@@ -10,7 +10,9 @@ extension Gate1AppModel {
     func playsPublisherAudio(itemId: String) -> Bool {
         // The summary: every play start asks, and the answer needs no article text (#2506).
         guard let store, let item = try? store.loadItemSummary(id: itemId) else { return false }
-        return PublisherAudioPlayback.playsRecording(summary: item, record: try? store.loadPublisherAudio(itemId: itemId))
+        return PublisherAudioPlayback.playsRecording(
+            summary: item, record: try? store.loadPublisherAudio(itemId: itemId),
+            choice: try? store.loadPublisherAudioChoice(itemId: itemId)) // #4640: the app's voice, if the listener chose it
     }
 
     /// Why a post added from Following kept, or didn't keep, its publisher's voice (#2024): the item it was added as,

@@ -679,6 +679,162 @@ final class PublisherAudioPlaybackTests: XCTestCase {
         XCTAssertEqual(audio.textPlays.last, "item-post", "reading aloud went on")
         assertClose(engine.currentSession?.position.charOffset, saved.position.charOffset, within: 2)
     }
+
+    // MARK: The listener's voice choice (#4640)
+
+    private func appVoice(_ prefers: Bool = true) -> PublisherAudioChoice {
+        PublisherAudioChoice(itemId: "item-post", prefersAppVoice: prefers, chosenAt: Date(timeIntervalSince1970: 1_000))
+    }
+
+    func testChoosingTheAppsVoicePlansAsIfThereWereNoRecord() {
+        let item = article()
+        XCTAssertNotNil(PublisherAudioPlayback.plan(for: item, record: record(map: map())))
+        XCTAssertNil(PublisherAudioPlayback.plan(for: item, record: record(map: map()), choice: appVoice()))
+        XCTAssertEqual(PublisherAudioPlayback.plan(for: item, record: record(map: map()), choice: appVoice()),
+                       PublisherAudioPlayback.plan(for: item, record: nil))
+        XCTAssertNotNil(PublisherAudioPlayback.plan(for: item, record: record(map: map()), choice: appVoice(false)))
+        var otherItems = appVoice()
+        otherItems.itemId = "another-item"
+        XCTAssertNotNil(PublisherAudioPlayback.plan(for: item, record: record(map: map()), choice: otherItems),
+                        "another article's choice changes nothing here")
+    }
+
+    func testTheSnapshotNamesTheRecordingsSourceWhileItPlays() throws {
+        let repository = repository(map: map())
+        let audio = FakePublisherAudioClient()
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio)
+
+        let started = try engine.startSession(itemId: "item-post")
+        XCTAssertEqual(started.publisherAudioSource, "feed_enclosure")
+        XCTAssertEqual(try engine.pause().publisherAudioSource, "feed_enclosure", "paused on the recording")
+        XCTAssertEqual(try engine.reconcileSystemInitiatedPause().publisherAudioSource, "feed_enclosure", "an interruption")
+        XCTAssertEqual(try engine.resumePlaybackAfterInterruption().publisherAudioSource, "feed_enclosure", "after it ends")
+    }
+
+    func testTheSnapshotHasNoSourceAfterTheRecordingFails() throws {
+        let repository = repository(map: map())
+        let audio = FakePublisherAudioClient()
+        audio.startStatusByTarget[recordingURL] = .failed("offline")
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio)
+
+        let started = try engine.startSession(itemId: "item-post")
+
+        XCTAssertEqual(started.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertNil(engine.snapshot.publisherAudioSource)
+    }
+
+    func testUseTheAppsVoiceReadsOnFromTheSameSentenceAndPlayPublishersAudioComesBack() throws {
+        let repository = repository(map: map())
+        let audio = FakePublisherAudioClient()
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: "item-post")
+        audio.mediaTimeMs = 10_500 // in the third sentence
+        _ = try engine.syncPlaybackProgress()
+        let thirdSentence = sentences[0].count + sentences[1].count + 2
+
+        try repository.savePublisherAudioChoice(appVoice())
+        let reading = try engine.replanVoice(itemId: "item-post", retryNow: false)
+
+        XCTAssertEqual(reading.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertEqual(reading.status, .playing)
+        XCTAssertNil(reading.publisherAudioSource)
+        XCTAssertEqual(audio.textPlays, ["item-post"])
+        let offset = try XCTUnwrap(engine.currentSession?.position.charOffset)
+        XCTAssertGreaterThanOrEqual(offset, thirdSentence)
+        XCTAssertNil(reading.lastFailure, "a listener's switch is not a failure")
+        XCTAssertEqual(try engine.replanVoice(itemId: "item-post", retryNow: false).targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertEqual(audio.textPlays.count, 1, "asking again for the voice already reading changes nothing")
+
+        try repository.deletePublisherAudioChoice(itemId: "item-post")
+        let back = try engine.replanVoice(itemId: "item-post", retryNow: true)
+
+        XCTAssertEqual(back.targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(back.publisherAudioSource, "feed_enclosure")
+        XCTAssertGreaterThanOrEqual(audio.mediaPlays.last?.timeMs ?? 0, 9_000, "the third sentence of the recording")
+        XCTAssertEqual(try engine.replanVoice(itemId: "item-post", retryNow: true).targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(audio.mediaPlays.count, 2, "asking again changes nothing")
+    }
+
+    /// Leaving the recording by choice must not hold it back for ten minutes, as a failure does.
+    func testTheAppsVoiceByChoiceLeavesNoHoldOnTheRecording() throws {
+        let repository = repository(map: map())
+        let audio = FakePublisherAudioClient()
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: "item-post")
+        try repository.savePublisherAudioChoice(appVoice())
+        _ = try engine.replanVoice(itemId: "item-post", retryNow: false)
+
+        try repository.deletePublisherAudioChoice(itemId: "item-post")
+        let back = try engine.replanVoice(itemId: "item-post", retryNow: false)
+
+        XCTAssertEqual(back.targetType, TargetType.transcriptBackedMedia.rawValue, "no failure was recorded, so no hold")
+    }
+
+    func testAfterAFailurePlayPublishersAudioTriesAgainAtOnce() throws {
+        let repository = repository(map: map())
+        let audio = FakePublisherAudioClient()
+        audio.startStatusByTarget[recordingURL] = .failed("offline")
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: "item-post")
+        XCTAssertEqual(engine.snapshot.targetType, TargetType.itemTextTTS.rawValue)
+        audio.startStatusByTarget[recordingURL] = nil // back online
+
+        XCTAssertEqual(try engine.replanVoice(itemId: "item-post", retryNow: false).targetType, TargetType.itemTextTTS.rawValue,
+                       "without an explicit request the failure still holds")
+        XCTAssertEqual(try engine.replanVoice(itemId: "item-post", retryNow: true).targetType, TargetType.transcriptBackedMedia.rawValue)
+    }
+
+    func testAVoiceTapWhilePausedStartsPlaying() throws {
+        let repository = repository(map: map())
+        let audio = FakePublisherAudioClient()
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: "item-post")
+        _ = try engine.pause()
+
+        try repository.savePublisherAudioChoice(appVoice())
+        let reading = try engine.replanVoice(itemId: "item-post", retryNow: false)
+
+        XCTAssertEqual(reading.status, .playing)
+        XCTAssertEqual(reading.targetType, TargetType.itemTextTTS.rawValue)
+    }
+
+    func testAnotherItemsVoiceIsLeftAlone() throws {
+        let repository = repository(map: map())
+        let audio = FakePublisherAudioClient()
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: "item-post")
+
+        let unchanged = try engine.replanVoice(itemId: "another-item", retryNow: true)
+
+        XCTAssertEqual(unchanged.targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(audio.mediaPlays.count, 1)
+    }
+
+    func testTheChoiceIsStoredAndAFreshEnginePlansTheAppsVoice() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("publisher-choice-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("library.sqlite").path
+        let store = try SQLiteSessionStore(path: path)
+        try store.saveItem(article())
+        try store.savePublisherAudio(record(map: map()))
+        try store.savePublisherAudioChoice(appVoice())
+
+        let reopened = try SQLiteSessionStore(path: path)
+        XCTAssertEqual(try reopened.loadPublisherAudioChoice(itemId: "item-post"), appVoice())
+        XCTAssertNotNil(try reopened.loadPublisherAudio(itemId: "item-post")?.textMap, "the recording's record still loads beside the new kind")
+        XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
+        let audio = FakePublisherAudioClient()
+        let started = try SessionEngine(profile: profile(), repository: reopened, audio: audio).startSession(itemId: "item-post")
+        XCTAssertEqual(started.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertTrue(audio.mediaPlays.isEmpty)
+
+        try reopened.deletePublisherAudioChoice(itemId: "item-post")
+        XCTAssertNil(try reopened.loadPublisherAudioChoice(itemId: "item-post"))
+        try reopened.savePublisherAudioChoice(appVoice())
+        try reopened.deleteItem(id: "item-post")
+        XCTAssertNil(try reopened.loadPublisherAudioChoice(itemId: "item-post"), "deleting the item removes its choice")
+    }
 }
 
 private func assertClose(_ value: Int?, _ expected: Int, within tolerance: Int, _ message: String = "", file: StaticString = #filePath, line: UInt = #line) {

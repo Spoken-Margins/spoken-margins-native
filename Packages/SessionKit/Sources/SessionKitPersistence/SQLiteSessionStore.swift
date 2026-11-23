@@ -1913,7 +1913,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         'podcast_download', 'owned_offline_asset', 'episode_map_preparation_job', 'audio_preparation_job', \
         'prepared_audio_manifest', 'edition_fingerprint_spine', 'transcript_phrase_sketch', \
         'resolved_listening_map_projection', 'watch_audio_package', 'watch_sync_event', 'watch_package_request', \
-        '\(TranscriptTimes.recordKind)'
+        '\(TranscriptTimes.recordKind)', 'publisher_audio_choice'
         """
 
     private static let quarantinedRowBelongsToItem = """
@@ -3076,6 +3076,22 @@ extension SQLiteSessionStore: PublisherAudioRepository {
 
     public func loadPublisherAudio(itemId: String) throws -> PublisherAudio? {
         try loadOptional(kind: Self.publisherAudioKind, id: itemId)
+    }
+
+    /// The listener's voice choice (#4640), kind "publisher_audio_choice", one row per item, linked by the item id
+    /// like the recording's record. No table, column or schema_version change.
+    static let publisherAudioChoiceKind = "publisher_audio_choice"
+
+    public func loadPublisherAudioChoice(itemId: String) throws -> PublisherAudioChoice? {
+        try loadOptional(kind: Self.publisherAudioChoiceKind, id: itemId)
+    }
+
+    public func savePublisherAudioChoice(_ choice: PublisherAudioChoice) throws {
+        try save(kind: Self.publisherAudioChoiceKind, id: choice.itemId, sessionId: nil, itemId: choice.itemId, value: choice)
+    }
+
+    public func deletePublisherAudioChoice(itemId: String) throws {
+        try deleteRecord(kind: Self.publisherAudioChoiceKind, id: itemId)
     }
 }
 
