@@ -70,8 +70,10 @@ class ExpressionTests(unittest.TestCase):
         self.assertFalse(TREE.docs_only(['Site/quiz/page.js']))
         self.assertFalse(TREE.docs_only(['scripts/x.py']))
         self.assertFalse(TREE.docs_only([]))
-        with self.assertRaises(ValueError):
-            ci_model.docs_only_rule('jobs: {scope: {steps: [{id: scope, run: "echo docs_only=true"}]}}')
+        for text in ('jobs: {scope: {steps: [{id: scope, run: "echo docs_only=true"}]}}', 'jobs: {scope: {steps: []}}',
+                     'jobs: {}', ''):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                ci_model.docs_only_rule(text)
 
 
 class FilterAndCronTests(unittest.TestCase):

@@ -103,8 +103,9 @@ PR (A8).
 - In `--diff`, helper modules that the imported scripts load by name (for example `comment_trust`) come from the
   first tree loaded.
 - Some decisions are still read or written by hand, so a change to them does not show in `--diff`:
-  - the docs-only rule (inline Python in `hosted-portable.yml`) and the web paths (a `grep` in `hosted-web.yml`) are
-    read from the YAML text with a regular expression, so a reworded step falls back to a default;
+  - the web paths (a `grep` in `hosted-web.yml`) are read from the YAML text with a regular expression, so a reworded
+    step falls back to a default. The docs-only rule (inline Python in `hosted-portable.yml`) is not: the model runs
+    the step's own Python, and a step that no longer has it stops the model with an error (#5048);
   - the audit's candidate loop (when it reads the head's checks) mirrors `sm_codex_audit.py` around line 866, and it
     assumes the re-run is called after every posted audit inside a workflow;
   - main-t3's `decide`, and which job catches which defect (`DEFECT_CATCHERS`, assumption A15).

@@ -639,8 +639,8 @@ def scenarios() -> list[Scenario]:
 def docs_only_rule(text: str) -> str:
     """The Python the scope job of hosted-portable.yml (given as text) runs with `python3 -c` on the changed-file list
     to decide docs_only. Raises when the step no longer has one, so a reworded step fails the model, not its verdict."""
-    steps = yaml.safe_load(text)['jobs']['scope']['steps']
-    run = next(step['run'] for step in steps if step.get('id') == 'scope')
+    steps = ((yaml.safe_load(text) or {}).get('jobs') or {}).get('scope', {}).get('steps') or []
+    run = next((step.get('run', '') for step in steps if step.get('id') == 'scope'), '')
     match = re.search(r"python3 -c '\n(.*?)\n' \"\$list\"", run, re.S)
     if not match:
         raise ValueError('the scope step has no python3 -c docs-only check')
