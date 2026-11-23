@@ -37,11 +37,16 @@ final class ArticleFeedAudioTests: XCTestCase {
 
     private func rss(_ entries: [Entry]) -> Data {
         let items = entries.map { entry -> String in
-            let enclosure = entry.enclosure.map { url in
-                #"<enclosure url="\#(url.replacingOccurrences(of: "&", with: "&amp;"))""#
-                    + (entry.length.map { #" length="\#($0)""# } ?? "")
-                    + (entry.type.map { #" type="\#($0)""# } ?? "") + "/>"
-            } ?? ""
+            // Built one piece at a time: a single `+` chain of optional-mapped literals makes Swift 6.4's type
+            // checker give up ("unable to type-check this expression in reasonable time").
+            var enclosure = ""
+            if let url = entry.enclosure {
+                let escaped = url.replacingOccurrences(of: "&", with: "&amp;")
+                enclosure = #"<enclosure url="\#(escaped)""#
+                if let length = entry.length { enclosure += #" length="\#(length)""# }
+                if let type = entry.type { enclosure += #" type="\#(type)""# }
+                enclosure += "/>"
+            }
             let duration = entry.duration.map { "<itunes:duration>\($0)</itunes:duration>" } ?? ""
             let link = entry.link.replacingOccurrences(of: "&", with: "&amp;")
             return "<item><title>Post</title><link>\(link)</link><guid>\(link)</guid>\(enclosure)\(duration)</item>"
