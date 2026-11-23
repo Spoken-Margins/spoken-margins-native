@@ -78,6 +78,22 @@ struct Build23SharingMarginSnapshot: Identifiable, Equatable {
     var placementNote: String? = nil
     /// False for a moved Margin with no place on its item (#4233): a packet can't carry it, so its switch stays off.
     var hasPlace = true
+    /// "Before your Margin" (#4171): nil for anything but a placed Margin on an episode or audio file.
+    var leadIn: Build23LeadInSnapshot? = nil
+}
+
+/// The sender's "Before your Margin" row on one Margin's card (#4171, PR 4b). The rules are `SenderLeadInPreview`'s.
+struct Build23LeadInSnapshot: Equatable {
+    /// The length the packet would carry, in ms.
+    let ms: Int
+    /// What the menu lists, in ms.
+    let choicesMs: [Int]
+    /// False while the Margin's moment is still being found: the preview would pause that sample.
+    let previewIsAvailable: Bool
+    let isPlaying: Bool
+    let previewFailed: Bool
+    /// What follows the chime when the Margin goes as words; nil for a voice.
+    let afterRunUpCaption: String?
 }
 
 extension Build23SharingMarginSnapshot {
@@ -254,6 +270,12 @@ enum Build23SenderAction: Equatable {
     case setRepresentation(id: String, choice: ShareMarginRepresentationChoice)
     /// Asks the friend's phone to read a text Margin aloud, or not to (#3427).
     case setReadAloud(id: String, readAloud: Bool)
+    /// How much of the episode the friend hears before this Margin (#4171).
+    case setLeadIn(id: String, ms: Int)
+    /// "Hear it as your friend will": starts this Margin's preview, or stops it when it is playing (#4171).
+    case toggleLeadInPreview(id: String)
+    /// Stops this Margin's preview if it is the one playing; its card went away.
+    case stopLeadInPreview(id: String)
     case setAnchorBefore(id: String, text: String)
     case setAnchorAfter(id: String, text: String)
     case setReviewedWords(id: String, text: String)
@@ -313,6 +335,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     @Published private(set) var pendingRecipientSourceRequest: Build23RecipientSourceRequest?
 
     private let model: Gate1AppModel
+    /// Plays "Hear it as your friend will" (#4171). One for the sheet, so only one Margin's preview plays.
+    private let leadInPreview = LeadInPreviewPlayer()
     /// The sheet's heading: "Share replies with Ana" (or "Share your Margins with Ana" when none is a reply) when it was opened to share replies back (#3221, #3906).
     var senderHeading: String { model.sharingState.replyBackTitle ?? "Share Margins" }
     /// Recovers a private-feed packet's episode from the recipient's own feed (#454).
@@ -375,6 +399,10 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         model.objectWillChange
             .sink { [weak self] in self?.scheduleModelChange(inputChanged: false, checksPlayback: true) }
             .store(in: &modelChangeCancellables)
+        // The preview's Play and Stop are on the card.
+        leadInPreview.objectWillChange
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &modelChangeCancellables)
     }
 
     static func isPlaying(itemID: String, in snapshot: SessionSnapshot) -> Bool {
@@ -420,6 +448,18 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 stored[draft.id] ?? draft.interjection, isNativeAudio: isNativeAudio, playingThisItem: playing,
                 hasVoice: originalVoiceURL != nil)
             if draft.isIncluded { waiting.append(reviewMargin) }
+            let marginPositionMs = (stored[draft.id] ?? draft.interjection).anchor.mediaTimeMs
+            let leadIn = SenderLeadInPreview.showsRow(
+                isNativeAudio: isNativeAudio, hasPlace: draft.interjection.hasPlace, marginPositionMs: marginPositionMs)
+                ? Build23LeadInSnapshot(
+                    ms: SenderLeadIn.clamped(draft.leadInMs),
+                    choicesMs: SenderLeadInPreview.choicesMs(current: draft.leadInMs),
+                    previewIsAvailable: SenderLeadInPreview.previewIsAvailable(reviewMargin),
+                    isPlaying: leadInPreview.playingMarginID == draft.id,
+                    previewFailed: leadInPreview.failedMarginID == draft.id,
+                    afterRunUpCaption: SenderLeadInPreview.afterRunUpCaption(
+                        goesAsWords: draft.representationChoice == .textOnly, readAloud: draft.readAloud))
+                : nil
             return Build23SharingMarginSnapshot(
                 id: draft.id,
                 reviewedText: draft.approvedTranscript,
@@ -449,7 +489,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 steps: ShareReviewSteps.cardSteps(reviewMargin),
                 waitingBadge: ShareReviewSteps.waitingBadge(reviewMargin),
                 placementNote: ShareReviewSteps.cardNote(reviewMargin),
-                hasPlace: draft.interjection.hasPlace
+                hasPlace: draft.interjection.hasPlace,
+                leadIn: leadIn
             )
         }
         let hasReviewedSelection = margins.contains {
@@ -642,9 +683,23 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         case .selectMargin(let id):
             selectedMarginID = id
         case .setRepresentation(let id, let choice):
+            // The preview was playing the version just replaced.
+            if leadInPreview.playingMarginID == id { leadInPreview.stop() }
             mutatePackage { model.setShareDraftRepresentation(id, choice: choice) }
         case .setReadAloud(let id, let readAloud):
             mutatePackage { model.setShareDraftReadAloud(id, readAloud: readAloud) }
+        case .setLeadIn(let id, let ms):
+            // The preview was playing the length just replaced.
+            if leadInPreview.playingMarginID == id { leadInPreview.stop() }
+            mutatePackage { model.setShareDraftLeadIn(id, ms: ms) }
+        case .toggleLeadInPreview(let id):
+            if leadInPreview.playingMarginID == id {
+                leadInPreview.stop()
+            } else {
+                startLeadInPreview(id)
+            }
+        case .stopLeadInPreview(let id):
+            if leadInPreview.playingMarginID == id { leadInPreview.stop() }
         case .setAnchorBefore(let id, let text):
             mutatePackage { model.setShareDraftAnchorBefore(id, value: text) }
         case .setAnchorAfter(let id, let text):
@@ -689,6 +744,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         case .returnFromSystemShare:
             stage = .review
         case .cancel:
+            leadInPreview.stop()
             model.cancelBulkSharePreparation()
             model.isSharingInterjectionsPresented = false
             discardPreview(resetTo: .select)
@@ -881,6 +937,23 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         objectWillChange.send()
     }
 
+    /// "Hear it as your friend will" (#4171): the episode from where the friend's review would start, the chime, then the
+    /// version chosen under "Your friend gets". It pauses the main player if it's playing, and leaves it paused.
+    private func startLeadInPreview(_ id: String) {
+        guard let draft = model.sharingState.drafts.first(where: { $0.id == id }),
+              let marginPositionMs = draft.interjection.anchor.mediaTimeMs,
+              snapshot.margins.first(where: { $0.id == id })?.leadIn?.previewIsAvailable == true else { return }
+        let plan = SenderLeadInPreview.Plan(marginPositionMs: marginPositionMs, leadInMs: draft.leadInMs)
+        let voiceURL: URL? = switch draft.representationChoice {
+        case .original: model.originalAudioURL(forShareDraft: draft.id)
+        case .cleaned: draft.cleanedAudioURL
+        case .textOnly: nil
+        }
+        let episodeURL = model.senderPreviewEpisodeURL(itemId: model.selectedItem.id)
+        if episodeURL != nil { model.pauseForSenderPreview() }
+        leadInPreview.start(marginID: id, episodeURL: episodeURL, plan: plan, voiceURL: voiceURL)
+    }
+
     private func currentDraftFingerprint() -> String {
         let state = model.sharingState
         var fields = [
@@ -897,6 +970,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 draft.approvedTranscript,
                 draft.representationChoice.rawValue,
                 String(draft.readAloud),
+                String(draft.leadInMs),
                 draft.anchorBefore,
                 draft.anchorAfter,
                 draft.cleanedAudioURL?.path ?? "",
