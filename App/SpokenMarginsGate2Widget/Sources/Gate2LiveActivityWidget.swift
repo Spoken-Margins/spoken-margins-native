@@ -381,40 +381,16 @@ struct Gate2LiveActivityView: View {
         #if SM_LOCKED_MARGIN_SPIKE
         // Phone builds only: record in place, without opening the app (#3086).
         Button(intent: Gate2RecordMarginIntent(finish: state.isRecording)) {
-            marginColumnLabel
+            Gate2MarginControl(finishes: state.isRecording)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(state.isRecording ? "Finish Margin" : "Add a Margin")
         #else
         Link(destination: Gate2CompactCommandURL.url(command: state.isRecording ? "finishInterjection" : "beginInterjection")) {
-            marginColumnLabel
+            Gate2MarginControl(finishes: state.isRecording)
         }
         .accessibilityLabel(state.isRecording ? "Finish Margin" : "Add a Margin")
         #endif
-    }
-
-    /// Start and finish differ by glyph, word, fill and outline, never by colour alone: a soft pill with the microphone
-    /// and "Margin", then a solid white, squarer block with the checkmark and "Finish". The whole column takes the tap.
-    private var marginColumnLabel: some View {
-        let finishes = state.isRecording
-        let outline = RoundedRectangle(
-            cornerRadius: finishes ? Gate2ControlSize.finishCornerRadius : Gate2ControlSize.marginColumnWidth / 2,
-            style: .continuous
-        )
-        return VStack(spacing: 4) {
-            Image(systemName: finishes ? "checkmark" : "mic.fill")
-                .font(.title2.weight(.semibold))
-            Text(finishes ? "Finish" : "Margin")
-                .font(.caption.weight(.bold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        }
-        .dynamicTypeSize(...Gate2ControlSize.captionedGlyphCeiling)
-        .frame(width: Gate2ControlSize.marginColumnWidth)
-        .frame(maxHeight: .infinity)
-        .foregroundStyle(finishes ? Color.black : Color.white)
-        .background(finishes ? Color.white : Color.white.opacity(0.16), in: outline)
-        .contentShape(Rectangle())
     }
 
     @ViewBuilder
@@ -448,6 +424,33 @@ struct Gate2LiveActivityView: View {
         .background(Color.white.opacity(0.12))
         .clipShape(Capsule())
         .expandedHitArea(top: 4, bottom: 16)
+    }
+}
+
+struct Gate2MarginControl: View {
+    let finishes: Bool
+
+    /// Start and finish differ by glyph, word, fill and outline, never by colour alone: a soft pill with the microphone
+    /// and "Margin", then a solid white, squarer block with the checkmark and "Finish". The whole column takes the tap.
+    var body: some View {
+        let outline = RoundedRectangle(
+            cornerRadius: finishes ? Gate2ControlSize.finishCornerRadius : Gate2ControlSize.marginColumnWidth / 2,
+            style: .continuous
+        )
+        return VStack(spacing: 4) {
+            Image(systemName: finishes ? "checkmark" : "mic.fill")
+                .font(.title2.weight(.semibold))
+            Text(finishes ? "Finish" : "Margin")
+                .font(.caption.weight(.bold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .dynamicTypeSize(...Gate2ControlSize.captionedGlyphCeiling)
+        .frame(width: Gate2ControlSize.marginColumnWidth)
+        .frame(maxHeight: .infinity)
+        .foregroundStyle(finishes ? Color.black : Color.white)
+        .background(finishes ? Color.white : Color.white.opacity(0.16), in: outline)
+        .contentShape(Rectangle())
     }
 }
 
