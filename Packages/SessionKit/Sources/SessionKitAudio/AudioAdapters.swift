@@ -1793,6 +1793,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
     private var completionObserver: NSObjectProtocol?
     private var timeJumpObserver: NSObjectProtocol?
     private var timeObserverToken: Any?
+    private var boundaryObserverToken: Any?
     private var playerStateObservation: NSKeyValueObservation?
     /// Reports the first sound of each `play` to the start cue (#842). Armed in `play`, taken once when the player
     /// first reaches `.playing`, so a rebuffer inside one play posts nothing more. Touched on the main queue only.
@@ -2984,6 +2985,22 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
             guard let self else { return }
             self.publishNowPlaying(isPlaying: !self.paused)
         }
+        installBoundaryObserver()
+    }
+
+    /// The boundary times asked for, on the player of their target only: a player for another file never runs them.
+    private func installBoundaryObserver() {
+        guard let player, boundaryObserverToken == nil, let request = boundaryRequest,
+              request.targetId == activeTargetId, !request.timesMs.isEmpty else { return }
+        let times = request.timesMs.map { NSValue(time: CMTime(value: CMTimeValue(max(0, $0)), timescale: 1_000)) }
+        let handler = request.handler
+        boundaryObserverToken = player.addBoundaryTimeObserver(forTimes: times, queue: .main) { handler() }
+    }
+
+    private func removeBoundaryObserver() {
+        guard let boundaryObserverToken else { return }
+        player?.removeTimeObserver(boundaryObserverToken)
+        self.boundaryObserverToken = nil
     }
 
     private func installPlayerStateObserver() {
@@ -3049,6 +3066,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
     }
 
     private func removeTimeObserver() {
+        removeBoundaryObserver()
         guard let timeObserverToken else { return }
         if let player {
             player.removeTimeObserver(timeObserverToken)
@@ -3142,7 +3160,21 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
     private func removePlayerStateObserver() {}
     private func removeCompletionObserver() {}
     private func removeTimeObserver() {}
+    private func installBoundaryObserver() {}
+    private func removeBoundaryObserver() {}
     #endif
+
+    private var boundaryRequest: (targetId: String, timesMs: [Int], handler: @Sendable () -> Void)?
+
+    /// Runs `handler` on the main queue each time playback of `targetId` crosses one of `timesMs`, exactly, instead of
+    /// at the next periodic report (#3777: the start of each run of footnotes in a prepared file, so the chime stops
+    /// before the note's first word). It holds for that target until replaced; an empty list or nil removes it. A player
+    /// built for the target later (a new play, an item rebuilt before a seek) gets the same times. Main queue only.
+    public func setBoundaryTimes(_ timesMs: [Int], targetId: String, handler: (@Sendable () -> Void)?) {
+        removeBoundaryObserver()
+        boundaryRequest = handler.map { (targetId, timesMs, $0) }
+        installBoundaryObserver()
+    }
 
     private func currentChapterId(mediaTimeMs: Int) -> String? {
         mediaContext?.chapters

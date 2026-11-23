@@ -19,7 +19,7 @@ import Foundation
 /// 2. Only playback that runs on into a note's segment can cue it. A start, a seek or a resume that lands in a note
 ///    passes over it silently, as a play that begins inside a run does on the on-device voice.
 ///
-/// Nothing calls this yet: the media player's wiring and the card on that path are the visible half.
+/// `FootnoteMediaChimeSession` holds one for the item playing, and the app drives it from the media player's clock.
 public struct FootnoteMediaChimeDriver: Equatable, Sendable {
     public typealias Tag = NarrationChunkPlanner.FootnoteTag
 
@@ -114,8 +114,19 @@ public struct FootnoteMediaChimeDriver: Equatable, Sendable {
     ) -> Action {
         let index = segmentIndex(atMs: timeMs)
         guard index != current else { return .none }
+        // The player seeks to within a quarter second of the time asked (`requestMediaSeek`), so a move the driver
+        // made can land at the end of the segment before its target. That is still the move: it completes when
+        // playback runs on into the target, and nothing in the segment it landed in counts as heard.
+        if let expected = expectedEntry, index == expected - 1 {
+            current = index
+            currentEnteredAtStart = false
+            return .none
+        }
         let ranOn = current.map { index == $0 + 1 } ?? false
         let landedFromOwnMove = index == expectedEntry
+        // Any other jump is a move the driver did not make: the listener's seek or skip, or a start. Nothing stays
+        // offered or being read, as `playerMovedOnItsOwn()` says, so a card does not outlive the place it was for.
+        if current != nil, !ranOn, !landedFromOwnMove { sequencer.reset() }
         // A move the driver made past a note can land on the very next segment; that note was passed over, not heard.
         if ranOn, !landedFromOwnMove { recordCurrentPlayedToEnd() }
         let runOn = ranOn || landedFromOwnMove
