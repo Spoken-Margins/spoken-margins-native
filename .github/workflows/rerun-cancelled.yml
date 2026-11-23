@@ -1,22 +1,34 @@
-# Re-run a PR's required check once when its newest run on the PR head was cancelled and nothing replaced it (#4937).
+# Re-run a PR's required check once when its newest run on the PR head was cancelled and nothing replaced it (#4937),
+# or failed only outside the PR's code (#5057).
 #
 # GitHub reads a required check from the newest check run of that name on the commit. A cancelled newest run blocks
 # the PR, shows grey rather than red, and nothing else starts it again: #4929 (a re-arm's two `merge policy` runs, the
 # newer one cancelled; #4898, #4871 and #4830 sat armed with green checks for 2 to 5 hours), #4747 (passing portable
 # runs cut off at their time limit, which ends `cancelled`), and a hosted Mac job that hangs on a PR.
-# scripts/rerun_cancelled_check.py decides, and leaves alone a run a newer push replaced, a second attempt, a run whose
-# required checks failed, and any PR that is not open and armed. It found these cases in scripts/ci_harness.py's sweep
-# (`*/portable-timeout-once`, `web/mac-hang-once`, the reversed `rearm-burst`).
+# A run that failed only in a setup step, or in a plan step whose log ends in a network error from an outside host
+# (the dequeue notifier's reading of a merge group, #4940), stayed red until a person re-ran it: the web job when the
+# Playwright CDN or Hugging Face is down, the portable job when PyPI or Docker Hub is (#4795's outage, on a PR). That
+# run is re-run once, 90 minutes later (rerun_cancelled_check.RETRY_DELAY_MINUTES), so the outage has time to end; the
+# job sleeps on a Linux runner and reads everything again before it re-runs.
+# scripts/rerun_cancelled_check.py decides, and leaves alone a run a newer push replaced, a second attempt, a run with
+# a job that failed in a test or a step it does not know, and any PR that is not open and armed. It found these cases
+# in scripts/ci_harness.py's sweep (`*/portable-timeout-once`, `web/mac-hang-once`, the reversed `rearm-burst`,
+# `web/*/mac-fail-once`, `web/*/mac-download-fail-once`, `*/outage-90m`).
 #
-# `workflow_run` runs this file and the script from main, never from the PR; nothing from the PR is checked out or run.
-# A run cancelled by a merge group or a dispatch is skipped by the job's `if:`.
+# `workflow_run` runs this file and the scripts from main, never from the PR; nothing from the PR is checked out or run.
+# A run cancelled or failed in a merge group or a dispatch is skipped by the job's `if:` (the dequeue notifier handles
+# a merge group).
 #
-# Cost and catch: one Linux job of about 15 seconds per cancelled PR run of the three workflows (about 40 a day before
-# #4930, mostly merge-policy runs superseded by a newer label event, which the script leaves alone), plus one re-run
-# of the cancelled workflow when it rescues a PR: a 30-second merge-policy run, or a portable run of about 25 minutes.
-# No Mac minutes on a PR (Mac rest runs only in the queue), no tokens. It catches a PR stuck behind a cancelled
-# required check: 3 PRs and about 12 PR-hours on 2026-11-22 (#4929), and the portable time-outs of 2026-11-20 (#4747).
-# Waste signal: a month in which every run says "left alone".
+# Cost and catch: one Linux job of about 15 seconds per cancelled or failed PR run of the three workflows. Cancelled:
+# about 40 a day before #4930, mostly merge-policy runs superseded by a newer label event, which the script leaves
+# alone. Failed: about 100 a day, mostly merge-policy holds (97 failed merge-policy PR runs in the 24 hours to
+# 2026-11-23 06:00 UTC), whose failing step "Check the merge rules" is not a setup step, so each is left alone after
+# one job read; a plan step adds one job-log read. When a failed run failed outside the PR, the job holds a free hosted Linux runner for 90 minutes
+# while it waits, then re-runs the workflow: a portable run of about 25 minutes or a web run of about 12 minutes on a
+# hosted Mac. A cancelled run is re-run at once: a 30-second merge-policy run or a portable run. No tokens. It catches
+# a PR stuck behind a cancelled required check (3 PRs and about 12 PR-hours on 2026-11-22, #4929), the portable
+# time-outs of 2026-11-20 (#4747), and a PR's check failed by an outside host or a runner (#4795; #5057).
+# Waste signal: a month in which every run says "left alone", or in which no 90-minute wait ended in a green re-run.
 name: rerun-cancelled
 
 on:
@@ -33,9 +45,12 @@ permissions:
 jobs:
   rerun:
     name: rerun cancelled check
-    if: github.event.workflow_run.conclusion == 'cancelled' && github.event.workflow_run.event == 'pull_request'
+    if: >-
+      (github.event.workflow_run.conclusion == 'cancelled' || github.event.workflow_run.conclusion == 'failure')
+      && github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Above the script's 90-minute wait before it re-runs a run that failed outside the PR.
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -44,8 +59,9 @@ jobs:
           sparse-checkout: |
             scripts/rerun_cancelled_check.py
             scripts/required_checks.py
+            scripts/merge_queue_dequeued.py
           sparse-checkout-cone-mode: false
-      - name: Re-run the cancelled check if it is all that blocks the PR
+      - name: Re-run the cancelled or outside-failed check if it is all that blocks the PR
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
