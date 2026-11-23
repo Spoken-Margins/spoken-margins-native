@@ -53,8 +53,8 @@ final class PaperSourceFollowingTests: XCTestCase {
             status: 200, data: try fixture("zotero-group-collection"), totalResults: 25)
         fake.replies["/groups/2205533/collections/DMKBHP6P/items?itemType=attachment#0"] = PaperFetchReply(
             status: 200, data: try fixture("zotero-group-attachments"))
-        fake.replies["/groups/2205533/collections/DMKBHP6P"] = PaperFetchReply(status: 200, data: try fixture("zotero-collection-record"))
-        fake.replies["/groups/2205533"] = PaperFetchReply(status: 200, data: try fixture("zotero-group-record"))
+        fake.replies["/groups/2205533/collections/DMKBHP6P"] = PaperFetchReply(status: 200, data: try fixture("zotero-api/collection-record"))
+        fake.replies["/groups/2205533"] = PaperFetchReply(status: 200, data: try fixture("zotero-api/group-record"))
         return fake
     }
 
@@ -284,8 +284,8 @@ final class PaperSourceFollowingTests: XCTestCase {
         // The same real JSON, served at the listener's own library's addresses.
         fake.replies["/users/42/collections/DMKBHP6P/items/top#0"] = PaperFetchReply(status: 200, data: try fixture("zotero-group-collection"), totalResults: 25)
         fake.replies["/users/42/collections/DMKBHP6P/items?itemType=attachment#0"] = PaperFetchReply(status: 200, data: try fixture("zotero-group-attachments"))
-        fake.replies["/users/42/collections/DMKBHP6P"] = PaperFetchReply(status: 200, data: try fixture("zotero-collection-record"))
-        fake.replies["/users/42/collections#0"] = PaperFetchReply(status: 200, data: try fixture("zotero-group-collections"))
+        fake.replies["/users/42/collections/DMKBHP6P"] = PaperFetchReply(status: 200, data: try fixture("zotero-api/collection-record"))
+        fake.replies["/users/42/collections#0"] = PaperFetchReply(status: 200, data: try fixture("zotero-api/group-collections"))
         return fake
     }
 

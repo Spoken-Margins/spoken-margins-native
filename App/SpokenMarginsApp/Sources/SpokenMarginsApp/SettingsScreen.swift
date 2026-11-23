@@ -429,6 +429,9 @@ struct SettingsScreen: View, Equatable {
                     }
                     .accessibilityIdentifier("settings.yourAI.row")
                     NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
+                    // #4341: the listener's own Zotero library, followed as papers from Following.
+                    NavigationLink("Zotero") { ZoteroSettingsScreen().miniPlayerKeepOut() }
+                        .accessibilityIdentifier("settings.zotero.row")
                     NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
                     Toggle(isOn: Binding(
                         get: { model.quickAccess.inboxFeedsQueue },

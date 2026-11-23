@@ -2,7 +2,8 @@ import SessionKit
 import SwiftUI
 
 /// Following's plus (#3205): one sheet that does one job, following a show. Paste follows a copied link at once and
-/// the banner offers Undo; Browse opens the catalog; Import from another app opens the file picker. Read Later and
+/// the banner offers Undo; Browse opens the catalog; Papers from Zotero follows a reading list (#4341); Import from
+/// another app opens the file picker. Read Later and
 /// Listening Edition imports live in Settings, Import & Export.
 struct FollowSheet: View {
     @EnvironmentObject private var model: Gate1AppModel
@@ -57,6 +58,19 @@ struct FollowSheet: View {
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     }
                     .accessibilityIdentifier("sources.browseCatalog")
+                    // #4341: a reading list from Zotero, followed as papers.
+                    NavigationLink {
+                        FollowPapersScreen(done: { dismiss() })
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("Papers from Zotero", systemImage: "doc.text.magnifyingglass")
+                            Text("Follow a reading list")
+                                .font(.footnote)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    .accessibilityIdentifier("sources.followPapers")
                     if let makeOPMLImport = catalogDrawer.makeOPMLImport {
                         NavigationLink {
                             OPMLImportScreen(importer: makeOPMLImport(), opensFilePickerOnAppear: true)

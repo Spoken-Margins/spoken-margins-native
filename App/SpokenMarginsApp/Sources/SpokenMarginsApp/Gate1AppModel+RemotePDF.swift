@@ -15,16 +15,35 @@ extension Gate1AppModel {
     @discardableResult
     func importRemotePDFInBackground(
         url: URL,
-        onboardingSteps: Set<OnboardingStep> = [.addedOwnSource, .addedFromSafari]
+        onboardingSteps: Set<OnboardingStep> = [.addedOwnSource, .addedFromSafari],
+        bibliography: @escaping @Sendable (PDFBibliography?) -> PDFBibliography? = { $0 }
     ) async throws -> String {
         #if canImport(PDFKit)
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
         let (data, response) = try await URLSession.shared.data(for: request)
+        guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
+            throw SourceFileImportError.remotePDFInvalidResponse
+        }
+        return try await importDownloadedPDF(data, sourceURL: url, onboardingSteps: onboardingSteps, bibliography: bibliography)
+        #else
+        throw SourceFileImportError.pdfImportUnavailable
+        #endif
+    }
+
+    /// A PDF's bytes, already fetched: checked to be a PDF (a login page is refused), extracted off the main thread, and
+    /// added as an item. `bibliography` may fill the citation the extractor found (#4341: a paper source's metadata
+    /// fills it when the PDF names no DOI).
+    @discardableResult
+    func importDownloadedPDF(
+        _ data: Data,
+        sourceURL url: URL,
+        onboardingSteps: Set<OnboardingStep> = [.addedOwnSource, .addedFromSafari],
+        bibliography: @escaping @Sendable (PDFBibliography?) -> PDFBibliography? = { $0 }
+    ) async throws -> String {
+        #if canImport(PDFKit)
         let pdfHeader = Data("%PDF-".utf8)
-        guard let response = response as? HTTPURLResponse,
-              (200..<300).contains(response.statusCode),
-              data.prefix(1_024).range(of: pdfHeader) != nil else {
+        guard data.prefix(1_024).range(of: pdfHeader) != nil else {
             throw SourceFileImportError.remotePDFInvalidResponse
         }
         guard data.count <= 50 * 1_024 * 1_024 else {
@@ -33,6 +52,8 @@ extension Gate1AppModel {
         let extracted = try await Task.detached(priority: .userInitiated) {
             try NativePDFDocumentExtractor.extractStructured(from: data)
         }.value
+        var documentStructure = extracted.documentStructure
+        documentStructure.bibliography = bibliography(documentStructure.bibliography)
         let decodedName = url.deletingPathExtension().lastPathComponent.removingPercentEncoding
             ?? url.deletingPathExtension().lastPathComponent
         let fileTitle = decodedName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -44,7 +65,7 @@ extension Gate1AppModel {
             ),
             text: extracted.document.text,
             contentFormat: .plainText,
-            documentStructure: extracted.documentStructure
+            documentStructure: documentStructure
         )
         let itemId = try await importBrowserTextInBackgroundOffMain(handoff, structuredDocument: extracted.document)
         await keepOriginalPDF(data, itemId: itemId) // #4338: a PDF imported again replaces its item's copy (#556)

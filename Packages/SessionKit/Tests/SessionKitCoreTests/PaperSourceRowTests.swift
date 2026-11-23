@@ -84,7 +84,9 @@ final class PaperSourceRowTests: XCTestCase {
 
     func testFollowingAListMeansFollowingSomething() {
         XCTAssertTrue(FollowingFeed.showsEmptyState(friends: [], shows: FollowingShowList(), showsLoaded: true))
-        XCTAssertFalse(FollowingFeed.showsEmptyState(friends: [], shows: FollowingShowList(), showsLoaded: true, followsPapers: true))
+        XCTAssertFalse(FollowingFeed.showsEmptyState(showsEmpty: true, followsPapers: true))
+        XCTAssertTrue(FollowingFeed.showsEmptyState(showsEmpty: true, followsPapers: false))
+        XCTAssertFalse(FollowingFeed.showsEmptyState(showsEmpty: false, followsPapers: false))
     }
 
     // MARK: The paper screen

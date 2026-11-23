@@ -82,10 +82,12 @@ public enum FollowingFeed {
 
     /// Whether to say "You're not following anything yet" (#3753): only when the show list has loaded and there are
     /// really no shows (Quiet ones count) and no friends. Before the load, an empty list means "not read yet".
-    /// A followed reading list counts too (#4341), Quiet or not.
-    public static func showsEmptyState(
-        friends: [FollowingFriends.Friend], shows: FollowingShowList, showsLoaded: Bool, followsPapers: Bool = false
-    ) -> Bool {
-        showsLoaded && shows.rows.isEmpty && shows.quiet.isEmpty && friends.isEmpty && !followsPapers
+    public static func showsEmptyState(friends: [FollowingFriends.Friend], shows: FollowingShowList, showsLoaded: Bool) -> Bool {
+        showsLoaded && shows.rows.isEmpty && shows.quiet.isEmpty && friends.isEmpty
+    }
+
+    /// Following with a followed reading list (#4341), Quiet or not, is following something.
+    public static func showsEmptyState(showsEmpty: Bool, followsPapers: Bool) -> Bool {
+        showsEmpty && !followsPapers
     }
 }
