@@ -169,6 +169,14 @@ public struct MarginMomentSequence: Sendable, Equatable {
         return Self.effectiveLeadInMs(of: anchor, momentLeadInMs: momentLeadInMs)
     }
 
+    /// Where this review's run-up before its target starts, counting a run-up the listener lengthened with "Start a minute
+    /// earlier" (#4171), for the Next Margin press (`NextMarginPress.Context.momentLeadIn`). Nil for a plain moment, which has
+    /// no press, and for a listening with no lead-in at all (`CantPlayListening`), which keeps the press's own rule.
+    public var targetRunUpStartMediaTimeMs: Int? {
+        guard review != nil, momentLeadInMs > 0 else { return nil }
+        return max(0, target.mediaTimeMs - leadInMs(for: target))
+    }
+
     /// Where the lead-in before `target` starts, by the single lead-in rule (#807). The target's own length (the
     /// sender's, #4171) wins over `leadInMs`, the moment's.
     public static func leadInStartMediaTimeMs(forTarget target: MarginMomentAnchor, leadInMs: Int = defaultLeadInMs) -> Int {
