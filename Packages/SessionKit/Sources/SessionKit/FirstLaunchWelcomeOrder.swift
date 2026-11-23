@@ -177,7 +177,8 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
             phase = .drawerShowing
             return .presentDrawer
         case .waitingForFriendItem:
-            if place == .item { phase = .waitingForLibrary }
+            // Only the import's own signal (`friendItemOpened`) advances this: an item the listener opened themselves,
+            // or one still downloading, is not the friend's, and going back to the Library must not bring the drawer.
             return .none
         case .notOwed, .drawerShowing:
             return .none

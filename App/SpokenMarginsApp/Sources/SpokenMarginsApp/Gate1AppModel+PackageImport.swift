@@ -141,7 +141,7 @@ extension Gate1AppModel {
     private func startShareLinkOpen(_ url: URL) {
         guard let link = ShareLinkURL(url: url) else {
             shareLinkOpener.cancel() // the last thing the listener opened is this, so an earlier download says nothing
-            packetOpenFailures.present(PacketOpenFailureSheetContent(unparsedShareHostURL: url), retry: nil)
+            packetOpenFailures.present(PacketOpenFailureSheetContent(unparsedShareHostURL: url), retry: nil, endsOpen: true)
             return
         }
         diagnostics["lastShareLink"] = link.key == nil ? "opening:no_key" : "opening"
@@ -160,7 +160,7 @@ extension Gate1AppModel {
             fail: { [weak self] failure in
                 self?.diagnostics["lastShareLink"] = "failed"
                 let content = PacketOpenFailureSheetContent(failure, linkID: link.id)
-                self?.packetOpenFailures.present(content, retry: content.isRetryable ? tryAgain : nil)
+                self?.packetOpenFailures.present(content, retry: content.isRetryable ? tryAgain : nil, endsOpen: true)
             }
         )
     }

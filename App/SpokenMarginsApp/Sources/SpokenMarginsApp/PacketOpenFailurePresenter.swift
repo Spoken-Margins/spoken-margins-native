@@ -22,9 +22,11 @@ final class PacketOpenFailurePresenter: ObservableObject {
     var generation: Int { state.generation }
 
     /// Shows `content`, or swaps the words of the sheet that is already up. `retry` runs the same open again.
-    func present(_ content: PacketOpenFailureSheetContent, retry: (@MainActor () -> Void)?) {
+    /// `endsOpen`: this failure ends the open that was running (a download that failed); a refused file doesn't, its open
+    /// ends with `openEnded`.
+    func present(_ content: PacketOpenFailureSheetContent, retry: (@MainActor () -> Void)?, endsOpen: Bool = false) {
         self.retry = retry
-        state.present(content, canRetry: retry != nil)
+        state.present(content, canRetry: retry != nil, endsOpen: endsOpen)
     }
 
     func tryAgain() {
@@ -52,18 +54,23 @@ final class PacketOpenFailurePresenter: ObservableObject {
 
     /// An open that began when the sheet was at `generation` has ended; see `PacketOpenFailureSheetState.openEnded`.
     func openEnded(opened: Bool, since generation: Int) {
-        state.openEnded(opened: opened, since: generation)
+        if state.openEnded(opened: opened, since: generation) { onCloseNotice?() }
     }
 
-    /// The notice is owed and no sheet is up to take it (see `PacketOpenFailureSheetState.isCloseNoticeDue`).
-    var isCloseNoticeDue: Bool { state.isCloseNoticeDue }
+    /// Tells the first-launch drawer that the failure it was waiting on is over. Set once by the root view, which knows
+    /// where the listener is. Called only from `sheetDismissed` and `openEnded`, the state's two routes.
+    var onCloseNotice: (@MainActor () -> Void)?
 
     /// Told by the import when a friend's file opened its item; the first-launch drawer's order listens (#4834).
     var onFriendItemOpened: (@MainActor () -> Void)?
     func friendItemOpened() { onFriendItemOpened?() }
 
-    /// True once after the listener closed the sheet, so the first-launch drawer comes back once the sheet is gone.
-    func takeCloseNotice() -> Bool {
-        state.takeCloseNotice()
+    /// The sheet's `onDismiss`: it has fully left, so the first-launch drawer comes back now if it is due. True when it
+    /// told the drawer.
+    @discardableResult
+    func sheetDismissed() -> Bool {
+        guard state.sheetDismissed() else { return false }
+        onCloseNotice?()
+        return true
     }
 }

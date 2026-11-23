@@ -103,15 +103,16 @@ private struct PacketOpenFailureSheetModifier: ViewModifier {
                 get: { hosts ? presenter.presented : nil },
                 set: { if $0 == nil, hosts { presenter.close() } }
             ),
-            onDismiss: {
-                if presenter.takeCloseNotice() { drawer.friendFileFailed(at: FirstLaunchWelcomeOrder.Place(model)) }
-            },
+            onDismiss: { presenter.sheetDismissed() },
             content: { presented in PacketOpenFailureSheet(presenter: presenter, presented: presented) }
         )
-        // The old sheet closed while a second link opened, and that link ended with no words: no sheet is left to carry
-        // the notice out, so it is taken here (#4834).
-        .onChange(of: presenter.isCloseNoticeDue) { _, due in
-            if due, hosts, presenter.takeCloseNotice() { drawer.friendFileFailed(at: FirstLaunchWelcomeOrder.Place(model)) }
+        .onAppear {
+            // The one place the drawer is told (#4834): the presenter calls this from `sheetDismissed` and `openEnded`
+            // only, so it never presents while the failure sheet is still leaving.
+            presenter.onCloseNotice = { [weak model, weak drawer] in
+                guard let model, let drawer else { return }
+                drawer.friendFileFailed(at: drawer.isPresented ? .elsewhere : FirstLaunchWelcomeOrder.Place(model))
+            }
         }
     }
 }
@@ -130,10 +131,8 @@ private struct PacketOpenFailureDrawerSheetModifier: ViewModifier {
                 get: { hosts ? presenter.presented : nil },
                 set: { if $0 == nil, hosts { presenter.close() } }
             ),
-            onDismiss: {
-                // The drawer is up, so it was never withdrawn: it only needs to be told no friend's item is coming.
-                if presenter.takeCloseNotice() { drawer.friendFileFailed(at: .elsewhere) }
-            },
+            // The drawer is up, so it was never withdrawn: `onCloseNotice` only tells it no friend's item is coming.
+            onDismiss: { presenter.sheetDismissed() },
             content: { presented in PacketOpenFailureSheet(presenter: presenter, presented: presented) }
         )
     }
