@@ -24,6 +24,9 @@ final class QuickAccessFolderState: ObservableObject {
     static let lastCheckedAtKey = "quickAccessLastCheckedAt"
     static let folderProblemKey = "quickAccessFolderProblem"
     static let lastImportProblemKey = "quickAccessLastImportProblem"
+    /// Added in #4274. Files modified since this can be listed on Following even when they are past the newest eight. An older
+    /// build ignores it.
+    static let folderChosenAtKey = "quickAccessFolderChosenAt"
     /// What the name reads when no folder is chosen.
     static let noFolderName = "No folder selected"
 
@@ -61,6 +64,10 @@ final class QuickAccessFolderState: ObservableObject {
 
     @Published var folderName: String
     @Published var recentFiles: [QuickAccessFile] = [] { didSet { cachedCandidates = nil } }
+    /// What Following may list (#4274): the newest few files plus every file past them modified since the folder was chosen
+    /// (`QuickFolderListing.pool`), with no relative-time wording yet. The candidates take the first few not dismissed. Not
+    /// published (the refresh also sets `recentFiles`, which is), and settable so a test can set it as it sets `recentFiles`.
+    var followingPool: [QuickAccessFile] = [] { didSet { cachedCandidates = nil } }
     @Published var dismissedFileKeys: Set<String> {
         didSet {
             cachedCandidates = nil
@@ -68,6 +75,12 @@ final class QuickAccessFolderState: ObservableObject {
         }
     }
     @Published private(set) var isRefreshing = false
+
+    /// When the listener chose this folder (#4274), or for a folder chosen in an earlier build, the first launch of this one.
+    /// Nil with no folder. Choosing the same folder again keeps it.
+    private(set) var folderChosenAt: Date? {
+        didSet { Self.store(folderChosenAt, forKey: Self.folderChosenAtKey, in: defaults) }
+    }
 
     /// Where the folder is, as the last successful scan saw it (#3770). Nil until one has finished, and in a build that stored none.
     /// Written only by a scan that finishes successfully, so a moved folder gets its new path.
@@ -141,6 +154,14 @@ final class QuickAccessFolderState: ObservableObject {
             .flatMap { try? JSONDecoder().decode(QuickFolderStatus.ImportProblem.self, from: $0) }
         dismissedFileKeys = Set(defaults.stringArray(forKey: Self.dismissedFilesKey) ?? [])
         inboxFeedsQueue = defaults.bool(forKey: Self.inboxFeedsQueueKey)
+        folderChosenAt = defaults.object(forKey: Self.folderChosenAtKey) as? Date
+        if folderChosenAt == nil, defaults.data(forKey: Self.folderBookmarkKey) != nil {
+            // An upgrade: files saved from now on can't be stranded past the newest eight; older ones show as before. Set in
+            // `init`, so `didSet` doesn't run: store it here.
+            let now = dependencies.now()
+            folderChosenAt = now
+            defaults.set(now, forKey: Self.folderChosenAtKey)
+        }
     }
 
     deinit {
@@ -166,7 +187,7 @@ final class QuickAccessFolderState: ObservableObject {
     ) -> [QuickAddCandidate] {
         if let cachedCandidates { return cachedCandidates }
         let candidates = Self.candidates(
-            folderFiles: recentFiles,
+            folderFiles: QuickFolderListing.listed(followingPool, dismissedKeys: dismissedFileKeys).map(Self.described),
             followedEntries: followedEntries,
             subscriptions: subscriptions,
             libraryItems: libraryItems,
@@ -177,6 +198,23 @@ final class QuickAccessFolderState: ObservableObject {
     }
 
     func invalidateCandidates() { cachedCandidates = nil }
+
+    /// The same short relative-time wording the refresh gives `recentFiles`. Used for at most eight listed files per rebuild.
+    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter
+    }()
+
+    private static func described(_ file: QuickAccessFile) -> QuickAccessFile {
+        QuickAccessFile(
+            id: file.id,
+            name: file.name,
+            relativePath: file.relativePath,
+            modifiedAt: file.modifiedAt,
+            modifiedAtDescription: relativeDateFormatter.localizedString(for: file.modifiedAt, relativeTo: Date())
+        )
+    }
 
     nonisolated static func candidates(
         folderFiles: [QuickAccessFile],
@@ -232,6 +270,7 @@ final class QuickAccessFolderState: ObservableObject {
         lastCheckedAt = nil
         problem = nil
         lastImportProblem = nil
+        folderChosenAt = nil
         inboxSeenFileIds = nil
         defaults.removeObject(forKey: Self.inboxSeenWholeFolderKey)
         inboxFeedsQueue = false
@@ -242,6 +281,9 @@ final class QuickAccessFolderState: ObservableObject {
     func recordImportProblem(_ problem: QuickFolderStatus.ImportProblem?) { lastImportProblem = problem }
 
     private func save(url: URL, keepingSeenFiles: Bool, whenSaved: () -> Void) throws {
+        // Decided before the branch below clears the stored path. The same folder chosen again, through Choose Folder or Choose
+        // Folder Again, keeps its date (#4274); a different one starts its own.
+        let isSameFolder = QuickFolderReconnectRule.decide(storedPath: folderPath, chosenPath: url.path) == .keepSeenFiles
         let didAccess = dependencies.startAccess(url)
         defer {
             if didAccess {
@@ -252,6 +294,9 @@ final class QuickAccessFolderState: ObservableObject {
         defaults.set(bookmark, forKey: Self.folderBookmarkKey)
         defaults.set(url.lastPathComponent, forKey: Self.folderNameKey)
         folderName = url.lastPathComponent
+        if !isSameFolder || folderChosenAt == nil {
+            folderChosenAt = dependencies.now()
+        }
         if !keepingSeenFiles {
             inboxSeenFileIds = nil // a different folder: files already in it are not new
             folderPath = nil
@@ -316,6 +361,7 @@ final class QuickAccessFolderState: ObservableObject {
             refreshTask = nil
             isRefreshing = false
             recentFiles = []
+            followingPool = []
             inboxFiles = []
             return
         }
@@ -350,6 +396,7 @@ final class QuickAccessFolderState: ObservableObject {
             refreshTask = nil
             isRefreshing = false
             recentFiles = []
+            followingPool = []
             inboxFiles = []
             problem = .cantOpen
             recordDiagnostic("quickAccessBookmarkError", description)
@@ -362,25 +409,26 @@ final class QuickAccessFolderState: ObservableObject {
         isRefreshing = false
         if let errorDescription = scan.errorDescription {
             recentFiles = []
+            followingPool = []
             inboxFiles = []
             problem = .cantOpen
             recordDiagnostic("quickAccessError", errorDescription)
             return
         }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
         func file(_ entry: QuickAccessFileCandidate, described: Bool = true) -> QuickAccessFile {
             QuickAccessFile(
                 id: entry.id,
                 name: entry.name,
                 relativePath: entry.relativePath,
                 modifiedAt: entry.modifiedAt,
-                modifiedAtDescription: described ? formatter.localizedString(for: entry.modifiedAt, relativeTo: Date()) : ""
+                modifiedAtDescription: described ? Self.relativeDateFormatter.localizedString(for: entry.modifiedAt, relativeTo: Date()) : ""
             )
         }
-        // Both lists are stored before `onFilesRefreshed` runs, which is where the inbox reads `inboxFiles`. The inbox
-        // never shows a row, so its files carry no relative-time wording: a big folder costs no formatting on the main actor.
+        // Every list is stored before `onFilesRefreshed` runs, which is where the inbox reads `inboxFiles`. The inbox and
+        // Following's pool carry no relative-time wording: a big folder costs no formatting on the main actor, and the
+        // candidates word only the few they list.
         inboxFiles = scan.inboxFiles.map { file($0, described: false) }
+        followingPool = QuickFolderListing.pool(newest: scan.files, all: scan.inboxFiles, since: folderChosenAt).map { file($0, described: false) }
         recentFiles = scan.files.map { file($0) }
         folderName = folderURL.lastPathComponent
         // A scan that finished is the only thing that learns where the folder is and when it was checked, and it ends "can't open".
