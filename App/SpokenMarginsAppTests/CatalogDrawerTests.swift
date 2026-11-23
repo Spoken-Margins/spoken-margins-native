@@ -809,6 +809,7 @@ final class CatalogDrawerTests: XCTestCase {
                 await snapshotGate?.wait()
                 return packLog.snapshot
             },
+            currentNotForMe: { packLog.snapshot },
             hiddenSources: { [] },
             hide: { entry, _ in
                 packLog.hidden.append(entry.feedURL)
@@ -818,7 +819,7 @@ final class CatalogDrawerTests: XCTestCase {
                 packLog.shownAgain.append(feedURL)
                 if let key = SourceCatalog.feedKey(feedURL) { packLog.snapshot.hiddenFeedKeys.remove(key) }
             },
-            unfollow: { feedURL in
+            unfollow: { feedURL, _ in
                 packLog.unfollowed.append(feedURL)
                 let key = SourceCatalog.feedKey(feedURL)
                 log.subscriptions.removeAll { SourceCatalog.feedKey($0.source.canonicalURL) == key }
@@ -882,6 +883,23 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertEqual(drawer.selectedChip, .subject("news"))
         drawer.present()
         XCTAssertEqual(drawer.selectedChip, .packs, "every opening resets to Packs")
+
+        // A hide made elsewhere since (the Show screen) shows at the next opening, without a second load.
+        let other = try XCTUnwrap(drawer.entries.first)
+        packLog.snapshot.hiddenEntryIds.insert(other.id)
+        drawer.present()
+        XCTAssertFalse(drawer.entries.contains { $0.id == other.id }, "the snapshot is read again at each opening")
+    }
+
+    func testFollowingLoadingTheCatalogFirstStillReadsHidesBeforeAnythingDraws() async throws {
+        let log = FollowLog(), packLog = PackLog()
+        let drawer = try packDrawer(log: log, packLog: packLog)
+        let bundled = try JSONDecoder().decode(SourceCatalog.self, from: Data(contentsOf: try XCTUnwrap(Bundle.main.url(forResource: "catalog", withExtension: "json"))))
+        let hiddenId = try XCTUnwrap(bundled.entries(forSubject: nil).first?.id)
+        packLog.snapshot = NotForMeSnapshot(hiddenEntryIds: [hiddenId])
+        await drawer.loadSnapshot() // Following's tags, before the drawer ever opens
+        XCTAssertNotNil(drawer.catalog)
+        XCTAssertFalse(drawer.entries.contains { $0.id == hiddenId })
     }
 
     func testFollowAllFollowsThePackInOrderOnceAndASecondTapDoesNothing() async throws {

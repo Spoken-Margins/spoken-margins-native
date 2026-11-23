@@ -186,12 +186,13 @@ struct SpokenMarginsApp: App {
                     await model?.loadNotForMe()
                     return model?.notForMeSnapshot ?? .empty
                 },
+                currentNotForMe: { [weak model] in model?.notForMeSnapshot ?? .empty },
                 hiddenSources: { [weak model] in await model?.notForMeHiddenSources() ?? [] },
                 hide: { [weak model] entry, sourceId in
                     await model?.hideNotForMeSource(feedURL: entry.feedURL, title: entry.title, artworkURL: entry.artworkURL, sourceId: sourceId)
                 },
                 showAgain: { [weak model] feedURL in await model?.showNotForMeSourceAgain(feedURL: feedURL) },
-                unfollow: { [weak model] feedURL in await model?.unfollowCatalogFeed(feedURL) ?? false }
+                unfollow: { [weak model] feedURL, sourceId in await model?.unfollowCatalogFeed(feedURL, sourceId: sourceId) ?? false }
             )
         )
         model.notForMe.catalog = { [weak drawer] in drawer?.catalog }

@@ -10,12 +10,16 @@ struct CatalogDrawerPackActions {
     var refreshAfterBatch: @MainActor () async -> Void
     /// Awaited before the first list is published, so a hidden source never shows and then snaps away.
     var notForMe: @MainActor () async -> NotForMeSnapshot
+    /// The snapshot as the store last published it, read synchronously at each opening, so a hide made on a Show
+    /// screen or a hide the reconcile cleared since the last opening shows at once.
+    var currentNotForMe: @MainActor () -> NotForMeSnapshot
     var hiddenSources: @MainActor () async -> [NotForMeStore.HiddenSource]
     /// Hides a source; the second value is its followed source id when the drawer knows one.
     var hide: @MainActor (SourceCatalogEntry, String?) async -> Void
     var showAgain: @MainActor (String) async -> Void
-    /// Unfollows the subscription whose feed matches; false when none matched or it failed.
-    var unfollow: @MainActor (String) async -> Bool
+    /// Unfollows the subscription with this source id, else the one whose feed matches; false when none matched or
+    /// it failed.
+    var unfollow: @MainActor (_ feedURL: String, _ sourceId: String?) async -> Bool
 }
 
 /// The drawer's own toast (#4285 §2a): the app's top banner sits under the sheet and can't be seen.
@@ -304,6 +308,7 @@ final class CatalogDrawerModel: ObservableObject {
         searchText = ""
         path = []
         dismissToast()
+        if let packActions { notForMeSnapshot = packActions.currentNotForMe() }
         if let catalog {
             selectedChip = CatalogDrawerChip.start(in: catalog, notForMe: notForMeSnapshot)
         } else {
@@ -429,6 +434,8 @@ final class CatalogDrawerModel: ObservableObject {
     /// doesn't count as the drawer's load, so opening the drawer still refreshes it.
     func loadSnapshot() async {
         guard catalog == nil, let store, let snapshot = try? await store.current() else { return }
+        // Hides first here too: Following loads the catalog before the drawer ever opens (#4285 §5 `store`).
+        if let packActions, catalog == nil { notForMeSnapshot = await packActions.notForMe() }
         if catalog == nil { catalog = snapshot }
         applyPendingStartChip()
     }
@@ -540,7 +547,7 @@ final class CatalogDrawerModel: ObservableObject {
     }
 
     /// Follows one catalog entry as a pick. `quietly` skips the at-once episode fetch (Follow all's later sources).
-    /// Returns whether it landed.
+    /// Returns the follow's task, so a batch can wait for it.
     private func startFollow(_ entry: SourceCatalogEntry, quietly: Bool) -> Task<Void, Never> {
         followStates[entry.id] = .following
         picks.append((entry.id, nil))
@@ -650,9 +657,11 @@ final class CatalogDrawerModel: ObservableObject {
     /// Unfollow on a Pack row. Toast: "Unfollowed <title>." Undo follows it again.
     func unfollowFromPack(_ entry: SourceCatalogEntry) {
         guard let packActions else { return }
+        let sourceId = sourceId(for: entry)
         Task { [weak self] in
-            guard await packActions.unfollow(entry.feedURL), let self else { return }
+            guard await packActions.unfollow(entry.feedURL, sourceId), let self else { return }
             self.followStates[entry.id] = nil
+            self.picks.removeAll { $0.key == entry.id } // no longer something Done could play
             self.showToast(CatalogPackWords.unfollowedToast(title: entry.title)) { [weak self] in
                 self?.toggleFollow(entry)
             }
@@ -666,10 +675,11 @@ final class CatalogDrawerModel: ObservableObject {
         let wasFollowed = state(for: entry) == .followed
         let sourceId = wasFollowed ? sourceId(for: entry) : nil
         Task { [weak self] in
-            if wasFollowed { _ = await packActions.unfollow(entry.feedURL) }
+            if wasFollowed { _ = await packActions.unfollow(entry.feedURL, sourceId) }
             await packActions.hide(entry, sourceId)
             guard let self else { return }
             self.followStates[entry.id] = nil
+            self.picks.removeAll { $0.key == entry.id }
             await self.refreshNotForMe()
             self.showToast(CatalogPackWords.hiddenMessage(title: entry.title)) { [weak self] in
                 await packActions.showAgain(entry.feedURL)

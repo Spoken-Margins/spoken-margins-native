@@ -149,12 +149,14 @@ extension Gate1AppModel {
 }
 
 extension Gate1AppModel {
-    /// Unfollow from a Pack screen row (#4285): the subscription whose feed matches the entry's goes, with its follow
-    /// lists, and the list is published before this returns, so a hide written next is never undone by the
+    /// Unfollow from a Pack screen row (#4285): the subscription with the drawer's recorded source id goes (a feed
+    /// that moved after it was followed no longer matches by address), else the one whose feed matches, with its
+    /// follow lists. The list is published before this returns, so a hide written next is never undone by the
     /// reconcile. False when no subscription matches or the unfollow failed.
-    func unfollowCatalogFeed(_ feedURL: String) async -> Bool {
-        guard let key = SourceCatalog.feedKey(feedURL),
-              let subscription = feedSubscriptions.first(where: { SourceCatalog.feedKey($0.source.canonicalURL) == key }),
+    func unfollowCatalogFeed(_ feedURL: String, sourceId: String?) async -> Bool {
+        let key = SourceCatalog.feedKey(feedURL)
+        guard let subscription = feedSubscriptions.first(where: { sourceId != nil && $0.source.id == sourceId })
+                ?? feedSubscriptions.first(where: { key != nil && SourceCatalog.feedKey($0.source.canonicalURL) == key }),
               let coordinator = followedSourceCoordinator else { return false }
         let member = FollowListEditing.member(for: subscription)
         do {

@@ -126,6 +126,7 @@ struct CatalogPackScreen: View {
         .navigationTitle(drawer.pack(id: packId)?.title ?? "")
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) { CatalogDrawerBottomInset() }
+        .toolbar { CatalogDrawerDoneButton() }
         .accessibilityIdentifier("catalog.packScreen")
     }
 
@@ -265,6 +266,7 @@ struct CatalogNotForMeScreen: View {
             await drawer.reloadHiddenSources()
             hasLoaded = true
         }
+        .toolbar { CatalogDrawerDoneButton() }
         .onChange(of: drawer.hiddenSources.isEmpty) { _, isEmpty in
             if isEmpty, hasLoaded { dismiss() }
         }
@@ -288,5 +290,17 @@ struct CatalogNotForMeScreen: View {
         }
         .padding(.vertical, 4)
         .listRowBackground(Color.clear)
+    }
+}
+
+/// The drawer's Done, kept in the toolbar of the screens pushed inside it (#4285 §2b).
+struct CatalogDrawerDoneButton: ToolbarContent {
+    @EnvironmentObject private var drawer: CatalogDrawerModel
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .confirmationAction) {
+            Button("Done") { drawer.finish() }
+                .accessibilityIdentifier("catalog.drawer.done")
+        }
     }
 }
