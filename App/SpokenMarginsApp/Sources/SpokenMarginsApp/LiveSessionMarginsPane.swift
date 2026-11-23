@@ -31,13 +31,16 @@ struct LiveSessionMarginsPane: View {
                         .accessibilityIdentifier("liveSession.margins.count")
                     Spacer()
                     if let move, LiveMarginMove.offersMove(in: session) {
-                        Button("Move…") {
+                        Button {
                             audio.stop() // a chosen Margin's recording stops before it moves
                             move(nil)
+                        } label: {
+                            Text("Move…")
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
                         }
                         .font(.subheadline)
                         .foregroundStyle(AppColors.listeningAccent)
-                        .frame(minHeight: 44)
                         .accessibilityLabel("Move Margins to an item")
                         .accessibilityIdentifier("liveSession.margins.move.button")
                     }
