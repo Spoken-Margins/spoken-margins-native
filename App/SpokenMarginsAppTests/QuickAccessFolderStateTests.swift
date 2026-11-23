@@ -28,26 +28,6 @@ final class QuickAccessFolderStateTests: XCTestCase {
         super.tearDown()
     }
 
-    // MARK: Inbox feeds the queue (#1990 slice 3)
-
-    /// The setting is off by default, persists, and a completed refresh reports to the model so the inbox can run.
-    func testInboxSettingIsOffByDefaultPersistsAndRefreshReportsToTheModel() async throws {
-        let fixture = try makeFixture()
-        XCTAssertFalse(fixture.state.inboxFeedsQueue)
-        var refreshed = 0
-        fixture.state.onFilesRefreshed = { refreshed += 1 }
-        fixture.state.inboxFeedsQueue = true
-        try await waitFor("toggle starts a scan") { fixture.bench.scansStarted == 1 }
-        fixture.bench.finishScan(0, with: Self.scan(["a"]))
-        try await waitFor("refresh reports") { refreshed == 1 }
-        XCTAssertNil(fixture.state.inboxSeenFileIds, "turning it on starts with no baseline")
-        fixture.state.inboxSeenFileIds = ["a"]
-        XCTAssertTrue(QuickAccessFolderState(defaults: fixture.defaults, dependencies: fixture.bench.dependencies()).inboxFeedsQueue)
-        XCTAssertEqual(QuickAccessFolderState(defaults: fixture.defaults, dependencies: fixture.bench.dependencies()).inboxSeenFileIds, ["a"])
-        fixture.state.inboxFeedsQueue = false
-        XCTAssertNil(fixture.state.inboxSeenFileIds)
-    }
-
     // MARK: Stale refresh guard
 
     /// A refresh that started later wins, whichever scan finishes first. Removing the refresh-ID check makes
@@ -419,58 +399,46 @@ final class QuickAccessFolderStateTests: XCTestCase {
         XCTAssertEqual(fixture.state.folderPath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }, folder.resolvingSymlinksInPath().path)
     }
 
-    /// An upgrade from a build that stored none of this: the folder, the switch and the dismissed files read as before, and the
-    /// new values are unknown, not invented.
-    func testAnUpgradeFromOldKeysKeepsTheFolderAndLeavesTheNewValuesUnknown() throws {
+    /// An upgrade from a build that had the queue switch (#4274): the four retired keys are deleted at launch, so an older build
+    /// installed over this one reads the switch as off with no stale baseline. The folder and the dismissed files read as
+    /// before, and the newer values are unknown, not invented.
+    func testAnUpgradeRetiresTheQueueKeysAndKeepsTheFolder() throws {
         let defaults = try makeDefaults()
         let folder = try makeFolder(named: "Clippings")
         try save(folder, in: defaults)
-        defaults.set(true, forKey: "quickFolderFeedsQueueV1")
         defaults.set(["quick-access:a.md"], forKey: "dismissedQuickAccessFilesV1")
+        defaults.set(true, forKey: "quickFolderFeedsQueueV1")
         defaults.set(["a.md"], forKey: "quickFolderInboxSeenFilesV1")
+        defaults.set(true, forKey: "quickFolderInboxSeenWholeFolderV1")
+        defaults.set(Data(#"{"fileName":"a.pdf","reason":"x","date":0}"#.utf8), forKey: "quickAccessLastImportProblem")
 
         let state = QuickAccessFolderState(defaults: defaults)
 
+        for key in ["quickFolderFeedsQueueV1", "quickFolderInboxSeenFilesV1", "quickFolderInboxSeenWholeFolderV1", "quickAccessLastImportProblem"] {
+            XCTAssertNil(defaults.object(forKey: key), key)
+        }
         XCTAssertEqual(state.folderName, "Clippings")
-        XCTAssertTrue(state.inboxFeedsQueue)
         XCTAssertEqual(state.dismissedFileKeys, ["quick-access:a.md"])
-        XCTAssertEqual(state.inboxSeenFileIds, ["a.md"])
+        XCTAssertNotNil(defaults.data(forKey: "quickAccessFolderBookmark"), "the folder is kept")
         XCTAssertNil(state.folderPath)
         XCTAssertNil(state.lastCheckedAt)
         XCTAssertNil(state.problem)
-        XCTAssertNil(state.lastImportProblem)
-    }
-
-    func testTheLastImportProblemRoundTripsAndClears() throws {
-        let defaults = try makeDefaults()
-        let state = QuickAccessFolderState(defaults: defaults)
-        let problem = QuickFolderStatus.ImportProblem(fileName: "notes.pdf", reason: "No readable text", date: Self.checkedAt)
-
-        state.recordImportProblem(problem)
-        XCTAssertEqual(QuickAccessFolderState(defaults: defaults).lastImportProblem, problem)
-        state.recordImportProblem(nil)
-        XCTAssertNil(QuickAccessFolderState(defaults: defaults).lastImportProblem)
-        XCTAssertNil(defaults.object(forKey: "quickAccessLastImportProblem"))
     }
 
     // MARK: Choose again and remove (#3770)
 
-    /// The same folder keeps what the app knew; a different folder, or an unknown stored path, takes a fresh baseline.
-    func testChoosingTheSameFolderAgainKeepsWhatWasSeenAndAnyOtherFolderStartsOver() async throws {
+    /// The same folder keeps what the last scan learned; a different folder, or an unknown stored path, drops it.
+    func testChoosingTheSameFolderAgainKeepsWhatTheScanLearnedAndAnyOtherFolderStartsOver() async throws {
         let fixture = try makeFixture(now: { Self.checkedAt })
         fixture.state.refresh()
         try await waitFor("scan starts") { fixture.bench.scansStarted == 1 }
         fixture.bench.finishScan(0, with: Self.scan(["a"]))
         try await waitFor("scan stored") { fixture.state.lastCheckedAt != nil }
-        fixture.state.inboxSeenFileIds = ["a"]
-        fixture.state.inboxSeenCoversWholeFolder = true
         fixture.state.dismiss(Self.file("gone.md"))
 
         // Same folder, written as a URL with a trailing slash.
         let decision = try fixture.state.reconnect(url: URL(fileURLWithPath: fixture.folder.path, isDirectory: true)) {}
         XCTAssertEqual(decision, .keepSeenFiles)
-        XCTAssertEqual(fixture.state.inboxSeenFileIds, ["a"])
-        XCTAssertTrue(fixture.state.inboxSeenCoversWholeFolder)
         XCTAssertEqual(fixture.state.lastCheckedAt, Self.checkedAt)
         XCTAssertNotNil(fixture.state.folderPath)
         XCTAssertEqual(fixture.state.dismissedFileKeys, [Self.file("gone.md").dismissalKey])
@@ -480,7 +448,6 @@ final class QuickAccessFolderStateTests: XCTestCase {
         XCTAssertNotEqual(other.path, fixture.folder.path)
         let otherDecision = try fixture.state.reconnect(url: other) {}
         XCTAssertEqual(otherDecision, .freshBaseline)
-        XCTAssertNil(fixture.state.inboxSeenFileIds, "files already in it are not new")
         XCTAssertNil(fixture.state.folderPath)
         XCTAssertNil(fixture.state.lastCheckedAt)
         XCTAssertNil(fixture.state.problem)
@@ -491,13 +458,11 @@ final class QuickAccessFolderStateTests: XCTestCase {
         let defaults = try makeDefaults()
         let folder = try makeFolder()
         try save(folder, in: defaults)
-        defaults.set(["a"], forKey: "quickFolderInboxSeenFilesV1")
         let state = QuickAccessFolderState(defaults: defaults, dependencies: ScanBench().dependencies())
 
         let decision = try state.reconnect(url: folder) {}
 
         XCTAssertEqual(decision, .freshBaseline, "an upgrade stored no path, so the folder can't be known to be the same")
-        XCTAssertNil(state.inboxSeenFileIds)
     }
 
     /// Removing forgets the folder and what was learned about it, keeps what was dismissed, and ends a scan in flight. Nothing
@@ -508,12 +473,9 @@ final class QuickAccessFolderStateTests: XCTestCase {
         try await waitFor("scan starts") { fixture.bench.scansStarted == 1 }
         fixture.bench.finishScan(0, with: Self.scan(["a"]))
         try await waitFor("scan stored") { fixture.state.lastCheckedAt != nil }
-        fixture.state.inboxFeedsQueue = true
-        fixture.state.inboxSeenFileIds = ["a"]
-        fixture.state.inboxSeenCoversWholeFolder = true
         fixture.state.dismiss(Self.file("gone.md"))
-        fixture.state.recordImportProblem(QuickFolderStatus.ImportProblem(fileName: "x.pdf", reason: "Nope", date: Self.checkedAt))
-        try await waitFor("the toggle's scan starts") { fixture.bench.scansStarted == 2 }
+        fixture.state.refresh()
+        try await waitFor("the second scan starts") { fixture.bench.scansStarted == 2 }
 
         fixture.state.remove()
 
@@ -521,22 +483,16 @@ final class QuickAccessFolderStateTests: XCTestCase {
         XCTAssertNil(fixture.state.folderPath)
         XCTAssertNil(fixture.state.lastCheckedAt)
         XCTAssertNil(fixture.state.problem)
-        XCTAssertNil(fixture.state.lastImportProblem)
-        XCTAssertFalse(fixture.state.inboxFeedsQueue, "New Files goes back to waiting in Following")
-        XCTAssertNil(fixture.state.inboxSeenFileIds)
-        XCTAssertFalse(fixture.state.inboxSeenCoversWholeFolder)
         XCTAssertEqual(fixture.state.recentFiles, [])
         XCTAssertFalse(fixture.state.isRefreshing)
         XCTAssertEqual(fixture.state.dismissedFileKeys, [Self.file("gone.md").dismissalKey])
         for key in [
             "quickAccessFolderBookmark", "quickAccessFolderName", "quickAccessFolderPath", "quickAccessLastCheckedAt",
-            "quickAccessFolderProblem", "quickAccessLastImportProblem", "quickFolderInboxSeenFilesV1", "quickFolderInboxSeenWholeFolderV1",
-            "quickAccessFolderChosenAt",
+            "quickAccessFolderProblem", "quickAccessFolderChosenAt",
         ] {
             XCTAssertNil(fixture.defaults.object(forKey: key), key)
         }
         XCTAssertEqual(fixture.defaults.stringArray(forKey: "dismissedQuickAccessFilesV1"), [Self.file("gone.md").dismissalKey])
-        XCTAssertEqual(fixture.defaults.bool(forKey: "quickFolderFeedsQueueV1"), false)
 
         // The scan that was in flight finishes into a state with no folder and changes nothing.
         fixture.bench.finishScan(1, with: Self.scan(["late"]))
