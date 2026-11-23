@@ -23,6 +23,7 @@ final class SpeechAskController: ObservableObject {
     private(set) var ask: SpeechRecognitionAsk
     private(set) var waiting: SpeechAskWaitingList
     private var reAskShownThisLaunch = false
+    private var announcedForThisAsk = false
     /// Nil while no card is due. The slot and the list draw it only on their own surface.
     @Published private(set) var cardSurface: Surface?
 
@@ -138,6 +139,13 @@ final class SpeechAskController: ObservableObject {
         cardSurface = .now
     }
 
+    /// True once per ask: VoiceOver hears the card when it first appears, not again each time the slot frees up. A Not now
+    /// that is re-asked later is a new ask.
+    func shouldAnnounceCard() -> Bool {
+        defer { announcedForThisAsk = true }
+        return !announcedForThisAsk
+    }
+
     // MARK: What the listener taps
 
     func notNow() {
@@ -157,6 +165,7 @@ final class SpeechAskController: ObservableObject {
 
     private func record(_ answer: SpeechRecognitionAsk.Answer) {
         ask.answered(answer)
+        announcedForThisAsk = false
         defaults.set(ask.storedAnswer, forKey: SpeechRecognitionAsk.storageKey)
         cardSurface = nil
     }

@@ -88,8 +88,8 @@ struct SpeechAskCard: View {
         .padding(16)
         .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal, gutter)
-        // One announcement when the card appears, so VoiceOver's focus (which doesn't move) still hears it.
-        .onAppear { AccessibilityNotification.Announcement(Self.headline).post() }
+        // One announcement per ask, so VoiceOver's focus (which doesn't move) hears it, but not again when the slot frees up.
+        .onAppear { if controller.shouldAnnounceCard() { AccessibilityNotification.Announcement(Self.headline).post() } }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("speechAsk.card")
     }

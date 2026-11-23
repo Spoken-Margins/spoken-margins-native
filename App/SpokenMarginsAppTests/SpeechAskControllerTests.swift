@@ -74,6 +74,15 @@ final class SpeechAskControllerTests: XCTestCase {
         XCTAssertNil(controller.cardSurface)
     }
 
+    func testTheCardIsAnnouncedOncePerAsk() {
+        let controller = makeController()
+        controller.spokenMarginSaved(isWritten: false)
+        XCTAssertTrue(controller.shouldAnnounceCard())
+        XCTAssertFalse(controller.shouldAnnounceCard(), "the slot freeing up again is not a new card")
+        controller.notNow()
+        XCTAssertTrue(controller.shouldAnnounceCard(), "a re-ask after Not now is announced")
+    }
+
     func testUnansweredCardSurvivesARelaunchWhileAMarginWaits() {
         let first = makeController()
         first.spokenMarginSaved(isWritten: false)

@@ -8,8 +8,16 @@ struct MarginRow: Identifiable, Equatable, Sendable {
     /// The chapter the Margin was made in and, for text, its paragraph number (#777). nil when the item has no
     /// chapters or the position isn't a paragraph.
     var place: MarginPlaces.Place? = nil
+    /// #4715: a spoken Margin held until the listener answers the Speech Recognition card. It is an input of the row, read
+    /// when the rows are built, so it is part of the row's equality and a Deny or Allow refreshes the rows that show it.
+    var transcriptWaitsForAnswer: Bool = false
 
-    var id: String { "\(interjection.sessionId)::\(interjection.id)" }
+    static func waitsForAnswer(_ interjection: Interjection) -> Bool {
+        interjection.captureKind != .written
+            && SpeechAskController.marginIsWaitingForAnswer(MarginIdentity.make(sessionId: interjection.sessionId, interjectionId: interjection.id))
+    }
+
+    var id: String { MarginIdentity.make(sessionId: interjection.sessionId, interjectionId: interjection.id) }
     var isWritten: Bool { interjection.captureKind == .written }
     var fullText: String {
         [interjection.displayText, interjection.cleanedTranscript, interjection.transcript]
@@ -48,9 +56,6 @@ struct MarginRow: Identifiable, Equatable, Sendable {
             recordingMissing: interjection.audioStatus == "missing"
         )
     }
-
-    /// #4715: a spoken Margin held until the listener answers the Speech Recognition card. It reads "No transcript yet.".
-    var transcriptWaitsForAnswer: Bool { !isWritten && SpeechAskController.marginIsWaitingForAnswer(id) }
 
     /// The row's second line: where the Margin was made, then the day (#777). Responses and summaries keep their label.
     func placeDescription(now: Date = Date()) -> String {
