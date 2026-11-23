@@ -92,4 +92,5 @@ Releases are a maintainer's act: nobody else archives, uploads, distributes or t
 
 - Apple build numbers identify uploads, not product milestones. Each replacement upload needs a new, unused build number (`CURRENT_PROJECT_VERSION` in `project.yml`, every target; run `xcodegen generate` and commit).
 - Land the bump on `main` through a PR, so `main` always reads one above the last upload.
-- Tag the archived commit `testflight/0.1-build-N`.
+- Upload from GitHub, no Mac needed: `.github/workflows/testflight-upload.yml` archives `main`, checks the build number, waits for a maintainer to approve the run, then uploads to TestFlight and tags the commit. It never assigns tester groups. On this repository the owner starts it by adding the label `upload` to an issue or PR. A Mac upload remains the fallback.
+- Tag the archived commit `testflight/0.1-build-N` (the GitHub upload does this itself).
