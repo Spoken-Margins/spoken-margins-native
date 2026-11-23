@@ -25,7 +25,15 @@ It compares your branch (uncommitted files included) with `origin/main`, prints 
 
 ## 3. Ask the lane
 
-A PR doesn't need a T3 to merge: arm it per section 4, and ask for a T3 only when you want to see the app tests pass. The request is answered and reported, but it never holds the merge (#4572), and `main` gets a scheduled T3 (`main-t3`, #4573).
+A PR doesn't need a T3 to merge: arm it per section 4, and ask for a T3 only when you want to see the app tests pass. It never holds the merge (#4572), and `main` gets a scheduled T3 (`main-t3`, #4573).
+
+**T3 is a `branch-t3` dispatch now (#4839).** `lane.yml` is off, so a `/lane T3` comment gets no answer. Push the branch (a branch in this repository that contains `scripts/branch_t3.py`), then:
+
+```bash
+gh workflow run branch-t3.yml --ref main -f branch=<branch> -f tests='ClassA ClassB/testMethod' -f pr=<n>
+```
+
+A hosted Mac runs those classes (`scripts/test-scope.py` suggests them; empty runs both whole plans, about 80 minutes) and comments PASS, FAIL or a runner fault on PR `<n>`, usually within 15 to 25 minutes. Without `pr` the result is only in the run's summary. A newer dispatch for the same branch replaces one still running. It sets no status and no `lane:queued` label is needed. The `/lane T3` format below stays for the record until the lane is deleted (`docs/workstreams/retire-mac-ci.md`, step 6); steps 1 to 3 below are for T4 and T5.
 
 1. Push your branch. The lane tests the pushed commit, not your working tree, and merges the newest `main` in itself. Merge `origin/main` in first only if the PR conflicts with `main` (AGENTS.md, "Merge `main` into a branch only when you must").
 2. On your draft PR into `main`, post the request exactly in the format from test-lane.md, then add the `lane:queued` label:
@@ -70,7 +78,7 @@ A PR is done when it's armed, and it holds the whole issue: one PR per issue, tw
 
 1. If you changed Swift, run `scripts/hot_file_ratchet.py` (5 seconds) after `git fetch origin main`. It is the lane's first check: if it says "Move N lines out of it, or ask the desk for the hot-file-ok label", move the lines out of `Gate1AppModel.swift` or `Gate1RootView.swift` into a focused type before you push. A lane FAIL on the ratchet costs a queue trip of hours (#2175). With `hot-file-ok` granted, set `SM_HOT_FILE_OK=1`.
 2. Push. Merge `origin/main` in first only when the PR conflicts with `main`, or when it got no lane run because its branch was last pushed before the lane workflow changed on `main` (GitHub builds the run from the PR's merge ref, which it doesn't refresh when `main` moves, #221). The runner merges the newest `main` in itself, so don't merge it in just to refresh.
-3. A T3 is optional and never holds the merge (#4572); `main` gets a scheduled T3 (#4573). If you want one anyway, post the `/lane T3` request and add `lane:queued` (section 3). Adding a label that's already on the PR triggers nothing, so if `lane:queued` was already there (a T4 waiting), remove it and add it again. The PR must target `main` from a branch in this repository.
+3. A T3 is optional and never holds the merge (#4572); `main` gets a scheduled T3 (#4573). If you want one anyway, dispatch `branch-t3` (section 3). For a T4, adding a label that's already on the PR triggers nothing, so if `lane:queued` was already there (a T4 waiting), remove it and add it again. The PR must target `main` from a branch in this repository.
 4. Add `automerge` once the issue's "Done when" holds; don't wait for a T3. The runner then runs the host tests and builds the diff needs, and runs again on every push while the label stays ([test-lane.md](../../../docs/workstreams/test-lane.md), Request format).
 5. Post a short summary on the PR. A project thread then posts its stop note and ends. If a check or review event on the PR wakes the thread afterwards, that turn ends on exactly `Nothing needed from Cole.` whatever else it did ([thread-workflow skill](../thread-workflow/SKILL.md), section 8, #4986); the coordinator starts a fresh thread for the next issue ([thread-workflow skill](../thread-workflow/SKILL.md)). A session on the Mac takes the next Mac-only `ready` issue.
 
@@ -78,7 +86,7 @@ A PR is done when it's armed, and it holds the whole issue: one PR per issue, tw
 - **FAIL on the PR's own code**, or a conflict with `main`: the dispatcher gives the fix to whoever is free.
 - **Runner fault** (no run starts, the runner is offline, or INCONCLUSIVE because of the lane: no simulator, XCTest never connected, a failed boot, a crash flood, low disk): the dispatcher asks for one more run, and files an issue labelled `ready` and `regression` only if it fails the same way again.
 
-An INCONCLUSIVE T3 is re-run by a new `/lane T3` comment with the same `tests:` line plus `lane:queued`, because re-adding `automerge` starts only the host tests and builds. A fault in those is re-run by removing and re-adding `automerge`. An identical request for the same head and `main` commit that already has a PASS or FAIL report isn't run again; the lane links the earlier report.
+A `branch-t3` runner fault is re-run by dispatching it again with the same `tests`, because re-adding `automerge` starts only the host tests and builds. A fault in those is re-run by removing and re-adding `automerge`. An identical request for the same head and `main` commit that already has a PASS or FAIL report isn't run again; the lane links the earlier report.
 
 ## 5. Read a report (the dispatcher and fix-up threads)
 

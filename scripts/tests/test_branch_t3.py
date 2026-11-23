@@ -176,6 +176,21 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(job['steps'][0]['with']['ref'], '${{ github.sha }}')
         self.assertEqual(job['permissions'], {'contents': 'read', 'pull-requests': 'write'})
 
+    def test_the_pr_check_lets_an_empty_pr_through_and_refuses_anything_but_digits(self):
+        # Run 45250843509 (2026-11-23) was dispatched with no pr; `printf '%s' "" | grep -Eq '^[0-9]*$'` matches no
+        # line, so the report job failed and the result reached nobody.
+        import os
+        import subprocess
+        step = next(s for s in self.load()['jobs']['report']['steps'] if s.get('name') == 'Comment')
+        check = step['run'].split('# No result')[0]
+        self.assertIn('pr must be a number', check)
+        for value, ok in (('', True), ('4839', True), ('0', True), ('12a', False), ('1;x', False), ('-1', False),
+                          (' 1', False), ('1\n', False)):
+            with self.subTest(pr=value):
+                done = subprocess.run(['bash', '-e', '-c', check], env={**os.environ, 'PR': value},
+                                      capture_output=True, text=True)
+                self.assertEqual(done.returncode == 0, ok, done.stdout + done.stderr)
+
     def test_dispatch_inputs_reach_scripts_through_the_environment_only(self):
         for step in [s for j in self.load()['jobs'].values() for s in j['steps'] if 'run' in s]:
             self.assertNotIn('${{ inputs.', step['run'], step.get('name'))
