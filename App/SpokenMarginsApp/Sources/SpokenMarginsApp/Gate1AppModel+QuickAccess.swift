@@ -81,6 +81,8 @@ extension Gate1AppModel {
     }
 
     func refreshQuickAddFeed(force: Bool = true, trigger: FollowedRefreshTrigger) {
+        // Coming forward is when a link list that waited offline or failed is tried again (#4683).
+        if trigger == .foreground { linkListArrival.releaseHeldFiles() }
         refreshQuickAccessFolder()
         refreshFollowedSources(force: force, trigger: trigger)
     }

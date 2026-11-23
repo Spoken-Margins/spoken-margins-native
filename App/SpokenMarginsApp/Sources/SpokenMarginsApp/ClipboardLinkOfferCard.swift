@@ -247,7 +247,10 @@ struct ClipboardLinkOfferCard: View {
     private func add(_ url: URL) {
         // Back to the Paste line: the import's progress or error shows above it, and a failed add is retried with another Paste.
         stage = .offered
-        switch model.pasteAndGo(url.absoluteString) {
+        // A copied link, never a reply from the listener's AI: link lists are read only by the Add sheet's Paste & go (#4683).
+        switch model.pasteAndGoWithoutLinkList(url.absoluteString) {
+        case .readingLinkList:
+            message = nil // not reachable from this call; a link list is never read here
         case .resolvingLink:
             message = nil
             clipboard.beganAdding()

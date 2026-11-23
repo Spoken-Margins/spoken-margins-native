@@ -154,6 +154,11 @@ public enum LibraryCollectionImport {
         public enum Kind: Equatable, Sendable { case success, warning, failure }
         public var message: String
         public var kind: Kind
+
+        public init(message: String, kind: Kind) {
+            self.message = message
+            self.kind = kind
+        }
     }
 
     public static func summary(name: String, isNew: Bool, added: Int, failed: Int, notAdded: Int) -> Summary {

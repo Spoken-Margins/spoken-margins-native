@@ -9,6 +9,8 @@ struct PasteAndGoBar: View {
     let onAdded: () -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var notAddedMessage: String?
+    /// True from a Paste that holds a link list until the list has arrived or been refused (#4683).
+    @State private var isReadingLinkList = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -37,7 +39,7 @@ struct PasteAndGoBar: View {
                 }
                 .accessibilityHidden(true)
                 if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 8) }
-                if model.isResolvingSourceLink {
+                if model.isResolvingSourceLink || isReadingLinkList {
                     ProgressView()
                         .frame(minWidth: 44, minHeight: 44)
                 } else {
@@ -62,6 +64,20 @@ struct PasteAndGoBar: View {
         .frame(maxWidth: 720)
         .frame(maxWidth: .infinity)
         .background(AppColors.bone)
+        .background {
+            LinkListArrivalWatcher(
+                arrival: model.linkListArrival,
+                onAdded: {
+                    isReadingLinkList = false
+                    notAddedMessage = nil
+                    onAdded()
+                },
+                onRefused: { message in
+                    isReadingLinkList = false
+                    notAddedMessage = message
+                },
+                onIdle: { isReadingLinkList = false })
+        }
     }
 
     private func paste(_ content: String?) {
@@ -69,6 +85,10 @@ struct PasteAndGoBar: View {
         case .resolvingLink:
             // The sheet closes itself when the link import reports success.
             notAddedMessage = nil
+        case .readingLinkList:
+            // The sheet closes when the list has arrived (`LinkListArrivalWatcher`); a refusal shows under the bar.
+            notAddedMessage = nil
+            isReadingLinkList = true
         case .addedText, .openingShareLink:
             // A friend's link opens its own import review, as a tapped link does; the sheet is done.
             notAddedMessage = nil
@@ -76,6 +96,29 @@ struct PasteAndGoBar: View {
         case .notAdded(let message):
             notAddedMessage = message
         }
+    }
+}
+
+/// Turns the arrival's phase into the bar's two moves: close the sheet, or show why nothing was added. A view of its
+/// own because `LinkListArrivalState` is a separate object the bar doesn't observe (#4683).
+private struct LinkListArrivalWatcher: View {
+    @ObservedObject var arrival: LinkListArrivalState
+    let onAdded: () -> Void
+    let onRefused: (String) -> Void
+    /// The text turned out not to hold a list and went the old way (a link import shows its own progress).
+    let onIdle: () -> Void
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onChange(of: arrival.phase) { _, phase in
+                switch phase {
+                case .added: onAdded()
+                case .refused(let message): onRefused(message)
+                case .idle: onIdle()
+                case .reading: break
+                }
+            }
     }
 }
 

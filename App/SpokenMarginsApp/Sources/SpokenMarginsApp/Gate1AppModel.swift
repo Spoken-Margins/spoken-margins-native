@@ -301,6 +301,8 @@ final class Gate1AppModel: ObservableObject {
     }
     let quickAccess = QuickAccessFolderState() // the Quick Folder; its changes are relayed in init (#981)
     let libraryCollections = LibraryCollectionModel() // the Library's collection chips; relayed in init (#4343)
+    let linkListArrival = LinkListArrivalState() // Paste & go's wait on a pasted link list and the Quick Folder's retries (#4683)
+    let aiFollowSuggestionsModel = AIFollowSuggestionsModel() // shows the listener's AI suggested following (#4683)
     @Published var sourceImportProgressMessage: String?
     @Published var importInbox: [ImportInboxEntry] = []
     @Published var sourceLinksWaitingForNetwork = 0 // shared links left pending while offline (#1546)

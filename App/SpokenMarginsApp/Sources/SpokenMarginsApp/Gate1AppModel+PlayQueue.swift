@@ -149,8 +149,9 @@ extension Gate1AppModel {
     func quickFolderInboxRefreshed() {
         guard quickAccess.inboxFeedsQueue, !quickAccess.isRefreshing else { return }
         // The whole folder, not the Quick Add list's eight: a batch of more than eight new files arrives in passes (#3767).
+        // A link list that waited offline or failed while online is held out until the app next comes forward (#4683).
         let plan = QuickFolderInbox.plan(
-            files: quickAccess.inboxFiles,
+            files: quickAccess.inboxFiles.filter { !linkListArrival.isHeld($0.id) },
             seenKeys: quickAccess.inboxSeenFileIds,
             dismissedKeys: quickAccess.dismissedFileKeys,
             seenCoversWholeFolder: quickAccess.inboxSeenCoversWholeFolder
@@ -168,13 +169,15 @@ extension Gate1AppModel {
             return
         }
         // One import at a time; the next refresh picks these up again because they are not marked seen yet.
-        guard sourceImportTask == nil, let folderURL = quickAccess.resolvedFolderURL() else { return }
-        // Link lists (#3767) go first and alone: their links are added to the Library, in file order. The files that
-        // are not marked seen yet are picked up by the refresh that import ends with, so text files follow right after.
+        guard !linkListArrivalIsBusy, let folderURL = quickAccess.resolvedFolderURL() else { return }
+        // Link lists (#3767) go first and alone: they arrive as a collection or loose items, in file order, and their
+        // follow entries wait as suggestions (#4683). The files that are not marked seen yet are picked up by the refresh
+        // that import ends with, so text files follow right after. A list that waited offline or failed while online is
+        // taken out of the seen set again and tried at the next refresh once the app comes forward, up to three tries.
         let linkLists = plan.toImport.filter(Self.isQuickFolderLinkList)
         if !linkLists.isEmpty {
             quickAccess.inboxSeenFileIds = (quickAccess.inboxSeenFileIds ?? []).union(linkLists.map(\.id))
-            importQuickFolderLinkLists(linkLists, folderURL: folderURL)
+            importQuickFolderLinkLists(linkLists, folderURL: folderURL, automatic: true)
             return
         }
         quickAccess.inboxSeenFileIds = (quickAccess.inboxSeenFileIds ?? []).union(plan.newSeenKeys)
