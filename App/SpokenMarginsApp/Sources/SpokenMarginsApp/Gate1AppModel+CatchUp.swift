@@ -7,6 +7,8 @@ import SessionKitAudio
 struct ActiveCatchUp: Equatable {
     var run: CatchUpRun
     let conductor: ObjectIdentifier?
+    /// The run's friend Margins whose voice started, so the end can say what stays new wherever the listener has browsed.
+    var heardMarginIds: Set<String> = []
 }
 
 /// Catch-up (#4785): on an item the listener finished, a new reply to one of their own Margins plays by itself with only
@@ -69,16 +71,18 @@ extension Gate1AppModel {
         }
     }
 
-    /// The conductor saw its last Margin end. Only the run's own conductor counts. How many of the run's friend Margins are
-    /// still new is read from the item the model holds, which marks each heard as its voice starts.
+    /// A voice of the run started: that friend Margin is heard.
+    func noteCatchUpVoiceStarted(_ marginId: String) {
+        guard var current = catchUp, current.run.isRunning, current.run.friendMarginIds.contains(marginId) else { return }
+        current.heardMarginIds.insert(marginId)
+        catchUp = current
+    }
+
+    /// The conductor saw its last Margin end. Only the run's own conductor counts. What stays new is the run's friend
+    /// Margins whose voice never started (they couldn't play, or were skipped first); the listener's own parents never count.
     func catchUpRunReachedItsEnd(_ conductor: MarginMomentConductor) {
         guard let catchUp, catchUp.run.isRunning, catchUp.conductor == ObjectIdentifier(conductor) else { return }
-        let itemId = catchUp.run.itemId
-        let detail: ItemDetailState? = selectedItem.id == itemId ? selectedItem : activePlaybackDetail?.id == itemId ? activePlaybackDetail : nil
-        let stillNewIds = Set((detail?.importedCommentaryInterjections.values.joined() ?? []).filter(\.isNewToListener).map {
-            SharedMarginReview.marginId(layerId: $0.layerId, interjectionId: $0.id)
-        })
-        let stillNew = catchUp.run.friendMarginIds.filter(stillNewIds.contains).count
+        let stillNew = catchUp.run.friendMarginIds.filter { !catchUp.heardMarginIds.contains($0) }.count
         noteCatchUp(.completed(stillNew: stillNew))
         diagnostics["catchUp"] = "ended:still_new=\(stillNew)"
     }

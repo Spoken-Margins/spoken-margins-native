@@ -187,8 +187,9 @@ extension Gate1AppModel {
         if catchUp {
             guard let started = startCatchUpSession(itemId: itemId) else { return } // offline or refused: the replies stay new
             catchUpReturnTo = started.returnToMediaTimeMs
-        } else if snapshot.itemId != itemId || !hasActiveSession {
-            startItem(id: itemId)
+        } else {
+            noteCatchUp(.play) // an ordinary review puts an earlier caught-up card away (#4785)
+            if snapshot.itemId != itemId || !hasActiveSession { startItem(id: itemId) }
         }
         // A friend's reply to one of the listener's own spoken Margins plays after that Margin (#3221): the lead-in,
         // the Margin, then the reply. Skip on the card goes past the Margin to the reply.
@@ -224,6 +225,7 @@ extension Gate1AppModel {
         if catchUp { beginCatchUpRun(itemId: itemId, entries: entries) }
         marginMomentConductor?.onVoiceStarted = { [weak self] in
             if let margin = heard[$0] { self?.markSharedMarginHeard(margin) }
+            self?.noteCatchUpVoiceStarted($0)
         }
         settleReviewPlaceAsTheReviewProgresses(itemId: itemId)
         // Their voices get the same chime as the automatic prompt, except for a muted layer's (#932).
