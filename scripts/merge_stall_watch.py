@@ -40,9 +40,10 @@ OWNER_LOGIN = 'uncomposed'  # as in owner_tap_alert.py
 AUTOMERGE = 'automerge'
 MARKER = '<!-- merge-stall-alarm -->'
 BOT = 'github-actions[bot]'
-# These run on a PR's head while they wait for something else, so they aren't progress. The `release` job's check sits on
+# These run on a PR's head while they wait for something else, so they aren't progress (`merge policy` stays in progress
+# while it waits for an audit or the owner's tap, #4986). The `release` job's check sits on
 # the trunk's tip, never on the PR's head.
-WAITING_CHECKS = {'automerge', 'automerge-mac'}
+WAITING_CHECKS = {'automerge', 'automerge-mac', 'merge policy'}
 LANE_VERDICT = re.compile(r'^\s*Lane report\b.*?(?:—|--|-)\s*(PASS|FAIL|INCONCLUSIVE)\b')
 LANE_COMMIT = re.compile(r'\bcommit\s+`?([0-9a-f]{7,40})\b')
 LANE_TIER = re.compile(r'^commit\b.*\btier\s+(T\d)\b', re.M)

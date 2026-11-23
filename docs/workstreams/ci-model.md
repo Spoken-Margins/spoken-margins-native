@@ -30,7 +30,8 @@ an outcome changes on purpose.
 3. **The repository's own decisions are not copied.** These run from the tree under test against a fake GitHub,
    so a change to them shows up in `--diff`:
    - the label bridge (`merge_queue_label_bridge.main`) and the dequeue notifier (`merge_queue_dequeued.notify`);
-   - the merge policy (`merge_policy.blockers`, with its git reads replaced by the scenario's paths);
+   - the merge policy (`merge_policy.blockers` and `merge_policy.verdict`, with its git reads replaced by the scenario's
+     paths; a PR that only waits for an audit or the owner's tap leaves the `merge policy` check in progress, #4986);
    - the `rearm` jobs (`lane_rearm.main`, with `--results` rendered from the workflow step);
    - the audit's eligibility (`sm_codex_audit.evaluate`, `owner_tap_alert.checks_state`) and its merge policy re-run
      (`sm_codex_audit.rerun_merge_policy`);
@@ -78,12 +79,12 @@ Each fix is replayed with `ci_harness.py --diff <merge>^1 <merge>` where the old
 | #4747 | A passing portable run at its time limit ended `cancelled`, grey, and nothing re-ran it | missed | covered by `portable-timeout-once`: 35 combinations fixed by #4937's re-run |
 | #4753, #4755 | Audit before the hosted checks; the re-arm job standing down | caught in hindsight | the older trees do not load |
 | #4746, #4754 | Audit without the lane; the merge audit trusting the queue | missed | the older trees do not load |
-| #4835 (#4795) | download.onnxruntime.ai's bad certificate failed Mac jobs; each PR was re-armed by hand | missed | caught as `outage-90m` / `needs-person`; open as #4940 |
+| #4835 (#4795) | download.onnxruntime.ai's bad certificate failed Mac jobs; each PR was re-armed by hand | missed | caught as `outage-90m` / `needs-person`. #4940 (merge-queue half) reads the failing step and retries a setup failure once after 30 minutes: `mac-fail-once` and `mac-download-fail-once` now merge on the Mac-in-queue kinds; a failed test (`mac-test-fail-once`) is still held at once. #5057 covers the failing check on the PR itself: `rerun-cancelled.yml` re-runs a PR run that failed outside the PR once, 90 minutes later, so `outage-90m` and the web kind left `KNOWN` |
 | #4937 | The bridge's token refused (403), or expired (401 on every read, found by #4942's audit), with no word on the PR; a timed-out queue entry disarmed; workflow-level groups in two more workflows; the web check skipped (= passed) when change detection failed | missed | caught: 42 + 9 combinations, and the static rules |
 
 Against `main` at b825e9dd, over the first 376 combinations, #4937 fixes 134 of 222 violating ones and moves 9 more
 from silent to told or slow. The expired-token fault added after #4942's audit adds 42 combinations, all of them told
-on the PR. The 88 left are in `KNOWN`: outages and one-off Mac failures in the queue (#4940), dropped schedules with the
+on the PR. After #4940 the harness runs 460 combinations (42 added: a Mac job that fails in a download, and one that fails a test) and 81 violations were left; after #5057 32 are left, all in `KNOWN`: dropped schedules with the
 backstop down (#4866, now reported by the wake sweep's rule 15), and GitHub's runner pool.
 
 ## Assumptions
@@ -103,8 +104,9 @@ PR (A8).
 - In `--diff`, helper modules that the imported scripts load by name (for example `comment_trust`) come from the
   first tree loaded.
 - Some decisions are still read or written by hand, so a change to them does not show in `--diff`:
-  - the docs-only rule (inline Python in `hosted-portable.yml`) and the web paths (a `grep` in `hosted-web.yml`) are
-    read from the YAML text with a regular expression, so a reworded step falls back to a default;
+  - the web paths (a `grep` in `hosted-web.yml`) are read from the YAML text with a regular expression, so a reworded
+    step falls back to a default. The docs-only rule (inline Python in `hosted-portable.yml`) is not: the model runs
+    the step's own Python, and a step that no longer has it stops the model with an error (#5048);
   - the audit's candidate loop (when it reads the head's checks) mirrors `sm_codex_audit.py` around line 866, and it
     assumes the re-run is called after every posted audit inside a workflow;
   - main-t3's `decide`, and which job catches which defect (`DEFECT_CATCHERS`, assumption A15).

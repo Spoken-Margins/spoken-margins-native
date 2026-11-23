@@ -21,6 +21,8 @@ struct ExperienceShowScreen: View {
     /// The follow lists (#4046): the Lists row's value, and the sheet it opens.
     @ObservedObject private var listsState = FollowListsState.shared
     @State private var isShowingLists = false
+    /// "Skipped by your rules" starts collapsed each time the screen opens (#4046 PR 10b).
+    @State private var isShowingSkipped = false
 
     init(subscriptionID: String, lookedAtOnOpen: Date?, artwork: FollowingArtworkCache) {
         self.subscriptionID = subscriptionID
@@ -79,8 +81,10 @@ struct ExperienceShowScreen: View {
     private func content(for subscription: FeedSubscription) -> some View {
         let title = FollowingShowRows.displayTitle(of: subscription)
         let newCount = subscription.state == .muted ? 0 : episodes.filter(\.isNew).count
-        // The Up next episode is on the card, so the list leaves it out; "N new" still counts it.
-        let listed = episodes.filter { $0.id != upNext?.card.entry.id }
+        // The Up next episode is on the card, so the list leaves it out; "N new" still counts it. Episodes a rule skipped go
+        // to their own collapsed group at the bottom (#4046 PR 10b).
+        let listed = episodes.filter { $0.id != upNext?.card.entry.id && $0.skippedWord == nil }
+        let skipped = episodes.filter { $0.skippedWord != nil }
         return List {
             headerRow(for: subscription, title: title)
             listsRow(for: subscription)
@@ -125,6 +129,9 @@ struct ExperienceShowScreen: View {
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
                 }
             }
+            if !skipped.isEmpty {
+                skippedSection(skipped)
+            }
         }
         .scrollContentBackground(.hidden)
         .listStyle(.plain)
@@ -135,6 +142,42 @@ struct ExperienceShowScreen: View {
         .trackedSheet(isPresented: $isShowingLists) {
             FollowListPickerSheet(subscription: subscription)
                 .environmentObject(model)
+        }
+    }
+
+    /// "Skipped by your rules (<n>)", collapsed, with **Show** (#4046 PR 10b). Each row says which word skipped it, and its
+    /// menu's **Hear it anyway** does what tapping the row does. Nothing here changes a rule.
+    @ViewBuilder
+    private func skippedSection(_ skipped: [FollowingShowEpisode]) -> some View {
+        Section {
+            if isShowingSkipped {
+                ForEach(skipped) { episode in
+                    episodeRow(episode)
+                        .listRowInsets(EdgeInsets(
+                            top: 0,
+                            leading: horizontalSizeClass == .regular ? 28 : 16,
+                            bottom: 0,
+                            trailing: horizontalSizeClass == .regular ? 28 : 16
+                        ))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(AppColors.bone)
+                }
+            }
+        } header: {
+            HStack {
+                Text(ListeningRuleScreens.skippedHeader(count: skipped.count))
+                    .font(.headline)
+                    .foregroundStyle(AppColors.text)
+                Spacer()
+                Button { isShowingSkipped.toggle() } label: {
+                    Text(isShowingSkipped ? "Hide" : "Show").minimumTapTarget()
+                }
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityLabel(isShowingSkipped ? "Hide skipped episodes" : "Show skipped episodes")
+                    .accessibilityIdentifier("show.skipped.toggle")
+            }
+            .textCase(nil)
+            .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
         }
     }
 
@@ -232,7 +275,8 @@ struct ExperienceShowScreen: View {
         if episode.isInLibrary {
             InLibraryEpisodeRow(episode: episode, itemId: model.followingLibraryEpisodes[episode.entry.id]?.itemID)
         } else {
-            SourceInboxRow(candidate: .followedSource(episode.entry), artwork: artwork)
+            SourceInboxRow(candidate: .followedSource(episode.entry), artwork: artwork,
+                           skippedWord: episode.skippedWord, isPick: episode.isPick)
         }
     }
 }

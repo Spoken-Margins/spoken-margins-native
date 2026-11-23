@@ -191,6 +191,16 @@ test('a starred Margin writes the very bytes an unstarred one does: a star never
   assert.equal(b.contentDigest, a.contentDigest);
 });
 
+test('heard and the lead-in text write the very bytes a Margin without them does: neither enters a packet (part of #3216)', async () => {
+  const pinned = { packageId: 'package-heard-check', createdAt: new Date('2026-11-17T12:00:00.000Z') };
+  const plain = writtenMargins();
+  const marked = plain.map((m) => ({ ...m, heard: true as const, leadIn: 'the words just before it' }));
+  const a = await writePacket(episode, plain, pinned);
+  const b = await writePacket(episode, marked, pinned);
+  assert.deepEqual(b.bytes, a.bytes);
+  assert.equal(b.contentDigest, a.contentDigest);
+});
+
 const written = async (margins: Margin[]) => {
   const { bytes } = await writePacket(episode, margins, { show, sender: 'Web fixture', packageId: 'package-copy-length', createdAt: new Date('2026-11-22T12:00:00.000Z') });
   const files = await readZip(bytes, unlimited);

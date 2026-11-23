@@ -15,6 +15,10 @@ label into the queue's own commands. merge-queue-label-bridge.yml runs it from m
 - A PR carrying `needs-fix` is never queued by the sweep or an edit. merge_queue_dequeued.py adds it, and removes
   `automerge`, when a merge group fails, so a failing PR is queued again only after someone re-arms it. Without
   this the 15-minute sweep would queue it again at once, rebuilding every group behind it, four times an hour.
+- A PR that left the queue because its jobs failed outside its code (merge_queue_dequeued.py, #4940) keeps `automerge`
+  and carries a `setup-retry not-before=<time>` marker in the notifier's comment. Until that time the sweep and an
+  edit leave it unqueued (one line says so); after it, the sweep queues it once, as for any armed PR. A person adding
+  `automerge` again is never held, since that is "fixed, go". The notifier writes the marker, this reads it.
 - Label removed: auto-merge off, and the GraphQL `dequeuePullRequest` mutation if the PR is in the queue.
 - Sweep: queues every armed PR, re-reading each one just before acting so a PR stopped after the list was read
   (label removed, retitled, `needs-fix` added) is not queued again. It never takes a PR out: a PR set to merge
@@ -41,6 +45,7 @@ PR out), so it posts a comment on the PR saying it is still set to merge and how
 Run: `python3 scripts/merge_queue_label_bridge.py --repo owner/name (--pr N --action ACTION | --sweep)`.
 """
 import argparse
+import datetime
 import json
 import os
 import re
@@ -65,6 +70,14 @@ NOT_QUEUED = re.compile(r'not (in|on) the merge queue|not queued', re.I)
 AUTO_OFF = re.compile(r"(not|n't) (been )?(enabled|set|configured|turned on)|(not|n't) have auto-?merge|"
                       r"no auto-?merge|already (disabled|off)|"
                       r'auto-?merge (is )?(disabled|off)', re.I)
+# The notifier's marker (merge_queue_dequeued.py SETUP_RETRY_MARKER): a comment that sets a PR to merge again no sooner
+# than the time it carries. A copy of the pattern, since each workflow checks out only its own script; the notifier's
+# tests check the two agree. SETUP_RETRY_MINUTES is the notifier's delay, kept here only so that a test can compare.
+SETUP_RETRY = re.compile(r'<!-- merge-queue-dequeued setup-retry not-before=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) -->')
+SETUP_RETRY_MINUTES = 30
+TRUSTED_LOGIN = 'github-actions[bot]'
+# A marker further ahead than the notifier's delay plus this slack is not the notifier's: ignored, whoever wrote it.
+SETUP_RETRY_SLACK = datetime.timedelta(minutes=15)
 CHECK_ACTIONS = ('edited', 'converted_to_draft', 'opened', 'reopened', 'synchronize', 'ready_for_review')
 
 PR_FIELDS = 'id number isDraft title state labels(first: 50) { nodes { name } } autoMergeRequest { enabledAt } ' \
@@ -151,6 +164,18 @@ class GitHub:
                 return pulls
             after = page['pageInfo']['endCursor']
 
+    def now(self):
+        return datetime.datetime.now(datetime.timezone.utc)
+
+    def trusted_comments(self, number):
+        """The text of the workflow's own comments only (the notifier posts as the Actions bot). Anyone can comment, and a
+        marker from anyone else must not hold a PR out of the queue."""
+        code, out = self.call('read', ['api', f'repos/{self.repo}/issues/{number}/comments', '--paginate', '--jq',
+                                       f'.[] | select(.user.login == "{TRUSTED_LOGIN}") | .body'])
+        if code:
+            raise Failed(out.strip()[-300:])
+        return out
+
     def comments(self, number):
         code, out = self.call('read', ['api', f'repos/{self.repo}/issues/{number}/comments', '--paginate', '--jq',
                                        '.[].body'])
@@ -232,6 +257,23 @@ def take_out(github, pr, out):
     return ok
 
 
+def setup_retry_hold(github, number):
+    """The time before which a PR that left the queue on a setup failure may not be queued again, or None. The latest
+    marker counts; a marker with a time that does not parse counts for nothing."""
+    latest = None
+    now = github.now() if hasattr(github, 'now') else datetime.datetime.now(datetime.timezone.utc)
+    read = getattr(github, 'trusted_comments', github.comments)
+    for stamp in SETUP_RETRY.findall(read(number)):
+        try:
+            when = datetime.datetime.strptime(stamp, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
+        except ValueError:
+            continue
+        if when > now + datetime.timedelta(minutes=SETUP_RETRY_MINUTES) + SETUP_RETRY_SLACK:
+            continue
+        latest = when if latest is None or when > latest else latest
+    return latest if latest is not None and now < latest else None
+
+
 def queue(github, pr, out=sys.stdout, rearmed=False):
     """Queue one armed PR. True when it is queued, set to merge, or rightly left alone."""
     number = pr['number']
@@ -257,6 +299,10 @@ def queue(github, pr, out=sys.stdout, rearmed=False):
         print(f'#{number}: `{LABEL}` added again, `{FIX_LABEL}` removed', file=out)
     if pr.get('mergeQueueEntry'):
         print(f'#{number}: already in the merge queue', file=out)
+        return True
+    if not rearmed and (hold := setup_retry_hold(github, number)):
+        print(f'#{number}: left the queue on a failure outside the PR; set to merge again after '
+              f'{hold.strftime("%Y-%m-%dT%H:%M:%SZ")}', file=out)
         return True
     code, text = github.merge(number)
     if code == 0 or ALREADY.search(text):

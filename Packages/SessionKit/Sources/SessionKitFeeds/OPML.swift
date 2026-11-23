@@ -89,6 +89,9 @@ public struct OPMLDocument: Equatable, Sendable {
     public var feeds: [OPMLFeed]
     /// Outlines that looked like feeds but had no usable http(s) feed URL.
     public var unusableOutlineCount: Int
+    /// #4858: the names of those unusable outlines that carried one, in file order (an Apple-only show in a
+    /// Shortcut's list has a name and no public feed). Nameless unusable lines only add to the count.
+    public var unusableNames: [String] = []
     /// `type="include"` rows in file order (#4046).
     public var includes: [OPMLInclude] = []
 }
@@ -115,7 +118,7 @@ public enum OPMLParser {
         guard delegate.sawOPMLRoot else { throw OPMLError.notOPML }
         // Some XMLParser builds accept a truncated file; a cut-off export must not import half its feeds silently.
         guard delegate.sawOPMLEnd else { throw OPMLError.malformed("the file ends before </opml>") }
-        return OPMLDocument(title: delegate.title, feeds: delegate.feeds, unusableOutlineCount: delegate.unusable, includes: delegate.includes)
+        return OPMLDocument(title: delegate.title, feeds: delegate.feeds, unusableOutlineCount: delegate.unusable, unusableNames: delegate.unusableNames, includes: delegate.includes)
     }
 
     /// The one place parse's XMLParser is configured: external entities are never resolved.
@@ -138,6 +141,7 @@ private final class OPMLDelegate: NSObject, XMLParserDelegate {
     var feeds: [OPMLFeed] = []
     var includes: [OPMLInclude] = []
     var unusable = 0
+    var unusableNames: [String] = []
 
     private var depth = 0
     private var outlineCount = 0
@@ -182,7 +186,7 @@ private final class OPMLDelegate: NSObject, XMLParserDelegate {
         }
         if let rawURL = attributes["xmlurl"] ?? attributes["url"].flatMap({ type == "rss" ? $0 : nil }) {
             outlineStack.append((nil, true))
-            guard let feedURL = OPMLParser.webURL(rawURL) else { unusable += 1; return }
+            guard let feedURL = OPMLParser.webURL(rawURL) else { countUnusable(label); return }
             feeds.append(OPMLFeed(
                 title: label.flatMap { $0.isEmpty ? nil : $0 } ?? feedURL,
                 feedURL: feedURL,
@@ -201,8 +205,13 @@ private final class OPMLDelegate: NSObject, XMLParserDelegate {
             ))
             return
         }
-        if type == "rss" { unusable += 1 }
+        if type == "rss" { countUnusable(label) }
         outlineStack.append((label, false))
+    }
+
+    private func countUnusable(_ label: String?) {
+        unusable += 1
+        if let label, !label.isEmpty { unusableNames.append(label) }
     }
 
     func parser(_ parser: XMLParser, foundCharacters string: String) {
@@ -243,28 +252,79 @@ extension OPMLParser {
 /// "Get Podcasts from Library" gives each show's Feed URL. Each entry may hold several lines; each line is
 /// one show: a feed link, optionally with the show's name around it ("Name https://…" or "Name: https://…").
 /// A line with no usable feed link (a junk line, an Apple Podcasts store page, a feed: or itpc: link)
-/// counts as unusable; blank lines are skipped.
+/// counts as unusable, and its name, if it has one, is kept for the preview (#4858); blank lines are skipped.
+///
+/// #4858: a name stuck to its link with no space ("Hard Forkhttps://…", "Hard Fork:https://…", the owner's
+/// own second try at the Shortcut) is read too, but only when no word on the line is a feed link by itself,
+/// so a normal link whose query holds another link is never split.
 public enum FeedLinkListParser {
     public static func parse(_ entries: [String], limits: OPMLLimits = OPMLLimits()) throws -> OPMLDocument {
         guard entries.reduce(0, { $0 + $1.utf8.count }) <= limits.maximumBytes else { throw OPMLError.tooLarge }
         var feeds: [OPMLFeed] = []
         var unusable = 0
+        var unusableNames: [String] = []
         for line in entries.flatMap({ $0.components(separatedBy: .newlines) }) {
             let words = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
             guard !words.isEmpty else { continue }
             guard feeds.count + unusable < limits.maximumOutlines else { throw OPMLError.tooManyOutlines }
-            guard let index = words.firstIndex(where: { feedURL(in: $0) != nil }), let url = feedURL(in: words[index]) else {
+            guard let (index, link) = linkWord(in: words) else {
                 unusable += 1
+                if let name = unusableName(words) { unusableNames.append(name) }
                 continue
             }
             var rest = words
-            rest.remove(at: index)
-            let title = rest.filter { OPMLParser.webURL(trimmingWrappers($0)) == nil }
-                .joined(separator: " ")
-                .trimmingCharacters(in: separators)
-            feeds.append(OPMLFeed(title: title.isEmpty ? url : title, feedURL: url, websiteURL: nil, folders: []))
+            rest[index] = link.leading
+            let title = name(from: rest.filter { OPMLParser.webURL(trimmingWrappers($0)) == nil })
+            feeds.append(OPMLFeed(title: title ?? link.url, feedURL: link.url, websiteURL: nil, folders: []))
         }
-        return OPMLDocument(title: nil, feeds: feeds, unusableOutlineCount: unusable)
+        return OPMLDocument(title: nil, feeds: feeds, unusableOutlineCount: unusable, unusableNames: unusableNames)
+    }
+
+    /// The line's feed link: the first word that is one by itself, else the first word with a name glued to
+    /// its front. `leading` is the glued name ("" for a plain link word).
+    static func linkWord(in words: [String]) -> (index: Int, link: (url: String, leading: String))? {
+        if let index = words.firstIndex(where: { feedURL(in: $0) != nil }), let url = feedURL(in: words[index]) {
+            return (index, (url, ""))
+        }
+        for (index, word) in words.enumerated() {
+            if let glued = gluedLink(in: word), let url = feedURL(in: glued.link) { return (index, (url, trimmingWrappers(glued.leading))) }
+        }
+        return nil
+    }
+
+    /// Splits "Hard Forkhttps://…" at its first http:// or https:// (any case) that is not at the start of the
+    /// word. Text holding a path before the scheme ("example.com/go?to=https://…") is not a glued name.
+    static func gluedLink(in word: String) -> (leading: String, link: String)? {
+        let schemes = [word.range(of: "http://", options: .caseInsensitive), word.range(of: "https://", options: .caseInsensitive)]
+        guard let earliest = schemes.compactMap({ $0 }).min(by: { $0.lowerBound < $1.lowerBound }),
+              earliest.lowerBound != word.startIndex else { return nil }
+        let leading = String(word[..<earliest.lowerBound])
+        guard !leading.contains("/") else { return nil }
+        return (leading, String(word[earliest.lowerBound...]))
+    }
+
+    /// The name an unusable line carries, with its links and scheme words (feed:, itpc:, a store page, a glued
+    /// store page's link part) left out; nil when nothing is left.
+    static func unusableName(_ words: [String]) -> String? {
+        name(from: words.compactMap { word in
+            let bare = trimmingWrappers(word)
+            if let glued = gluedLink(in: bare) { return trimmingWrappers(glued.leading) }
+            return looksLikeLink(bare) ? nil : word
+        })
+    }
+
+    /// A link-like word: anything holding "://", or a word that starts with a scheme a feed list carries
+    /// (feed:, itpc:, javascript:…). A name with a colon inside ("Re:Think", "Fork:") is not one.
+    private static func looksLikeLink(_ word: String) -> Bool {
+        let lower = word.lowercased()
+        return lower.contains("://") || linkSchemes.contains { lower.hasPrefix($0) && lower.count > $0.count }
+    }
+
+    private static let linkSchemes = ["http:", "https:", "feed:", "itpc:", "pcast:", "podcast:", "javascript:", "data:", "file:", "mailto:"]
+
+    private static func name(from words: [String]) -> String? {
+        let name = words.filter { !$0.isEmpty }.joined(separator: " ").trimmingCharacters(in: separators)
+        return name.isEmpty ? nil : name
     }
 
     /// A word that is a feed link once the brackets, quotes and punctuation around it are dropped. An Apple
@@ -302,6 +362,22 @@ public struct OPMLImportPreview: Equatable, Sendable {
     public var unusableOutlineCount: Int
     /// The lists the file holds, for the import screen's "Lists in this file" (#4046).
     public var lists: [OPMLPlannedList] = []
+    /// #4858: the unusable lines' names, in file order (see `OPMLDocument.unusableNames`).
+    public var unusableNames: [String] = []
+
+    /// #4858: the feeds ticked when the preview opens. A feed on a home-network address (`FeedHostClass`) starts
+    /// unticked, because it will rarely work away from that network; the listener can still tick it.
+    public var defaultSelection: Set<String> {
+        Set(toFollow.filter { !FeedHostClass.isHomeNetwork(url: $0.feed?.url) }.map(\.id))
+    }
+
+    /// #4858: the unusable names to list, at most `limit` of them, and how many named lines are left over.
+    public func unusableNameList(limit: Int = OPMLImportPreview.unusableNameLimit) -> (names: [String], moreNamed: Int) {
+        let shown = Array(unusableNames.prefix(max(0, limit)))
+        return (shown, unusableNames.count - shown.count)
+    }
+
+    public static let unusableNameLimit = 20
 }
 
 public enum OPMLImportPlanner {
@@ -345,7 +421,8 @@ public enum OPMLImportPlanner {
             alreadyFollowed: already,
             duplicatesInFile: duplicates,
             unusableOutlineCount: document.unusableOutlineCount,
-            lists: OPMLListPlanner.plan(document, existingLists: existingLists)
+            lists: OPMLListPlanner.plan(document, existingLists: existingLists),
+            unusableNames: document.unusableNames
         )
     }
 

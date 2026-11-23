@@ -60,6 +60,41 @@ public enum ReplyReceipt {
         return newest?.offer
     }
 
+    /// Every offer on one item, for the item screen (Design E2): one per packet card that answers the listener, and the
+    /// newest of them for the intro at the top. The reply graph is built once for the item. An item none of whose friend
+    /// Margins carries a reply link offers nothing and builds no graph, so a friend's first share costs nothing here.
+    public struct ItemOffers: Equatable, Sendable {
+        public static let empty = ItemOffers(byLayer: [:], newest: nil)
+
+        /// The offer for each packet that answers one of the listener's own Margins, by the packet's layer id.
+        public let byLayer: [String: Offer]
+        /// The offer from the newest such packet (`newestOffer`).
+        public let newest: Offer?
+    }
+
+    /// The offers on one item, worked out from its own Margins and its friends' packets as stored, so they come back after
+    /// a relaunch. `importedMargins` holds each packet's Margins by its layer id, as `ItemDetailState` keeps them.
+    public static func offers(
+        ownMargins: [Interjection],
+        layers: [ImportedCommentaryLayer],
+        importedMargins: [String: [ImportedCommentaryInterjection]]
+    ) -> ItemOffers {
+        let all = layers.flatMap { importedMargins[$0.id] ?? [] }
+        guard all.contains(where: { !($0.replyLinks ?? []).isEmpty }) else { return .empty }
+        let graph = MarginReplyGraph.build(localMargins: ownMargins, layers: layers, importedMargins: all)
+        var byLayer: [String: Offer] = [:]
+        for layer in layers {
+            if let offer = offer(layer: layer, graph: graph, importedMargins: all) { byLayer[layer.id] = offer }
+        }
+        return ItemOffers(byLayer: byLayer, newest: newestOffer(layers: layers, graph: graph, importedMargins: all))
+    }
+
+    /// The offers on an item as the item screen holds it.
+    public static func offers(on item: ItemDetailState) -> ItemOffers {
+        offers(ownMargins: item.interjections, layers: item.importedCommentaryLayers,
+               importedMargins: item.importedCommentaryInterjections)
+    }
+
     /// "Tell Sam you got it", or "Tell your friend you got it" for a sender with no name.
     public static func buttonTitle(senderLabel: String?) -> String {
         "Tell \(MarginReplyWords.senderName(senderLabel) ?? "your friend") you got it"

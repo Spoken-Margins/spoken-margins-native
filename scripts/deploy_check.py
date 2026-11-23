@@ -38,10 +38,11 @@ BOT_LOGIN = 'github-actions[bot]'
 SHOWN = 15
 
 # What each deploy copies, so the list names only changes that ship. deploy-web.sh also builds the share-link opener
-# from the server's tree (research/B4/server/internal/links).
+# from the server's tree (research/B4/server/internal/links) and reads the Margins control center cases.
 TARGETS = {
     'web': {'name': 'web player', 'url': sm_live.WEB, 'section': 'web',
-            'paths': ['Web', 'research/B4/server/internal/links', 'research/B4/deploy/deploy-web.sh']},
+            'paths': ['Web', 'research/B4/server/internal/links', 'Contracts/fixtures/margins-control-center',
+                      'research/B4/deploy/deploy-web.sh']},
     'site': {'name': 'website', 'url': sm_live.SITE, 'section': 'site',
              'paths': ['Site', 'scripts/deploy-spoken-margins-site.sh']},
 }

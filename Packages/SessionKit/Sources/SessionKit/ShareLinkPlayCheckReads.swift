@@ -3,23 +3,32 @@ import Foundation
 /// What the sender's play check may ask the app to read for the web page (#4454, PR 3), and what it says about itself.
 ///
 /// The page runs inside the app's hidden web view. It cannot read a publisher's page (CORS), and our relay must never
-/// see the item's address, so it asks the app: one read of a Substack post's page and the first 1 KB of the episode's
-/// audio, once per link (the owner's yes, 2026-11-17). This file decides which asks are allowed; the app's web view does
-/// the reading. Nothing here touches the network.
+/// see the item's address, so it asks the app, once per link: one read of a Substack post's page and the first 1 KB of the
+/// episode's audio (the owner's yes, 2026-11-17); and, for an Apple Podcasts episode with no audio address, Apple's public
+/// lookup for that show and one read of the show's feed that Apple's answer names (the owner's yes, 2026-11-23, #4783).
+/// This file decides which asks are allowed; the app's web view does the reading. Nothing here touches the network.
 extension ShareLinkPlayCheck {
     /// The most of a post's page the app returns, as `Web/src/sources/read.ts` allows itself.
     public static let maximumPageBytes = 4 * 1024 * 1024
     /// The audio's first bytes: enough to see the status and the type, never the episode.
     public static let audioStartBytes = 1_024
 
-    /// One ask from the page (`Web/src/app/play-check-reads.ts`): `{ kind: 'page' | 'audio-start', url }`.
+    /// What the app answers for a read it won't make. The web page reads this exact message as "refused", which an app
+    /// built before a kind existed also says, so the page falls back to "couldn't tell" (`Web/src/app/play-check-reads.ts`).
+    public static let readRefusedMessage = "This read is not allowed."
+
+    /// One ask from the page (`Web/src/app/play-check-reads.ts`): `{ kind: 'page' | 'apple-lookup' | 'feed' | 'audio-start', url }`.
     public enum ReadRequest: Equatable, Sendable {
         case page(URL)
+        /// Apple's public lookup of one show's newest 200 episodes, in exactly the shape the web page and the iPhone app ask.
+        case appleLookup(URL)
+        /// A show's feed. Allowed only when Apple's lookup answer for this link named it (`ReadBudget`).
+        case feed(URL)
         case audioStart(URL)
 
         public var url: URL {
             switch self {
-            case .page(let url), .audioStart(let url): url
+            case .page(let url), .appleLookup(let url), .feed(let url), .audioStart(let url): url
             }
         }
 
@@ -34,11 +43,24 @@ extension ShareLinkPlayCheck {
                 // Only a Substack post's page: the one read that was agreed. Any other page stays unchecked.
                 guard Self.isSubstackPostAddress(url) else { return nil }
                 self = .page(url)
+            case "apple-lookup":
+                guard Self.isAppleLookupAddress(url) else { return nil }
+                self = .appleLookup(url)
+            case "feed":
+                self = .feed(url)
             case "audio-start":
                 self = .audioStart(url)
             default:
                 return nil
             }
+        }
+
+        /// `https://itunes.apple.com/lookup?id=<show id>&entity=podcastEpisode&limit=200` and nothing else: no other host,
+        /// path, parameter or order (`appleLookupUrl` in `Web/src/sources/apple.ts`).
+        static func isAppleLookupAddress(_ url: URL) -> Bool {
+            guard url.host?.lowercased() == "itunes.apple.com", url.path == "/lookup", url.fragment == nil,
+                  let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedQuery else { return false }
+            return query.range(of: #"^id=[0-9]{1,19}&entity=podcastEpisode&limit=200$"#, options: .regularExpression) != nil
         }
 
         /// A public https address with a name: no sign-in in it, no unusual port, no address of this phone or its network.
@@ -67,11 +89,16 @@ extension ShareLinkPlayCheck {
         }
     }
 
-    /// One page and one audio start for each check, and no more: a page that asks twice, or asks for a second post, is
-    /// refused.
+    /// One of each read for each link, and no more: a page that asks twice, or asks for a second post, is refused. A feed
+    /// is read only when Apple's lookup answer for this link named it (`noteLookupAnswer`). The lookup's show id comes from
+    /// the page (the sealed packet is opened there, not here), so this bounds the feed to one Apple lists, not to this
+    /// item's; the audio start is no tighter. Both need our own page to ask, which only our hosts can serve.
     public struct ReadBudget: Equatable, Sendable {
         private var pageRead = false
+        private var lookupRead = false
+        private var feedRead = false
         private var audioRead = false
+        private var namedFeeds: Set<String> = []
 
         public init() {}
 
@@ -81,11 +108,49 @@ extension ShareLinkPlayCheck {
             case .page:
                 guard !pageRead else { return false }
                 pageRead = true
+            case .appleLookup:
+                guard !lookupRead else { return false }
+                lookupRead = true
+            case .feed(let url):
+                guard !feedRead, let key = ReadBudget.feedKey(url), namedFeeds.contains(key) else { return false }
+                feedRead = true
             case .audioStart:
                 guard !audioRead else { return false }
                 audioRead = true
             }
             return true
+        }
+
+        /// Keeps the feeds Apple's lookup answer names, the only feeds this link's check may then read.
+        public mutating func noteLookupAnswer(_ body: Data) {
+            namedFeeds = Set(ReadBudget.feedAddresses(inLookupAnswer: body).compactMap(ReadBudget.feedKey))
+        }
+
+        /// The `feedUrl` of each row of Apple's lookup answer, as https (the app reads https only, and the page asks for
+        /// an `http://` feed as `https://`). Rows with no readable address are left out.
+        public static func feedAddresses(inLookupAnswer body: Data) -> [URL] {
+            guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  let results = object["results"] as? [Any] else { return [] }
+            return results.compactMap { row -> URL? in
+                guard let raw = (row as? [String: Any])?["feedUrl"] as? String,
+                      var components = URLComponents(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+                      let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return nil }
+                components.scheme = "https"
+                guard let url = components.url, ReadRequest.isReadableAddress(url) else { return nil }
+                return url
+            }
+        }
+
+        /// One spelling for one feed address: https, host in lower case, port 443 dropped, no fragment.
+        static func feedKey(_ url: URL) -> String? {
+            guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                  components.scheme?.lowercased() == "https", let host = components.host?.lowercased() else { return nil }
+            components.scheme = "https"
+            components.host = host
+            if components.port == 443 { components.port = nil }
+            components.fragment = nil
+            if components.percentEncodedPath.isEmpty { components.percentEncodedPath = "/" }
+            return components.string
         }
     }
 

@@ -120,4 +120,44 @@ final class PDFCommentExporterTests: XCTestCase {
         ) { XCTAssertEqual($0 as? PDFCommentWriter.Failure, .destinationIsTheSource) }
         XCTAssertEqual(try Data(contentsOf: kept), before)
     }
+
+    // MARK: A chosen file for a PDF with no copy on this iPhone (#4338, PR 6)
+
+    func testTheSameFileIsAcceptedWithItsPlacements() throws {
+        let pages = try XCTUnwrap(PDFDocument(url: source)).pageCount
+        // m1 lands on its sentence, m2 only on a page: one of two is half, which is enough.
+        guard case .accepted(let preview) = PDFCommentExporter.check(chosen: source, plan: plan(), expectedPageCount: pages) else {
+            return XCTFail("the same file is accepted")
+        }
+        XCTAssertEqual(preview, try PDFCommentExporter.preview(source: source, plan: plan()))
+    }
+
+    func testAFileWithAnotherPageCountIsRefusedWithBothCounts() throws {
+        let pages = try XCTUnwrap(PDFDocument(url: source)).pageCount
+        XCTAssertEqual(
+            PDFCommentExporter.check(chosen: source, plan: plan(), expectedPageCount: pages + 3),
+            .refused(.pageCount(picked: pages, expected: pages + 3))
+        )
+    }
+
+    func testAFileWhereTooFewMarginsFindTheirSentenceIsRefused() throws {
+        let pages = try XCTUnwrap(PDFDocument(url: source)).pageCount
+        let elsewhere = MarginCommentPlan(entries: [
+            entry("m2", "Where is this from?", sentence: absentSentence, page: 1),
+            entry("m4", "And this?", sentence: absentSentence, page: 0),
+            entry("m1", "Cite this.", sentence: firstSentence, page: 0),
+        ])
+        XCTAssertEqual(
+            PDFCommentExporter.check(chosen: source, plan: elsewhere, expectedPageCount: pages),
+            .refused(.tooFewPlaced(placed: 1, of: 3))
+        )
+    }
+
+    func testALockedFileAndAFileThatIsNotAPDFAreRefusedAsChosenFiles() throws {
+        let locked = Self.folder.appending(path: "locked.pdf")
+        XCTAssertEqual(PDFCommentExporter.check(chosen: locked, plan: plan(), expectedPageCount: 0), .refused(.locked))
+        let notAPDF = directory.appending(path: "notes.pdf")
+        try Data("not a pdf".utf8).write(to: notAPDF)
+        XCTAssertEqual(PDFCommentExporter.check(chosen: notAPDF, plan: plan(), expectedPageCount: 2), .refused(.unreadable))
+    }
 }

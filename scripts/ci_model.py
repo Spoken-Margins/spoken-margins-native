@@ -32,6 +32,7 @@ import ast
 import contextlib
 import copy
 import dataclasses
+import datetime
 import fnmatch
 import heapq
 import importlib.util
@@ -277,7 +278,11 @@ def extract(root: Path = ROOT) -> dict:
             needs = job.get('needs') or []
             jobs[job_id] = {
                 'id': job_id,
-                'check': str(job.get('name') or job_id),
+                # A job that posts its own check run under another name says so in `SM_REPORTS_CHECK` (merge-policy.yml,
+                # #4986): the job is named `merge policy run`, the check the ruleset requires is `merge policy`.
+                'check': str((job.get('env') or {}).get('SM_REPORTS_CHECK') or job.get('name') or job_id),
+                # The job writes that check run itself, so a cancel kills it before it can mark it (#4986).
+                'own_check': bool((job.get('env') or {}).get('SM_REPORTS_CHECK')),
                 'if': None if job.get('if') is None else str(job['if']).strip(),
                 'needs': [needs] if isinstance(needs, str) else list(needs),
                 'concurrency': job.get('concurrency'),
@@ -635,6 +640,17 @@ def scenarios() -> list[Scenario]:
 
 # --- the simulator --------------------------------------------------------------------------------------------------
 
+def docs_only_rule(text: str) -> str:
+    """The Python the scope job of hosted-portable.yml (given as text) runs with `python3 -c` on the changed-file list
+    to decide docs_only. Raises when the step no longer has one, so a reworded step fails the model, not its verdict."""
+    steps = ((yaml.safe_load(text) or {}).get('jobs') or {}).get('scope', {}).get('steps') or []
+    run = next((step.get('run', '') for step in steps if step.get('id') == 'scope'), '')
+    match = re.search(r"python3 -c '\n(.*?)\n' \"\$list\"", run, re.S)
+    if not match:
+        raise ValueError('the scope step has no python3 -c docs-only check')
+    return match.group(1)
+
+
 class Tree:
     """The repository's own decision code, loaded from one tree (the working tree or an unpacked ref)."""
 
@@ -642,6 +658,7 @@ class Tree:
         self.root = root
         self._modules = {}
         self._scopes = {}
+        self._docs_only, self._docs_rule = {}, None
         self.model = extract(root)
 
     def module(self, name: str, rel: str):
@@ -663,6 +680,27 @@ class Tree:
             ts = self.module('test_scope', 'scripts/test-scope.py')
             self._scopes[key] = ts.classify(list(key), {}, root=self.root)
         return self._scopes[key]
+
+    def docs_only(self, paths: list[str]) -> bool:
+        """The scope job's docs-only verdict, from the Python the workflow itself runs (exit 0 is docs-only). #5048: a
+        copy of its rule here would have kept saying Site/quiz/ is docs after the workflow stopped."""
+        key = tuple(paths)
+        if key not in self._docs_only:
+            if self._docs_rule is None:
+                self._docs_rule = compile(docs_only_rule(self.yaml_text('hosted-portable.yml')), 'docs-only', 'exec')
+            with tempfile.NamedTemporaryFile('w', suffix='.txt') as listing:
+                listing.write(''.join(f'{path}\n' for path in paths))
+                listing.flush()
+                argv, sys.argv = sys.argv, ['-c', listing.name]
+                try:
+                    exec(self._docs_rule, {'__name__': '__main__'})
+                    code = 0
+                except SystemExit as stop:
+                    code = stop.code
+                finally:
+                    sys.argv = argv
+            self._docs_only[key] = code == 0
+        return self._docs_only[key]
 
     def raw(self, file: str) -> dict:
         """The workflow file as parsed YAML, for a step's env or run text."""
@@ -703,6 +741,10 @@ class World:
         self.events[event['id']] = event
         heapq.heappush(self.queue, (at, event['id'], event))
         return event
+
+    def clock(self):
+        """The simulated time as the API prints it, for the markers the scripts write (the model starts at 10:00 UTC)."""
+        return datetime.datetime(2026, 11, 20, 10, 0, tzinfo=datetime.timezone.utc) + datetime.timedelta(minutes=self.now)
 
     def note(self, event, text):
         self.log.append({'at': self.now, 'event': event['id'] if event else None, 'text': text})
@@ -843,8 +885,10 @@ class World:
                         result = 'failure'
                     results[job_id] = {'result': result, 'outputs': outputs}
                 if sha:
-                    self.checks.setdefault(sha, {})[(job['check'], file)] = {'name': job['check'],'conclusion': results[job_id]['result'],
-                                                                     'run': run['id'], 'event': event_name}
+                    held = results[job_id]['outputs'].get('check') == 'pending'
+                    self.checks.setdefault(sha, {})[(job['check'], file)] = {
+                        'name': job['check'], 'conclusion': 'pending' if held else results[job_id]['result'],
+                        'run': run['id'], 'event': event_name}
             if not progressed:
                 break
         run['jobs'] = results
@@ -870,8 +914,10 @@ class World:
             found = [c for c in checks.values() if c['name'] == name and c['event'] in ('pull_request', 'merge_group')]
             if not found:  # A3, A4
                 missing.append(name)
-            elif any(c['conclusion'] not in ('success', 'skipped', 'neutral') for c in found):  # A2
+            elif any(c['conclusion'] not in ('success', 'skipped', 'neutral', 'pending') for c in found):  # A2
                 failed.append(name)
+            elif any(c['conclusion'] == 'pending' for c in found):  # an in-progress check run is not yet a pass (#4986)
+                missing.append(name)
         if failed:
             return 'failed', failed
         if missing:
@@ -1036,11 +1082,7 @@ def changed_paths(world, ctx):
 def b_scope(world, run, job, ctx, cause):
     ts = world.tree.module('test_scope', 'scripts/test-scope.py')
     mac, _ = ts.mac_checks_required(changed_paths(world, ctx))
-    text = world.tree.yaml_text('hosted-portable.yml')
-    match = re.search(r'docs = (\(.*?\))', text)
-    docs = ast.literal_eval(match.group(1)) if match else ()
-    paths = changed_paths(world, ctx)
-    docs_only = bool(paths) and all(p.endswith('.md') or p.startswith(docs) for p in paths)
+    docs_only = world.tree.docs_only(changed_paths(world, ctx))
     return 'success', {'mac': 'true' if mac else 'false', 'docs_only': 'true' if docs_only else 'false'}
 
 
@@ -1080,7 +1122,15 @@ def b_merge_policy(world, run, job, ctx, cause):
                                   classify=lambda paths, diffs: world.tree.classify(paths), inherited=lambda c: [])
     finally:
         policy.fetch_head, policy.changes, policy.unsigned_commits, policy.commit_messages = saved
-    return ('failure' if reasons else 'success'), {'reasons': '; '.join(reasons) or 'may merge'}
+    if not hasattr(policy, 'verdict'):  # a tree from before #4986 (ci_harness.py --diff reads old trees): red for any hold
+        return ('failure' if reasons else 'success'), {'reasons': '; '.join(reasons) or 'may merge'}
+    state = policy.verdict([(1, world.head, reasons, False)], queue=ctx['github']['event_name'] == 'merge_group')
+    # What the check run shows (#4986): a PR that is only waiting for an audit or the owner's tap leaves the `merge
+    # policy` check in progress and the job succeeds, so no runner waits and nothing reads red.
+    outputs = {'reasons': '; '.join(reasons) or 'may merge'}
+    if state == 'waiting':
+        outputs['check'] = 'pending'
+    return ('failure' if state == 'failure' else 'success'), outputs
 
 
 class FakeBridgeGitHub:
@@ -1098,6 +1148,9 @@ class FakeBridgeGitHub:
 
     def open_pulls(self):
         return [self.pull(1)] if self.w.merged_at is None else []
+
+    def now(self):
+        return self.w.clock()
 
     def comments(self, number):
         return '\n'.join(c['body'] for c in self.w.comments)
@@ -1149,11 +1202,37 @@ class FakeDequeueGitHub:
                                        'created_at': f'{r["id"]:06d}'} for r in w.runs if r['event'] == 'merge_group']}
         if path.startswith('commits/'):
             sha = path.split('/')[1]
-            return {'check_runs': [{'name': c['name'], 'conclusion': c['conclusion'], 'completed_at': 'x',
-                                    'html_url': ''} for c in w.checks.get(sha, {}).values()]}
+            rows = []
+            for c in w.checks.get(sha, {}).values():
+                held = c['conclusion'] == 'pending'  # a check run left in progress (#4986)
+                row = {'name': c['name'], 'conclusion': None if held else c['conclusion'],
+                       'status': 'in_progress' if held else 'completed', 'completed_at': 'x', 'html_url': ''}
+                if c.get('id') is not None:   # the timed harness gives every check run an id, as Actions does
+                    row['id'] = c['id']
+                    row['details_url'] = f'https://github.com/{REPO}/actions/runs/{c["run"]}/job/{c["id"]}'
+                rows.append(row)
+            return {'check_runs': rows}
+        if path.startswith('actions/jobs/'):
+            row = next((r for r in getattr(w, 'rows', []) if r['id'] == int(path.rsplit('/', 1)[1])), None)
+            step = (row or {}).get('failed_step')
+            return {'steps': [{'number': 1, 'name': step, 'conclusion': 'failure'}] if step else []}
         if path.startswith('issues/'):
             return list(w.comments)
         return {'workflow_runs': []}
+
+    def now(self):
+        return self.w.clock()
+
+    def log_tail(self, job_id):
+        """What the failed plan step's log ends with: an outside host's bad certificate for a download failure, a
+        failing test otherwise."""
+        row = next((r for r in getattr(self.w, 'rows', []) if r['id'] == job_id), None)
+        # verify-tests' own lines included: its `<step>: 41s — FAILED` summary must not read as a failed test (#5070).
+        if row and getattr(self.w.c, 'fail_in', '') == 'download':
+            return ("tools: 41s — FAILED\nProcess exit 1; fatal: unable to access 'https://download.onnxruntime.ai/pod.zip': "
+                    'SSL certificate problem: certificate has expired')
+        return ('ops: 30s — FAILED\nProcess exit 1; Failed: test_something (test_x.T.test_something) at '
+                "/w/scripts/tests/test_x.py:12 — AssertionError: GET https://github.com/a: HTTP 502")
 
     def queue_heads(self):
         return set()
@@ -1207,7 +1286,8 @@ def b_claude_audit(world, run, job, ctx, cause):
     tap_checks_done = False
     if audit.lane_report_missing_for_head(why):
         if audit.touches_owner_tap(files) or audit.risky_areas(world.paths):
-            runs = [{'name': c['name'], 'status': 'completed', 'conclusion': c['conclusion']}
+            runs = [{'name': c['name'], 'status': 'in_progress' if c['conclusion'] == 'pending' else 'completed',
+                     'conclusion': None if c['conclusion'] == 'pending' else c['conclusion']}
                     for c in world.checks.get(world.head, {}).values()]
             state, _ = audit.owner_tap_alert.checks_state(runs, [])
             tap_checks_done = state == 'ok' and bool(runs)

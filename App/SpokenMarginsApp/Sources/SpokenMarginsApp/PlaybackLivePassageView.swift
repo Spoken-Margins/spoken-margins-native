@@ -165,6 +165,8 @@ struct PlaybackLivePassageView: View {
     let openReader: (Int) -> Void
     @State private var sourceIndex = PlaybackLivePassage.SourceIndex(TimelineSourceContent(text: ""))
     @State private var sourceVersion = 0
+    /// The item's footnote markers as shown (#5109), scanned once per text.
+    @State private var footnotes = FootnoteDisplayText.none
     @State private var margins: [PlaybackLivePassage.Margin] = []
     @State private var lastOffset: Int?
     @State private var playbackTick = 0 // bumped by each progress tick: the current sentence follows the source offset (#2074)
@@ -243,7 +245,7 @@ struct PlaybackLivePassageView: View {
             }
             .onChange(of: input) { _, _ in rebuild() }
             .onChange(of: model.selectedItem.timelineSource) { _, value in
-                sourceIndex = PlaybackLivePassage.SourceIndex(value)
+                sourceIndex = PlaybackLivePassage.SourceIndex(value, footnotes: footnotes)
                 sourceVersion &+= 1
             }
             .onChange(of: model.marginRows) { _, _ in updateMargins() }
@@ -288,7 +290,8 @@ struct PlaybackLivePassageView: View {
         rebuilds &+= 1
         builtInput = input
         scene.reset(text: input.text, chapters: input.chapters)
-        sourceIndex = PlaybackLivePassage.SourceIndex(model.selectedItem.timelineSource)
+        footnotes = FootnoteDisplayText(text: input.text)
+        sourceIndex = PlaybackLivePassage.SourceIndex(model.selectedItem.timelineSource, footnotes: footnotes)
         sourceVersion &+= 1
         updateMargins()
     }
@@ -486,7 +489,7 @@ private struct NowSceneRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(sentence.text)
+            .accessibilityLabel(fragments.map(\.text).joined())
             .accessibilityHint("Open the full source at the current sentence")
             .accessibilityValue(isLit ? "Current sentence" : "")
             .accessibilityAddTraits(isLit ? .isSelected : [])

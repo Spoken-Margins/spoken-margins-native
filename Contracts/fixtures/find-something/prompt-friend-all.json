@@ -1,0 +1,13 @@
+{
+  "answers": {
+    "who": "friend",
+    "now": "Cable news and cooking shows",
+    "dinner": "The school board",
+    "avoid": "Whether remote work is good",
+    "expert": "them",
+    "push": "new",
+    "situation": "In the kitchen, cleaning up",
+    "length": "45"
+  },
+  "expected": "I want to send a friend one podcast episode that we'll both have something to say about. Help me pick.\n\nAbout them:\n- What they watch, read or listen to now: Cable news and cooking shows\n- What they bring up at dinner: The school board\n- Already heard every argument about, so avoid: Whether remote work is good\n- Who should be the expert: them, so they get to teach me\n- How hard it should push: something new to them, where I'd want their thinking\n- Where and how they'll listen: In the kitchen, cleaning up\n- How long they'll give it: no more than 45 minutes\n\nSuggest 3 or 4 specific episodes (not shows). Put each on one line in this form:\nShow — Episode title | length | clean or explicit | suggested timestamp for my comment | link\nUse an Apple Podcasts episode link when you can. For a Substack, give the post link. One link per line, nothing else on the line after the link.\nUnder each episode line, add one line starting \"Why:\" with one sentence on why it suits them and one question I could end my comment with.\nBefore you answer, look up each link and confirm it opens that exact episode. Never write a link from memory or guess an ID. If you can't confirm an episode link, give the show's Apple Podcasts link and add (show link) before it."
+}

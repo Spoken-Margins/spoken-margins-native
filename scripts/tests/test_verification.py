@@ -712,6 +712,10 @@ class VerificationTests(unittest.TestCase):
         # must run it before the merge, not leave the red to the next PR that touches scripts/.
         self.assertIn('test_task_cost_map', verification.RUNNER_TEST_READERS)
         self.assertEqual(verification.runner_test_scope(['docs/task-cost-map.json'])[0], 'readers')
+        # The quiz page's tests (#4707) run its Node tests on Site/quiz/: a PR that edits only the page runs them (#5048).
+        self.assertIn('test_quiz_page', verification.RUNNER_TEST_READERS)
+        for path in ('Site/quiz/page.js', 'Site/quiz/quiz.js', 'Contracts/quiz/find-something.v1.json'):
+            self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         # A manifest, model or font file added anywhere must run the check in the PR that adds it, not in the
         # next PR that touches scripts/.
         for path in ('ops/x/requirements.txt', 'Design/New/fonts/a.ttf', 'docs/y/package.json', 'ops/m/voice.onnx',

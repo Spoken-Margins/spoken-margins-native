@@ -54,8 +54,9 @@ struct InterjectionSharingState {
     var autoCleanSelectedEnabled = ShareAutoCleanPreference.isEnabled
     var needsAutoCleanDecision = !ShareAutoCleanPreference.hasRecordedDecision
     var automaticallyCleanedDraftIDs: Set<String> = []
-    /// Set by the export screen, which prepares drafts from the session picked there. The
-    /// sheet's `begin` keeps them once instead of rebuilding from the open item's session.
+    /// Set by the export screen and by an item's Share, which prepare the drafts themselves: the export screen from the
+    /// session picked there, an item's Share from every listening pass of the item (#4688). The sheet's `begin` keeps
+    /// them once instead of rebuilding from the open item.
     var draftsPreparedForExport = false
     /// Where the sheet starts (#1507). The playback screen's Share sets `.reviewDefaults`, so the sheet opens on
     /// the review with Share pinned; `begin` reads it once and resets it.
