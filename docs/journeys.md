@@ -209,7 +209,7 @@ The script `J12SharingLoopJourneyUITests` runs step 2, step 3 up to the package 
 
 ## J13 — Following lists friends and shows together, newest first
 
-Following puts every friend who sent Margins and every followed show in one list, ordered by what changed most recently (#3343, part of #3216). A friend sorts by the later of their newest Margin's recorded time and when the listener received the packet; a show sorts by its newest episode. Quiet shows stay in their own section below.
+Following puts every friend who sent Margins and every followed show in one list, ordered by what changed most recently (#3343, part of #3216). A friend sorts by the later of their newest Margin's recorded time and when the listener received the packet; a show sorts by its newest episode that no rule sets aside (with no rule on, simply its newest episode; #4046). Quiet shows stay in their own section below.
 
 1. Use a Library with at least five friends and three shows. Some friends should be newer than some shows and older than others. Include one show with no episodes and one friend whose packet was recorded long ago but opened today.
 2. Open Following. Record the rows top to bottom with each row's name and its second line ("3 Margins on 1 episode" for a friend, the new-episode count for a show).

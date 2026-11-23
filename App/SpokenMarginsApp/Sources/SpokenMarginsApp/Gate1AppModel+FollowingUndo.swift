@@ -3,26 +3,35 @@ import SessionKit
 
 /// #477: Dismiss in Following is confirmed on the app's shared top banner, with an Undo button, as
 /// Mark Complete is (#1149). A full left swipe dismisses at once, so a stray one can be taken back.
+/// #4285: on a followed show's episode the action is "Not for me". It also writes a mark the phone keeps, so the
+/// episode stays out of New after the show is unfollowed and followed again; Undo takes the mark off first.
 extension Gate1AppModel {
-    func dismissFollowedSourceEntry(id: String) {
+    /// Takes the row's own entry, not a lookup in `followedSourceEntries`: a show's Up next card can draw an episode that
+    /// list doesn't hold, and the mark needs the entry's GUID and addresses.
+    func dismissFollowedSourceEntry(_ entry: FeedEntry) {
         guard let coordinator = followedSourceCoordinator else { return }
-        let title = followedSourceEntries.first { $0.id == id }?.title ?? ""
+        let id = entry.id
+        let title = entry.title
         Task { [weak self] in
             guard let previous = try? await coordinator.dismissEntry(id: id) else { return }
             self?.listeningSignals.dismiss(entryId: id)
             // The banner comes first: the refresh below can wait on the network, past the Undo window.
-            self?.presentDismissUndo(title: title) { [weak self] in
-                self?.undoDismissedFollowedSourceEntry(id: id, restoring: previous)
+            self?.presentNotForMeUndo(title: title) { [weak self] in
+                self?.undoDismissedFollowedSourceEntry(id: id, restoring: previous, unmarking: entry)
             }
+            // The mark is written before the refresh, which is the first thing that could save the episode again.
+            _ = await self?.markNotForMe(entry)
             await self?.reloadFollowedSourceEntries()
             await self?.performFollowedSourceRefresh(force: false, trigger: .localChange)
         }
     }
 
-    /// Puts the entry back in the state it had, through the existing entry-state path: no new field.
-    func undoDismissedFollowedSourceEntry(id: String, restoring previous: FeedEntryState) {
+    /// Puts the entry back in the state it had, through the existing entry-state path: no new field. The Not for me
+    /// mark goes first, so a refresh between the two can't dismiss the entry again.
+    func undoDismissedFollowedSourceEntry(id: String, restoring previous: FeedEntryState, unmarking entry: FeedEntry? = nil) {
         guard let coordinator = followedSourceCoordinator else { return }
         Task { [weak self] in
+            if let entry { await self?.unmarkNotForMe(entry) }
             try? await coordinator.undoDismissEntry(id: id, restoring: previous)
             await self?.reloadFollowedSourceEntries()
             await self?.performFollowedSourceRefresh(force: false, trigger: .undo)
@@ -80,6 +89,16 @@ extension Gate1AppModel {
             return
         }
         drawer.openShortcutImport(feedLinks: row.feedLinks, origin: .assistant)
+    }
+
+    private func presentNotForMeUndo(title: String, undo: @escaping @MainActor () -> Void) {
+        let action = UserFeedbackEvent.Action(
+            title: FollowingDismissMessages.undoTitle,
+            accessibilityLabel: FollowingDismissMessages.notForMeUndoAccessibilityLabel(title: title),
+            identifier: "following.undo.button",
+            perform: undo
+        )
+        presentFeedback(UserFeedbackEvent(kind: .success, message: FollowingDismissMessages.notForMe(title: title), action: action))
     }
 
     private func presentDismissUndo(title: String, undo: @escaping @MainActor () -> Void) {

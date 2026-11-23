@@ -16,8 +16,15 @@ public struct PlaybackTextReaderBrowser: Sendable, Equatable {
     /// transcript has many chapters, and counting its Characters for each of them on every redraw is slow.
     private let order: [Int]
     private let starts: [Int]
+    /// How the item's footnote markers show (#5109), scanned once for the sheet.
+    private let footnotes: FootnoteDisplayText
     /// What the reader shows now.
-    public private(set) var current: PlaybackTextReaderTarget
+    public private(set) var current: PlaybackTextReaderTarget {
+        didSet { reader = current.reader(footnotes: footnotes) }
+    }
+    /// What the reader shows now, footnote markers as a listener reads them. Rendered once per chapter shown, not
+    /// on every read: the sheet's body reads it several times.
+    public private(set) var reader: PlaybackLivePassage.Reader
 
     public init(text: String, chapters: [Chapter], opening: PlaybackTextReaderTarget) {
         self.text = text
@@ -27,6 +34,9 @@ public struct PlaybackTextReaderBrowser: Sendable, Equatable {
         let length = text.count
         self.order = PlaybackTextReaderTarget.readingOrder(chapters)
         self.starts = chapters.map { PlaybackTextReaderTarget.clamp($0.startChar, length) }
+        let footnotes = FootnoteDisplayText(text: text)
+        self.footnotes = footnotes
+        self.reader = opening.reader(footnotes: footnotes)
     }
 
     public var isAtOpening: Bool { current == opening }
