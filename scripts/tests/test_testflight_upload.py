@@ -320,6 +320,47 @@ class AppStoreConnect(unittest.TestCase):
                   get=self.fake([[{'attributes': {'version': '37', 'processingState': 'INVALID'}}]]),
                   sleep=lambda s: None, clock=lambda: 0)
 
+    def test_a_wait_longer_than_one_token_makes_a_new_token_before_the_old_one_expires(self):
+        """The #5156 audit: one token (600 s) reused for a 1200 s wait got a 401 after a real upload."""
+        import datetime as dt
+        start = dt.datetime(2026, 11, 23, 12, 0, tzinfo=dt.timezone.utc)
+        moment = [start]
+        made, used = [], []
+
+        def mint(key_id, issuer, pem, now):
+            made.append(now)
+            return f'token-{len(made)}'
+
+        def fetch(path, token):
+            # A token answers only until its 600 s expiry, as App Store Connect does.
+            born = made[int(token.split('-')[1]) - 1]
+            if (moment[0] - born).total_seconds() >= 600:
+                raise tu.sm_live.ReadError('App Store Connect answered 401 for /v1/builds')
+            used.append(token)
+            if path.startswith('/v1/apps'):
+                return {'data': [{'id': 'APP', 'attributes': {'bundleId': 'com.spokenmargins.native'}}]}
+            listed = (moment[0] - start).total_seconds() >= 1100
+            return {'data': [{'attributes': {'version': '37', 'processingState': 'PROCESSING'}}] if listed else []}
+
+        def sleep(seconds):
+            moment[0] += dt.timedelta(seconds=seconds)
+
+        env = {'ASC_KEY_ID': 'K', 'ASC_ISSUER_ID': 'I', 'ASC_KEY_P8': 'P'}
+        with unittest.mock.patch.dict('os.environ', env):
+            get = tu.asc_session(mint=mint, fetch=fetch, now=lambda: moment[0])
+            code, out = quiet(tu.asc_wait, SimpleNamespace(build=37, timeout=1200), get=get, sleep=sleep,
+                              clock=lambda: (moment[0] - start).total_seconds())
+        self.assertEqual(code, 0, out)
+        self.assertIn('lists Build 37', out)
+        self.assertEqual(len(made), 3)   # at 0 s, 480 s and 960 s: never one past 600 s old
+        self.assertTrue(all((b - a).total_seconds() == tu.TOKEN_REFRESH_SECONDS for a, b in zip(made, made[1:])))
+
+    def test_a_single_old_token_would_fail_the_same_wait(self):
+        """The same wait with the refresh pushed past the expiry fails, so the test above can fail."""
+        with unittest.mock.patch.object(tu, 'TOKEN_REFRESH_SECONDS', 10_000):
+            with self.assertRaisesRegex(tu.sm_live.ReadError, '401'):
+                self.test_a_wait_longer_than_one_token_makes_a_new_token_before_the_old_one_expires()
+
     def test_missing_secrets_fail_without_naming_values(self):
         with unittest.mock.patch.dict('os.environ', {'ASC_KEY_ID': '', 'ASC_ISSUER_ID': '', 'ASC_KEY_P8': ''}):
             with self.assertRaisesRegex(tu.Failure, 'missing ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8'):
@@ -364,11 +405,11 @@ class Workflow(unittest.TestCase):
         self.assertIn('approve', self.jobs['upload']['needs'])
         self.assertIn("needs.approve.result == 'success'", self.jobs['upload']['if'])
         self.assertIn('upload', self.jobs['tag']['needs'])
-        self.assertIn("needs.upload.result == 'success'", self.jobs['tag']['if'])
+        self.assertIn("needs.confirm.result == 'success'", self.jobs['tag']['if'])  # confirm needs a good upload
         self.assertIn("needs.check.result == 'success'", self.jobs['approve']['if'])
         self.assertIn('testflight_upload.py gate --run-id', self.jobs['approve']['steps'][-1]['run'])
         for name, job in self.jobs.items():
-            if 'secrets.' in str(job) and name not in ('upload', 'tag'):
+            if 'secrets.' in str(job) and name not in ('upload', 'confirm', 'tag'):
                 # Before the tap only GET requests to App Store Connect may hold the key.
                 self.assertEqual(name, 'check')
                 runs = [s.get('run', '') for s in job['steps'] if 'secrets.' in str(s)]
@@ -384,7 +425,7 @@ class Workflow(unittest.TestCase):
         self.assertIn('-allowProvisioningUpdates', runs[export])
         self.assertLess(next(i for i, r in enumerate(runs) if 'asc-check' in r), export)
         self.assertLess(next(i for i, r in enumerate(runs) if 'testflight_upload.py archive' in r), export)
-        self.assertGreater(next(i for i, r in enumerate(runs) if 'asc-wait' in r), export)
+        self.assertFalse([r for r in runs if 'asc-wait' in r], 'the wait is its own job, so a re-run can finish it')
         self.assertIn('Remove the signing key', names)
         archive = runs[next(i for i, n in enumerate(names) if n == 'Archive the Release app')]
         self.assertIn('-configuration Release', archive)
@@ -392,6 +433,21 @@ class Workflow(unittest.TestCase):
         self.assertNotIn('SM_PHONE_BUILD', archive)
         self.assertIn('SM_SHARE_LINK_CREATION=YES', archive)
         self.assertIn('[ "$SHARE_LINKS" = "on" ]', archive)
+
+    def test_the_wait_and_the_tag_follow_the_upload_and_a_rerun_of_them_never_checks_the_number_again(self):
+        confirm, tag = self.jobs['confirm'], self.jobs['tag']
+        self.assertEqual(confirm['needs'], ['check', 'upload'])
+        self.assertIn("needs.upload.result == 'success'", confirm['if'])
+        self.assertEqual(confirm['environment'], 'phone-build')
+        runs = ' '.join(s.get('run', '') for s in confirm['steps'])
+        self.assertIn('testflight_upload.py asc-wait', runs)
+        self.assertNotIn('asc-check', runs)
+        self.assertIn('confirm', tag['needs'])
+        self.assertIn("needs.confirm.result == 'success'", tag['if'])
+        self.assertNotIn('asc-check', ' '.join(s.get('run', '') for s in tag['steps']))
+        # The wait's ceiling fits inside the job's own timeout.
+        self.assertIn('--timeout 1200', runs)
+        self.assertGreater(confirm['timeout-minutes'] * 60, 1200)
 
     def test_the_upload_plist_is_app_store_connect_upload_not_internal_only(self):
         options = plistlib.loads((ROOT / 'scripts/TestFlightUploadOptions.plist').read_bytes())

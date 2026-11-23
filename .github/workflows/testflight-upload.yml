@@ -13,9 +13,10 @@
 #   4. `upload` (environment `phone-build`): archive the Release app with a placeholder signature, check the archive,
 #      then export with the App Store Connect method and upload in one xcodebuild call, the way the Mac does, with
 #      scripts/TestFlightUploadOptions.plist. Apple's cloud-managed distribution certificate signs it through the
-#      team API key, as in phone-build.yml, so no certificate lives on GitHub. Then wait until App Store Connect lists
-#      the build, because "EXPORT SUCCEEDED" alone is not proof.
-#   5. `tag` (environment `agent-identity`): as the spoken-margins-agent App, the annotated tag
+#      team API key, as in phone-build.yml, so no certificate lives on GitHub.
+#   5. `confirm` (environment `phone-build`, GET requests only): wait until App Store Connect lists the build, because
+#      "EXPORT SUCCEEDED" alone is not proof. A re-run of this job after a real upload waits again.
+#   6. `tag` (environment `agent-identity`): as the spoken-margins-agent App, the annotated tag
 #      testflight/<version>-build-N on the commit, carrying the archive's flags line (scripts/sm_live.py reads it).
 #
 # This run never assigns tester groups, submits for review or releases anything. Those stay the owner's own steps in
@@ -28,8 +29,9 @@
 # the approval job and the upload job are separate, and `upload` cannot start unless `approve` succeeded, which only
 # the owner's tap does. A copy would not narrow anything: the same Admin key already sits in `phone-build`, which any
 # workflow on main may use, and changing a workflow on main already needs the owner's review (.github/CODEOWNERS).
-# One copy also means one place to rotate. Re-running only the failed `upload` or `tag` job of an approved run does
-# not ask again; it re-tries the same approved commit and build number, and both checks run again.
+# One copy also means one place to rotate. Re-running a failed job of an approved run does not ask again: it is
+# the same approved commit and build number. A re-run of `upload` checks the number again and refuses once App Store
+# Connect has it; a re-run of `confirm` or `tag` finishes a real upload.
 #
 # Trust: workflow_dispatch only, main only. Every job refuses any other ref, and all three environments admit main
 # only. There is no schedule, pull_request, pull_request_target, issue_comment or workflow_run trigger, and there
@@ -283,13 +285,6 @@ jobs:
           grep -aE 'error:|EXPORT|[Uu]pload' "$OUT/upload.log" | head -60 || true
           grep -q 'EXPORT SUCCEEDED' "$OUT/upload.log" || { echo "::error::The export or upload failed."; exit 1; }
 
-      - name: Wait until App Store Connect lists the build
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
-        run: python3 scripts/testflight_upload.py asc-wait --build "$BUILD" --timeout 1200
-
       # Only archive.log: upload.log names the signing key's ID.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
@@ -311,9 +306,31 @@ jobs:
           [ -n "${STARTED:-}" ] || exit 0
           echo "testflight-upload took $(( $(date +%s) - STARTED ))s on xcode-27 (Xcode 27.0)." | tee -a "$GITHUB_STEP_SUMMARY"
 
-  tag:
+  # Its own job so that, after a real upload, re-running a failed wait (or tag) waits and tags again. Re-running
+  # `upload` would refuse, rightly, because App Store Connect then has the build number.
+  confirm:
     needs: [check, upload]
     if: ${{ !cancelled() && needs.upload.result == 'success' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment: phone-build
+    timeout-minutes: 25
+    steps:
+      - name: Check the ref
+        run: '[ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Wait until App Store Connect lists the build
+        env:
+          BUILD: ${{ needs.check.outputs.build }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: python3 scripts/testflight_upload.py asc-wait --build "$BUILD" --timeout 1200
+
+  tag:
+    needs: [check, upload, confirm]
+    if: ${{ !cancelled() && needs.confirm.result == 'success' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment: agent-identity
     timeout-minutes: 5

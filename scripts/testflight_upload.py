@@ -17,7 +17,8 @@ after the owner taps Approve. This script is everything in that workflow that is
               use, so without this a run before the environment was set up would upload with no tap at all.
   archive     After the archive: its Info.plist must say this build number, this commit, a Release build (no phone
               build switch) and the share-link setting the run asked for.
-  asc-wait    After the upload: wait until App Store Connect lists the build. Xcode's "EXPORT SUCCEEDED" is not proof.
+  asc-wait    After the upload, in its own job: wait until App Store Connect lists the build. Xcode's "EXPORT
+              SUCCEEDED" is not proof. A re-run of that job waits again instead of refusing the number it uploaded.
   tag         As the spoken-margins-agent App: the annotated tag `testflight/<version>-build-N` on the commit, with
               the archive's flags line (scripts/sm_live.py --tag-message), refused if the tag exists.
 
@@ -180,13 +181,24 @@ def plan(args, run=git, root=ROOT):
 
 # ---- App Store Connect (GET only) -------------------------------------------------------------------------------
 
-def asc_session(now=None):
+TOKEN_REFRESH_SECONDS = 480  # sm_live.asc_token's tokens expire 600 s after they are made
+
+
+def asc_session(mint=sm_live.asc_token, fetch=sm_live.asc_get, now=lambda: dt.datetime.now(dt.timezone.utc)):
+    """A GET function that makes a new App Store Connect token once the last is 8 minutes old, so a wait longer
+    than one token's 10 minutes keeps reading instead of failing with a 401 after a real upload (#5156 audit)."""
     missing = [name for name in ('ASC_KEY_ID', 'ASC_ISSUER_ID', 'ASC_KEY_P8') if not os.environ.get(name)]
     if missing:
         raise Failure('the environment is missing ' + ', '.join(missing))
-    now = now or dt.datetime.now(dt.timezone.utc)
-    token = sm_live.asc_token(os.environ['ASC_KEY_ID'], os.environ['ASC_ISSUER_ID'], os.environ['ASC_KEY_P8'], now)
-    return lambda path: sm_live.asc_get(path, token)
+    held = {}
+
+    def get(path):
+        moment = now()
+        if 'token' not in held or (moment - held['made']).total_seconds() >= TOKEN_REFRESH_SECONDS:
+            held['token'] = mint(os.environ['ASC_KEY_ID'], os.environ['ASC_ISSUER_ID'], os.environ['ASC_KEY_P8'], moment)
+            held['made'] = moment
+        return fetch(path, held['token'])
+    return get
 
 
 def app_id(get):
