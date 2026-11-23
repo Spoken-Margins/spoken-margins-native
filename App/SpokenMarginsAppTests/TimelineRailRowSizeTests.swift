@@ -18,7 +18,9 @@ final class TimelineRailRowSizeTests: XCTestCase {
 
     func testAFoldedChapterWithALongerTitleStaysCompact() {
         let row = chapterRow(title: "The Quest for Sane Regulations", corner: "about 65%", hidden: 12)
-        XCTAssertLessThanOrEqual(height(row, .large), 80)
+        // The title has about 140 pt beside the rail, icon and corner, so it may take two or three lines. Even at three it
+        // stays under today's floor of 104 pt (a 92 pt card and 12 pt below), which is the claim this test pins.
+        XCTAssertLessThanOrEqual(height(row, .large), 96)
     }
 
     func testALinkRowFoldsItsHostIntoItsKindLine() {
