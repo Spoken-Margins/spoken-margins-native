@@ -510,6 +510,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// label, the item, and when it was asked. The next play of that item within `chimeMoveWindow` hands it to the
     /// sequencer after the play's own resets, so the note is read when the player reaches it. Guarded by `lock`.
     private var pendingFootnoteRequest: (label: String, targetId: String, at: TimeInterval)?
+    /// A pending request whose play was for another item than the one this client held: the old item's plan (and its
+    /// player, which may still reach a seam) is in force until `nextRequest` replaces it, and its labels can collide with
+    /// this item's, so the request waits for the new plan and is handed to the sequencer there. Guarded by `lock`.
+    private var armedFootnoteRequest: (label: String, targetId: String)?
     /// Whether `preparedSpeechProjection` is the one with the article's matched citations silent (#3777). Reset by
     /// `prepareSpeechText`, set by `applyFootnoteSilencing` when a play starts. Guarded by `lock`.
     private var projectionHasAsides = false
@@ -835,12 +839,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         // A Timeline tap made before there was a plan to ask (#3777): installed after the resets above, which the tap's own
         // seek and a start of another item make, and after `prepareSpeechText`, which resets for a new text.
+        // Any later play drops a request still waiting for its plan: it was the listener's own move.
         lock.withLock {
+            armedFootnoteRequest = nil
             guard let request = pendingFootnoteRequest else { return }
             pendingFootnoteRequest = nil
-            if request.targetId == targetId,
-               ProcessInfo.processInfo.systemUptime - request.at <= Self.chimeMoveWindow {
+            guard request.targetId == targetId,
+                  ProcessInfo.processInfo.systemUptime - request.at <= Self.chimeMoveWindow else { return }
+            if currentTargetId == targetId, generationHasAsides {
+                // This item's own plan is in force: a seam resolves the note against it.
                 chimeSequencer.requestHearing(label: request.label)
+            } else {
+                armedFootnoteRequest = (request.label, targetId)
             }
         }
         let requestedSpokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
@@ -1265,6 +1275,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         lock.withLock {
             chimeMoveStartedAt = nil
             pendingFootnoteRequest = nil
+            armedFootnoteRequest = nil
             chimeSequencer.reset()
         }
     }
@@ -1475,6 +1486,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             chimeSequencer.reset()
             chimeMoveStartedAt = nil
             pendingFootnoteRequest = nil
+            armedFootnoteRequest = nil
             chimeCuePending = false
             let renderControl = activeRenderControl
             activeRenderControl = nil
@@ -1883,6 +1895,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         lock.withLock {
             generationPlan = plan
             generationHasAsides = asides
+            // A Timeline tap's request made while another item's plan was in force (#3777): this is that item's plan.
+            if let armed = armedFootnoteRequest, armed.targetId == targetId {
+                armedFootnoteRequest = nil
+                if asides { chimeSequencer.requestHearing(label: armed.label) }
+            }
             preparationPlan = canonicalPlan
             fastStartOriginals = fastStartOriginal.map { [$0.key: $0] } ?? [:]
             // Navigation is also a demand signal. Render from the new playhead
