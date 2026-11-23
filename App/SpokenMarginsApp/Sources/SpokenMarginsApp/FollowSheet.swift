@@ -15,6 +15,8 @@ struct FollowSheet: View {
     let browse: () -> Void
     /// The Lists screen's **Add a list by link** opens the sheet with the field focused.
     var focusesField = false
+    /// A list's address already found (pasted from Following's empty state): its preview opens at once.
+    var initialListURL: URL? = nil
     @State private var isFollowing = false
     /// A list's address the last paste or Follow found: its preview is pushed.
     @State private var listURL: URL?
@@ -87,6 +89,7 @@ struct FollowSheet: View {
                 }
             }
             .task {
+                if let initialListURL, listURL == nil { listURL = initialListURL }
                 guard focusesField else { return }
                 try? await Task.sleep(for: .milliseconds(450))
                 fieldFocused = true

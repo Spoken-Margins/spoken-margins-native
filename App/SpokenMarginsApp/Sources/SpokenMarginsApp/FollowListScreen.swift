@@ -150,7 +150,10 @@ struct FollowListScreen: View {
                 .autocorrectionDisabled()
                 .keyboardType(.URL)
             Button("Cancel", role: .cancel) {}
-            Button("Continue") { includeURL = ListLinkWords.webURL(includeAddress) }
+            Button("Continue") {
+                includeURL = ListLinkWords.webURL(includeAddress)
+                if includeURL == nil { model.reportFailure(ListLinkWords.notAListOrFeed) }
+            }
         } message: {
             Text(ListLinkWords.includeAddressMessage)
         }

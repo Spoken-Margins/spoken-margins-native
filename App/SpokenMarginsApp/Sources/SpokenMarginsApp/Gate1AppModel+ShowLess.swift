@@ -33,9 +33,10 @@ extension Gate1AppModel {
         guard let store else { return }
         let state = RuleSuggestionsState.shared
         let generation = state.nextGeneration()
-        let imported = listeningSignals.importedEntries.entryIds()
+        let importedEntries = listeningSignals.importedEntries
         let found = await Task.detached(priority: .utility) {
-            RuleSuggestionsLoader.load(store: store, importedEntryIds: imported)
+            // Read here: on a cold cache it reads a file (as `reloadFollowingShowEntries` does).
+            RuleSuggestionsLoader.load(store: store, importedEntryIds: importedEntries.entryIds())
         }.value
         state.publish(found, generation: generation)
     }
@@ -50,8 +51,9 @@ extension Gate1AppModel {
     func showLessTarget(itemId: String) async -> ShowLessTarget? {
         guard let store, !itemId.isEmpty else { return nil }
         let subscriptions = feedSubscriptions, entries = followingShowEntries
-        let imported = listeningSignals.importedEntries.entryIds()
+        let importedEntries = listeningSignals.importedEntries
         return await Task.detached(priority: .userInitiated) { () -> ShowLessTarget? in
+            let imported = importedEntries.entryIds()
             guard let item = try? store.loadItem(id: itemId), item.deletedAt == nil,
                   let subscription = FollowedShowMatch.subscription(for: item, subscriptions: subscriptions) else { return nil }
             let entryId = FollowedShowMatch.entryId(for: item, subscription: subscription, entries: entries, importedEntryIds: imported)

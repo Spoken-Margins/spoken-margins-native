@@ -38,6 +38,8 @@ struct ExperienceSourcesScreen: View, Equatable {
     @ObservedObject private var suggestionsState = RuleSuggestionsState.shared
     /// The list a chip's **Share list** is sharing, when it has rules to offer first (PR 5, 13).
     @State private var sharingList: FollowList?
+    /// A list's address pasted from the empty state: the Follow sheet opens on its preview (#4046 PR 7a).
+    @State private var followSheetListURL: URL?
     /// The show whose "Lists for <show>" sheet is open.
     @State private var listsSheetShow: FeedSubscription?
     /// The Lists screen is pushed from the toolbar's Lists button, and a list's own screen from a chip's Edit list (PR 3).
@@ -166,8 +168,14 @@ struct ExperienceSourcesScreen: View, Equatable {
                         // A copied link is followed at once; otherwise the sheet opens ready for a link.
                         if case .follow = model.clipboardFollowDecision {
                             Task {
-                                // Several feeds behind one link: the choice is on the sheet.
-                                if case .needsChoice = await model.followFromClipboard() { isShowingFollowSheet = true }
+                                // Several feeds behind one link: the choice is on the sheet. A list opens its preview there.
+                                switch await model.followFromClipboard() {
+                                case .needsChoice: isShowingFollowSheet = true
+                                case .list(let url):
+                                    followSheetListURL = url
+                                    isShowingFollowSheet = true
+                                case .followed, .stopped: break
+                                }
                             }
                         } else {
                             isShowingFollowSheet = true
@@ -273,6 +281,7 @@ struct ExperienceSourcesScreen: View, Equatable {
                 .miniPlayerKeepOut()
             }
             .trackedSheet(isPresented: $isShowingFollowSheet, onDismiss: {
+                followSheetListURL = nil
                 guard opensCatalogAfterFollowSheet else { return }
                 opensCatalogAfterFollowSheet = false
                 catalogDrawer.present()
@@ -280,7 +289,7 @@ struct ExperienceSourcesScreen: View, Equatable {
                 FollowSheet(browse: {
                     opensCatalogAfterFollowSheet = true
                     isShowingFollowSheet = false
-                })
+                }, initialListURL: followSheetListURL)
                 .environmentObject(model)
                 .environmentObject(catalogDrawer)
             }

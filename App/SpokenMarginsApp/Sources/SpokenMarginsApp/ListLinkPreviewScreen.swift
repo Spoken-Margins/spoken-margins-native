@@ -139,8 +139,11 @@ struct ListLinkPreviewScreen: View {
     /// One read; leaving the screen cancels it.
     private func fetch() async {
         guard case .fetching = phase else { return }
+        // A session with a delegate lives until it is invalidated.
+        let session = ListLinkTransport.makeSession()
+        defer { session.finishTasksAndInvalidate() }
         do {
-            let fetched = try await ListLinkChecker(session: ListLinkTransport.makeSession()).fetch(url)
+            let fetched = try await ListLinkChecker(session: session).fetch(url)
             let plan = ListLinkPreviewPlan(
                 shows: fetched.resolution.shows, documentTitle: fetched.resolution.title, url: fetched.url,
                 leftOut: fetched.resolution.leftOut, subscriptions: model.feedSubscriptions)

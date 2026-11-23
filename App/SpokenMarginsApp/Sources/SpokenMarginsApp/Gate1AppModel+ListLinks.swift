@@ -264,16 +264,24 @@ extension Gate1AppModel {
             let planned = extras.preview.lists, on = extras.listsOn
             let saved = try await FollowListsState.shared.service(for: store).update { existing in
                 let result = OPMLListImporter.apply(planned, switchedOn: on, followedFeedKeys: followed, existing: existing)
-                return (result.lists, result)
+                return (result.lists, (result: result, before: existing))
             }
             FollowListsState.shared.publish(saved.lists)
-            line = OPMLImportListWords.resultLine(saved.value)
+            line = OPMLImportListWords.resultLine(saved.value.result)
 
             if let target = OPMLIncludeImporter.targetList(preview: extras.preview, listsOn: extras.listsOn),
                let list = saved.lists.first(where: { FollowListName.sameName($0.name, target.name) }), !extras.includesOn.isEmpty {
+                // A show already in the listener's list before this import stays theirs: the include can never offer to
+                // remove it (as `includeListFromLink`).
+                let before = saved.value.before.first { $0.id == list.id }
                 let links = OPMLIncludeImporter.links(
                     extras.preview.includes, switchedOn: extras.includesOn, listID: list.id, followedFeedKeys: followed,
-                    existing: ListLinksState.shared.links)
+                    existing: ListLinksState.shared.links
+                ).map { link -> ListLink in
+                    var link = link
+                    link.acceptedMembers.removeAll { before?.contains(feedKey: $0.feedKey, podcastGUID: $0.podcastGUID) ?? false }
+                    return link
+                }
                 if !links.isEmpty { ListLinksState.shared.publish(try await ListLinksState.shared.service(for: store).saveLinks(links)) }
             }
 
