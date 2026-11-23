@@ -137,7 +137,7 @@ extension Gate1AppModel {
         // After this snapshot change has settled: starting a session writes the snapshot again.
         Task { @MainActor [weak self] in
             guard let self else { return }
-            hangTelemetry.labels.scoped("playQueueAdvance") { startItem(id: next) }
+            hangTelemetry.labels.scoped("playQueueAdvance") { _ = startItem(id: next) }
         }
     }
 }

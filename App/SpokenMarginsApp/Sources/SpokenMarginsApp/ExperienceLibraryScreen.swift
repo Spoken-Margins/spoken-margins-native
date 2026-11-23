@@ -591,7 +591,7 @@ struct ExperienceLibraryScreen: View {
                             return
                         }
                         // A note plays whole, start to finish, like any item; its own screen is where a sentence is picked.
-                        if let noteId = row.spokenNoteId { notePlay.play(noteId: noteId, app: model) } else { model.continueListening(itemId: row.id) { pendingNewMarginsOffer = $0 } }
+                        if let noteId = row.spokenNoteId { notePlay.play(noteId: noteId, app: model) } else { model.continueListening(itemId: row.id, offersCatchUp: true) { pendingNewMarginsOffer = $0 } }
                     },
                     onComplete: { model.markItemCompleted(id: row.id) },
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },

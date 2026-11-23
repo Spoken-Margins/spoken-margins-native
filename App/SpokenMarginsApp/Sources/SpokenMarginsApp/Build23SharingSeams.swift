@@ -344,6 +344,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     private var leadInPreviewStartID: String?
     /// The sheet's heading: "Share replies with Ana" (or "Share your Margins with Ana" when none is a reply) when it was opened to share replies back (#3221, #3906).
     var senderHeading: String { model.sharingState.replyBackTitle ?? "Share Margins" }
+    /// The line under the heading when the sheet shares replies (#4785): the friend can hear just these.
+    var senderCaption: String? { model.sharingState.replyBackCaption }
     /// Recovers a private-feed packet's episode from the recipient's own feed (#454).
     let episodeRecovery: SharedEpisodeRecovery
     private var previewFingerprint: String?

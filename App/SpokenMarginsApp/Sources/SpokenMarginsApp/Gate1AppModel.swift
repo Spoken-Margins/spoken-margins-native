@@ -282,6 +282,7 @@ final class Gate1AppModel: ObservableObject {
     /// Settable from other files so the go-to in `Gate1AppModel+SilentMarginJump.swift` can ask for Now (#4934).
     @Published var showNowRequests = 0
     @Published var silentMarginLanding: SilentMarginLanding? // a friend's silent Margin the listener went to; the pinned card shows it (#4934)
+    @Published var catchUp: ActiveCatchUp? // a catch-up run on a finished item and its caught-up card (#4785, `Gate1AppModel+CatchUp.swift`)
     @Published private(set) var marginMomentVoiceIsPaused = false
     /// Whose Margin the moment is for ("Your Margin", "Cole's Margin"), and whether its position is only a guess.
     @Published private(set) var marginMomentTitle = "Your Margin"
@@ -1159,7 +1160,9 @@ final class Gate1AppModel: ObservableObject {
         conductor.prepareAudioSession = { [weak self] in try self?.prepareMarginMomentVoice() }
         conductor.onVoiceUnavailable = { [weak self] (marginId: String, reason: String) in
             self?.diagnostics["marginMoment.voiceUnavailable"] = "\(marginId):\(reason)"
-            self?.reportWarning("That Margin's recording couldn't play, so listening continues.")
+            // A catch-up run ends paused, so it never says listening continues (#4785).
+            self?.reportWarning(self?.catchUp?.run.isRunning == true
+                ? "That Margin's recording couldn't play." : "That Margin's recording couldn't play, so listening continues.")
         }
         conductor.onChange = { [weak self, weak conductor] in
             guard let self, let conductor, self.marginMomentConductor === conductor else { return }
@@ -1167,7 +1170,10 @@ final class Gate1AppModel: ObservableObject {
             self.marginMomentVoiceIsPaused = conductor.isVoicePaused
             if !conductor.isPlayingVoice { self.recordMarginMomentVoiceEnded() }
             // Nothing left to play inline: the card goes away and the item simply continues.
-            if conductor.sequence.phase == .listening, conductor.sequence.unplayed.isEmpty { self.endMarginMoment() }
+            if conductor.sequence.phase == .listening, conductor.sequence.unplayed.isEmpty {
+                self.catchUpRunReachedItsEnd(conductor) // before the moment ends, so the caught-up card takes the slot (#4785)
+                self.endMarginMoment()
+            }
         }
         marginMomentConductor = conductor
         marginMomentTitle = title
@@ -1561,17 +1567,26 @@ final class Gate1AppModel: ObservableObject {
         LibraryQueryEngine.librarySortDescription(query: libraryQuery)
     }
 
-    func startItem(id: String) {
-        guard prepareToStartItem(id: id) else { return }
+    /// `catchUp` (#4785) starts by `PlayRule.catchUpStart`, which never moves a finished or 99% session. Returns what it
+    /// tried, nil when nothing was tried.
+    @discardableResult
+    func startItem(id: String, catchUp: Bool = false) -> PlayRule.StartAction? {
+        guard prepareToStartItem(id: id) else { return nil }
         silentMarginLanding = nil
         do {
             let store = try requireStore()
-            switch PlayRule.startAction(sessions: try store.loadSessions(itemId: id), addedAgainAt: addedAgainAt(forItem: id)) {
+            let sessions = try store.loadSessions(itemId: id)
+            let action = catchUp
+                ? PlayRule.catchUpStart(sessions: sessions, addedAgainAt: addedAgainAt(forItem: id))
+                : PlayRule.startAction(sessions: sessions, addedAgainAt: addedAgainAt(forItem: id))
+            switch action {
             case .resume(let continuation): resumeSession(continuation)
             case .startNew: startNewSession(id: id)
             }
+            return action
         } catch {
             reportFailure(error, context: "Continue listening failed")
+            return nil
         }
     }
 
@@ -1580,6 +1595,7 @@ final class Gate1AppModel: ObservableObject {
         // Before ending what's playing: a blocked start must not stop a downloaded episode.
         guard !blockOfflineEpisodeStart(itemId: id) else { return }
         endUnfinishedReview()
+        noteCatchUp(.otherItemOpened) // any new start puts the caught-up card away (#4785)
         followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
         resetMixWithOtherAudioForNewSession()
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
@@ -1599,6 +1615,7 @@ final class Gate1AppModel: ObservableObject {
     func openSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_session") else { return }
         endUnfinishedReview()
+        noteCatchUp(.otherItemOpened)
         followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
         resetMixWithOtherAudioForNewSession()
         sharedMarginOffers.removeAll()
@@ -1630,6 +1647,7 @@ final class Gate1AppModel: ObservableObject {
         guard !rejectNavigationOrSessionMutationWhileRecording("resume_session") else { return }
         guard !blockOfflineEpisodeStart(itemId: session.itemId) else { return }
         endUnfinishedReview()
+        noteCatchUp(.otherItemOpened)
         followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
         resetMixWithOtherAudioForNewSession()
         cancelSleepTimer()

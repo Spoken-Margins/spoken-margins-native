@@ -77,6 +77,8 @@ extension Gate1AppModel {
         // A friend's Margin the listener went to that is never read aloud: its words, while the source is still near it (#4934).
         if let landing = shownSilentMarginLanding { return landing.card(noun: sourceNoun) }
         if let saved = friendAnswerSavedCard { return saved }
+        // After a catch-up run, the card that says no answer is owed, ahead of any heard Margin still ahead (#4785).
+        if let caughtUp = caughtUpCard { return caughtUp }
         // Auto-play off still holds the slot: Next Margin is reachable between Margins and the title never moves.
         guard let next = nextSharedMargin else { return friendLastMarginCard }
         let remaining = next.mediaTimeMs.flatMap { ms in snapshot.currentMediaTimeMs.map { max(0, ms - $0) } }

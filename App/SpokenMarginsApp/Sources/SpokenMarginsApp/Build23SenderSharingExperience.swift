@@ -71,10 +71,20 @@ struct Build23SenderSharingExperience: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 HStack(alignment: .center) {
-                    Text(coordinator.senderHeading)
-                        .font(.headline)
-                        .foregroundStyle(AppColors.text)
-                        .accessibilityIdentifier("build23.sender.heading")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(coordinator.senderHeading)
+                            .font(.headline)
+                            .foregroundStyle(AppColors.text)
+                            .accessibilityIdentifier("build23.sender.heading")
+                        // Replies arrive marked new, so the friend can hear just them (#4785).
+                        if let caption = coordinator.senderCaption {
+                            Text(caption)
+                                .font(.footnote)
+                                .foregroundStyle(AppColors.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("build23.sender.caption")
+                        }
+                    }
                     Spacer()
                     Button("Cancel", role: .cancel) {
                         coordinator.send(.cancel)

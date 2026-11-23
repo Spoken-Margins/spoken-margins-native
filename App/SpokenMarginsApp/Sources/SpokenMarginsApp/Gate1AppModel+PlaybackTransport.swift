@@ -126,6 +126,7 @@ extension Gate1AppModel {
     @discardableResult
     func seekMedia(toMediaTimeMs mediaTimeMs: Int) -> Bool {
         marginMomentConductor?.sourceMoved()
+        noteCatchUp(.scrub) // a scrub after a catch-up run puts the caught-up card away (#4785)
         recordDeveloperDiagnostic("seek.media.request", ["timeMs": String(mediaTimeMs)])
         restoreSkimOriginBeforeCanonicalTransport()
         return run { engine in

@@ -41,10 +41,12 @@ extension Gate1AppModel {
     }
 
     func skimForward() {
+        noteCatchUp(.scrub) // Skim puts the caught-up card away (#4785)
         skimBridge.perform(direction: .forward)
     }
 
     func skimBackward() {
+        noteCatchUp(.scrub)
         skimBridge.perform(direction: .backward)
     }
 

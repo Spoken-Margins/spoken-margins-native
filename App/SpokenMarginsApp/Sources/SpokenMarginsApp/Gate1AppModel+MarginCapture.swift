@@ -222,6 +222,7 @@ extension Gate1AppModel {
             return
         }
         guard !recordingNavigationIsLocked, handOffPlayingMarginToRecording() else { return }
+        noteCatchUp(.recordingStarted) // "Your Margin is saved" takes the caught-up card's slot (#4785)
         suggestSharedMarginReply()
         let voiceCaptureRequestID = marginCapture.beginVoiceRequest()
         AppHaptics.play(.started)
