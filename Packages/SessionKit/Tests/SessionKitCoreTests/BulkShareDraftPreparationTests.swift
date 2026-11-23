@@ -319,6 +319,36 @@ final class BulkShareDraftPreparationTests: XCTestCase {
         }
     }
 
+    /// Switched out while its voice is made, then back in: it goes Without ums, the voice its cleaned words describe,
+    /// not As recorded with ums next to words that leave them out. A Without ums pick holds the same way.
+    func testAMarginSwitchedOutDuringTheRenderGoesWithoutUmsWhenSwitchedBackIn() async throws {
+        for picksWithoutUms in [false, true] {
+            let host = Host(folder: folder, drafts: [draft("a")])
+            let gate = RenderGate()
+            host.preparation = BulkShareDraftPreparation(
+                analyze: { _, _ in [] },
+                render: { _, destination, _ in
+                    try Data("cleaned".utf8).write(to: destination)
+                    await gate.park()
+                    return 10
+                },
+                discardStaleCopy: { _ in XCTFail("the copy is current") }
+            )
+            if picksWithoutUms { host.bulkShareDrafts[0].recordPick(.cleaned) }
+            host.startLikeTheSwitch()
+            try await waitUntil("the render is out") { await gate.isParked }
+            host.bulkShareDrafts[0].setIncluded(false)
+            await gate.open()
+            try await waitUntil("the run completes") { host.log.contains(.completed) }
+            XCTAssertEqual(host.log, [.skipped, .completed], "a left-out Margin is not counted")
+            host.bulkShareDrafts[0].setIncluded(true)
+            XCTAssertFalse(BulkShareDraftPreparation.includePass(id: "a", host: host), "its voice is already made")
+            let result = try XCTUnwrap(host.bulkShareDrafts.first)
+            XCTAssertEqual(result.representationChoice, .cleaned, "pick: \(picksWithoutUms)")
+            XCTAssertNotNil(result.cleanedAudioURL)
+        }
+    }
+
     func testAWordsOnlyPickSurvivesUndoBackToNoEdits() throws {
         var margin = draft("a")
         _ = margin.recordEdit(hasOriginalAudio: true, renderCleanedAudio: false) { $0.automaticCleanupEnabled = true }

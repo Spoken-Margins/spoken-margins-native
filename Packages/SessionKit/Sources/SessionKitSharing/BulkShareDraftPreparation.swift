@@ -247,10 +247,15 @@ public struct BulkShareDraftPreparation {
         if let duration = result.duration {
             host.bulkShareDrafts[current].cleanedAudioURL = destination
             host.bulkShareDrafts[current].cleanedAudioDurationMs = duration
-            // A sender's pick holds (#4647): the copy is kept for later, but goes now only when they picked nothing or
-            // picked Without ums, and only for a Margin still in the run.
-            guard !Self.leftTheRun(draft) else { return .skipped }
-            host.bulkShareDrafts[current].representationChoice = .cleaned
+            // A sender's pick holds (#4647): the copy goes when they picked nothing or picked Without ums, even for a
+            // Margin switched out meanwhile, so switching it back in sends the voice its cleaned words describe. A left-out
+            // Margin's version is never read (the packet and the fingerprint take only included Margins), and it is
+            // not counted as done.
+            let now = host.bulkShareDrafts[current]
+            if !now.optedOutOfCleanedVoice {
+                host.bulkShareDrafts[current].representationChoice = .cleaned
+            }
+            guard !Self.leftTheRun(now) else { return .skipped }
             return .done
         }
         host.bulkShareDrafts[current].cleanedAudioURL = nil

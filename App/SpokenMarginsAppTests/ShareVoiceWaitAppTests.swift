@@ -166,6 +166,22 @@ final class ShareVoiceWaitAppTests: XCTestCase {
         XCTAssertEqual(fixture.model.sharingState.drafts[0].representationChoice, .original, "the pick holds when the voice lands")
     }
 
+    /// "Select all shown" passes Margins that are already in: one whose cleanup the sender undid stays as recorded, and
+    /// nothing joins the run (#4647 audit on d4a4ca1).
+    func testSelectAllShownDoesNotRedoAnUndoneCleanup() async throws {
+        let fixture = try makeFixture(marginCount: 2)
+        defer { fixture.cleanUp() }
+        fixture.model.prepareAllIncludedShareDrafts()
+        try await fixture.drain()
+        fixture.model.restoreOriginalShareDraft("margin-wait-0")
+        XCTAssertEqual(fixture.model.sharingState.drafts[0].approvedTranscript, "Keep um words.")
+
+        fixture.model.setShareDraftsIncluded(["margin-wait-0", "margin-wait-1"], included: true)
+        XCTAssertEqual(fixture.model.sharingState.drafts[0].approvedTranscript, "Keep um words.", "the undo holds")
+        XCTAssertTrue(fixture.model.sharingState.queuedVoiceIDs.isEmpty, "nothing joins the run")
+        XCTAssertFalse(fixture.model.sharingState.isBulkPreparing)
+    }
+
     /// The export itself refuses while a voice it needs is still being made: the sheet waits before it asks.
     func testTheExportRefusesWhileAVoiceItNeedsIsBeingMade() async throws {
         let fixture = try makeFixture(marginCount: 1)

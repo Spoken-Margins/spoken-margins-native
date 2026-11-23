@@ -155,10 +155,13 @@ extension Gate1AppModel {
     }
 
     /// A Margin switched in or out (#4647). In, with the switch on, only its words are cleaned and only it joins the run;
-    /// out, it leaves the run at once if it is still queued.
+    /// out, it leaves the run at once if it is still queued. Only a real change does either: a Margin already in (as
+    /// "Select all shown" passes it again) is not cleaned again, so a sender's "Undo all edits" holds.
     func setShareDraftIncluded(_ id: String, included: Bool) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        let wasIncluded = sharingState.drafts[index].isIncluded
         sharingState.drafts[index].setIncluded(included)
+        guard sharingState.drafts[index].isIncluded != wasIncluded else { return }
         if sharingState.drafts[index].isIncluded {
             prepareIncludedShareDraftIfEnabled(id)
         } else {
