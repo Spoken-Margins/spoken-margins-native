@@ -551,7 +551,7 @@ struct SettingsScreen: View, Equatable {
                     .buttonStyle(.borderless)
                     .disabled(isPreparingDiagnostics)
                     .accessibilityIdentifier("settings.shareDiagnostics.button")
-                    Text("App state and recent playback events, as a file for a bug report. It includes the titles and links of what is in your Library. It stays on this device unless you share it.")
+                    Text("\(DiagnosticsExportFile.contentsDescription) It stays on this device unless you share it. The Export Diagnostics action in the Shortcuts app makes the same file.")
                         .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
                     ExportListeningSignalsButton(
