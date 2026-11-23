@@ -19,6 +19,7 @@ KEEP_OUT = ".miniPlayerKeepOut()"
 # and the Timeline places its own. Keyed by (file, the struct that holds the NavigationStack or link).
 NO_PILL = {
     ("CatalogDrawer.swift", "CatalogDrawerView"): "the catalog drawer is a sheet",
+    ("ApplePodcastsImportGuide.swift", "ApplePodcastsImportRow"): "only in the catalog drawer and the Follow sheet, both sheets (#4290)",
     ("ExperienceAudioPreparationQueueScreen.swift", "*"): "a sheet from the Library",
     ("ExperienceMarginDetailView.swift", "*"): "a sheet from Margins",
     ("ExperiencePlayQueueScreen.swift", "*"): "a sheet from the Library",
