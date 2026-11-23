@@ -204,6 +204,47 @@ final class ImportedPodcastPlacementCoordinatorTests: XCTestCase {
         XCTAssertTrue(h.coordinator.beginFullSourceTranscription(itemId: item.id))
     }
 
+    // MARK: Held for the Speech Recognition answer (#4715)
+
+    /// The audit on #5124: a friend's packet whose transient transcript met the hold must be placed again after Allow,
+    /// including when the transcript was asked for directly and `requestedURL` was never set (round 1 retried only when
+    /// it was). Mutation: guarding the retry on `requestedURL[itemId]`, or not reporting the hold, leaves it unplaced.
+    func testAHeldFriendPlacementIsPlacedAgainAfterAllowWithoutARequestedURL() async throws {
+        let h = try PlacementCoordinatorHarness()
+        defer { h.shutdown() }
+        let store = try h.makeStore()
+        try h.seedPodcastItem(in: store)
+        let item = h.makeItem()
+        let file = try h.writeAudio("episode.mp3")
+        XCTAssertTrue(h.coordinator.scheduleTransientTranscript(for: item, localSourceURL: file))
+        XCTAssertNil(h.coordinator.requestedURL[item.id], "a direct transient request sets no requestedURL")
+
+        h.transcriber.open(failingWith: SessionKitError.persistenceFailed(TranscriptionFailureWording.speechRecognitionNotYetAskedError))
+        let held = try await h.waitUntil { !h.spies.held.isEmpty }
+        XCTAssertTrue(held, "the hold is reported, so the card comes due")
+        XCTAssertEqual(h.spies.held.map(\.itemId), [item.id])
+
+        let retries = HeldTranscriptionRetries()
+        for entry in h.spies.held { retries.hold(.friendPacketPlacement, key: entry.itemId, retry: entry.retry) }
+        XCTAssertEqual(retries.settle(access: .authorized), 1)
+        await h.coordinator.waitForQueuedResolves()
+        XCTAssertEqual(h.coordinator.requestedURL[item.id], file, "Allow placed the held file again")
+        XCTAssertEqual(h.spies.deferCalls.map(\.itemId), [item.id])
+    }
+
+    /// Only the hold is held: any other transcript failure is reported as before and nothing waits for Allow.
+    func testATranscriptFailureThatIsNotTheHoldIsNotHeld() async throws {
+        let h = try PlacementCoordinatorHarness()
+        defer { h.shutdown() }
+        let item = h.makeItem()
+        let file = try h.writeAudio("episode.mp3")
+        XCTAssertTrue(h.coordinator.scheduleTransientTranscript(for: item, localSourceURL: file))
+        h.transcriber.open(failingWith: SessionKitError.persistenceFailed(TranscriptionFailureWording.speechRecognitionOffError))
+        let released = try await h.waitUntil { h.spies.transientDiagnostics(item.id).contains { $0.hasPrefix("failed_and_deleted") } }
+        XCTAssertTrue(released)
+        XCTAssertTrue(h.spies.held.isEmpty)
+    }
+
     // MARK: Placement: rejected preflight
 
     /// Mutation: letting `resolve` continue past a nil store (or returning something other than `.rejected`), or not
@@ -566,6 +607,9 @@ private final class PlacementSpies {
     private(set) var refreshedAfterInvalidation: [String] = []
     private(set) var passesLog: [(old: SharedMarginPlacementPasses, new: SharedMarginPlacementPasses)] = []
     var slotWasFreeAtDeferral: [Bool] = []
+    /// Transient transcripts that met the hold on iOS's prompt, with the retry each left for Allow.
+    private(set) var held: [(itemId: String, retry: @MainActor () -> Void)] = []
+    func recordHeld(_ itemId: String, _ retry: @escaping @MainActor () -> Void) { held.append((itemId: itemId, retry: retry)) }
     /// Runs inside each reported diagnostic, on the main actor, so a test can act at a point `resolve` reaches
     /// without having awaited anything since it scheduled its pass.
     var onDiagnostic: (@MainActor (String, String) -> Void)?
@@ -629,7 +673,8 @@ private final class PlacementCoordinatorHarness {
             refreshSelectedItemIfShowing: { _ in },
             recordDiagnostic: { spies.recordDiagnostic($0, $1) },
             passesDidChange: { old, new in spies.recordPassesChange(old, new) },
-            retainHost: { nil }
+            retainHost: { nil },
+            transcriptionHeld: { spies.recordHeld($0, $1) }
         ))
     }
 

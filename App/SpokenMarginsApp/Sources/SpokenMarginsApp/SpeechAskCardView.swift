@@ -50,8 +50,9 @@ struct SpeechAskCard: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    static let headline = "Want your Margins as text too?"
-    static let detail = "Then you can search them and copy them into your notes."
+    /// The words are SessionKit's choice (`SpeechRecognitionAsk.cardWording`): the Margins words, or the friend's-packet
+    /// words for a listener who has never recorded (#4715).
+    private var wording: SpeechRecognitionAsk.CardWording { controller.ask.cardWording }
 
     private var isLargeText: Bool { dynamicTypeSize >= .xLarge }
 
@@ -63,10 +64,12 @@ struct SpeechAskCard: View {
                     .foregroundStyle(AppColors.listeningAccent)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(Self.headline).font(.headline)
-                    Text(Self.detail)
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.85))
+                    Text(wording.headline).font(.headline)
+                    if let detail = wording.detail {
+                        Text(detail)
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
                 }
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
@@ -78,7 +81,7 @@ struct SpeechAskCard: View {
                     Text("Yes").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(PrimaryButtonStyle())
-                .accessibilityLabel("Yes, get my Margins as text")
+                .accessibilityLabel(wording.yesAccessibilityLabel)
                 .accessibilityIdentifier("speechAsk.yes")
                 Button { controller.notNow() } label: {
                     Text("Not now").minimumTapTarget()
@@ -94,7 +97,7 @@ struct SpeechAskCard: View {
         .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal, gutter)
         // One announcement per ask, so VoiceOver's focus (which doesn't move) hears it, but not again when the slot frees up.
-        .onAppear { if controller.shouldAnnounceCard() { AccessibilityNotification.Announcement(Self.headline).post() } }
+        .onAppear { if controller.shouldAnnounceCard() { AccessibilityNotification.Announcement(wording.headline).post() } }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("speechAsk.card")
     }
