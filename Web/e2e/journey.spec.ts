@@ -45,7 +45,7 @@ test('follow a show, play, write a Margin, find it in Margins, and resume after 
   await shot(page, info, '04-library');
 
   // Play the newest episode; the clock must actually move.
-  await page.getByRole('button', { name: /Episode 3: No link, GUID and audio/ }).click();
+  await page.getByRole('button', { name: /^(?!More for ).*Episode 3: No link, GUID and audio/ }).click();
   const nowPlaying = page.getByRole('dialog', { name: 'Episode 3: No link, GUID and audio' });
   await expect(nowPlaying).toBeVisible();
   await expect(nowPlaying.getByRole('button', { name: 'Pause' })).toBeVisible();
@@ -447,7 +447,7 @@ test('closing a layer puts focus back where the listener was', async ({ page }) 
 
   // Now Playing, from a Library row: closing it returns to that row.
   await tab(page, 'Library');
-  const row = page.getByRole('list', { name: 'Episodes, newest first' }).getByRole('button', { name: /Episode 2: No link, no GUID/ });
+  const row = page.getByRole('list', { name: 'Episodes, newest first' }).getByRole('button', { name: /^(?!More for ).*Episode 2: No link, no GUID/ });
   await row.focus();
   await page.keyboard.press('Enter');
   await expect.poll(focused).toBe('Close Now Playing');
