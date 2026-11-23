@@ -45,7 +45,7 @@ export interface DataApi extends Snapshot {
   setSetting<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void>;
 }
 
-const empty: Snapshot = { shows: [], episodes: [], margins: [], positions: [], settings: DEFAULT_SETTINGS };
+const empty: Snapshot = { shows: [], episodes: [], margins: [], positions: [], settings: DEFAULT_SETTINGS, library: {} };
 const DataContext = createContext<DataApi | null>(null);
 
 function upsert<T>(list: T[], items: readonly T[], key: (t: T) => string): T[] {
