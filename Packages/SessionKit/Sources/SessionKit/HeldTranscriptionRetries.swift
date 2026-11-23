@@ -8,8 +8,9 @@ import Foundation
 /// card (the audit on #5124 found three that didn't, one after another).
 ///
 /// The card is owed for a spoken Margin from any surface (the #4715 Design ties it to saving one), for a spoken note (the
-/// listener's own recording; director's Default taken on #4715, 2026-11-23) and for a friend's packet placement (the
-/// same Default). The other purposes wait quietly and are retried whenever the listener does allow.
+/// listener's own recording; director's Default taken on #4715, 2026-11-23), for a friend's packet placement (the
+/// same Default) and for an episode map the listener asked for (on `main`, iOS asked at that tap; the pre-audit on
+/// #5124). The other purposes wait quietly and are retried whenever the listener does allow.
 public enum HeldTranscription: String, Sendable, CaseIterable {
     /// A spoken Margin saved in the player, or by a Shortcut onto a Library item (`Gate1AppModel` transcription).
     case playerMargin
@@ -22,8 +23,11 @@ public enum HeldTranscription: String, Sendable, CaseIterable {
     /// A friend's podcast packet: a transient transcript of the listener's copy places the Margins acoustic evidence
     /// could not (`ImportedPodcastPlacementCoordinator.scheduleTransientTranscript`).
     case friendPacketPlacement
-    /// The private episode map and Listening Map (`EpisodeMapPreparer`).
+    /// The private episode map and Listening Map (`EpisodeMapPreparer`) prepared in the background, unasked.
     case episodeMap
+    /// The same map when the listener asked for it (an explicit policy: Prepare Listening Map, or the download they
+    /// started for one finishing). With no spoken Margin it is the only way to reach Allow, so it owes the card.
+    case listenerEpisodeMap
     /// The source words around a spoken Margin (`Gate1AppModel+SourceWindowContext`).
     case sourceWindow
     /// The text-to-time map for an article's publisher audio (`PublisherAudioTextMapper`), which checks iOS's answer
@@ -67,7 +71,7 @@ public enum HeldTranscription: String, Sendable, CaseIterable {
     public var isSpokenMargin: Bool {
         switch self {
         case .playerMargin, .liveSessionMargin, .watchMargin, .shortcutMargin: true
-        case .friendPacketPlacement, .episodeMap, .sourceWindow, .publisherTextMap, .justHeardPeek, .spokenNote: false
+        case .friendPacketPlacement, .episodeMap, .listenerEpisodeMap, .sourceWindow, .publisherTextMap, .justHeardPeek, .spokenNote: false
         }
     }
 
@@ -76,7 +80,7 @@ public enum HeldTranscription: String, Sendable, CaseIterable {
     public var isListenersRecording: Bool { isSpokenMargin || self == .spokenNote }
 
     /// Whether this held work makes the in-app card owed.
-    public var makesAskOwed: Bool { isListenersRecording || self == .friendPacketPlacement }
+    public var makesAskOwed: Bool { isListenersRecording || self == .friendPacketPlacement || self == .listenerEpisodeMap }
 
     /// The purposes whose held work is carried into the next launch, one per stored key: the purpose the launch reports
     /// again to owe the card and register the sweep.
@@ -92,7 +96,7 @@ public enum HeldTranscription: String, Sendable, CaseIterable {
         switch self {
         case .playerMargin: .waitingList
         case .liveSessionMargin, .watchMargin, .shortcutMargin: .liveSessionSweep
-        case .friendPacketPlacement, .episodeMap, .sourceWindow, .publisherTextMap: .callerRegisters
+        case .friendPacketPlacement, .episodeMap, .listenerEpisodeMap, .sourceWindow, .publisherTextMap: .callerRegisters
         case .spokenNote: .spokenNoteSweep
         case .justHeardPeek: .none
         }

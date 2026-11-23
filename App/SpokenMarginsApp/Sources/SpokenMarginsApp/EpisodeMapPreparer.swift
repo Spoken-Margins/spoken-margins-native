@@ -321,7 +321,7 @@ final class EpisodeMapPreparer {
                         url: localURL,
                         itemId: item.id,
                         durationMs: durationMs,
-                        for: .episodeMap
+                        for: initialJob.policy == .explicit ? .listenerEpisodeMap : .episodeMap
                     )
                     let transcriptData = try JSONEncoder().encode(timeline)
                     let safeItemID = host.safePodcastEvidenceComponent(item.id)
@@ -465,8 +465,10 @@ final class EpisodeMapPreparer {
                 host.recordEpisodeMapDiagnostic("episodeMapPreparation:\(item.id)", diagnostic)
             } catch {
                 job.lastFailureCode = SafeErrorText.describe(error)
-                if HeldTranscription.isHold(error) {
-                    // #4715: the map waits quietly for the listener's answer and starts again on Allow.
+                let held = HeldTranscription.isHold(error)
+                if held {
+                    // #4715: the map waits for the listener's answer, with no failure banner, and starts again on Allow. The
+                    // gate already owed the card for a map they asked for. One retry per item whichever purpose held it.
                     SpeechAskController.shared.transcriptionHeld(.episodeMap, key: item.id) { [weak self] in
                         MainThreadOperationLabels.shared.scoped("episodeMap.heldRetry") {
                             self?.prepare(itemId: item.id, policy: initialJob.policy, trigger: trigger, isHeldRetry: true)
@@ -474,12 +476,12 @@ final class EpisodeMapPreparer {
                     }
                 }
                 try? await self.saveJob(job, store: host.store)
-                self.status = "Failed"
+                self.status = held ? "Waiting for speech recognition" : "Failed"
                 host.recordEpisodeMapDiagnostic(
                     "episodeMapPreparation:\(item.id)",
                     EpisodeMapRunGuard.failedDiagnostic(SafeErrorText.describe(error), stage: job.stage, at: Date())
                 )
-                host.episodeMapPreparationDidFail(itemId: item.id, error: error)
+                if !held { host.episodeMapPreparationDidFail(itemId: item.id, error: error) }
             }
         }
         watchHeat(policy: initialJob.policy)

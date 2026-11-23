@@ -271,7 +271,12 @@ final class SpeechAskHeldTranscriptionTests: XCTestCase {
             ("friend's packet then a spoken note held", .unanswered, false, [.friendPacketPlacement, .spokenNote], true, .margins),
             ("answered Not now, spoken note held", .notNow, false, [.spokenNote], false, .margins),
             ("never recorded, friend's packet held", .unanswered, false, [.friendPacketPlacement], true, .friendPlacement),
-            ("never recorded, episode map held", .unanswered, false, [.episodeMap], false, .margins),
+            ("never recorded, background episode map held", .unanswered, false, [.episodeMap], false, .margins),
+            ("never recorded, episode map they asked for held", .unanswered, false, [.listenerEpisodeMap], true, .listeningMap),
+            ("answered Not now, episode map they asked for held", .notNow, false, [.listenerEpisodeMap], false, .listeningMap),
+            ("episode map they asked for, then a friend's packet", .unanswered, false, [.listenerEpisodeMap, .friendPacketPlacement], true, .friendPlacement),
+            ("episode map they asked for, then a spoken note", .unanswered, false, [.listenerEpisodeMap, .spokenNote], true, .margins),
+            ("spoken Margin and episode map they asked for", .unanswered, true, [.listenerEpisodeMap], true, .margins),
             ("never recorded, source window held", .unanswered, false, [.sourceWindow], false, .margins),
             ("never recorded, publisher map held", .unanswered, false, [.publisherTextMap], false, .margins),
             ("never recorded, episode map and source window", .unanswered, false, [.episodeMap, .sourceWindow], false, .margins),
@@ -306,6 +311,21 @@ final class SpeechAskHeldTranscriptionTests: XCTestCase {
         XCTAssertEqual(ask.cardWording, .margins)
     }
 
+    /// The pre-audit on #5124: a listener with no spoken Margin who asks for an episode's Listening Map met the hold and
+    /// never got the card (on `main`, iOS asked at that tap). The map they asked for owes it, in words about the map, and
+    /// shows when they reach for text too; a map prepared in the background stays quiet.
+    func testAnEpisodeMapTheListenerAskedForOwesTheCardInItsOwnWords() {
+        XCTAssertEqual(SpeechRecognitionAsk.CardWording.listeningMap.headline, "This episode's Listening Map needs speech recognition.")
+        var asked = SpeechRecognitionAsk(storedAnswer: nil)
+        asked.transcriptionHeld(.listenerEpisodeMap)
+        XCTAssertTrue(asked.isOwed(access: .notDetermined))
+        XCTAssertTrue(asked.cardDue(at: .reachedForText, access: .notDetermined, shownThisLaunchForReAsk: false))
+        XCTAssertEqual(asked.cardWording, .listeningMap)
+        var background = SpeechRecognitionAsk(storedAnswer: nil)
+        background.transcriptionHeld(.episodeMap)
+        XCTAssertFalse(background.isOwed(access: .notDetermined))
+    }
+
     /// Each purpose, by name: whether it owes the card and how it starts again after Allow. A new purpose must be added
     /// here, so its answer is a decision, not a default.
     func testEveryPurposeSaysWhetherItIsOwedAndHowItRetries() {
@@ -316,6 +336,7 @@ final class SpeechAskHeldTranscriptionTests: XCTestCase {
             .shortcutMargin: (true, .liveSessionSweep),
             .friendPacketPlacement: (true, .callerRegisters),
             .episodeMap: (false, .callerRegisters),
+            .listenerEpisodeMap: (true, .callerRegisters),
             .sourceWindow: (false, .callerRegisters),
             .publisherTextMap: (false, .callerRegisters),
             .justHeardPeek: (false, .none),
