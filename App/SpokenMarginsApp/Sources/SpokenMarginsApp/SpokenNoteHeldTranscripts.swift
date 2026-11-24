@@ -44,21 +44,27 @@ enum SpokenNoteHeldTranscripts {
     /// After Allow: transcribes every spoken note take that has no words, off the main thread, and refreshes the Library
     /// rows when any note got words.
     static func transcribeMissing() {
+        Task { _ = await transcribeMissingAndWait() }
+    }
+
+    /// `transcribeMissing`, ended when the sweep has: true once it ran, false when the store isn't handed over yet (it
+    /// runs when it is), so the speech ask keeps the takes' launch record until a sweep has really run.
+    static func transcribeMissingAndWait() async -> Bool {
         guard let environment else {
             sweepWaitingForStore = true
-            return
+            return false
         }
         let support = environment.applicationSupport
         let store = environment.store
-        let libraryChanged = environment.libraryChanged
-        Task.detached(priority: .utility) {
+        let filledAny = await Task.detached(priority: .utility) {
             let filled = await SpokenNoteTranscriptSweep.fillMissingTranscripts(
                 in: support, transcriber: SystemSpokenNoteTranscriber(), itemWriter: store, now: Date()
             )
-            guard !filled.isEmpty else { return }
-            await MainActor.run {
-                MainThreadOperationLabels.shared.scoped("spokenNote.heldTranscriptsFilled") { libraryChanged() }
-            }
+            return !filled.isEmpty
+        }.value
+        if filledAny {
+            MainThreadOperationLabels.shared.scoped("spokenNote.heldTranscriptsFilled") { environment.libraryChanged() }
         }
+        return true
     }
 }

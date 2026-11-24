@@ -24,10 +24,12 @@ final class SpeechAskController: ObservableObject {
     private(set) var waiting: SpeechAskWaitingList
     /// Transcription work that met the hold, other than a player Margin's (the waiting list has those). Allow runs each
     /// retry; a no drops them. The live-session sweep covers every live-session, Watch and Shortcut Margin at once; the
-    /// spoken-note sweep every note's takes with no words.
-    let heldRetries = HeldTranscriptionRetries(
-        liveSessionSweep: { Task { @MainActor in await LiveSessionSpokenMargins.transcribeMissing() } },
-        spokenNoteSweep: { SpokenNoteHeldTranscripts.transcribeMissing() }
+    /// spoken-note sweep every note's takes with no words. A sweep's launch record is forgotten only once it ran to the
+    /// end, so a kill right after Allow keeps it for the next launch.
+    private(set) lazy var heldRetries = HeldTranscriptionRetries(
+        liveSessionSweep: { await LiveSessionSpokenMargins.transcribeMissing(); return true },
+        spokenNoteSweep: { await SpokenNoteHeldTranscripts.transcribeMissingAndWait() },
+        sweepFinished: { [defaults = self.defaults] key in defaults.removeObject(forKey: key) }
     )
     private var reAskShownThisLaunch = false
     private var announcedForThisAsk = false
@@ -139,10 +141,12 @@ final class SpeechAskController: ObservableObject {
     func holdReported(_ purpose: HeldTranscription) {
         ask.transcriptionHeld(purpose)
         heldRetries.reported(purpose)
-        if settleLateHold() { return }
-        if let key = purpose.retry.heldAcrossLaunchKey, access() == .notDetermined {
+        // Recorded before a late Allow starts the sweep too: the sweep forgets it when it ends.
+        let answer = access()
+        if let key = purpose.retry.heldAcrossLaunchKey, answer == .notDetermined || answer == .authorized {
             defaults.set(true, forKey: key)
         }
+        if settleLateHold() { return }
         if cardSurface == nil, ask.isOwed(access: access()) { cardSurface = .now }
     }
 
@@ -237,7 +241,6 @@ final class SpeechAskController: ObservableObject {
         case .authorized:
             let identities = waiting.ids
             guard !identities.isEmpty || !heldRetries.isEmpty else { return }
-            forgetHeldAcrossLaunch()
             // A waiting Margin gets its source window after its own transcription, never before it.
             heldRetries.drop(.sourceWindow, keys: Set(identities))
             // The list is cleared only once its retries were scheduled, and only of those: with no store yet, or a read
@@ -259,7 +262,8 @@ final class SpeechAskController: ObservableObject {
         cardSurface = nil
     }
 
-    /// Either answer settles the waiting list and the sweeps' records: their retries ran or were dropped together.
+    /// A decided no clears the waiting list and the sweeps' records: their retries were dropped together. Allow never
+    /// comes here; each sweep forgets its own record when it ends.
     private func clearWaiting() {
         setWaiting(SpeechAskWaitingList(stored: nil))
         forgetHeldAcrossLaunch()
