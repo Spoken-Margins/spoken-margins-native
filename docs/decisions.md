@@ -713,6 +713,19 @@ These came in the project chat, so most have no comment of his to link. Each cit
   - Runs instead: `.github/workflows/main-slow.yml` runs `verify-tests.py --plan slow` on main nightly and before the 8:00 and 17:00 Phoenix phone builds, records a `main-slow` status, and on a failure opens one "Main slow tests failed on <sha7>" issue naming the last green commit and every merge since (`scripts/main_slow.py`). `scripts/phone-build` runs `--plan slow` itself on a commit without a green `main-slow`.
   - Waste signal: a red `main-slow` means a moved test still catches things; it goes back to every PR.
 
+## 2026-11-24
+- **Cloud slots pause while the ready work is proof-only; proof and merge throughput are the limit; the Test Desk works the proof runs in queue order (2026-11-24).** The coordinator reported that the cloud queue was dry: almost every `ready` issue had its code merged or armed, and only a simulator real-use run was left. It put option A to him, which was to pause filling cloud slots. He checked the numbers and answered in the project chat (copied from his message by the server): "Mostly right, and I'd pick A." He corrected three things. Two issues still had code to write (#4955, #4343). Seven groundwork and housekeeping issues might close without the desk. The merge-tap list was stale. He also pushed back on the framing: "the real limit isn't cloud slots, it's proof and merge throughput. 30 PRs are armed and waiting. Many ready issues already have three or four merged PRs marked "part of" and still aren't closed, because nobody has run them on a real screen. More code wouldn't move anything. Test Desk time and the queue would." His call was "A plus three things":
+  - two cloud threads on #4955 and #4343;
+  - one cloud thread sorting the seven groundwork and housekeeping issues into "close with waiver" or "needs the desk";
+  - the desk working through the rest in order.
+  - What would show he is wrong, in his words: "if the desk clears its proof runs quickly and the bottleneck turns out to be the queue, then the effort should go into merge speed instead."
+  - How it is carried out: a cloud slot starts only on a `ready` issue that still has code to write. An issue whose only step left is a simulator real-use run loses `ready` and gets `agent-verify`. Its desk request is a `/lane T4` comment on the PR that holds its code, which `scripts/desk-batch.py` collects. A groundwork issue closes once its code is merged, with no proof needed. An issue with no listener surface closes with `Real-use proof waived: <reason>`.
+  - The sort of the seven, 2026-11-24 ("Sort groundwork issues before the desk"):
+    - #4711: closes with its waiver once rollup 2 (#5243) merges.
+    - #5110, #5016, #4781: their code is merged, so they go to the desk (T4 requests on #5231, #5124 and #5148).
+    - #4713: goes to the desk (T4 request on #5243).
+    - #4574 and #4937: groundwork, but each still has cloud work left. #4574 needs #4802's conflict and token step. #4937 needs its Done when 7 probes. They stay `ready`.
+
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
   - Verification layers: tests that pass while the app is broken usually fake the boundary that broke, such as audio sessions, players, file paths across containers and network responses.

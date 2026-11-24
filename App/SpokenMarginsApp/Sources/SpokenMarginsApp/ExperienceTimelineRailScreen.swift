@@ -325,7 +325,7 @@ struct ExperienceTimelineRailScreen: View {
         // a row's action keeps the saved Margin, which `playInterjectionAnchor` moves onto the playing clock itself.
         var placing = item
         placing.interjections = SpokenNoteCleanClock.moved(item.interjections, by: noteClock)
-        let placedMargins = Dictionary(placing.interjections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let placedMargins = Dictionary(placing.interjections.map { ($0.sessionScopedId, $0) }, uniquingKeysWith: { first, _ in first }) // keyed as rows are (#5133)
         let sourceLength = item.timelineSource.characterCount > 0 ? item.timelineSource.characterCount : item.text.count
         // A podcast or audio file speaks in clock time, like its scrubber; an article or PDF speaks in percent (#3862).
         let kind: TimelinePositionLabel.ItemKind = item.isNativeAudio ? .media : .text
@@ -478,7 +478,7 @@ struct ExperienceTimelineRailScreen: View {
 
         let margins = currentSessionMargins(in: item, sessionID: sessionID)
         for row in margins where row.interjection.targetType == .item {
-            let placed = placedMargins[row.interjection.id] ?? row.interjection
+            let placed = placedMargins[row.interjection.sessionScopedId] ?? row.interjection
             let position = InterjectionPositionPresentation.sortPercent(
                 for: placed,
                 durationMs: item.mediaDurationMs
@@ -497,7 +497,7 @@ struct ExperienceTimelineRailScreen: View {
                         : MarginPlacePresentation.timelineDetail(for: placed, position: position)].compactMap { $0 }.joined(separator: " · "),
                     action: .margin(row),
                     precisePosition: preciseSourcePosition(placed, in: item, durationMs: knownDuration),
-                    reference: .local(row.interjection.id),
+                    reference: .local(row.interjection.sessionScopedId),
                     // A Margin with no place (#4233) says so in the corner and sorts after the last placed entry.
                     positionLabel: row.interjection.hasPlace
                         ? TimelinePositionLabel.label(kind: kind, startMs: placed.anchor.mediaTimeMs, percent: position)
@@ -694,7 +694,9 @@ struct ExperienceTimelineRailScreen: View {
                 // The rail shows one session's Margins. A reply whose thread starts with a Margin that has no entry
                 // here (an earlier session's) has nothing to indent under: it stands at its own place, and still
                 // says what it answers.
-                if let rootPosition = place.rootPosition {
+                // A thread that starts with a Margin with no place (#4233) has no place to lend: a reply that has one stands
+                // at its own, so its corner and its "Captured at" line agree.
+                if let rootPosition = place.rootPosition, rootPosition != MarginPlacePresentation.timelineSortPosition {
                     threaded.depth = place.depth
                     threaded.position = rootPosition
                     // The sort key goes by the precise place first, so a reply takes its parent's exactly.
@@ -733,9 +735,14 @@ struct ExperienceTimelineRailScreen: View {
         guard !visited.contains(turn.id) else { return 100 }
         let visited = visited.union([turn.id])
         let sourceIDs = Set(turn.sourceInterjectionIds)
-        return item.interjections
+        let sources = item.interjections.filter { $0.sessionId == turn.sessionId && sourceIDs.contains($0.id) }
+        // A reflection on Margins that all have no place (#4233) sits with them, after every placed entry.
+        if !sources.isEmpty, sources.allSatisfy({ $0.targetType == .item && !$0.hasPlace }) {
+            return Double(MarginPlacePresentation.timelineSortPosition)
+        }
+        return sources
             // A source Margin with no place (#4233) says nothing about where the reflection belongs.
-            .filter { $0.sessionId == turn.sessionId && sourceIDs.contains($0.id) && ($0.targetType != .item || $0.hasPlace) }
+            .filter { $0.targetType != .item || $0.hasPlace }
             .map { margin in
                 if margin.targetType == .item {
                     return preciseSourcePosition(margin, in: item, durationMs: durationMs)

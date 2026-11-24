@@ -199,7 +199,9 @@ jobs:
           SHA: ${{ needs.test.outputs.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          if ! printf '%s' "$PR" | grep -Eq '^[0-9]*$'; then echo "::error::pr must be a number"; exit 1; fi
+          # Empty is allowed (no comment, the job summary still has the result). Not `printf | grep`: grep sees no
+          # line in an empty string and refused every run without a pr (run 45250843509, 2026-11-23).
+          case "$PR" in *[!0-9]*) echo "::error::pr must be a number"; exit 1 ;; esac
           # No result (the job stopped early) leaves an empty file, which the report reads as a runner fault.
           printf '%s' "$RESULT_B64" | base64 -d > "$RUNNER_TEMP/branch-t3-result.json" || : > "$RUNNER_TEMP/branch-t3-result.json"
           python3 scripts/branch_t3.py report --result "$RUNNER_TEMP/branch-t3-result.json" \

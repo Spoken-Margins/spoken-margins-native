@@ -208,7 +208,7 @@ final class ReplyBackTests: XCTestCase {
             ownMargins: margins
         )
         let entry = try XCTUnwrap(entries.first)
-        XCTAssertEqual(entry.replyContext?.parent, .yours(interjectionId: "m1", mediaTimeMs: 754_000))
+        XCTAssertEqual(entry.replyContext?.parent, .yours(interjectionId: "session::m1", mediaTimeMs: 754_000))
         XCTAssertEqual(entry.replyContext?.caption, "Reply to your Margin at 12:34")
         XCTAssertEqual(entry.anchor.caption, "Reply to your Margin at 12:34")
     }
@@ -231,10 +231,10 @@ final class ReplyBackTests: XCTestCase {
                 layers: [self.layer("ben")], records: ["ben": [self.friendMargin("reply", in: "ben", at: 755_000, replyingTo: self.mine)]],
                 ownMargins: [margin])
         }
-        XCTAssertEqual(try XCTUnwrap(entries(placed).first).replyContext?.parent, .yours(interjectionId: "m1", mediaTimeMs: 754_000),
+        XCTAssertEqual(try XCTUnwrap(entries(placed).first).replyContext?.parent, .yours(interjectionId: "session::m1", mediaTimeMs: 754_000),
                        "a Margin with a place is unchanged")
         let entry = try XCTUnwrap(entries(moved).first)
-        XCTAssertEqual(entry.replyContext?.parent, .yours(interjectionId: "m1", mediaTimeMs: nil))
+        XCTAssertEqual(entry.replyContext?.parent, .yours(interjectionId: "session::m1", mediaTimeMs: nil))
         XCTAssertEqual(entry.replyContext?.caption, "Reply to your Margin")
         // A guessed (approximate) reply to the parent goes where the parent plays. With no place there is none, so the
         // parent plays at the reply's own time, never at 0:00.
@@ -298,7 +298,7 @@ final class ReplyBackTests: XCTestCase {
                        ["parent:m1", "r1", "r2", "parent:m2", "r3", "plain"])
         let parent = try XCTUnwrap(steps.first)
         XCTAssertTrue(parent.anchor.isYours)
-        XCTAssertEqual(parent.anchor.marginId, SharedMarginReview.parentMarginId("m1"))
+        XCTAssertEqual(parent.anchor.marginId, SharedMarginReview.parentMarginId("session::m1"))
         XCTAssertEqual(parent.anchor.mediaTimeMs, 755_000, "the parent sits at its reply's place, so the review makes no extra hop")
         XCTAssertEqual(parent.anchor.caption, "Your Margin at 12:34")
         XCTAssertEqual(Set(steps.map(\.anchor.marginId)).count, steps.count, "every step has its own identity")
@@ -436,8 +436,8 @@ final class ReplyBackTests: XCTestCase {
         var sequence = try XCTUnwrap(MarginMomentSequence(itemId: "item", reviewing: steps.map(\.anchor)))
         XCTAssertEqual(sequence.phase, .leadIn)
         XCTAssertLessThan(sequence.startMediaTimeMs, 755_000, "the lead-in runs first")
-        XCTAssertEqual(sequence.target.marginId, SharedMarginReview.parentMarginId("m1"))
-        XCTAssertEqual(sequence.jumpToTarget()?.marginId, SharedMarginReview.parentMarginId("m1"))
+        XCTAssertEqual(sequence.target.marginId, SharedMarginReview.parentMarginId("session::m1"))
+        XCTAssertEqual(sequence.jumpToTarget()?.marginId, SharedMarginReview.parentMarginId("session::m1"))
         guard case .playNow(let next) = sequence.marginFinished(sourceAtMediaTimeMs: 755_000) else {
             return XCTFail("the reply should follow the parent with no second lead-in")
         }
@@ -470,7 +470,7 @@ final class ReplyBackTests: XCTestCase {
             return SharedMarginReview.playlist(for: entries, ownMargins: margins)
         }
         let loud = steps(muted: false)
-        XCTAssertEqual(SharedMarginReview.chimedMarginIds(loud), [SharedMarginReview.parentMarginId("m1"), loud[2].anchor.marginId],
+        XCTAssertEqual(SharedMarginReview.chimedMarginIds(loud), [SharedMarginReview.parentMarginId("session::m1"), loud[2].anchor.marginId],
                        "the parent announces the reply that follows it; the reply itself does not chime again")
         XCTAssertEqual(SharedMarginReview.chimedMarginIds(steps(muted: true)), [steps(muted: true)[2].anchor.marginId])
     }

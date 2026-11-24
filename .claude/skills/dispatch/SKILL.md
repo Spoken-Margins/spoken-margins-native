@@ -22,7 +22,7 @@ Runs at 20 past each hour as a scheduled task in the project. If there is nothin
 ## 1. Work through new lane reports and Codex audits on `automerge` PRs
 
 1. **"Revert #N" PRs and `regression` issues first.**
-2. **Lane fault** (no test ran, runner offline, INCONCLUSIVE for a lane reason): one rerun. For T3, a new `/lane T3` with the same `tests:` line plus `lane:queued`; for host tests, remove and re-add `automerge`. File a `ready,regression` lane issue only if it fails the same way again. "Fails on main too: not this PR" is not a lane fault: the runner has filed that test's issue, so don't rerun.
+2. **Lane fault** (no test ran, runner offline, INCONCLUSIVE for a lane reason): one rerun. For T3, dispatch `branch-t3` again with the same `tests` and `pr` (lane-request skill, section 3); for host tests, remove and re-add `automerge`. File a `ready,regression` lane issue only if it fails the same way again. "Fails on main too: not this PR" is not a lane fault: the runner has filed that test's issue, so don't rerun.
 3. **The PR's own FAIL:** hand it to the Mac finisher (format in the [thread-workflow skill](../thread-workflow/SKILL.md), section 5). A conflict with `main`, a failing cloud test, confirmed audit findings or a finisher hand-back: give it to a free thread, else a fresh one.
 4. **A clean Codex audit naming a held PR's head:** remove and re-add `automerge`.
 

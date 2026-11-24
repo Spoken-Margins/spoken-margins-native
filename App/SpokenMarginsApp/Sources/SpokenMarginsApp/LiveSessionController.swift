@@ -370,6 +370,22 @@ final class LiveSessionController: ObservableObject {
         }
     }
 
+    /// Margins moved onto an item (#4233): the file worker has already taken them out of the stored session (and removed a
+    /// Quick session the move emptied), so this only drops them from the copy in memory, with no save of its own. The
+    /// Live Activity then counts what is left, and a removed session lets go as a discard would.
+    func takeOutMoved(ids: Set<String>, removedSession: Bool) {
+        guard session != nil else { return }
+        if removedSession {
+            if isRecordingSpoken { stopSpokenMargin() }
+            endActivities()
+            session = nil
+        } else {
+            session?.margins.removeAll { ids.contains($0.id) }
+            refreshActivities()
+        }
+        sessionChanged()
+    }
+
     /// Lets go of a session that was saved as a Library item (`Gate1AppModel.saveLiveSession` marks it saved).
     func close() {
         if isRecordingSpoken { stopSpokenMargin() }

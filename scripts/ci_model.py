@@ -85,10 +85,15 @@ SNAPSHOT = {
 # Every rule the model takes on trust. `basis`: documented (with source), observed (with evidence), or inferred.
 ASSUMPTIONS = {
     'A1-token-rule': {
-        'basis': 'documented',
+        'basis': 'observed',
         'text': 'An event caused by GITHUB_TOKEN starts no workflow run, except workflow_dispatch and '
                 'repository_dispatch.',
-        'source': 'docs.github.com "Triggering a workflow from a workflow"; quoted in merge-queue-label-bridge.yml:15'},
+        'source': 'docs.github.com "Triggering a workflow from a workflow"; quoted in '
+                  'merge-queue-label-bridge.yml:15. Also observed: job a1-token-push of probe run 45340601282 on a '
+                  'branch with no PR, 2026-11-24 (#4937) pushed 7cd4a3e9 with GITHUB_TOKEN to a branch whose push '
+                  "trigger matched, and no run started for that commit; on PR #5172 the dequeue notifier's label "
+                  'changes (github-actions[bot], 2026-11-23T23:02:04Z) started no merge-policy run, though that '
+                  'workflow runs on labeled and unlabeled'},
     'A2-skipped-is-success': {
         'basis': 'documented',
         'text': 'A job skipped by its `if:` reports its check as skipped, which satisfies a required check.',
@@ -109,10 +114,12 @@ ASSUMPTIONS = {
                 'labels) when its steps run.',
         'source': 'GitHub docs "Re-running workflows and jobs"'},
     'A6-rerun-by-token-allowed': {
-        'basis': 'inferred',
-        'text': 'A re-run requested with GITHUB_TOKEN (actions: write) runs; the token rule covers new events, and a '
-                're-run is not one.',
-        'source': 'not documented either way; sm_codex_audit.py:1188 depends on it'},
+        'basis': 'observed',
+        'text': 'A re-run requested with GITHUB_TOKEN (actions: write) runs; the token rule covers new events, and '
+                'a re-run is not one.',
+        'source': 'not documented either way; sm_codex_audit.py depends on it. Observed: run 45340601282 attempt '
+                  '2, re-run by job g6-token-rerun of run 45341093580 with GITHUB_TOKEN, triggering actor '
+                  'github-actions[bot], 2026-11-24; and merge-policy 45287422248 attempt 2 on PR #5172, 2026-11-23'},
     'A7-auto-merge-enqueues': {
         'basis': 'documented',
         'text': 'With a required merge queue, `gh pr merge N` (no method) turns auto-merge on, and GitHub adds the PR '
@@ -120,25 +127,36 @@ ASSUMPTIONS = {
                 'cancelled.',
         'source': 'GitHub docs "Managing a merge queue"; merge_queue_label_bridge.py:9-10'},
     'A8-queue-events-fire': {
-        'basis': 'inferred',
-        'text': 'merge_group checks_requested and pull_request_target dequeued are GitHub\'s own events and start '
+        'basis': 'observed',
+        'text': "merge_group checks_requested and pull_request_target dequeued are GitHub's own events and start "
                 'runs whoever queued the PR. Flip `gh_token_enqueue_starts_groups` to model the opposite for a PR '
                 'queued with GITHUB_TOKEN.',
-        'source': 'undocumented; merge-queue-label-bridge.yml:17-20 calls it out'},
+        'source': 'undocumented; merge-queue-label-bridge.yml:17-20 calls it out. Observed for the two tokens that '
+                  'queue PRs today: PR #5172 queued by spoken-margins-agent[bot] (App token) 2026-11-23T23:20:16Z '
+                  "got merge_group runs 45288821675 and 45288821724; groups for PRs queued with the owner's token "
+                  'run every day (merge-policy 45285146588). A PR queued with GITHUB_TOKEN has not been seen; the '
+                  'flag stays for that case'},
     'A9-dequeue-disables-auto-merge': {
-        'basis': 'inferred',
-        'text': 'When a merge group fails, GitHub removes the PR from the queue and turns its auto-merge off, so it '
-                'does not re-enter by itself. Flip `dequeue_keeps_auto_merge` to see the loop if it does not.',
-        'source': 'not verified; merge_queue_dequeued.py relies on labels only and does not call --disable-auto'},
+        'basis': 'observed',
+        'text': 'When a merge group fails, GitHub removes the PR from the queue and turns its auto-merge off, so '
+                'it does not re-enter by itself. Flip `dequeue_keeps_auto_merge` to see the loop if it does not.',
+        'source': 'PR #5172 timeline: removed_from_merge_queue by github-merge-queue[bot] at 2026-11-23T23:01:40Z '
+                  '(CI_FAILURE); no added_to_merge_queue until a new auto_merge_enabled at 23:17:12Z after the '
+                  "re-arm, with its checks green throughout; the same at 2026-11-24T01:30:02Z. The notifier's "
+                  'label removal started no bridge run (A1), so nothing of ours turned auto-merge off'},
     'A10-dequeue-reason': {
-        'basis': 'inferred',
-        'text': 'A failed group sends `dequeued` with a reason other than MERGE/MANUAL (the model uses '
-                'FAILED_CHECKS), which merge_queue_dequeued.py treats as a failure.',
-        'source': 'GitHub does not list the reason strings; merge_queue_dequeued.py NO_LABEL_REASONS'},
+        'basis': 'observed',
+        'text': 'A failed group sends `dequeued` with reason CI_FAILURE, which merge_queue_dequeued.py treats as a '
+                'failure; a PR taken out by hand sends MANUAL.',
+        'source': 'GitHub does not list the reason strings. Observed: merge-queue-dequeued run 45285138477 (PR '
+                  '#5172, triggering actor github-merge-queue[bot], 2026-11-23T23:01:44Z) commented "Left the '
+                  'merge queue (CI_FAILURE)"; run 45334370748 (PR #5157, removed by spoken-margins-agent[bot], '
+                  '2026-11-24) commented "(MANUAL)"'},
     'A11-merge-push-fires': {
-        'basis': 'inferred',
-        'text': 'The merge queue\'s merge into main is a push event that starts `push` workflows.',
-        'source': 'observed in practice for hosted-app-macos.yml runs after queue merges; not re-checked here'},
+        'basis': 'observed',
+        'text': "The merge queue's merge into main is a push event that starts `push` workflows.",
+        'source': "merge-audit run 45335469165, event push on main 245de06f (the queue's merge of #5200), "
+                  'triggering actor github-merge-queue[bot], 2026-11-24T05:44:54Z'},
     'A12-generic-job-passes': {
         'basis': 'inferred',
         'text': 'A job the model has no behaviour for succeeds and has no outputs or effects.',
@@ -609,6 +627,11 @@ def scenarios() -> list[Scenario]:
                  'lane.yml and fails, the audit reads that red check as "checks failed" and never audits, so merge '
                  'policy never turns green.',
                  ['scripts/lane_dedupe.py'], steps=[(0, 'label', 'automerge', 'user')]),
+        Scenario('b5-lane-conflicts-cancelled', 'As b, but the head\'s lane-conflicts `check` ends cancelled (its one '
+                 'concurrency group cancels older runs on a burst of pushes; not a required check): before #5249 the '
+                 'audit read it as "checks failed" and never audited, as #5161, #5177, #5185 and #5186 sat 3 to 4 hours.',
+                 ['scripts/lane_dedupe.py'], steps=[(0, 'label', 'automerge', 'user')],
+                 flags={'cancelled_jobs': {('lane-conflicts.yml', 'check')}}),
         Scenario('c-token-label', 'automerge added with GITHUB_TOKEN (by another workflow): the bridge does not start, '
                  'and only the 15-minute sweep queues it.',
                  ['docs/contributing/example.md'], steps=[(1, 'label', 'automerge', 'github_token')]),
@@ -885,6 +908,8 @@ class World:
                         result, outputs = behaviour(self, run, job, ctx, cause_event)
                     if self.defects & DEFECT_CATCHERS.get((file, job_id), set()):
                         result = 'failure'
+                    if (file, job_id) in self.flags.get('cancelled_jobs', ()):  # its concurrency group cancelled it
+                        result = 'cancelled'
                     results[job_id] = {'result': result, 'outputs': outputs}
                 if sha:
                     held = results[job_id]['outputs'].get('check') == 'pending'
@@ -958,7 +983,7 @@ class World:
             self.note(cause, f'merge group {self.group_sha[:7]} green: merged into main')
             self.post(self.now, 'push', cause['id'], token='github')
         elif state == 'failed':
-            self.dequeue(cause, 'FAILED_CHECKS', names)
+            self.dequeue(cause, 'CI_FAILURE', names)  # the reason GitHub sends (A10)
 
     def dequeue(self, cause, reason, names):
         self.in_queue = False
