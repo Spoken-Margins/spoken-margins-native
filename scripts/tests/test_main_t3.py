@@ -343,7 +343,9 @@ class WorkflowTests(unittest.TestCase):
         data = yaml.safe_load((self.ROOT / '.github/workflows/main-t3.yml').read_text())
         self.assertNotIn('push', self.load('main-t3.yml'))
         self.assertEqual(data['concurrency'], {'group': 'main-t3', 'cancel-in-progress': False})
-        self.assertEqual(sorted(data['jobs']), ['decide', 't3'])
+        # The bisect job (#4574) runs in the same run, so the group holds every probe too; no job has a group of its own.
+        self.assertEqual(sorted(data['jobs']), ['bisect', 'decide', 't3'])
+        self.assertEqual([name for name, job in data['jobs'].items() if 'concurrency' in job], [])
         self.assertEqual(data['jobs']['decide']['permissions'], {'contents': 'read', 'statuses': 'read'})
 
     def test_a_push_to_main_dispatches_main_t3_through_its_own_small_workflow(self):
@@ -363,6 +365,73 @@ class WorkflowTests(unittest.TestCase):
         jobs = yaml.safe_load((self.ROOT / '.github/workflows/main-t3.yml').read_text())['jobs']
         self.assertTrue(jobs['t3']['name'].startswith(M.RUN_JOB_PREFIX))
         self.assertFalse(jobs['decide']['name'].startswith(M.RUN_JOB_PREFIX))
+
+    def jobs(self):
+        import yaml
+        return yaml.safe_load((self.ROOT / '.github/workflows/main-t3.yml').read_text())['jobs']
+
+    def test_the_bisect_job_runs_only_after_a_red_t3_and_never_after_an_error(self):
+        """#4574: `error` and `success` prove nothing about a culprit; only `failure` names merges to bisect."""
+        jobs = self.jobs()
+        self.assertEqual(jobs['t3']['outputs'], {'state': '${{ steps.run.outputs.state }}'})
+        bisect = jobs['bisect']
+        self.assertEqual(bisect['needs'], ['decide', 't3'])  # t3 needs decide, so the trunk gate still holds
+        self.assertEqual(bisect['if'], "${{ always() && needs.t3.outputs.state == 'failure' }}")
+
+    def test_the_bisect_job_has_its_own_clock_history_and_the_rights_it_uses(self):
+        jobs = self.jobs()
+        bisect = jobs['bisect']
+        self.assertEqual(bisect['timeout-minutes'], 240)  # scripts/main_t3_bisect.py's budget assumes 240
+        self.assertEqual(bisect['runs-on'], jobs['t3']['runs-on'])
+        self.assertEqual(bisect['permissions'], {'contents': 'read', 'statuses': 'read', 'issues': 'write', 'actions': 'read'})
+        # The App's key lives in this environment, like the decide job's.
+        self.assertEqual(bisect['environment'], jobs['decide']['environment'])
+        checkout = bisect['steps'][0]
+        self.assertEqual(checkout['with']['fetch-depth'], 0)
+        self.assertEqual(checkout['with']['ref'], '${{ needs.decide.outputs.sha }}')
+        # Probes build older commits with the t3 job's Swift packages (#4664).
+        self.assertEqual(bisect['env']['SM_SPM_DIR'], jobs['t3']['env']['SM_SPM_DIR'])
+        self.assertIn('Restore the Swift packages', [step.get('name') for step in bisect['steps']])
+
+    def test_the_bisect_job_reads_the_red_runs_evidence_and_runs_the_script_without_a_status_write(self):
+        text = (self.ROOT / '.github/workflows/main-t3.yml').read_text()
+        bisect = text[text.index('\n  bisect:'):]
+        self.assertIn('gh run download "$GITHUB_RUN_ID" --name main-t3-evidence', bisect)
+        self.assertIn('scripts/main_t3_bisect.py bisect --sha "$SHA" --run-url "$RUN_URL" --evidence "$EVIDENCE"', bisect)
+        self.assertNotIn('statuses: write', bisect)  # main-t3's status stays as the t3 job set it
+        self.assertNotIn('cache/save', bisect)  # probes build old commits; only a green main saves the cache
+
+    def test_the_revert_token_is_minted_after_the_bisection_and_reaches_only_the_revert_step(self):
+        """An App installation token lives one hour and a bisection up to four: minted before it, the token would have
+        expired by the time the revert pushes. No probe of an older commit runs with a write token either."""
+        import sys
+        sys.path.insert(0, str(self.ROOT / 'scripts'))
+        import main_t3_bisect
+        steps = self.jobs()['bisect']['steps']
+        names = [step.get('name') for step in steps]
+        bisect_at, mint_at, revert_at = (names.index('Bisect the red commit'), names.index('The App token for the revert'),
+                                         names.index('Revert the culprit'))
+        self.assertLess(bisect_at, mint_at)
+        self.assertEqual(revert_at, mint_at + 1)
+        mint, revert = steps[mint_at], steps[revert_at]
+        self.assertTrue(mint['uses'].startswith('actions/create-github-app-token@'))
+        self.assertEqual(mint['uses'], self.jobs()['decide']['steps'][0]['uses'])  # one pinned version
+        self.assertTrue(mint['continue-on-error'])  # no token: the culprit issue says why, the job stays as it was
+        self.assertEqual({k: v for k, v in mint['with'].items() if k.startswith('permission-')},
+                         {'permission-contents': 'write', 'permission-pull-requests': 'write',
+                          'permission-issues': 'write'})
+        self.assertEqual(revert['env'][main_t3_bisect.REVERT_TOKEN_ENV], '${{ steps.revert-token.outputs.token }}')
+        self.assertIn('scripts/main_t3_bisect.py revert --evidence "$EVIDENCE"', revert['run'])
+        # Both run only when `bisect` left a request, under the file name the script writes.
+        for step in (mint, revert):
+            self.assertEqual(step['if'], "steps.bisect.outputs.revert == 'true'")
+        self.assertIn(f'"$EVIDENCE/{main_t3_bisect.REVERT_REQUEST}"', steps[bisect_at]['run'])
+        # The token and the key appear nowhere else in the job.
+        text = (self.ROOT / '.github/workflows/main-t3.yml').read_text()
+        bisect_text = text[text.index('\n  bisect:'):]
+        self.assertEqual(bisect_text.count('steps.revert-token.outputs.token'), 1)
+        self.assertEqual(bisect_text.count('secrets.SM_APP_PRIVATE_KEY'), 1)
+        self.assertNotIn(main_t3_bisect.REVERT_TOKEN_ENV, str(self.jobs()['bisect']['env']))
 
     def test_hosted_integration_no_longer_runs_on_a_push(self):
         self.assertEqual(list(self.load('hosted-integration.yml')), ['workflow_dispatch'])
