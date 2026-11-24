@@ -19,6 +19,7 @@ KEEP_OUT = ".miniPlayerKeepOut()"
 # and the Timeline places its own. Keyed by (file, the struct that holds the NavigationStack or link).
 NO_PILL = {
     ("CatalogDrawer.swift", "CatalogDrawerView"): "the catalog drawer is a sheet",
+    ("ApplePodcastsImportGuide.swift", "ApplePodcastsImportRow"): "only in the catalog drawer and the Follow sheet, both sheets (#4290)",
     ("ExperienceAudioPreparationQueueScreen.swift", "*"): "a sheet from the Library",
     ("ExperienceMarginDetailView.swift", "*"): "a sheet from Margins",
     ("ExperiencePlayQueueScreen.swift", "*"): "a sheet from the Library",
@@ -38,6 +39,7 @@ NO_PILL = {
     ("Gate1RootView.swift", "InterjectionDetailView"): "pushed inside the Margin detail sheet",
     ("ItemCollectionSheet.swift", "*"): "a sheet",
     ("LibraryAddToCollectionSheet.swift", "*"): "Select's Add to Collection sheet from the Library (#4720)",
+    ("PaperNoteSection.swift", "PaperNoteChooseMarginSheet"): "Choose a Margin, a sheet from the item screen's Paper note (#4340)",
     ("PlaybackNativeTextPeekView.swift", "*"): "inside Now Playing, which hides the mini player",
     ("PlaybackTimelineSourceView.swift", "*"): "inside Now Playing, which hides the mini player",
     ("PlaybackScreen.swift", "*"): "Now Playing hides the mini player",

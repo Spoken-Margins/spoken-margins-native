@@ -188,7 +188,9 @@ public enum LibraryQueryEngine {
         [.unfinished, .unplayed, .inProgress].contains(libraryQuery.listeningState)
     }
 
-    public static func libraryFilterDescription(query libraryQuery: LibraryQuery) -> String {
+    /// The menu words of each filter that narrows the list, in the summary line's order: content type,
+    /// listening, offline, shared Margins. A filter set to `.all` is skipped; search and sort never count.
+    public static func libraryFilterSelections(query libraryQuery: LibraryQuery) -> [String] {
         var selections: [String] = []
         if libraryQuery.contentType != .all {
             selections.append(Self.displayName(libraryQuery.contentType.rawValue))
@@ -202,7 +204,33 @@ public enum LibraryQueryEngine {
         if libraryQuery.sharedMargins != .all {
             selections.append(libraryQuery.sharedMargins.title)
         }
+        return selections
+    }
+
+    public static func libraryFilterDescription(query libraryQuery: LibraryQuery) -> String {
+        let selections = libraryFilterSelections(query: libraryQuery)
         return selections.isEmpty ? "Everything" : selections.joined(separator: " · ")
+    }
+
+    /// What the Library's Filter chip shows (#4762). It comes from the query alone, never from the rows,
+    /// so it is right on the first draw. It is filled whenever a filter narrows the list, the everyday
+    /// Unfinished view included; that differs from the summary line, which shows only when the filters
+    /// differ from the everyday view.
+    public static func libraryFilterChip(query libraryQuery: LibraryQuery) -> LibraryFilterChipState {
+        let selections = libraryFilterSelections(query: libraryQuery)
+        switch selections.count {
+        case 0:
+            return LibraryFilterChipState(isNarrowing: false, title: "Filter", accessibilityValue: "Everything")
+        case 1:
+            return LibraryFilterChipState(isNarrowing: true, title: selections[0], accessibilityValue: selections[0])
+        default:
+            let count = selections.count
+            return LibraryFilterChipState(
+                isNarrowing: true,
+                title: "\(count) Filters",
+                accessibilityValue: "\(count) filters: " + selections.joined(separator: ", ")
+            )
+        }
     }
 
     public static func librarySortDescription(query libraryQuery: LibraryQuery) -> String {
@@ -233,5 +261,21 @@ public enum LibraryQueryEngine {
         let right = rhs ?? .distantPast
         if left == right { return .orderedSame }
         return left > right ? .orderedAscending : .orderedDescending
+    }
+}
+
+/// The Library Filter chip's look and words, from `LibraryQueryEngine.libraryFilterChip(query:)` (#4762).
+public struct LibraryFilterChipState: Equatable, Sendable {
+    /// True when any of content type, listening, offline or shared Margins is not `.all`.
+    public let isNarrowing: Bool
+    /// `Filter`, the one filter's menu words, or `N Filters`.
+    public let title: String
+    /// What VoiceOver reads after the label `Filter Library`.
+    public let accessibilityValue: String
+
+    public init(isNarrowing: Bool, title: String, accessibilityValue: String) {
+        self.isNarrowing = isNarrowing
+        self.title = title
+        self.accessibilityValue = accessibilityValue
     }
 }

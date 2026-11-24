@@ -2,9 +2,9 @@ import SessionKit
 import SwiftUI
 
 /// Following's plus (#3205): one sheet that does one job, following a show. Paste follows a copied link at once and
-/// the banner offers Undo; Browse opens the catalog; Import from another app opens the file picker. Read Later and
-/// Listening Edition imports live in Settings, Import & Export. A link to a list of shows opens its "Add <list>" preview
-/// instead (#4046 PR 7a).
+/// the banner offers Undo; Browse opens the catalog; Import from Apple Podcasts opens its Shortcut's guide (#4290);
+/// Import from another app opens the file picker. Read Later and Listening Edition imports live in Settings, Import &
+/// Export. A link to a list of shows opens its "Add <list>" preview instead (#4046 PR 7a).
 struct FollowSheet: View {
     @EnvironmentObject private var model: Gate1AppModel
     @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
@@ -66,6 +66,12 @@ struct FollowSheet: View {
                     }
                     .accessibilityIdentifier("sources.browseCatalog")
                     if let makeOPMLImport = catalogDrawer.makeOPMLImport {
+                        #if !SPOKEN_MARGINS_LEGACY
+                        // This sheet closes once the Shortcut's link is taken: the drawer the preview opens in can't
+                        // present over it when the Shortcut brings the listener back (#4290).
+                        ApplePodcastsImportRow(closeHostWhenOpened: { dismiss() })
+                            .accessibilityIdentifier("sources.importApplePodcasts")
+                        #endif
                         NavigationLink {
                             OPMLImportScreen(importer: makeOPMLImport(), opensFilePickerOnAppear: true)
                         } label: {
