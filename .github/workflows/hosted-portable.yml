@@ -43,9 +43,10 @@
 # already fails has no use for a hosted-Mac slot, and the org has five of them.
 #
 # Guards first (merge groups only): the Mac jobs also wait for `guards`, about 2 minutes of hosted Linux running the
-# repository's rule tests (scripts/queue_guards.py), and are skipped when it fails; `stop-on-guard-red` then cancels the
-# run. `stop-macs-on-red` fired only when `portable` ended, 16 minutes in at the median, after the app build (8 minutes)
-# had finished and most of Mac rest (25) had run.
+# repository's rule tests (scripts/queue_guards.py), and `stop-on-guard-red` cancels the run when one of those tests
+# fails. `stop-macs-on-red` fired only when `portable` ended, 16 minutes in at the median, after the app build (8
+# minutes) had finished and most of Mac rest (25) had run. No result of `guards` skips a Mac job: a skipped required
+# check counts as passed, so only the cancel stops them, and a cancel that fails leaves them running as before.
 #
 # The slow tier (#5145, owner 2026-11-23): every plan here runs with --leave-out-slow, which leaves out the tests in
 # scripts/slow_tier.py (slow on these runners, no failure in 30 days, none a packet, database or owner-data guard) and
@@ -343,13 +344,14 @@ jobs:
 
   guards:
     # The repository's rule tests first, in a merge group only (scripts/queue_guards.py says which and why). The Mac
-    # jobs below wait for this job and are skipped when it fails; stop-on-guard-red then cancels the run, so the queue
-    # drops the group in minutes instead of when `portable` ends. 2026-11-20 to 11-24: 157 merge groups failed first in
+    # jobs below wait for this job; when a guard test fails (output `red`), stop-on-guard-red cancels the run, so the
+    # queue drops the group in minutes instead of when `portable` ends. 2026-11-20 to 11-24: 157 merge groups failed first in
     # `portable` while their Mac jobs ran beside it (1,569 Mac minutes), and 117 of them failed a test this job runs.
     # `portable` still runs every one of these tests and stays the required check: a skipped Mac job reports success,
     # so a red here must be red there too, which test_fast_portable keeps true. Not on a PR push: the Mac jobs are
-    # queue-only there, and the quick tier runs the Swift scans itself (#5220). Any result but `failure` (a cancel, a
-    # timeout, which ends `cancelled`) lets the Mac jobs run as before.
+    # queue-only there, and the quick tier runs the Swift scans itself (#5220). No result of this job skips a Mac job
+    # (audit on 089d17c): a failure in checkout, setup-python or Python tools (a PyPI flake, which `portable` may not
+    # hit) is not `red` and cancels nothing, and if the cancel itself fails (#5217's token budget) the Mac jobs run.
     # Cost and catch: about 2 minutes of hosted Linux per merge group (the scans took 59 s on a PR's portable job,
     # 75 s for the whole set in one process on the owner's Mac), and that much later Mac start in each group, beside a
     # 16-minute `portable`. Waste signal: a month in which it fails no group, or it passes 5 minutes.
@@ -357,6 +359,8 @@ jobs:
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      red: ${{ steps.guard-tests.outcome == 'failure' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -369,6 +373,7 @@ jobs:
       - name: Python tools
         run: bash scripts/bootstrap-python-tools.sh
       - name: Repository guard tests
+        id: guard-tests
         run: .venv/bin/python scripts/queue_guards.py
 
   sessionkit:
@@ -376,7 +381,7 @@ jobs:
     needs: [scope, guards]
     # Not with LANE_HOSTED_MAC_REST `on`: the mac-rest job below runs these tests then (#2596).
     if: >-
-      !cancelled() && needs.guards.result != 'failure' &&
+      !cancelled() &&
       needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && vars.LANE_HOSTED_MAC_REST != 'on' && (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on'))
     # The image and Xcode the lane Mac builds with (hosted-app-macos.yml says why), so the two can't disagree.
@@ -457,7 +462,7 @@ jobs:
     name: 'hosted app: build (no tests)'
     needs: [scope, guards]
     if: >-
-      !cancelled() && needs.guards.result != 'failure' &&
+      !cancelled() &&
       needs.scope.result == 'success' && needs.scope.outputs.app != 'false' &&
       (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch')
     runs-on: xcode-27
@@ -549,7 +554,7 @@ jobs:
     # --ref <branch>`). Unset (today), PRs run it as before, because the lane still merges on it. The variable goes
     # on in the same hour the ruleset starts requiring the queue.
     if: >-
-      !cancelled() && needs.guards.result != 'failure' &&
+      !cancelled() &&
       needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && (github.event_name != 'pull_request' ||
       ((github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on') &&
        vars.MERGE_QUEUE_MAC != 'queue-only' && vars.LANE_HOSTED_MAC_REST == 'on'))
@@ -722,14 +727,16 @@ jobs:
         run: gh run cancel "$RUN" || true
 
   stop-on-guard-red:
-    # The same cancel when `guards` ends red (merge groups only). Its failed check stays red, which the queue and
+    # The same cancel when a guard test fails (merge groups only); a setup failure in `guards` is not red and cancels
+    # nothing. The run's Mac jobs may become ready in the same moment, but they wait for a Mac slot and start slower
+    # than this Linux job, so the cancel reaches them queued. Its failed check stays red, which the queue and
     # merge_queue_dequeued.py read as the PR's failure (`needs-fix`); `portable` and the Mac checks end `cancelled`.
     # The group is dropped about 2 minutes in instead of when `portable` ends (median 16.5 minutes), so a broken PR
     # leaves the queue before more groups are built on it: #5172 stayed queued for 2 h 10 min on 2026-11-23 and 25
     # groups failed with it on the same rule.
     name: stop-on-guard-red
     needs: guards
-    if: always() && needs.guards.result == 'failure'
+    if: always() && needs.guards.outputs.red == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:

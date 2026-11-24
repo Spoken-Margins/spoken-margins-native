@@ -32,10 +32,12 @@ class AppCompileJobTests(unittest.TestCase):
         # scope still blocks the group.
         self.assertFalse(runs('merge_group', scope='failure'))
 
-    def test_a_red_guards_job_skips_it_and_any_other_guards_result_builds(self):
-        # #5281: `guards` runs the repository's rule tests first; `portable` runs them too and fails the group.
-        self.assertFalse(runs('merge_group', guards='failure'))
-        for result in ('success', 'skipped', 'cancelled'):
+    def test_no_guards_result_skips_it(self):
+        # #5281: `guards` runs the repository's rule tests first and stop-on-guard-red cancels the run on a red test.
+        # A skipped required check counts as passed, so a red `guards` must not skip the build: if the cancel failed
+        # or `guards` failed in setup, the group would merge unbuilt (audit on 089d17c).
+        self.assertNotIn('needs.guards', str(JOB['if']))
+        for result in ('success', 'skipped', 'cancelled', 'failure'):
             self.assertTrue(runs('merge_group', guards=result), result)
         self.assertTrue(runs('workflow_dispatch', guards='skipped'))
 

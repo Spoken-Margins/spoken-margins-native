@@ -240,7 +240,9 @@ class QueueActsAsTheApp(unittest.TestCase):
 class GuardsRunBeforeTheMacs(unittest.TestCase):
     """2026-11-20 to 11-24: 157 merge groups failed first in `hosted fast: portable` while their Mac jobs ran beside it,
     1,569 hosted-Mac minutes, mostly on repository rule tests. hosted-portable.yml's `guards` job runs those tests first
-    in each merge group, every Mac job waits for it and is skipped on its red, and stop-on-guard-red cancels the run."""
+    in each merge group, every Mac job waits for it, and stop-on-guard-red cancels the run when a guard test fails. No
+    result of `guards` skips a Mac job (audit on 089d17c): a skipped required check counts as passed, so a guards red
+    whose cancel failed, or a setup flake in `guards`, would have let a group merge with no Mac check."""
 
     REQUIRED = ('hosted fast: scope', 'hosted fast: portable', 'hosted fast: Mac rest', 'hosted app: build (no tests)')
 
@@ -263,7 +265,7 @@ class GuardsRunBeforeTheMacs(unittest.TestCase):
         runs = [step.get('run', '') for step in guards['steps']]
         self.assertIn('.venv/bin/python scripts/queue_guards.py', runs)
 
-    def test_every_mac_job_waits_for_guards_and_is_skipped_only_on_its_failure(self):
+    def test_every_mac_job_waits_for_guards_and_no_guards_result_skips_it(self):
         macs = [name for name, job in self.jobs.items() if not str(job.get('runs-on', '')).startswith('ubuntu')]
         self.assertEqual(sorted(macs), ['app-compile', 'mac-rest', 'sessionkit'])
         for name in macs:
@@ -271,15 +273,23 @@ class GuardsRunBeforeTheMacs(unittest.TestCase):
                 job = self.jobs[name]
                 self.assertIn('guards', self.needs(job))
                 condition = ' '.join(job['if'].split())
-                # !cancelled() keeps the job's own condition deciding when guards is skipped (every PR push).
-                self.assertTrue(condition.startswith("!cancelled() && needs.guards.result != 'failure' &&"), condition)
+                # !cancelled() lets the job run whatever `guards` ended with (skipped on every PR push, failed in a
+                # setup step or a test); only the run's cancel stops it, and a failed cancel leaves the Macs running.
+                self.assertTrue(condition.startswith('!cancelled() && '), condition)
+                self.assertNotIn('needs.guards', condition)
 
-    def test_a_red_guards_job_cancels_the_run(self):
+    def test_only_a_failed_guard_test_step_cancels_the_run(self):
+        guards = self.jobs['guards']
+        tests = [step for step in guards['steps'] if step.get('run') == '.venv/bin/python scripts/queue_guards.py']
+        self.assertEqual(len(tests), 1)
+        # A step that never ran (checkout, setup-python or Python tools failed) has an empty outcome: not red.
+        self.assertEqual(' '.join(str(guards['outputs']['red']).split()),
+                         "${{ steps.%s.outcome == 'failure' }}" % tests[0]['id'])
         stop = self.jobs['stop-on-guard-red']
         self.assertEqual(self.needs(stop), ['guards'])
         self.assertEqual(stop['runs-on'], 'ubuntu-latest')
         self.assertEqual(stop['permissions'], {'actions': 'write'})
-        self.assertIn("needs.guards.result == 'failure'", stop['if'])
+        self.assertEqual(' '.join(stop['if'].split()), "always() && needs.guards.outputs.red == 'true'")
         self.assertIn('gh run cancel', stop['steps'][0]['run'])
 
     def test_rearm_still_waits_for_every_other_job(self):
