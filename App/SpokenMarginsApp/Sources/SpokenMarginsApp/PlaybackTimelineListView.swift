@@ -27,6 +27,9 @@ struct PlaybackTimelineListView<Details: View>: View {
     var openClip: (TimelineSourceContent.Entry) -> Void = { _ in }
     @ViewBuilder var details: (TimelineRailEntry.Action) -> Details
     @Environment(\.timelineClips) private var clips
+    /// Saved live-session photos on the listener's own Margin cards (#4180). Named `photoIndex` because `index` is the
+    /// row's position below.
+    @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
 
     var body: some View {
         let rows = entries.map(\.foldingRow)
@@ -41,6 +44,7 @@ struct PlaybackTimelineListView<Details: View>: View {
                                     isFirst: index == 0, isLast: index == visible.count - 1,
                                     hidden: summary,
                                     clip: TimelineRowClip(entry: entry, in: clips),
+                                    photo: ownMarginPhoto(entry),
                                     // Only the current card carries the position, so a playback tick redraws one row.
                                     currentLine: currentIDs.contains(entry.id) ? currentPosition?.line(for: entry.currentLabel) : nil,
                                     action: { perform(entry.action) },
@@ -100,6 +104,14 @@ extension TimelineRailEntry {
     }
 }
 
+extension PlaybackTimelineListView {
+    /// The photo of the listener's own Margin card (`.margin`); a friend's (`.sharedMargin`) and every other card get none.
+    fileprivate func ownMarginPhoto(_ entry: TimelineRailEntry) -> LiveSessionPhoto? {
+        guard case .margin(let row) = entry.action else { return nil }
+        return photoIndex.photo(forMarginId: row.interjection.id)?.photo
+    }
+}
+
 private struct TimelineRailRow: View, Equatable {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let entry: TimelineRailEntry
@@ -110,6 +122,9 @@ private struct TimelineRailRow: View, Equatable {
     var hidden: TimelineChapterFolding.HiddenSummary? = nil
     /// Set when this table or figure has a picture saved (#3895).
     var clip: TimelineRowClip? = nil
+    /// Set on the listener's own Margin card when it came from a live session with a photo (#4180). A Margin has no clip,
+    /// so the two never show together.
+    var photo: LiveSessionPhoto? = nil
     /// The current card's line with the listener's position (#3862); nil on other cards, and the label alone when unknown.
     var currentLine: String? = nil
     let action: () -> Void
@@ -117,7 +132,7 @@ private struct TimelineRailRow: View, Equatable {
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.entry == rhs.entry && lhs.isCurrent == rhs.isCurrent && lhs.isFirst == rhs.isFirst && lhs.isLast == rhs.isLast
-            && lhs.hidden == rhs.hidden && lhs.clip == rhs.clip && lhs.currentLine == rhs.currentLine
+            && lhs.hidden == rhs.hidden && lhs.clip == rhs.clip && lhs.photo == rhs.photo && lhs.currentLine == rhs.currentLine
     }
 
     var body: some View {
@@ -168,6 +183,9 @@ private struct TimelineRailRow: View, Equatable {
                     if let clip {
                         TimelineClipPicture(clip: clip, open: openClip)
                     }
+                    if let photo {
+                        LiveSessionPhotoThumbnail(source: .kept(photo), surface: .page)
+                    }
                     Text(entry.detail)
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
@@ -197,7 +215,7 @@ private struct TimelineRailRow: View, Equatable {
             .padding(.bottom, 12)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(isCurrent ? "\(currentSpoken). " : "")\(entry.isNew ? "New to you. " : "")\(entry.provenanceLabel), \(entry.spokenPosition). \(entry.title). \(entry.detail)\(clipSpoken)\(hiddenSpoken)")
+        .accessibilityLabel("\(isCurrent ? "\(currentSpoken). " : "")\(entry.isNew ? "New to you. " : "")\(entry.provenanceLabel), \(entry.spokenPosition). \(entry.title). \(entry.detail)\(clipSpoken)\(photoSpoken)\(hiddenSpoken)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { action() }
     }
@@ -205,6 +223,11 @@ private struct TimelineRailRow: View, Equatable {
     /// What VoiceOver adds when the row has a picture: its label, so it is known before the "View" action is chosen.
     private var clipSpoken: String {
         clip.map { ". \($0.spokenLabel)" } ?? ""
+    }
+
+    /// What VoiceOver adds when the Margin has a live-session photo (#4180).
+    private var photoSpoken: String {
+        photo == nil ? "" : ". \(LiveSessionPhotoMargin.rowAccessibilityValue)"
     }
 
     /// The current line as VoiceOver reads it: the separators become pauses.

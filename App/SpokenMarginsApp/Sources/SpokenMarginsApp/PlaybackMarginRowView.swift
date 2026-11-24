@@ -113,7 +113,7 @@ struct PlaybackMarginRowView: View {
 }
 
 /// Adds an accessibility value only when there is one, so a row without a photo is read exactly as before.
-private struct OptionalAccessibilityValue: ViewModifier {
+struct OptionalAccessibilityValue: ViewModifier {
     let value: String?
 
     @ViewBuilder

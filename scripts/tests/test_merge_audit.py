@@ -347,6 +347,35 @@ class QueueCheckTests(unittest.TestCase):
         github.api = broken
         self.assertFalse(github.passed_merge_queue(QUEUE_MERGE))
 
+    @staticmethod
+    def status(state='success', context='merge policy', creator='github-actions[bot]'):
+        return {'context': context, 'state': state, 'creator': {'login': creator}}
+
+    def test_a_passing_merge_policy_status_from_github_actions_counts(self):
+        # #5162: the check is a commit status now; the API lists them newest first.
+        self.assertTrue(audit.passed_queue_status([self.status()]))
+        self.assertTrue(audit.passed_queue_status([self.status(), self.status('pending')]))
+        for statuses in ([self.status('pending')], [self.status('failure')], [self.status('error')],
+                         [self.status('failure'), self.status()], [self.status(context='main-t3')],
+                         [self.status(creator='mallory')], []):
+            with self.subTest(statuses=statuses):
+                self.assertFalse(audit.passed_queue_status(statuses))
+        # someone else's newer success can't stand in for the Actions one
+        self.assertFalse(audit.passed_queue_status([self.status(creator='mallory'), self.status('failure')]))
+
+    def test_the_reader_falls_back_to_the_statuses_of_the_merge_commit(self):
+        github = audit.GitHub('o/r')
+        asked = []
+
+        def answer(*args, check=True):
+            asked.append(args[0])
+            if '/check-runs' in args[0]:
+                return json.dumps({'check_runs': []})
+            return json.dumps([self.status()])
+        github.api = answer
+        self.assertTrue(github.passed_merge_queue(QUEUE_MERGE))
+        self.assertIn(f'repos/o/r/commits/{QUEUE_MERGE}/statuses?per_page=100', asked)
+
 
 class FakeGitHub:
     repo = 'uncomposed/spoken-margins-native'

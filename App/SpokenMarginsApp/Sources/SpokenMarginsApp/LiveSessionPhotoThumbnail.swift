@@ -11,7 +11,16 @@ struct LiveSessionPhotoThumbnail: View {
     var isSquare = true
     var maxPixelSize = 144
     var accessibilityText: String?
+    /// The dark listening surface (the live session, Now Playing) or a light page (the item screen, Timeline, Margins
+    /// tab, #4180). The page has no dark tile: it is clear while loading, and a missing file shows the page's secondary
+    /// glyph inside its border outline, colour pairs the page already uses.
+    var surface: Surface = .listening
     @State private var loaded: Loaded = .loading
+
+    enum Surface {
+        case listening
+        case page
+    }
 
     private enum Loaded {
         case loading
@@ -22,8 +31,13 @@ struct LiveSessionPhotoThumbnail: View {
     var body: some View {
         content
             .frame(width: isSquare ? height : nil, height: height)
-            .background(AppColors.watchControl)
+            .background(surface == .page ? Color.clear : AppColors.watchControl)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                if case .missing = loaded, surface == .page {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(AppColors.border, lineWidth: 1)
+                }
+            }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityText ?? "")
             .accessibilityHidden(accessibilityText == nil)
@@ -40,7 +54,8 @@ struct LiveSessionPhotoThumbnail: View {
                 Image(uiImage: image).resizable().scaledToFit()
             }
         case .missing:
-            Image(systemName: "camera").foregroundStyle(AppColors.watchSecondary)
+            Image(systemName: "camera")
+                .foregroundStyle(surface == .page ? AppColors.secondaryText : AppColors.watchSecondary)
         case .loading:
             Color.clear
         }
