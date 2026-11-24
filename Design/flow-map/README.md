@@ -16,7 +16,7 @@
 Each sharing screen's `capture` says whether the real thing was seen and where:
 
 - `pass`: the run reached the screen; `file` is the picture in `captures/`, `commit` the commit it was taken at, `run` which run.
-- `broken`: the step failed in that run; `seen` says what was on screen instead. The map does not wait for a full pass.
+- `broken`: the step failed in that run; `seen` says what was on screen instead and `commit` the commit it failed at. A failed step usually leaves no picture (each capture follows the step's check), so `file` is optional. The map does not wait for a full pass.
 - `pending`: no capture yet; `why` says which run takes it, or that it needs a person on a device (Messages, TestFlight).
 
 Pictures come only from test simulators and fixtures, never a real Library. Two runs make them:

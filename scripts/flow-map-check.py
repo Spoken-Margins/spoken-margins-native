@@ -126,8 +126,10 @@ def check(flow, fix_lines=False, only_sharing=False):
                 problems.append(f"sharing screen {screen['id']} has no capture status (pass, broken or pending)")
             elif capture.get("file") and not (MAP.parent / capture["file"]).is_file():
                 problems.append(f"sharing screen {screen['id']} names a missing capture {capture['file']}")
-            elif capture["status"] != "pending" and not (capture.get("file") and capture.get("commit")):
-                problems.append(f"sharing screen {screen['id']}: a {capture['status']} capture needs its file and commit")
+            elif capture["status"] == "pass" and not (capture.get("file") and capture.get("commit")):
+                problems.append(f"sharing screen {screen['id']}: a pass capture needs its file and commit")
+            elif capture["status"] == "broken" and not capture.get("commit"):
+                problems.append(f"sharing screen {screen['id']}: a broken capture needs the commit it failed at")
             elif capture["status"] == "broken" and not capture.get("seen"):
                 problems.append(f"sharing screen {screen['id']}: a broken capture says what was seen")
     for edge in flow["edges"]:

@@ -166,6 +166,18 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual((screens["JOIN_PAGE"]["status"], screens["JOIN_PAGE"]["seen"]), ("broken", "Blank page"))
         self.assertIn("JOIN_PAGE (broken)", recorded)
 
+    def test_a_failed_step_marked_broken_with_no_picture_keeps_the_map_valid(self):
+        # Audit of #5280: a failed step leaves no picture (each capture follows the step's assertion), so the README's
+        # --broken run dropped the file, and the check then failed every PR for a broken capture with no file.
+        flow = copy.deepcopy(FLOW)
+        captures.apply(flow, {}, "abc1234", "J12", {"WebArrivalPreview": "Spinner never ended"}, "2026-11-24",
+                       lambda src, dst: dst)
+        screen = next(s for s in flow["screens"] if s["id"] == "WebArrivalPreview")
+        self.assertNotIn("file", screen["capture"])
+        self.assertEqual(check.check(flow, only_sharing=True)[3], [])
+        del screen["capture"]["commit"]
+        self.assertTrue(any("WebArrivalPreview" in p and "commit" in p for p in check.check(flow, only_sharing=True)[3]))
+
 
 if __name__ == "__main__":
     unittest.main()
