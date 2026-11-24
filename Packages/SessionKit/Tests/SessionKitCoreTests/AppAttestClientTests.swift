@@ -59,6 +59,8 @@ final class AppAttestClientTests: XCTestCase {
         var offline = false
         /// The phone drops off between the challenge and the register call, after the key is made.
         var offlineAtRegister = false
+        /// Keys whose every attested request is answered 401 `invalid_assertion` (#4134), whatever `answers` says.
+        var refusedKeys: Set<String> = []
         func handle(_ url: URL, _ headers: [String: String], _ body: Data) async throws -> (status: Int, body: Data) {
             let index: Int = try lock.withLock {
                 if offline || (offlineAtRegister && url.path == "/api/v1/attest/register") { throw URLError(.notConnectedToInternet) }
@@ -69,6 +71,9 @@ final class AppAttestClientTests: XCTestCase {
             case "/api/v1/attest/challenge": return (200, Data(#"{"challenge":"\#(challenge.base64EncodedString())","expiresInSeconds":300}"#.utf8))
             case "/api/v1/attest/register": return (registerStatus, Data(#"{"registered":true}"#.utf8))
             default:
+                if lock.withLock({ refusedKeys.contains(headers["X-SM-Key-Id"] ?? "") }) {
+                    return (401, Data(#"{"error":"invalid_assertion"}"#.utf8))
+                }
                 let answer = answers[min(index, answers.count - 1)]
                 return (answer.0, Data(answer.1.utf8))
             }
@@ -333,7 +338,8 @@ final class AppAttestClientTests: XCTestCase {
         let provider = Provider(), server = Server()
         provider.failAttest = true
         let attested = client(provider, server, store: AppAttestKeyStore(defaults: defaults()))
-        for _ in 0..<3 { let failure = await tap(attested); XCTAssertEqual(failure, .failed) }
+        let failures = await [tap(attested), tap(attested), tap(attested)]
+        XCTAssertEqual(failures, [.failed, .registrationWaiting, .registrationWaiting], "the taps in the wait say so (#4134)")
         XCTAssertEqual(provider.counts.keys, 1, "one orphaned key, not three")
         XCTAssertEqual(server.paths().filter { $0.hasSuffix("/challenge") }.count, 1, "one challenge spent, not three")
     }
@@ -342,7 +348,8 @@ final class AppAttestClientTests: XCTestCase {
         let provider = Provider(), server = Server()
         server.registerStatus = 401
         let attested = client(provider, server, store: AppAttestKeyStore(defaults: defaults()))
-        for _ in 0..<3 { let failure = await tap(attested); XCTAssertEqual(failure, .failed) }
+        let failures = await [tap(attested), tap(attested), tap(attested)]
+        XCTAssertEqual(failures, [.failed, .registrationWaiting, .registrationWaiting])
         XCTAssertEqual(provider.counts.keys, 1)
         XCTAssertEqual(server.paths().filter { $0.hasSuffix("/register") }.count, 1)
     }
@@ -391,7 +398,7 @@ final class AppAttestClientTests: XCTestCase {
         _ = await tap(attested)
         provider.failAttest = false
         let during = await tap(attested)
-        XCTAssertEqual(during, .failed, "the wait holds even though Apple would now succeed")
+        XCTAssertEqual(during, .registrationWaiting, "the wait holds even though Apple would now succeed")
         clock.advance(AttestedServerClient.registrationBackoffBase)
         let answer = try await attested.send(path: "/api/v1/links/sender", body: Data())
         XCTAssertEqual(answer.status, 200)
@@ -409,14 +416,14 @@ final class AppAttestClientTests: XCTestCase {
     }
 
     /// The key exists once attested, so a register call that is cut off has orphaned it: remembered, unlike an
-    /// offline challenge. The cut-off is itself `.offline`; the taps after it during the wait are `.failed`.
+    /// offline challenge. The cut-off is itself `.offline`; the taps after it during the wait are `.registrationWaiting`.
     func testARegisterCallThatIsCutOffIsRemembered() async {
         let provider = Provider(), server = Server()
         server.offlineAtRegister = true
         let attested = client(provider, server, store: AppAttestKeyStore(defaults: defaults()))
         let first = await tap(attested), second = await tap(attested)
         XCTAssertEqual(first, .offline)
-        XCTAssertEqual(second, .failed)
+        XCTAssertEqual(second, .registrationWaiting)
         XCTAssertEqual(provider.counts.keys, 1, "the second tap made no key")
     }
 
@@ -701,5 +708,126 @@ final class AppAttestClientTests: XCTestCase {
             if n == 1 { await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in } }
             return Data("assertion".utf8)
         }
+    }
+}
+
+// MARK: The bounded re-attest (#4134)
+
+extension AppAttestClientTests {
+    /// The id the fake provider gives its `n`th key.
+    private func keyID(_ n: Int) -> String { Data(repeating: UInt8(n), count: 32).base64EncodedString() }
+
+    private func status(_ attested: AttestedServerClient) async throws -> Int {
+        try await attested.send(path: "/api/v1/links/sender", body: Data()).status
+    }
+
+    /// A key the server keeps refusing (a Team ID change, a counter ahead of the phone's): the first refusal is passed on,
+    /// the second running replaces the key once and sends again under the new one.
+    func testTwoInvalidAssertionsRunningReplaceTheKeyOnceAndRetry() async throws {
+        let provider = Provider(), server = Server()
+        server.refusedKeys = [keyID(1)]
+        let store = AppAttestKeyStore(defaults: defaults())
+        let attested = client(provider, server, store: store)
+        let first = try await status(attested)
+        XCTAssertEqual(first, 401, "one refusal can be one stale request: passed on")
+        XCTAssertEqual(provider.counts.keys, 1)
+        XCTAssertEqual(store.invalidAssertionStreak, 1)
+        let second = try await status(attested)
+        XCTAssertEqual(second, 200, "the second refusal replaced the key and the request went again")
+        XCTAssertEqual(provider.counts.keys, 2)
+        XCTAssertEqual(store.keyID, keyID(2))
+        XCTAssertEqual(store.invalidAssertionStreak, 0)
+        let senderKeys = server.all().filter { $0.path == "/api/v1/links/sender" }.map { $0.headers["X-SM-Key-Id"] }
+        XCTAssertEqual(senderKeys, [keyID(1), keyID(1), keyID(2)])
+    }
+
+    /// Past the bound: a third refusal within a day replaces nothing, and the answer goes to the caller.
+    func testNoSecondReplacementWithinADay() async throws {
+        let provider = Provider(), server = Server()
+        server.refusedKeys = [keyID(1), keyID(2), keyID(3)]
+        let clock = Clock()
+        let store = AppAttestKeyStore(defaults: defaults())
+        let attested = client(provider, server, store: store, clock: clock)
+        for _ in 0..<6 {
+            let answer = try await status(attested)
+            XCTAssertEqual(answer, 401)
+        }
+        XCTAssertEqual(provider.counts.keys, 2, "one replacement in the day, however many refusals")
+        clock.advance(AttestedServerClient.assertionReplacementInterval - 1)
+        _ = try await status(attested)
+        XCTAssertEqual(provider.counts.keys, 2, "a second before the day is out")
+        clock.advance(1)
+        _ = try await status(attested)
+        XCTAssertEqual(provider.counts.keys, 3, "a day later the streak may replace it again")
+    }
+
+    /// A relaunch is a new client over the same defaults: the streak and the day's bound both carry over.
+    func testARelaunchKeepsTheStreakAndTheBound() async throws {
+        let provider = Provider(), server = Server()
+        server.refusedKeys = [keyID(1), keyID(2)]
+        let clock = Clock()
+        let suite = defaults()
+        _ = try await status(client(provider, server, store: AppAttestKeyStore(defaults: suite), clock: clock))
+        XCTAssertEqual(provider.counts.keys, 1)
+        // Relaunch: the second refusal running is still the second, so it replaces.
+        _ = try await status(client(provider, server, store: AppAttestKeyStore(defaults: suite), clock: clock))
+        XCTAssertEqual(provider.counts.keys, 2)
+        // Relaunch again, twice: the day's replacement is spent, so no loop.
+        for _ in 0..<2 {
+            let answer = try await status(client(provider, server, store: AppAttestKeyStore(defaults: suite), clock: clock))
+            XCTAssertEqual(answer, 401)
+        }
+        XCTAssertEqual(provider.counts.keys, 2)
+    }
+
+    /// Any 2xx resets the streak, so two refusals a week apart never count as running.
+    func testASuccessResetsTheStreak() async throws {
+        let provider = Provider(), server = Server()
+        server.answers = [(401, #"{"error":"invalid_assertion"}"#), (200, #"{"ok":true}"#), (401, #"{"error":"invalid_assertion"}"#), (200, #"{"ok":true}"#)]
+        let store = AppAttestKeyStore(defaults: defaults())
+        let attested = client(provider, server, store: store)
+        let answers = try await [status(attested), status(attested), status(attested), status(attested)]
+        XCTAssertEqual(answers, [401, 200, 401, 200])
+        XCTAssertEqual(provider.counts.keys, 1, "no two refusals in a row: the key stays")
+        XCTAssertEqual(store.invalidAssertionStreak, 0)
+    }
+
+    /// Other refusals don't count toward the streak and don't reset it either: only `invalid_assertion` is the key's fault.
+    func testOtherAnswersNeitherCountNorReset() async throws {
+        let provider = Provider(), server = Server()
+        server.answers = [(401, #"{"error":"invalid_assertion"}"#), (429, #"{"error":"rate_limited"}"#), (401, #"{"error":"clock_skew"}"#), (401, #"{"error":"invalid_assertion"}"#), (200, #"{"ok":true}"#)]
+        let store = AppAttestKeyStore(defaults: defaults())
+        let attested = client(provider, server, store: store)
+        let answers = try await [status(attested), status(attested), status(attested), status(attested)]
+        XCTAssertEqual(answers, [401, 429, 401, 200], "the fourth was the second invalid_assertion: replaced and retried")
+        XCTAssertEqual(provider.counts.keys, 2)
+    }
+
+    /// Two Share taps during a re-attest: the gate runs them one after the other, so only one key is replaced.
+    func testTwoSendsDuringAReattestReplaceOneKey() async throws {
+        let provider = Provider(), server = Server()
+        server.refusedKeys = [keyID(1)]
+        let store = AppAttestKeyStore(defaults: defaults())
+        let attested = client(provider, server, store: store)
+        _ = try await status(attested)
+        async let one = attested.send(path: "/api/v1/links/sender", body: Data())
+        async let two = attested.send(path: "/api/v1/links/sender", body: Data())
+        let answers = try await [one.status, two.status]
+        XCTAssertEqual(answers, [200, 200])
+        XCTAssertEqual(provider.counts.keys, 2, "one replacement, not one per tap")
+        XCTAssertEqual(server.paths().filter { $0.hasSuffix("/register") }.count, 2)
+    }
+
+    /// The forgotten-key replacement and this one are separate: a key the server lost, then refused twice, is replaced
+    /// for each reason once.
+    func testTheUnknownKeyReplacementHasItsOwnFlag() async throws {
+        let provider = Provider(), server = Server()
+        server.answers = [(401, #"{"error":"unknown_key"}"#), (401, #"{"error":"invalid_assertion"}"#), (200, #"{"ok":true}"#)]
+        let store = AppAttestKeyStore(defaults: defaults())
+        store.save(keyID(9))
+        _ = store.noteInvalidAssertion()
+        let answer = try await status(client(provider, server, store: store))
+        XCTAssertEqual(answer, 200)
+        XCTAssertEqual(provider.counts.keys, 2, "one for unknown_key, one for the second invalid_assertion running")
     }
 }

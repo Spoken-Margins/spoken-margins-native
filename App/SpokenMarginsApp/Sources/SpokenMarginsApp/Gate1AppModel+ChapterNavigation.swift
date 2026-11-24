@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitSupertonic
 
 /// Chapter jumps and play-from-start (#1011): moved out of `Gate1AppModel.swift` unchanged, to keep that
 /// file under its size ceiling (scripts/hot_file_ratchet.py). Next chapter lives in `+NextChapter`.

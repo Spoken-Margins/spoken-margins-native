@@ -59,7 +59,7 @@ final class ShareAsLinkRenderingTests: XCTestCase {
         for size in [DynamicTypeSize.large, .accessibility5] {
             let idle = try render(ShareLinkStatusLines(state: .idle, companionNote: nil), name: "status-idle", size: size)
             let failed = try render(
-                ShareLinkStatusLines(state: .useFile(ShareLinkFallback.unavailable.message), companionNote: nil),
+                ShareLinkStatusLines(state: .useFile(.unavailable), companionNote: nil),
                 name: "status-failed", size: size
             )
             let companion = try render(
@@ -71,6 +71,27 @@ final class ShareAsLinkRenderingTests: XCTestCase {
             XCTAssertGreaterThan(failed.height, 15, "\(size): a failed upload did not say to send the file")
             XCTAssertGreaterThan(companion.height, 15, "\(size): the companion-file note did not appear")
         }
+    }
+
+    /// #4134: each new line draws in the pinned bar and wraps on the narrowest phone. From AX1 it keeps to two lines with
+    /// "More", so the longest (the clock line) is no taller there than at the default size plus the button.
+    func testTheSenderCheckLinesDrawAndWrapAtEveryTextSize() throws {
+        let cases: [ShareLinkFallback] = [.clockWrong, .notVerified, .cantVerify, .phoneCantMakeLinks, .updateNeeded]
+        for size in [DynamicTypeSize.large, .accessibility5] {
+            for fallback in cases {
+                let lines = ShareLinkStatusLines(state: .useFile(fallback), companionNote: nil)
+                XCTAssertTrue(lines.hasLines, "\(fallback)")
+                let rendered = try render(lines, name: "status-\(fallback)", size: size)
+                XCTAssertLessThanOrEqual(rendered.width, Self.narrowestWidth + 1, "\(size): \(fallback) ran off the screen")
+                XCTAssertGreaterThan(rendered.height, 15, "\(size): \(fallback) drew no line")
+            }
+        }
+        let clockAtLarge = try render(ShareLinkStatusLines(state: .useFile(.clockWrong), companionNote: nil), name: "clock-large", size: .large)
+        let clockAtAX5 = try render(ShareLinkStatusLines(state: .useFile(.clockWrong), companionNote: nil), name: "clock-ax5", size: .accessibility5)
+        let twoLinesAtAX5 = try render(
+            ShareLinkStatusLines(state: .useFile(.phoneCantMakeLinks), companionNote: nil), name: "short-ax5", size: .accessibility5)
+        XCTAssertLessThanOrEqual(clockAtAX5.height, twoLinesAtAX5.height + 1, "from AX1 the long line keeps to two lines and More")
+        XCTAssertGreaterThan(clockAtLarge.height, 15)
     }
 
     /// #4454: the play check's line goes under Share link, wraps at every text size, and a problem is taller than a pass

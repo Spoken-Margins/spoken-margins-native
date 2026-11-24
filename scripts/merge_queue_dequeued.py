@@ -24,7 +24,10 @@ Two jobs, independent of each other:
    comment's marker has passed (the bridge reads that marker, so the two scripts agree on its format; a test checks
    it). A failed test step is the PR's, and gets `needs-fix` at once. `automerge` is removed only when the event shows the PR carries it (the owner's own Merge tap on an
    unlabelled PR has nothing to remove, and its comment says nothing about a label). A PR that merged keeps its labels. Each comment carries a hidden marker with the group head (or the PR
-   head when no group ran), so a second event for the same group adds nothing. A failed read logs a warning and exits 0: a notifier must not go red.
+   head when no group ran), so a second event for the same group adds nothing. A test that failed in a group of only
+   the trunk and this PR is this PR's: the comment carries an `own-failure` marker for the PR's head commit, and the
+   label bridge holds a commit with two of them out of the queue until a new push (#5281). After a failure removal it
+   also turns auto-merge off and takes the PR out of the queue again if the bridge's sweep re-queued it first. A failed read logs a warning and exits 0: a notifier must not go red.
 
 2. Cancel. When an entry leaves the queue GitHub rebuilds the groups behind it and sends `merge_group: destroyed`
    for the old ones, but Actions only triggers on `checks_requested`, so the old groups' runs keep their Macs until
@@ -70,6 +73,14 @@ SETUP_RETRY_DELAY = datetime.timedelta(minutes=30)
 # check out only their own script. test_merge_queue_dequeued checks the two agree.
 SETUP_RETRY_MARKER = '<!-- merge-queue-dequeued setup-retry not-before={when} -->'
 TIME_FORMAT = '%Y-%m-%dT%H:%M:%SZ'
+# #5281: a test failed in a group that held nothing but the trunk and this PR, so nothing else can have caused it. The
+# marker names the PR's head commit; merge_queue_label_bridge.py (OWN_FAILURE, its own copy of the pattern) refuses to
+# queue a commit that carries OWN_FAILURE_LIMIT of them, even on a re-arm, until a new push. On 2026-11-24 #5207 failed
+# its groups three times on one commit (03:53, 10:38, 19:27 UTC), each time re-armed with no push, and every group
+# built behind it failed with it: from 18:32 to 19:27 five groups failed its two catalog tests.
+OWN_FAILURE_MARKER = '<!-- merge-queue-dequeued own-failure head={head} -->'
+OWN_FAILURE_LIMIT = 2
+DEQUEUE = 'mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }'
 
 # Steps whose failure is the runner's, never the PR's code. The names are the real steps of the workflows that run in
 # a merge group (hosted-portable.yml, hosted-web.yml); test_merge_queue_dequeued reads those files to keep the list
@@ -204,6 +215,28 @@ class GitHub:
             return False
         return done.returncode == 0 or 'already' in f'{done.stdout}{done.stderr}'.lower()
 
+    def stop_merging(self, number, node_id, in_queue):
+        """Auto-merge off, and out of the queue when it is in it, with the queue token (#5281). The label bridge's sweep
+        can set a PR to merge again in the seconds between GitHub's removal and this script's `needs-fix` (#5207 at
+        10:38:14 on 2026-11-24), and this script's label removal, made with GITHUB_TOKEN, wakes no bridge run to undo it.
+        True when nothing is left set to merge."""
+        env = dict(os.environ)
+        if env.get('QUEUE_TOKEN'):
+            env['GH_TOKEN'] = env['QUEUE_TOKEN']
+        ok = True
+        try:
+            if in_queue and node_id:
+                done = subprocess.run(['gh', 'api', 'graphql', '-f', f'query={DEQUEUE}', '-f', f'id={node_id}'], env=env,
+                                      text=True, timeout=90, capture_output=True)
+                ok = done.returncode == 0
+            done = subprocess.run(['gh', 'pr', 'merge', str(number), '--repo', self.repo, '--disable-auto'], env=env,
+                                  text=True, timeout=90, capture_output=True)
+            text = f'{done.stdout}{done.stderr}'.lower()
+            ok = ok and (done.returncode == 0 or 'not' in text or 'already' in text)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return ok
+
     def delete(self, path):
         """DELETE; a 404 (already gone) is fine."""
         try:
@@ -329,6 +362,32 @@ def setup_retry_not_before(github):
     return (github.now() if hasattr(github, 'now') else datetime.datetime.now(datetime.timezone.utc)) + SETUP_RETRY_DELAY
 
 
+def group_base(run):
+    """The commit a merge group was built on: its branch is gh-readonly-queue/<trunk>/pr-<n>-<base sha>."""
+    match = re.search(r'-([0-9a-f]{40})$', str((run or {}).get('head_branch', '')))
+    return match.group(1) if match else None
+
+
+def alone_on_trunk(github, run, trunk):
+    """Whether the group held nothing but the trunk and this PR: its base commit is on the trunk itself, not another
+    entry's group commit. Unknown counts as no, so a failed read never holds a PR out."""
+    base = group_base(run)
+    if not base:
+        return False
+    try:
+        status = github.get(f'compare/{trunk}...{base}').get('status')
+    except ReadFailed:
+        return False
+    return status in ('identical', 'behind')
+
+
+def own_failures(comments, head):
+    """How many of the workflow's own comments say this commit failed a group alone. Anyone can comment, so a marker
+    from another account counts for nothing."""
+    marker = OWN_FAILURE_MARKER.format(head=head)
+    return sum(1 for c in comments if marker in (c.get('body') or '') and (c.get('user') or {}).get('login') == BOT)
+
+
 def carries_arm_label(pr):
     return any((label or {}).get('name') == ARM_LABEL for label in pr.get('labels') or [])
 
@@ -351,9 +410,12 @@ def setup_sentence(setup):
     return f'Every failed job failed outside your code: {where}.'
 
 
-def comment_body(number, reason, head, check, armed=True, cancelled=None, retry=False, requeued=None, setup=None):
+def comment_body(number, reason, head, check, armed=True, cancelled=None, retry=False, requeued=None, setup=None,
+                 own=None):
     lines = [MARKER.format(head=head),
              f'**Left the merge queue** ({reason or "no reason given"}).']
+    if own:
+        lines[0] += '\n' + OWN_FAILURE_MARKER.format(head=own['head'])
     if setup and setup.get('when'):
         lines[0] += '\n' + SETUP_RETRY_MARKER.format(when=setup['when'])
         lines.append(f'{setup_sentence(setup)} That is a setup step or a download (a runner problem or a host that was '
@@ -399,6 +461,15 @@ def comment_body(number, reason, head, check, armed=True, cancelled=None, retry=
         return '\n\n'.join(lines)
     if check:
         lines.append(f'Failed check: "{check.get("name", "?")}" on the merge group `{head[:7]}`: {check.get("html_url", "")}')
+        if own:
+            if own['count'] >= OWN_FAILURE_LIMIT:
+                lines.append(f'That group held nothing but main and this PR, and commit `{own["head"][:7]}` has now failed '
+                             f'that way {own["count"]} times, so the queue will not take this commit again, even if '
+                             f'`{ARM_LABEL}` is added again. Push a fix.')
+            else:
+                lines.append(f'That group held nothing but main and this PR, so the failure is this PR\'s, not one ahead '
+                             f'of it. If it was a flaky test, adding `{ARM_LABEL}` again retries this commit once; a second '
+                             f'failure like this holds commit `{own["head"][:7]}` out of the queue until a new push.')
         if setup:
             lines.append(f'{setup_sentence(setup)} It was set to merge again once for that and failed the same way, so '
                          f'it is held as a failure this time.')
@@ -437,6 +508,12 @@ def notify(github, event, out=sys.stdout):
             except ReadFailed:
                 outside = False   # not knowing is the status quo: the PR is told it failed
         comments = all_comments(github, number)
+        own = None
+        if check and not outside and reason.upper() not in NO_LABEL_REASONS and not is_conflict(reason) \
+                and alone_on_trunk(github, run, (pr.get('base') or {}).get('ref') or 'main'):
+            pr_head = (pr.get('head') or {}).get('sha')
+            if pr_head:
+                own = {'head': pr_head, 'count': own_failures(comments, pr_head) + 1}
     except ReadFailed as error:
         warn(f'#{number}: could not read GitHub, no comment posted ({error})', out)
         return 'skipped: read failed'
@@ -464,7 +541,8 @@ def notify(github, event, out=sys.stdout):
             return 'told: setup retry'
         requeued = github.requeue(number) if retry and armed and hasattr(github, 'requeue') else None
         github.post(f'issues/{number}/comments',
-                    {'body': comment_body(number, reason, head, check, armed, cancelled, retry, requeued, setup)})
+                    {'body': comment_body(number, reason, head, check, armed, cancelled, retry, requeued, setup,
+                                          None if outside else own)})
         if retry:
             print(f'#{number}: nothing failed in group {head[:7]}; left armed for one retry'
                   f'{" and set to merge again" if requeued else ""}.', file=out)
@@ -474,6 +552,15 @@ def notify(github, event, out=sys.stdout):
         # Merged PRs and a first cancelled group returned above, so every removal left here means "stop".
         if armed:
             github.delete(f'issues/{number}/labels/{ARM_LABEL}')
+            # #5281: undo a re-queue that slipped in before the label above came off.
+            if reason.upper() not in NO_LABEL_REASONS and hasattr(github, 'stop_merging'):
+                pr_head = (pr.get('head') or {}).get('sha')
+                try:
+                    in_queue = bool(pr_head) and pr_head in github.queue_heads()
+                except ReadFailed:
+                    in_queue = True
+                if not github.stop_merging(number, pr.get('node_id'), in_queue):
+                    warn(f'#{number}: could not make sure it is no longer set to merge', out)
     except (subprocess.SubprocessError, OSError) as error:
         warn(f'#{number}: could not post ({error!r})', out)
         return 'skipped: post failed'
