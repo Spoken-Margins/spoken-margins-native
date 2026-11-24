@@ -45,7 +45,7 @@ extension Gate1AppModel {
     /// The Margin recordings (#1035, #2507) are found by the audio paths the deleted rows named. The rule is
     /// `MarginRecordingCleanup`'s: only a file under `SpokenMargins/`, where the recorder keeps them, and only once no
     /// Margin that stays names it. `store` is read for that on the removal step's background task, never on the main
-    /// thread. The leveled playback copies (#467) are the same voice and are found by the recording's content, so they
+    /// thread. A recording a live session still names is kept too (#4233). The leveled playback copies (#467) are the same voice and are found by the recording's content, so they
     /// go before the recording does. If the Margins that stay can't be read, nothing is removed and the record is kept.
     private func permanentDeletePurge(store: SQLiteSessionStore) -> PermanentDeletePurge? {
         guard let support = try? applicationSupportDirectory() else { return nil }
@@ -70,7 +70,9 @@ extension Gate1AppModel {
             marginRecordings: .init(
                 directory: support.appending(path: "SpokenMargins", directoryHint: .isDirectory),
                 resolve: { Self.resolvedInterjectionAudioURL(for: $0, applicationSupportDirectory: support) },
-                survivingAudioPaths: { try store.allMarginAudioPaths() },
+                // A live session's Margin names its recording too, and a Margin moved onto an item shares it with the live
+                // Margin Undo puts back (#4233 Design 2.9.3), so a file any live session names is kept as well.
+                survivingAudioPaths: { try store.allMarginAudioPaths() + LiveSessionCollection(root: support).namedAudioPaths() },
                 beforeRemoving: { leveledMargins.removeCopies(of: $0) }))
     }
 
