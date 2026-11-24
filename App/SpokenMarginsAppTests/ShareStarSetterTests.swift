@@ -80,7 +80,7 @@ final class ShareStarSetterTests: XCTestCase {
         XCTAssertEqual(fixture.model.selectedItem.interjections.first { $0.id == "m-current" }?.isStarredForSharing, true, "shown before any reload")
         fixture.model.prepareShareInterjections()
         XCTAssertEqual(fixture.model.sharingState.draftFilter, .starred)
-        XCTAssertEqual(fixture.model.sharingState.drafts.filter(\.isIncluded).map(\.id), ["m-current"])
+        XCTAssertEqual(fixture.model.sharingState.drafts.filter(\.isIncluded).map(\.interjection.id), ["m-current"])
 
         fixture.model.setStarredForSharing(older, starred: true, place: .marginsTab)
         XCTAssertEqual(try fixture.store.loadInterjections(sessionId: "earlier-session").first?.isStarredForSharing, true, "saved")

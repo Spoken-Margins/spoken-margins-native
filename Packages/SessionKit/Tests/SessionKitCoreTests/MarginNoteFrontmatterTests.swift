@@ -208,6 +208,19 @@ final class MarginNoteFrontmatterTests: XCTestCase {
         XCTAssertTrue(SessionExportMarkdownRenderer.writesMarginNote(captureKind: .written, text: "Words."))
     }
 
+    /// Settings' Notes Folder footer must say what the folder really gets (#5034): it said "each text Margin"
+    /// while every spoken Margin was written, so a listener who mainly speaks read it as "not for me".
+    func testTheNotesFolderFooterSaysSpokenMarginsAreWrittenToo() {
+        let lead = MarginNoteCoverage.notesFolderLead
+        // The rule the words describe; if it changes, this test fails and the footer is rewritten with it.
+        XCTAssertTrue(SessionExportMarkdownRenderer.writesMarginNote(captureKind: .audio, text: nil))
+        XCTAssertTrue(SessionExportMarkdownRenderer.writesMarginNote(captureKind: .written, text: "Words."))
+        XCTAssertFalse(lead.localizedCaseInsensitiveContains("text Margin"), lead)
+        XCTAssertTrue(lead.contains("spoken or written"), lead)
+        XCTAssertTrue(lead.contains("once it’s transcribed"), "A spoken note fills in its words later: \(lead)")
+        XCTAssertTrue(lead.contains("Markdown note"), lead)
+    }
+
     // MARK: - A paper's citation (#206)
 
     func testPaperMarginCarriesDOIAuthorsYearAndThePageItSitsOn() throws {

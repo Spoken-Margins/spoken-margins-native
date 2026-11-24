@@ -42,6 +42,14 @@ public struct SourceElement: Codable, Equatable, Sendable, Identifiable {
         self.url = url
         self.rows = rows
     }
+
+    /// Where a link goes, for its Timeline row's kind line ("Link · x.com", #4778): the host, lowercased, with one leading
+    /// "www." removed. Nil for every kind but a link, and for a link with no host (a `mailto:`, a relative path, nothing).
+    public var timelineLinkHost: String? {
+        guard kind == .link, let host = URL(string: url)?.host, !host.isEmpty else { return nil }
+        let lowered = host.lowercased()
+        return lowered.hasPrefix("www.") && lowered.count > 4 ? String(lowered.dropFirst(4)) : lowered
+    }
 }
 
 /// What the store keeps for one item. `textSHA256` ties the elements to the text their offsets index, so elements

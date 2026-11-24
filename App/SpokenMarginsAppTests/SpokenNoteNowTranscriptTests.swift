@@ -7,7 +7,9 @@ import XCTest
 @MainActor
 final class SpokenNoteNowTranscriptTests: XCTestCase {
     private var support: URL!
-    private let noteId = "now-note"
+    // One id per test: the loader keeps its last result per note id for the whole process, so a shared id lets a
+    // later test start from an earlier test's cached result.
+    private let noteId = "now-note-\(UUID().uuidString)"
 
     override func setUpWithError() throws {
         support = FileManager.default.temporaryDirectory.appendingPathComponent("now-transcript-\(UUID().uuidString)")

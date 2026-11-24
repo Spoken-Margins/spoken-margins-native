@@ -79,6 +79,33 @@ final class PlaybackTimelineTests: XCTestCase {
         XCTAssertEqual(item.timelineSource.entries.map(\.role), roles, "Now and the reader still receive every retained role")
     }
 
+    /// #4778, device condition `long-source`: on a long article every chapter is a compact header and every link a compact
+    /// child, and none of them repeats its type in a detail line. No work is added per row, so there is no timing test.
+    func testALongSourceMapsEveryChapterAndLinkToItsCompactRole() {
+        let text = String(repeating: "word ", count: 12_000)
+        let chapters = (0..<120).map { index in
+            Chapter(id: "c\(index)", title: "Section \(index)", startChar: index * 500, endChar: index * 500 + 499,
+                    percent: index * 100 / 120)
+        }
+        let links = (0..<300).map { index in
+            SourceElement(id: "l\(index)", kind: .link, start: index * 190 + 7, label: "Link \(index)",
+                          url: "https://www.example\(index % 7).com/p/\(index)")
+        }
+        var item = ItemDetailState(id: "long", title: "Long", text: text)
+            .includingTimelineSource(nil, elements: SourceElementsRecord(text: text, elements: links))
+        item.chapters = chapters
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        let chapterRows = entries.filter { if case .chapter = $0.action { return true } else { return false } }
+        let linkRows = entries.filter { if case .sourceElement = $0.action { return true } else { return false } }
+        XCTAssertEqual(chapterRows.count, 120)
+        XCTAssertEqual(linkRows.count, 300)
+        XCTAssertTrue(chapterRows.allSatisfy { $0.rowRole == .chapter })
+        XCTAssertTrue(linkRows.allSatisfy {
+            if case .sourceElement(.link, let host) = $0.rowRole { return host?.hasPrefix("example") == true } else { return false }
+        })
+        XCTAssertFalse((chapterRows + linkRows).contains { $0.detail.contains("Chapter ·") || $0.detail.contains("Link ·") })
+    }
+
     /// 2026-11-14: a table is a Timeline row named by its columns; a link row's tap goes straight to its address; a
     /// picture and a YouTube embed have a picture to draw, a link and a table don't.
     func testTableRowsLinkTapsAndPreviewPictures() throws {
@@ -93,7 +120,10 @@ final class PlaybackTimelineTests: XCTestCase {
             if case .sourceElement = $0.action { return true } else { return false }
         }
         XCTAssertEqual(rows.map(\.title), ["A · B", "the study"])
-        XCTAssertEqual(rows.map(\.detail), ["Table", "Link · example.com"])
+        // The kind and the host are the compact row's first line now, so the detail is empty (#4778).
+        XCTAssertEqual(rows.map(\.detail), ["", ""])
+        XCTAssertEqual(rows.map(\.rowRole), [.sourceElement(kind: .table, linkHost: nil),
+                                             .sourceElement(kind: .link, linkHost: "example.com")])
         XCTAssertEqual(rows.map(\.provenanceLabel), ["Table", "Link"])
 
         let link = record.elements[1]
@@ -222,7 +252,10 @@ final class PlaybackTimelineTests: XCTestCase {
         let rows = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
         let elementRows = rows.filter { if case .sourceElement = $0.action { return true } else { return false } }
         XCTAssertEqual(elementRows.map(\.title), ["A chart caption.", "the study", "YouTube video"])
-        XCTAssertEqual(elementRows.map(\.detail), ["Picture", "Link · example.com", "Embed"])
+        XCTAssertEqual(elementRows.map(\.detail), ["", "", ""])
+        XCTAssertEqual(elementRows.map(\.rowRole), [.sourceElement(kind: .picture, linkHost: nil),
+                                                    .sourceElement(kind: .link, linkHost: "example.com"),
+                                                    .sourceElement(kind: .embed, linkHost: nil)], "the www. is dropped")
         XCTAssertEqual(elementRows.map(\.position), elementRows.map(\.position).sorted())
         XCTAssertEqual(elementRows.map(\.accessibilityIdentifier),
                        ["timeline.sourceElement.e0", "timeline.sourceElement.e1", "timeline.sourceElement.e2"])
@@ -452,7 +485,7 @@ final class PlaybackTimelineTests: XCTestCase {
         let entries = ExperienceTimelineRailScreen.makeEntries(from: podcastWithPublisherChapters(), sessionID: nil)
         let long = try XCTUnwrap(entries.first { $0.id == "source.chapter.long" })
         XCTAssertEqual(long.cornerLabel, "1:07:30", "an hour in is 1:07:30, never 67:30")
-        XCTAssertEqual(long.detail, "Chapter · 1:07:30")
+        XCTAssertEqual(long.detail, "", "the place shows once, in the corner (#4778)")
         XCTAssertEqual(long.spokenPosition, "1 hour, 7 minutes, 30 seconds")
         XCTAssertEqual(long.position, 65, "the sort coordinate stays a percent, so the order does not move")
         let open = try XCTUnwrap(entries.first { $0.id == "source.chapter.open" })
@@ -464,9 +497,9 @@ final class PlaybackTimelineTests: XCTestCase {
     func testAPodcastChapterSavedOnlyAsAFractionSaysAboutAndNeverMakesATime() throws {
         let entries = ExperienceTimelineRailScreen.makeEntries(from: podcastWithPublisherChapters(), sessionID: nil)
         let rough = try XCTUnwrap(entries.first { $0.id == "source.chapter.rough" })
-        XCTAssertEqual(rough.cornerLabel, "72%")
-        XCTAssertEqual(rough.detail, "Chapter · about 72%")
-        XCTAssertEqual(rough.spokenPosition, "72 percent")
+        XCTAssertEqual(rough.cornerLabel, "about 72%", "the corner keeps the about now the detail line is gone (#4778)")
+        XCTAssertEqual(rough.detail, "")
+        XCTAssertEqual(rough.spokenPosition, "about 72 percent")
 
         // An episode whose chapters an earlier build saved only as percents (no exact twins at all).
         var returning = podcastWithPublisherChapters()
@@ -474,7 +507,7 @@ final class PlaybackTimelineTests: XCTestCase {
         for entry in ExperienceTimelineRailScreen.makeEntries(from: returning, sessionID: nil)
         where entry.id.hasPrefix("source.chapter.") {
             XCTAssertTrue(entry.cornerLabel.hasSuffix("%"), "\(entry.id) has no exact time to show")
-            XCTAssertTrue(entry.detail.contains("about"), entry.detail)
+            XCTAssertTrue(entry.cornerLabel.contains("about"), entry.cornerLabel)
         }
     }
 
@@ -485,22 +518,23 @@ final class PlaybackTimelineTests: XCTestCase {
         let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
         let chapter = try XCTUnwrap(entries.first { $0.id == "source.chapter.c1" })
         XCTAssertEqual(chapter.cornerLabel, "56%", "text never shows a time")
-        XCTAssertEqual(chapter.detail, "Chapter · 56%")
+        XCTAssertEqual(chapter.detail, "")
         XCTAssertEqual(chapter.spokenPosition, "56 percent")
         XCTAssertEqual(try XCTUnwrap(entries.first { $0.id == "source.beginning" }).cornerLabel, "0%")
     }
 
-    func testAMediaChapterAndSceneOverAnHourReadAsHoursInTheirDetailLines() throws {
+    func testAMediaChapterAndSceneOverAnHourReadAsHoursInTheirCorners() throws {
         var item = ItemDetailState(id: "long", title: "Long episode", text: "", isNativeAudio: true)
         item.mediaDurationMs = 7_200_000
         item.mediaChapters = [MediaTimelineChapter(id: "m1", title: "Late", startMs: 4_050_000, transcriptSegmentId: "s")]
         item.listeningMapScenes = [MediaTimelineChapter(id: "sc1", title: "Scene", startMs: 3_725_000, transcriptSegmentId: "s")]
         let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
         let chapter = try XCTUnwrap(entries.first { $0.id == "source.mediaChapter.m1" })
-        XCTAssertEqual(chapter.detail, "Chapter · 1:07:30")
+        XCTAssertEqual(chapter.detail, "")
         XCTAssertEqual(chapter.cornerLabel, "1:07:30")
         let scene = try XCTUnwrap(entries.first { $0.id == "source.listeningMapScene.sc1" })
-        XCTAssertTrue(scene.detail.hasPrefix("Generated scene · 1:02:05"), scene.detail)
+        XCTAssertTrue(scene.detail.hasPrefix("Generated scene"), scene.detail)
+        XCTAssertFalse(scene.detail.contains("1:02:05"), "the time is in the corner, once (#4778)")
         XCTAssertEqual(scene.cornerLabel, "1:02:05")
     }
 
