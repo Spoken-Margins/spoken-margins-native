@@ -3,7 +3,6 @@ import CryptoKit
 import Foundation
 import SessionKit
 import SessionKitAudio
-import SessionKitSupertonic
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -12,7 +11,7 @@ import UIKit
 
 /// The bundled voice that renders a chunk when Supertonic isn't allowed (#849). A seam so a test can hold one render
 /// open while a play releases the voice; the app passes `KittenNarrationRenderer`.
-protocol BundledVoiceRendering: Sendable {
+public protocol BundledVoiceRendering: Sendable {
     func render(text: String) async throws -> SupertonicNarrationResult
     func discardGeneratedAudio(at url: URL) async
 }
@@ -21,34 +20,35 @@ extension KittenNarrationRenderer: BundledVoiceRendering {}
 
 /// Background preparation's view of the shared renderer: every render is paced, whatever the
 /// app's state, without touching the pacing the listener's live narration gets (#377).
-struct BackgroundPreparationRenderer: SupertonicRendering {
-    let base: SupertonicNarrationRenderer
+public struct BackgroundPreparationRenderer: SupertonicRendering {
+    public let base: SupertonicNarrationRenderer
 
-    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+    public init(base: SupertonicNarrationRenderer) {
+        self.base = base
+    }
+
+    public func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
         try await base.render(text: text, voice: voice, language: language, speed: speed, synthesisSteps: synthesisSteps, pacing: .always)
     }
 
-    func discardGeneratedAudio(at url: URL) async {
+    public func discardGeneratedAudio(at url: URL) async {
         await base.discardGeneratedAudio(at: url)
     }
 }
 
-struct PreparedChunkLookupResult: Sendable {
-    var audioURL: URL
-    var duration: TimeInterval
-}
-
 /// A warning backs off new inference across playback and Library workers.
 /// Use monotonic time so clock changes cannot prematurely end the backoff.
-final class SupertonicMemoryBackoff: @unchecked Sendable {
+public final class SupertonicMemoryBackoff: @unchecked Sendable {
     private let lock = NSLock()
     private var blockedUntil: TimeInterval = 0
 
-    func recordWarning(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+    public init() {}
+
+    public func recordWarning(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         lock.withLock { blockedUntil = max(blockedUntil, now + 60) }
     }
 
-    func isActive(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+    public func isActive(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
         lock.withLock { now < blockedUntil }
     }
 }
@@ -56,22 +56,22 @@ final class SupertonicMemoryBackoff: @unchecked Sendable {
 extension OnDeviceVoiceGovernor {
     /// The app's one governor: every on-device voice's renderer paces through it, and the app's lifecycle tells it
     /// when the app is in the background, so a voice that takes over there is paced from its first render (#1679).
-    static let app = OnDeviceVoiceGovernor(conditions: { SupertonicResourcePolicy.currentConditions() })
+    public static let app = OnDeviceVoiceGovernor(conditions: { SupertonicResourcePolicy.currentConditions() })
 }
 
 /// Applies I14 (`SpeechEnginePolicy`) to the device: heat and memory pressure stop new
 /// Supertonic inference; Low Power Mode and charging alone don't (#183).
-enum SupertonicResourcePolicy {
-    static let memoryBackoff = SupertonicMemoryBackoff()
+public enum SupertonicResourcePolicy {
+    public static let memoryBackoff = SupertonicMemoryBackoff()
 
-    static func allowsRendering(processInfo: ProcessInfo = .processInfo) -> Bool {
+    public static func allowsRendering(processInfo: ProcessInfo = .processInfo) -> Bool {
         SpeechEnginePolicy.onDeviceRenderingBlock(currentConditions(processInfo: processInfo)) == nil
     }
 
     /// What the phone reports now, from any thread. The engine choice ignores the power source (charging alone
     /// never stops or starts a voice, #183), but the render-ahead window decides on it (#2703: a cool phone on
     /// power renders further ahead), so it is read from `power`, never left out.
-    static func currentConditions(
+    public static func currentConditions(
         processInfo: ProcessInfo = .processInfo,
         power: any ExternalPowerSource = DevicePowerSource.app
     ) -> SpeechEngineConditions {
@@ -85,12 +85,12 @@ enum SupertonicResourcePolicy {
 
     /// Whether the device is charging or full on power. Nil when it can't tell (the simulator, off iOS).
     @MainActor
-    static func isOnExternalPower() -> Bool? {
+    public static func isOnExternalPower() -> Bool? {
         DevicePowerSource.app.startMonitoring()
         return DevicePowerSource.app.isOnExternalPower
     }
 
-    static func thermalLevel(_ state: ProcessInfo.ThermalState) -> SpeechThermalLevel {
+    public static func thermalLevel(_ state: ProcessInfo.ThermalState) -> SpeechThermalLevel {
         switch state {
         case .nominal: .nominal
         case .fair: .fair
@@ -101,46 +101,46 @@ enum SupertonicResourcePolicy {
     }
 }
 
-final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
-    typealias FallbackHandler = @Sendable (_ reason: String, _ charOffset: Int, _ targetId: String) -> Void
-    typealias RestoreHandler = @Sendable (_ targetId: String) -> Void
+public final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
+    public typealias FallbackHandler = @Sendable (_ reason: String, _ charOffset: Int, _ targetId: String) -> Void
+    public typealias RestoreHandler = @Sendable (_ targetId: String) -> Void
     /// A stand-in voice let go of an item (#1786): `reason`, `item` and `from` (the voice that held it), so an export
     /// shows every voice change, the ones back to the chosen voice too.
-    typealias VoiceRestoredHandler = @Sendable (_ fields: [String: String]) -> Void
+    public typealias VoiceRestoredHandler = @Sendable (_ fields: [String: String]) -> Void
     /// The bundled voice took a passage: `block` is the resource that refused Supertonic when Kitten took the
     /// generation (nil when it had cleared by then), not what the phone reports when the passage plays (#849 audit).
-    typealias BundledVoiceHandler = @Sendable (_ block: SpeechFallbackReason?, _ charOffset: Int, _ targetId: String) -> Void
+    public typealias BundledVoiceHandler = @Sendable (_ block: SpeechFallbackReason?, _ charOffset: Int, _ targetId: String) -> Void
     /// A stall or its end, with the audio session's and player's state then (#288).
-    typealias StallHandler = @Sendable (_ kind: String, _ fields: [String: String]) -> Void
+    public typealias StallHandler = @Sendable (_ kind: String, _ fields: [String: String]) -> Void
     /// A pause, or a missing resume, the listener didn't ask for, with its cause (#538).
-    typealias PauseLogHandler = @Sendable (_ kind: String, _ fields: [String: String]) -> Void
+    public typealias PauseLogHandler = @Sendable (_ kind: String, _ fields: [String: String]) -> Void
     /// The article text a target speaks, without the engine's spoken preface ("Overview. …").
-    typealias ArticleTextLookup = @Sendable (_ targetId: String) -> String?
+    public typealias ArticleTextLookup = @Sendable (_ targetId: String) -> String?
     /// Whether a preparation created now for the target's article is planned with its notes read where they are cited
     /// (#3777). The app's one rule (`FootnotePlanDecision`); a client without it plays today's plan.
-    typealias FootnoteAsidesLookup = @Sendable (_ targetId: String) -> Bool
+    public typealias FootnoteAsidesLookup = @Sendable (_ targetId: String) -> Bool
     /// Which way a play request went, for diagnostics (#235).
-    typealias ResumeDecisionHandler = @Sendable (_ fields: [String: String]) -> Void
+    public typealias ResumeDecisionHandler = @Sendable (_ fields: [String: String]) -> Void
     /// `stopReason` is set only with `.stopped`: the code that stopped generation (#314).
-    typealias GenerationStateHandler = @Sendable (_ state: RenderedSpeechGenerationState, _ stopReason: String?) -> Void
-    typealias GenerationProgressHandler = @Sendable (RenderedSpeechGenerationProgress) -> Void
+    public typealias GenerationStateHandler = @Sendable (_ state: RenderedSpeechGenerationState, _ stopReason: String?) -> Void
+    public typealias GenerationProgressHandler = @Sendable (RenderedSpeechGenerationProgress) -> Void
     /// A new longest gap between one chunk ending and the next playing (#586).
-    typealias ChunkHandOverGapHandler = @Sendable (ChunkHandOverGapRecorder.Gap) -> Void
+    public typealias ChunkHandOverGapHandler = @Sendable (ChunkHandOverGapRecorder.Gap) -> Void
     /// Names a chunk of the plan in the client's per-chunk state; an aside shares its start offset with the next chunk (#3777).
-    typealias ChunkKey = NarrationChunkPlanner.ChunkKey
+    public typealias ChunkKey = NarrationChunkPlanner.ChunkKey
     /// One line on how fast chunks render against how fast they play, after each chunk the phone renders (#540).
-    typealias RenderPaceHandler = @Sendable (_ summary: String) -> Void
+    public typealias RenderPaceHandler = @Sendable (_ summary: String) -> Void
     /// Per-chunk render speed, voice switches and the session line, for Diagnostics (#2701).
-    typealias VoiceTelemetryHandler = @Sendable (_ event: VoiceTelemetryEvent) -> Void
+    public typealias VoiceTelemetryHandler = @Sendable (_ event: VoiceTelemetryEvent) -> Void
     /// The count of seams that came while the app was away, by how each went, after every one (#538).
-    typealias BackgroundSeamHandler = @Sendable (_ summary: String) -> Void
-    typealias PreparedAudioHandler = @Sendable (_ itemId: String, _ prepared: PreparedTextAudio) -> Void
+    public typealias BackgroundSeamHandler = @Sendable (_ summary: String) -> Void
+    public typealias PreparedAudioHandler = @Sendable (_ itemId: String, _ prepared: PreparedTextAudio) -> Void
     // Prepared audio is matched by the article plan's identity (NarrationChunkPlanner, #312), not by
     // comparing texts: plans are in the article's own coordinates, never the spoken preface's.
-    typealias PreparationPlanHandler = @Sendable (_ itemId: String, _ articleIdentity: String, _ plan: [PreparedChunkPlan]) async -> Void
-    typealias PreparedChunkHandler = @Sendable (_ itemId: String, _ articleIdentity: String, _ plan: PreparedChunkPlan, _ audioURL: URL, _ durationMs: Int, _ engine: String) async -> Void
-    typealias PreparedChunkLookup = @Sendable (_ itemId: String, _ articleIdentity: String, _ plan: PreparedChunkPlan) async -> PreparedChunkLookupResult?
-    typealias InterruptionHandler = @Sendable (AudioPlaybackInterruptionEvent) -> Void
+    public typealias PreparationPlanHandler = @Sendable (_ itemId: String, _ articleIdentity: String, _ plan: [PreparedChunkPlan]) async -> Void
+    public typealias PreparedChunkHandler = @Sendable (_ itemId: String, _ articleIdentity: String, _ plan: PreparedChunkPlan, _ audioURL: URL, _ durationMs: Int, _ engine: String) async -> Void
+    public typealias PreparedChunkLookup = @Sendable (_ itemId: String, _ articleIdentity: String, _ plan: PreparedChunkPlan) async -> PreparedChunkLookupResult?
+    public typealias InterruptionHandler = @Sendable (AudioPlaybackInterruptionEvent) -> Void
 
     private struct RenderRequest: Sendable {
         var generation: UUID
@@ -184,15 +184,27 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// What `applyQueuedAdvance` reads from the queue player. Every one of these is an AVFoundation call that can
     /// block when the media server is slow, so they are made outside `lock` (#2242).
-    struct QueuedPlayerReading {
-        var current: AVPlayerItem?
+    public struct QueuedPlayerReading {
+        public var current: AVPlayerItem?
         /// Only read when the end of the playing chunk was just heard (`includesEndFacts`).
-        var queuedChunkIsOnThePlayer = false
-        var playerAdvancesAtItemEnd = false
-        var playerIsPlaying = false
+        public var queuedChunkIsOnThePlayer = false
+        public var playerAdvancesAtItemEnd = false
+        public var playerIsPlaying = false
+
+        public init(
+            current: AVPlayerItem?,
+            queuedChunkIsOnThePlayer: Bool = false,
+            playerAdvancesAtItemEnd: Bool = false,
+            playerIsPlaying: Bool = false
+        ) {
+            self.current = current
+            self.queuedChunkIsOnThePlayer = queuedChunkIsOnThePlayer
+            self.playerAdvancesAtItemEnd = playerAdvancesAtItemEnd
+            self.playerIsPlaying = playerIsPlaying
+        }
     }
 
-    typealias QueuedPlayerReader = @Sendable (_ player: AVQueuePlayer, _ queuedItem: AVPlayerItem, _ includesEndFacts: Bool) -> QueuedPlayerReading
+    public typealias QueuedPlayerReader = @Sendable (_ player: AVQueuePlayer, _ queuedItem: AVPlayerItem, _ includesEndFacts: Bool) -> QueuedPlayerReading
 
     private final class RenderTaskControl: @unchecked Sendable {
         private let lock = NSLock()
@@ -274,7 +286,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let renderWaitLimit: Duration
     /// How many more `renderWaitLimit` waits a render gets while its renderer is still loading its model (#2856):
     /// 15 s plus 8 × 15 s, two minutes in all, for a Core ML voice's first Neural Engine specialisation.
-    static let maxModelLoadExtensions = 8
+    public static let maxModelLoadExtensions = 8
     /// How long a background seam handed to the bundled voice waits in silence for its render (#1786 audit).
     private let backgroundGapWaitLimit: Duration
     private var playbackRate: Float
@@ -409,7 +421,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let renderAheadWindow: @Sendable () -> TimeInterval?
     /// The window the app's clients use: the app's background state and what the phone reports now, power included,
     /// through `RenderAheadPolicy` (#1681, #2703).
-    static let defaultRenderAheadWindow: @Sendable () -> TimeInterval? = {
+    public static let defaultRenderAheadWindow: @Sendable () -> TimeInterval? = {
         RenderAheadPolicy.window(appBackgrounded: OnDeviceVoiceGovernor.app.isAppBackgrounded,
                                  conditions: OnDeviceVoiceGovernor.app.conditions())
     }
@@ -463,29 +475,29 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var lastStallRecovery: ContinuousClock.Instant?
     #if DEBUG
     /// Runs as the stall monitor is about to stop, so a test can resume playback exactly then.
-    var debugStallMonitorWillExit: (@Sendable () -> Void)?
+    public var debugStallMonitorWillExit: (@Sendable () -> Void)?
     /// Runs between a stall sample and its handling, so a test can switch items exactly then.
-    var debugStallWillBeHandled: (@Sendable () -> Void)?
+    public var debugStallWillBeHandled: (@Sendable () -> Void)?
     /// Runs once that handling has finished on the main actor, so a test can check its effect without a fixed wait (#2747).
-    var debugStallWasHandled: (@Sendable () -> Void)?
+    public var debugStallWasHandled: (@Sendable () -> Void)?
     /// Runs once per stall-monitor loop, after that sample has been observed and any stall handled, so a test that
     /// says "no stall" can wait for the monitor to have sampled past the threshold instead of for a fixed time (#4368).
-    var debugStallSampleWasTaken: (@Sendable () -> Void)?
+    public var debugStallSampleWasTaken: (@Sendable () -> Void)?
     /// Runs when the client has finished with a render's outcome (it landed, failed or was cancelled), after the chunk
     /// was cached, played or queued as it called for, so a test that says "nothing started" can wait for that outcome
     /// instead of a fixed time (#4368).
-    var debugRenderWasHandled: (@Sendable () -> Void)?
+    public var debugRenderWasHandled: (@Sendable () -> Void)?
     /// Runs when the client has finished handling the end of a chunk, whatever it decided at the seam (#4368).
-    var debugChunkEndWasHandled: (@Sendable () -> Void)?
+    public var debugChunkEndWasHandled: (@Sendable () -> Void)?
     /// How often the client asked to stop lowering other apps' audio.
-    private(set) var debugBackgroundAudioReleaseCount = 0
-    var debugHasStallMonitor: Bool { lock.withLock { stallMonitor != nil } }
+    public private(set) var debugBackgroundAudioReleaseCount = 0
+    public var debugHasStallMonitor: Bool { lock.withLock { stallMonitor != nil } }
     /// Where the chunk queued behind the playing one starts, nil when none is queued (#538).
-    var debugQueuedChunkStart: Int? { lock.withLock { queuedChunk?.cached.request.startOffset } }
+    public var debugQueuedChunkStart: Int? { lock.withLock { queuedChunk?.cached.request.startOffset } }
     /// The count of seams that came with the app away, as the export shows it (#538).
-    var debugBackgroundSeamSummary: String? { lock.withLock { backgroundSeams.summary } }
+    public var debugBackgroundSeamSummary: String? { lock.withLock { backgroundSeams.summary } }
     /// How often a resting render chain started again with playback not waiting for a chunk (#1681).
-    var debugRenderAheadRestarts: Int { lock.withLock { renderAheadRestarts } }
+    public var debugRenderAheadRestarts: Int { lock.withLock { renderAheadRestarts } }
     #endif
     private let articleText: ArticleTextLookup?
     private let footnoteAsides: FootnoteAsidesLookup?
@@ -550,7 +562,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Whether speculative Library work may share the serial renderer: two committed chunks wait past the audible one,
     /// and no stand-in holds the item, since Kitten renders beside Supertonic, not in turn (#2695).
-    var canYieldRendererToLibrary: Bool {
+    public var canYieldRendererToLibrary: Bool {
         lock.withLock {
             var offset = currentStartOffset + currentChunkLength, ahead = 0
             while ahead < OnDeviceRenderAdmission.chunksAheadForLibrary, offset < preparedSpeechProjection.text.count,
@@ -563,7 +575,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    init(
+    public init(
         renderer: any SupertonicRendering,
         voice: SupertonicVoiceID,
         speed: Float,
@@ -717,12 +729,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         queuedStatusObservation?.invalidate()
     }
 
-    func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {
+    public func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {
         try setPlaybackRate(Double(rate / 0.5))
         try fallback.configureSpeechSettings(voiceIdentifier: voiceIdentifier, rate: rate)
     }
 
-    func prepareSpeechText(_ text: String) throws -> String {
+    public func prepareSpeechText(_ text: String) throws -> String {
         let projection = SpeechTextNormalizer.normalizeWithSourceOffsets(text)
         lock.withLock {
             // The engine re-prepares the same text before every play, so only a different text clears what the chime
@@ -770,17 +782,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    func play(targetId: String) throws {
+    public func play(targetId: String) throws {
         try play(targetId: targetId, from: 0)
     }
 
-    func play(targetId: String, from charOffset: Int) throws {
+    public func play(targetId: String, from charOffset: Int) throws {
         try play(targetId: targetId, from: charOffset, isSeek: false)
     }
 
     /// A listener's explicit move: it moves even within `livePositionTolerance` of the live
     /// position, which only absorbs how far a repeated play or restart trails it (#346 audit).
-    func play(targetId: String, seekingTo charOffset: Int) throws {
+    public func play(targetId: String, seekingTo charOffset: Int) throws {
         try play(targetId: targetId, from: charOffset, isSeek: true)
     }
 
@@ -1106,7 +1118,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         if restartsHeldQueue { restartRenderQueueBehindKeptChunk() }
     }
 
-    func currentCharOffset() -> Int? {
+    public func currentCharOffset() -> Int? {
         applyQueuedAdvance(finished: nil)
         let snapshot = lock.withLock {
             (
@@ -1127,7 +1139,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         return place.sourceOffset(playerTime: playerTime(snapshot.3))
     }
 
-    func currentRecoveryCharOffset() -> Int? {
+    public func currentRecoveryCharOffset() -> Int? {
         applyQueuedAdvance(finished: nil)
         let snapshot = lock.withLock {
             (fallbackIsActive, currentStartOffset, preparedSpeechProjection, initialRequestedSpokenOffset)
@@ -1140,7 +1152,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// Where the text continues when the note now being read is cut short with the paragraph-forward button (#3777):
     /// the source offset of the first chunk after the run of notes at this citation, skipping a heard note's
     /// definition, or the end of the text when nothing is left. Nil when the chunk now playing is not an aside.
-    func footnoteContinuationSourceOffset() -> Int? {
+    public func footnoteContinuationSourceOffset() -> Int? {
         applyQueuedAdvance(finished: nil)
         let exit = lock.withLock { () -> Int? in
             guard !fallbackIsActive,
@@ -1170,7 +1182,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Whether the plan now playing has note chunks at all: false for every article without a note that can be read where
     /// it is cited, and for the system voice. The card's view asks this first, so plain narration is never polled.
-    var hasFootnoteAsides: Bool { lock.withLock { generationHasAsides && !fallbackIsActive } }
+    public var hasFootnoteAsides: Bool { lock.withLock { generationHasAsides && !fallbackIsActive } }
 
     /// The Footnote card for the note now being read (#3777): its label and whole text, across every chunk the planner split
     /// the note into. Nil when the chunk now playing (or held, while paused) is not an aside, when the voice has handed
@@ -1179,7 +1191,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     ///
     /// In `chime` mode the card also shows while a note is offered (the tone sounded and the text carries on), for the note
     /// the sequencer names; it is that note's words, which are in the plan though the player passes over them.
-    func currentFootnoteCard() -> FootnoteCard? {
+    public func currentFootnoteCard() -> FootnoteCard? {
         // No `applyQueuedAdvance` here, unlike `footnoteContinuationSourceOffset`: the view calls this twice a second from
         // the main thread, and that call reaches chunk start-up work (the main-thread-reads ratchet lists it). The player's
         // own timer and the playback tick apply a queued advance, so the card follows within a tick of the note ending.
@@ -1198,7 +1210,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// What the Footnote card's button says, for the chime mode: `hidden` in any other mode, so a card left over from a
     /// choice the listener changed offers nothing (#3777).
-    func chimeCardState() -> FootnoteChimeSequencer.Card {
+    public func chimeCardState() -> FootnoteChimeSequencer.Card {
         lock.withLock { footnoteMode?() == .chime ? chimeSequencer.card : .hidden }
     }
 
@@ -1207,7 +1219,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// chunk again, then the note, then the text after the citation (Design, Flow 5: "a sentence or two again"). Nil when
     /// no note is offered. The seek's own play keeps the sequencer's state (`chimeMoveStartedAt`); `footnoteMoveFailed()`
     /// undoes this when the app refuses the seek.
-    func beginHearingOfferedFootnote() -> Int? {
+    public func beginHearingOfferedFootnote() -> Int? {
         let spokenOffset = lock.withLock { () -> Int? in
             guard !fallbackIsActive, generationHasAsides, currentTargetId != nil else { return nil }
             let tags = generationPlan.map(\.footnote)
@@ -1229,7 +1241,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// citing sentence's last chunk, then the note, then the text after the citation). Nil when this client holds no plan
     /// with notes for `targetId` (another item, a plan prepared without notes, the system voice, or nothing started yet): the
     /// caller then goes to the citation itself. `footnoteMoveFailed()` undoes this when the app refuses the seek.
-    func beginHearingFootnote(label: String, targetId: String) -> Int? {
+    public func beginHearingFootnote(label: String, targetId: String) -> Int? {
         let spokenOffset = lock.withLock { () -> Int? in
             guard !fallbackIsActive, generationHasAsides, currentTargetId == targetId else { return nil }
             let tags = generationPlan.map(\.footnote)
@@ -1251,7 +1263,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// sentence; that seek's play hands the request to the sequencer, which reads the note when the player reaches it
     /// instead of offering it with the tone. Only "Chime where cited" needs this: "Read where cited" reads the note anyway.
     /// `footnoteMoveFailed()` drops it when the app refuses the seek.
-    func requestFootnoteHearing(label: String, targetId: String) {
+    public func requestFootnoteHearing(label: String, targetId: String) {
         lock.withLock {
             pendingFootnoteRequest = (label, targetId, ProcessInfo.processInfo.systemUptime)
         }
@@ -1259,7 +1271,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// The card's Stop note, first half: the source offset where the text goes on after the citation, or the end of the
     /// text. Nil when no note is being read. See `beginHearingOfferedFootnote()`.
-    func beginStoppingFootnote() -> Int? {
+    public func beginStoppingFootnote() -> Int? {
         let spokenOffset = lock.withLock { () -> Int? in
             guard !fallbackIsActive, currentTargetId != nil, let identity = articleIdentity,
                   let resume = chimeSequencer.stopHearing(
@@ -1271,7 +1283,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     /// The app refused the seek a card button asked for: nothing is offered or read any more.
-    func footnoteMoveFailed() {
+    public func footnoteMoveFailed() {
         lock.withLock {
             chimeMoveStartedAt = nil
             pendingFootnoteRequest = nil
@@ -1282,7 +1294,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Takes the offered card away when its 30 seconds are up (#3777). `voiceOverIsOnCard` is true while VoiceOver is
     /// running: the app can't see where its focus is, so the card stays for as long as VoiceOver is on.
-    func expireChimeCardIfDue(voiceOverIsOnCard: Bool) {
+    public func expireChimeCardIfDue(voiceOverIsOnCard: Bool) {
         lock.withLock {
             _ = chimeSequencer.expireCard(now: ProcessInfo.processInfo.systemUptime, voiceOverIsOnCard: voiceOverIsOnCard)
         }
@@ -1290,28 +1302,28 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     #if DEBUG
     /// The render headroom the resume mark would read for the current generation in the app's current state (#2703).
-    func debugRenderHeadroom(isStandIn: Bool) -> Double? {
+    public func debugRenderHeadroom(isStandIn: Bool) -> Double? {
         let backgrounded = governor.isAppBackgrounded
         return lock.withLock {
             renderHeadroom.headroom(in: .init(isStandIn: isStandIn, isInBackground: backgrounded, generation: generation))
         }
     }
 
-    func debugRenderedCacheOffsets() -> [Int] {
+    public func debugRenderedCacheOffsets() -> [Int] {
         lock.withLock { renderedCache.keys.sorted().map(\.startOffset) }
     }
 
-    func debugActiveAudioState() -> (hasURL: Bool, duration: TimeInterval, targetId: String?, startOffset: Int) {
+    public func debugActiveAudioState() -> (hasURL: Bool, duration: TimeInterval, targetId: String?, startOffset: Int) {
         lock.withLock { (activeAudioURL != nil, activeAudioDuration, currentTargetId, currentStartOffset) }
     }
 
-    func debugFinishActiveChunk() {
+    public func debugFinishActiveChunk() {
         guard let item = lock.withLock({ player?.currentItem }) else { return }
         playbackItemFinished(item)
     }
     #endif
 
-    func currentPlaybackPosition() -> PlaybackPosition? {
+    public func currentPlaybackPosition() -> PlaybackPosition? {
         applyQueuedAdvance(finished: nil)
         let snapshot = lock.withLock {
             (
@@ -1339,7 +1351,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         )
     }
 
-    func setPlaybackRate(_ rate: Double) throws {
+    public func setPlaybackRate(_ rate: Double) throws {
         let clamped = Float(max(0.25, min(2.0, rate)))
         let state = lock.withLock { () -> (usesFallback: Bool, activePlayer: AVPlayer?) in
             playbackRate = clamped
@@ -1352,7 +1364,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    func setMixesWithOtherAudio(_ enabled: Bool) throws {
+    public func setMixesWithOtherAudio(_ enabled: Bool) throws {
         let state = lock.withLock { () -> (usesFallback: Bool, hasActivePlayer: Bool) in
             mixesWithOtherAudio = enabled
             return (fallbackIsActive, player != nil && transportIntent == .playing && !playbackComplete)
@@ -1363,7 +1375,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    func setLowersBackgroundAudio(_ enabled: Bool) throws {
+    public func setLowersBackgroundAudio(_ enabled: Bool) throws {
         let state = lock.withLock { () -> (usesFallback: Bool, isPlaying: Bool) in
             lowersBackgroundAudio = enabled
             return (fallbackIsActive, player != nil && transportIntent == .playing && !playbackComplete)
@@ -1374,7 +1386,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    func setPlaybackVolume(_ volume: Float) throws {
+    public func setPlaybackVolume(_ volume: Float) throws {
         let clamped = max(0, min(1, volume))
         let state = lock.withLock { () -> (usesFallback: Bool, activePlayer: AVPlayer?) in
             playbackVolume = clamped
@@ -1386,14 +1398,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    func isPlaybackComplete(targetId: String) -> Bool {
+    public func isPlaybackComplete(targetId: String) -> Bool {
         let snapshot = lock.withLock {
             (fallbackIsActive, playbackComplete && completedTargetId == targetId)
         }
         return snapshot.0 ? fallback.isPlaybackComplete(targetId: targetId) : snapshot.1
     }
 
-    func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
+    public func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
         let snapshot = lock.withLock {
             (
                 fallbackIsActive,
@@ -1423,7 +1435,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// True while the start waits for a chunk that is rendering and whose render deadline applies
     /// (the same condition that lets that deadline fall back to the iOS voice), so the engine's
     /// start watchdog doesn't fail a start that is only waiting on Supertonic (#235).
-    func isAwaitingRenderedAudio(targetId: String) -> Bool {
+    public func isAwaitingRenderedAudio(targetId: String) -> Bool {
         lock.withLock {
             guard !fallbackIsActive, currentTargetId == targetId, pendingStartTargetId == targetId,
                   transportIntent == .playing, playbackFailure == nil, !inFlightKeys.isEmpty else { return false }
@@ -1432,7 +1444,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    func pause() throws {
+    public func pause() throws {
         interruptionWaitEnded(.listenerActed)
         forgetActivatedSession()
         let snapshot = lock.withLock { () -> (Bool, AVPlayer?) in
@@ -1449,7 +1461,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    func playbackTransportState(targetId: String) -> PlaybackTransportState? {
+    public func playbackTransportState(targetId: String) -> PlaybackTransportState? {
         let snapshot = lock.withLock {
             (fallbackIsActive, currentTargetId, transportIntent, playbackFailure, playbackComplete, player)
         }
@@ -1474,7 +1486,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    func stop() throws {
+    public func stop() throws {
         onVoiceTelemetry?(.sessionEnded)
         interruptionWaitEnded(.listenerActed)
         forgetActivatedSession()
@@ -1540,7 +1552,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// `returnsAutomatically`: true for a memory warning, whose fallback ends by itself (I14);
     /// false when the listener chose to stop generation.
     @discardableResult
-    func stopOnDeviceRenderingAndUseSystemSpeech(returnsAutomatically: Bool = false) throws -> Bool {
+    public func stopOnDeviceRenderingAndUseSystemSpeech(returnsAutomatically: Bool = false) throws -> Bool {
         let offset = currentCharOffset() ?? currentRecoveryCharOffset() ?? 0
         let state = lock.withLock { (currentTargetId, transportIntent, fallbackIsActive) }
         guard let targetId = state.0 else { return false }
@@ -1621,7 +1633,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Retry the current target at its current source offset, including while
     /// paused. Completed disk/manifest chunks remain eligible for reuse.
-    func retryOnDeviceRendering() throws -> Bool {
+    public func retryOnDeviceRendering() throws -> Bool {
         guard let target = lock.withLock({ currentTargetId }) else { return false }
         let offset = currentCharOffset() ?? 0
         let wasPaused = lock.withLock { transportIntent == .paused }
@@ -2804,16 +2816,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     /// The player's own state for the playback heartbeat (#288).
-    func playerDiagnostics() -> [String: String] {
+    public func playerDiagnostics() -> [String: String] {
         lock.withLock { AudioSessionDiagnostics.fields(for: fallbackIsActive ? nil : player) }
     }
 
     /// True while the iOS voice reads in place of the on-device one (#1109).
-    var isSystemVoiceActive: Bool { lock.withLock { fallbackIsActive } }
+    public var isSystemVoiceActive: Bool { lock.withLock { fallbackIsActive } }
 
     /// The client's own intent and voice, for every `playback.state` record, so a pause no request explains
     /// shows which part of the client set it (#1109).
-    func narrationDiagnostics() -> [String: String] {
+    public func narrationDiagnostics() -> [String: String] {
         lock.withLock {
             PlaybackDiagnosticFields.narration(
                 intent: String(describing: transportIntent),
@@ -2830,7 +2842,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// The guard's replacement that is playing now (#306), not a render prepared ahead.
     /// Full-item fallbacks have their own reason; this notice is only for a temporary passage.
-    var replacementVoiceTargetId: String? {
+    public var replacementVoiceTargetId: String? {
         lock.withLock {
             guard !fallbackIsActive, transportIntent == .playing, !playbackComplete,
                   player?.currentItem != nil, startedTargetId == currentTargetId,
@@ -3858,7 +3870,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     /// About two seconds of speech: how far a sampled position can trail the live one.
-    static let livePositionTolerance = 30
+    public static let livePositionTolerance = 30
 
     /// Reads the player's clock. AVFoundation can block here when the media server is slow, so callers read it
     /// outside `lock`: take the player under the lock, release it, then call this (#2119).
@@ -3923,7 +3935,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// A chunk player's `.playing` is the first sound of the play when that player is the current one and playback
     /// is intended; it posts the current target once per play. Not from `startPlayer`, which only schedules (#842).
-    func noteTimeControlStatus(_ status: AVPlayer.TimeControlStatus, of observed: AVPlayer) {
+    public func noteTimeControlStatus(_ status: AVPlayer.TimeControlStatus, of observed: AVPlayer) {
         // Before `lock` on purpose: `pause()` and `Self.empty` run under it and their `.paused` may be delivered on
         // this thread, so only `.playing` may go on to take it.
         guard status == .playing else { return }
@@ -4056,7 +4068,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// `OnDeviceCPUBudget.liveReserve` ahead, or with the play head waiting on a chunk (a start, a seek or skip, a
     /// render gap), live narration skips the shared background CPU budget, so the budget slows render-ahead but never
     /// lets playback run dry. Pulled, not pushed: a path that moves the play head can't leave a stale answer.
-    func liveNarrationBuffer() -> LiveNarrationBuffer {
+    public func liveNarrationBuffer() -> LiveNarrationBuffer {
         lock.withLock {
             LiveNarrationBuffer(
                 listeningAhead: listeningAhead(),
@@ -4293,7 +4305,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Whether the app is in the background, not merely inactive (Control Center, a call banner). Off the main thread
     /// it answers "not in the background", which leaves a seam as it was (#1673).
-    static func isApplicationInBackground() -> Bool {
+    public static func isApplicationInBackground() -> Bool {
         #if canImport(UIKit) && os(iOS)
         guard Thread.isMainThread else { return false }
         return MainActor.assumeIsolated { UIApplication.shared.applicationState == .background }
@@ -4304,7 +4316,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Whether the app is in front, for the queue's decision. Off the main thread it answers "in front", which
     /// leaves a seam as it was.
-    static func isApplicationActive() -> Bool {
+    public static func isApplicationActive() -> Bool {
         #if canImport(UIKit) && os(iOS)
         guard Thread.isMainThread else { return true }
         return MainActor.assumeIsolated { UIApplication.shared.applicationState == .active }
