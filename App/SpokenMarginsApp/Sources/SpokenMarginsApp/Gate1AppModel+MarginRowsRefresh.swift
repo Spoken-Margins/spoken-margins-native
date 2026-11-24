@@ -169,7 +169,8 @@ extension Gate1AppModel {
     }
 
     private func privateRow(_ entry: MarginCollection.PrivateEntry) -> MarginRow {
-        MarginRow(interjection: entry.interjection, itemTitle: entry.itemTitle, sessionDate: entry.sessionDate, place: entry.place)
+        MarginRow(interjection: entry.interjection, itemTitle: entry.itemTitle, sessionDate: entry.sessionDate, place: entry.place,
+                  transcriptWaitsForAnswer: MarginRow.waitsForAnswer(entry.interjection))
     }
 
     private func sharedRow(_ entry: MarginCollection.SharedEntry) -> SharedMarginRow {

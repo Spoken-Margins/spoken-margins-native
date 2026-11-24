@@ -24,6 +24,11 @@ public struct ReadwiseHighlight: Equatable, Sendable {
     static let authorLimit = 1_024
     static let sourceURLLimit = 2_047
 
+    /// The one rule for whether a Margin is sent: it has words. Settings copy reads it through `MarginNoteCoverage` (#5034).
+    public static func hasWords(_ text: String?) -> Bool {
+        !(text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     public static func key(sessionId: String, marginId: String) -> String { sessionId + ":" + marginId }
 
     /// Builds the highlight from a one-Margin export (the one the notes folder and "Copy with Context" use).
@@ -31,8 +36,8 @@ public struct ReadwiseHighlight: Equatable, Sendable {
     /// sent once its transcript arrives rather than as an empty note.
     public init?(export: SessionExport, createdAt: Date) {
         guard export.interjections.count == 1, let margin = export.interjections.first else { return nil }
+        guard Self.hasWords(margin.transcript) else { return nil }
         let note = (margin.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !note.isEmpty else { return nil }
         let excerpt = [margin.anchorBefore, margin.anchorAfter]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }

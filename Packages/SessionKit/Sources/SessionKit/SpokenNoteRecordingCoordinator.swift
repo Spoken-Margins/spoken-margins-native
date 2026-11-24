@@ -52,6 +52,9 @@ public struct SpokenNoteRecordingSnapshot: Equatable, Sendable {
     public var transcribingTakeIds: Set<String>
     /// Takes whose transcript failed. The audio is safe; `retryTranscript` or the next open asks again.
     public var failedTranscriptTakeIds: Set<String>
+    /// Takes whose transcript met the Speech Recognition hold (#4715): not failed, waiting for the listener's answer. A
+    /// retry can't help before it; after Allow the spoken-note sweep fills them in, and the next open asks again.
+    public var heldTranscriptTakeIds: Set<String>
     /// A closed take whose audio is in the folder but could not be added to `note.json` yet. It is added again at the
     /// next stop, start or resume; nothing is deleted meanwhile.
     public var hasUnsavedTake: Bool
@@ -91,6 +94,7 @@ public actor SpokenNoteRecordingCoordinator {
     private var recording: (takeId: String, audioFileName: String)?
     private var transcribing: Set<String> = []
     private var failed: Set<String> = []
+    private var held: Set<String> = []
     private var transcriptionTasks: [String: Task<Void, Never>] = [:]
     private var revision = 0
     /// Takes closed on disk that `note.json` doesn't list yet (it couldn't be read or written at that moment).
@@ -153,7 +157,8 @@ public actor SpokenNoteRecordingCoordinator {
     public func snapshot() -> SpokenNoteRecordingSnapshot {
         SpokenNoteRecordingSnapshot(
             note: store.load(), isRecording: recording != nil,
-            transcribingTakeIds: transcribing, failedTranscriptTakeIds: failed, hasUnsavedTake: !pendingTakes.isEmpty, revision: revision,
+            transcribingTakeIds: transcribing, failedTranscriptTakeIds: failed, heldTranscriptTakeIds: held,
+            hasUnsavedTake: !pendingTakes.isEmpty, revision: revision,
             title: item.title
         )
     }
@@ -288,23 +293,29 @@ public actor SpokenNoteRecordingCoordinator {
         guard transcriptionTasks[takeId] == nil else { return }
         transcribing.insert(takeId)
         failed.remove(takeId)
+        held.remove(takeId)
         let url = store.folderURL.appendingPathComponent(audioFileName)
         let transcriber = self.transcriber
         transcriptionTasks[takeId] = Task { [weak self] in
             let words: [AlignedTranscriptSegment]?
+            var wasHeld = false
             do {
                 words = try await transcriber.transcribe(fileAt: url)
             } catch {
                 words = nil
+                wasHeld = HeldTranscription.isHold(error)
             }
-            await self?.transcriptFinished(takeId: takeId, words: words)
+            await self?.transcriptFinished(takeId: takeId, words: words, wasHeld: wasHeld)
         }
     }
 
-    private func transcriptFinished(takeId: String, words: [AlignedTranscriptSegment]?) {
+    private func transcriptFinished(takeId: String, words: [AlignedTranscriptSegment]?, wasHeld: Bool = false) {
         transcriptionTasks[takeId] = nil
         transcribing.remove(takeId)
-        if let words {
+        if wasHeld {
+            // Waiting for the listener's answer, not failed: the take reads as waiting and offers no Try again.
+            held.insert(takeId)
+        } else if let words {
             do {
                 let note = try SpokenNoteIntake.applyTranscript(words: words, forTake: takeId, in: store)
                 syncItem(with: note)
