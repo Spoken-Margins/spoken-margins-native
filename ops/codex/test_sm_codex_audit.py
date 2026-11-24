@@ -873,6 +873,37 @@ class HostedAudit(unittest.TestCase):
 
     WORKFLOW = {"GITHUB_ACTIONS": "true"}
 
+    def test_reads_keep_gh_token_and_writes_use_the_write_token(self):
+        """#5217: reads run on the App's token; writes on GITHUB_TOKEN so a label change starts no run."""
+        reads = [["gh", "api", "--paginate", "repos/o/r/issues/1/comments"], ["gh", "pr", "view", "1"],
+                 ["gh", "pr", "list", "--repo", "o/r"], ["gh", "api", "repos/o/r/issues/1"]]
+        writes = [["gh", "pr", "comment", "1", "--body", "x"], ["gh", "pr", "edit", "1", "--add-label", "automerge"],
+                  ["gh", "workflow", "run", "lane.yml"], ["gh", "run", "rerun", "9"],
+                  ["gh", "api", "-X", "POST", "repos/o/r/issues/1/labels", "-f", "labels[]=x"],
+                  ["gh", "api", "-X", "DELETE", "repos/o/r/issues/1/labels/x"]]
+        for cmd in reads:
+            self.assertFalse(A.is_gh_write(cmd), cmd)
+        for cmd in writes:
+            self.assertTrue(A.is_gh_write(cmd), cmd)
+        seen = []
+
+        def fake(cmd, **kwargs):
+            seen.append(kwargs.get("env"))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        with patch.dict(os.environ, {"GH_TOKEN": "app", "SM_WRITE_TOKEN": "wf"}), \
+                patch.object(A.subprocess, "run", fake):
+            A.run(reads[0])
+            A.run(writes[0])
+        self.assertIsNone(seen[0])
+        self.assertEqual(seen[1]["GH_TOKEN"], "wf")
+        with patch.dict(os.environ, {"GH_TOKEN": "app"}), patch.object(A.subprocess, "run", fake):
+            os.environ.pop("SM_WRITE_TOKEN", None)
+            A.run(writes[0])
+        self.assertIsNone(seen[2])
+
+    def test_the_write_token_never_reaches_claude(self):
+        self.assertIn('"GITHUB_TOKEN", "SM_WRITE_TOKEN")', Path(A.__file__).read_text())
+
     def test_the_workflow_s_secret_is_used_and_the_keychain_never_asked(self):
         with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": " tok\n"}), patch.object(A, "run") as run:
             self.assertEqual(A.claude_token(), "tok")
@@ -1136,13 +1167,18 @@ class HostedAudit(unittest.TestCase):
             self.assertIs(options.get("persist-credentials"), False, job)
         # The parsed file, not its text: `secrets[...]` and `toJSON(secrets)` count, and a comment does not (#3704).
         named = W.mentions_of(workflow, "secrets")
-        self.assertEqual(len(named), 1, named)
+        # Two: the Claude token, and (#5217) the App's private key, which only the mint step reads (the App token it
+        # makes reaches the Audit step as GH_TOKEN; the script strips it from Claude's environment).
+        self.assertEqual(len(named), 2, named)
+        mint = [m for m in named if m.endswith("/app-token.with/private-key")]
+        self.assertEqual(len(mint), 1, named)
+        self.assertEqual(len([m for m in named if "/Audit.env/" in m]), 1, named)
         # Its token is an environment secret only main may use: a repository secret reaches any branch's workflow.
         self.assertEqual(workflow["jobs"]["audit"]["environment"], "claude-audit")
         audit = next(step for step in workflow["jobs"]["audit"]["steps"] if step.get("name") == "Audit")
         self.assertEqual(audit["env"]["CLAUDE_CODE_OAUTH_TOKEN"], "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}")
         self.assertNotIn("uses", audit)  # the repository's own script, never a third party's action
-        self.assertTrue(named[0].endswith("/Audit.env/CLAUDE_CODE_OAUTH_TOKEN"), named)
+        self.assertTrue(any(m.endswith("/Audit.env/CLAUDE_CODE_OAUTH_TOKEN") for m in named), named)
         # One exact version, so a new release can't change the merge gate unannounced.
         self.assertRegex(text, r"@anthropic-ai/claude-code@\d+\.\d+\.\d+")
 

@@ -235,3 +235,35 @@ class QueueActsAsTheApp(unittest.TestCase):
                 token = steps[queue]['env'][var].replace(' ', '')
                 self.assertTrue(token.startswith('${{steps.app-token.outputs.token||secrets.MERGE_QUEUE_TOKEN'),
                                 token)
+
+
+class ClaudeAuditReadsAsTheApp(unittest.TestCase):
+    """#5217: claude-audit read the API with GITHUB_TOKEN, whose 1,000 requests an hour for the repository ran out. It
+    mints the App token and reads with it; writes stay on GITHUB_TOKEN (SM_WRITE_TOKEN). Claude never gets either."""
+
+    def steps(self):
+        return parse(ROOT / '.github/workflows/claude-audit.yml')['jobs']['audit']['steps']
+
+    def test_the_audit_step_reads_as_the_app_and_writes_as_the_workflow(self):
+        steps = self.steps()
+        mint = next(i for i, s in enumerate(steps) if is_app_token_mint_only(s))
+        audit = next(i for i, s in enumerate(steps) if s.get('name') == 'Audit')
+        self.assertLess(mint, audit)
+        self.assertEqual(steps[mint].get('id'), 'app-token')
+        self.assertIs(steps[mint].get('continue-on-error'), True, 'a failed mint must fall back, not fail')
+        permissions = {k for k in steps[mint]['with'] if k.startswith('permission-')}
+        self.assertTrue(permissions, 'the App token must be narrowed')
+        for name in permissions:
+            self.assertEqual(steps[mint]['with'][name], 'read', f'{name}: the App token only reads')
+        env = steps[audit]['env']
+        self.assertEqual(env['GH_TOKEN'].replace(' ', ''), '${{steps.app-token.outputs.token||github.token}}')
+        self.assertEqual(env['SM_WRITE_TOKEN'].replace(' ', ''), '${{github.token}}')
+
+    def test_the_app_token_reaches_no_other_step(self):
+        for step in self.steps():
+            if step.get('name') != 'Audit':
+                self.assertNotIn('app-token', json.dumps(step.get('env', {})) + str(step.get('run', '')))
+
+    def test_the_job_keeps_its_environment(self):
+        self.assertEqual(parse(ROOT / '.github/workflows/claude-audit.yml')['jobs']['audit']['environment'],
+                         'claude-audit')
