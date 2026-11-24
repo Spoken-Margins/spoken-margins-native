@@ -120,6 +120,9 @@ struct LiveSessionMarginDetailView: View {
                             audio.stop()
                             showsMove = true
                         }
+                        // The move sheet is made from the Margin as it is now, so words still being edited would be left
+                        // behind on the item: Save or Cancel first.
+                        .disabled(isEditing)
                         .accessibilityIdentifier("marginDetail.move.button")
                     } else if let moveUnavailableReason {
                         Text(moveUnavailableReason)
