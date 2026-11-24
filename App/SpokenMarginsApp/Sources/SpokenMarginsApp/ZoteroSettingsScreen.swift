@@ -31,12 +31,12 @@ struct ZoteroSettingsScreen: View {
                 }
             } else {
                 Section {
-                    TextField("Zotero user ID", text: $userID)
+                    AppTextField("Zotero user ID", text: $userID)
                         .keyboardType(.numberPad)
                         .textContentType(.username)
                         .frame(minHeight: 44)
                         .accessibilityIdentifier("zotero.userID")
-                    SecureField("API key", text: $apiKey)
+                    AppSecureField("API key", text: $apiKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .frame(minHeight: 44)

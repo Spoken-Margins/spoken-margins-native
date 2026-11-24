@@ -406,14 +406,14 @@ final class PaperSourcesState: ObservableObject {
         }
         let fetcher = fetcher
         let result = await Task.detached(priority: .userInitiated) { () -> Result<(String?, [ZoteroCollection]), PaperFetchProblem> in
-            do { return .success(try await fetcher.collections(userID: typed.userID, apiKey: typed.apiKey)) } catch { return .failure(error) }
+            do { return .success(try await fetcher.collections(userID: typed.userID, apiKey: typed.apiKey)) } catch { return .failure(error as? PaperFetchProblem ?? .unreachable) }
         }.value
         switch result {
         case .failure(let problem):
             return problem.message(zoteroConnected: true)
         case .success(let (name, found)):
             credentials.keep(userID: typed.userID, apiKey: typed.apiKey, libraryName: name)
-            apiKey = typed.apiKey
+            self.apiKey = typed.apiKey
             refreshProblems = [:]
             connection = ZoteroConnection(userID: typed.userID, libraryName: name)
             collections = found
@@ -439,7 +439,7 @@ final class PaperSourcesState: ObservableObject {
         defer { isLoadingCollections = false }
         let fetcher = fetcher
         let result = await Task.detached(priority: .userInitiated) { () -> Result<(String?, [ZoteroCollection]), PaperFetchProblem> in
-            do { return .success(try await fetcher.collections(userID: connection.userID, apiKey: key)) } catch { return .failure(error) }
+            do { return .success(try await fetcher.collections(userID: connection.userID, apiKey: key)) } catch { return .failure(error as? PaperFetchProblem ?? .unreachable) }
         }.value
         switch result {
         case .success(let (_, found)):

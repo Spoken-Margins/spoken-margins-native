@@ -68,6 +68,7 @@ struct ReadCostReport {
             ("loadOfflineStorageReservation(id:)", { _ = try store.loadOfflineStorageReservation(id: "reservation-0") }),
             ("loadItemCollections()", { _ = try store.loadItemCollections() }),
             ("loadLibraryFolders()", { _ = try store.loadLibraryFolders() }),
+            ("loadPaperSources()", { _ = try store.loadPaperSources() }),
             ("loadFollowLists()", { _ = try store.loadFollowLists() }),
             ("loadFollowList(id:)", { _ = try store.loadFollowList(id: "follow-list-0") }),
             ("loadListLinks()", { _ = try store.loadListLinks() }),

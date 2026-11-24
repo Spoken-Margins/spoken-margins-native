@@ -428,6 +428,7 @@ final class StoreReadMeterTests: XCTestCase {
         "marginNoteChanges", "itemRevision", "isLiveImportedCommentaryLayer", "transcriptTimelineStamp",
         "listDeletedItems",                   // the trash starts empty
         "loadLibraryFolders",                 // only an imported folder has a record; a Library with none reads none (#3769)
+        "loadPaperSources",                   // only a followed Zotero reading list has a record; most Libraries follow none (#4341)
         "loadMovedMarginOrigins",             // no Margin is moved until the Move feature ships (#4233); then only a cut-short move has one to finish
         "loadTranscriptTimes",                // only an imported meeting transcript has a record; the screens read it only for one (#2997)
         "loadLastSentReadAloud",              // only a Margin shared as text carries a choice, so a healthy Library mostly misses (it filters inside SQLite)
