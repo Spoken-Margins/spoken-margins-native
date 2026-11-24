@@ -58,6 +58,31 @@ class SharingAnchorCheckTests(unittest.TestCase):
         screen["capture"]["status"] = "broken"
         self.assertTrue(any("what was seen" in p for p in check.check(flow, only_sharing=True)[3]))
 
+    def test_removing_one_of_two_sharing_controls_with_the_same_text_fails_the_pr_check(self):
+        # Audit of #5280: Arrival.tsx has a "Report this link" in more than one footer. Deleting one sent its arrow
+        # to the nearest other one as "moved", and the PR check passed with a control on the map that was gone.
+        flow = copy.deepcopy(FLOW)
+        report = next(e for e in flow["edges"] if e["id"] == "s039")
+        real = check.load_lines
+
+        def without_the_preview_report(cache, name):
+            lines = real(cache, name)
+            if name != report["file"]:
+                return lines
+            return lines[:report["line"] - 1] + lines[report["line"]:]
+
+        check.load_lines = without_the_preview_report
+        try:
+            missing, _, _, problems = check.check(flow, only_sharing=True)
+        finally:
+            check.load_lines = real
+        self.assertTrue(missing or any("s039" in p for p in problems), problems)
+
+    def test_every_sharing_control_whose_text_repeats_in_its_file_is_on_the_map(self):
+        # An anchor that matches several lines is safe only when the map cites each of them; else a deletion "moves".
+        problems = [p for p in check.check(copy.deepcopy(FLOW), only_sharing=True)[3] if "the map cites" in p]
+        self.assertEqual(problems, [])
+
 
 class ChangedPathsTests(unittest.TestCase):
     def git(self, cwd, *args):

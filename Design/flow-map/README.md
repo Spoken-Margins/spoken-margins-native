@@ -38,7 +38,7 @@ Pictures come only from test simulators and fixtures, never a real Library. Two 
 python3 scripts/flow-map-check.py
 ```
 
-The check fails when an arrow's anchor is gone from its file, when a ruling's quote is gone from `docs/decisions.md`, or when a sharing screen lacks a surface or a capture status. `--fix-lines` rewrites line numbers for anchors that only moved. It also lists navigation calls in the app that no arrow covers, so a new sheet or screen shows up as work to map.
+The check fails when an arrow's anchor is gone from its file, when a ruling's quote is gone from `docs/decisions.md`, or when a sharing screen lacks a surface or a capture status. A sharing anchor whose text repeats in its file (the same "Report this link" in two footers) must be cited once for each line it is on: otherwise deleting one control would send its arrow to the other as "moved", and the check would pass. So when a sharing anchor matches more lines than the map cites, or fewer, the check fails; map the other copy too, or pick anchor text that is on one line only. `--fix-lines` rewrites line numbers for anchors that only moved. It also lists navigation calls in the app that no arrow covers, so a new sheet or screen shows up as work to map.
 
 ```bash
 python3 scripts/flow-map-check.py --touched Web/src/app/screens/Arrival.tsx App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackScreen.swift

@@ -77,12 +77,35 @@ def sharing_sets(flow):
     return screens, edges
 
 
+def repeated_anchor_problems(cache, cited):
+    """A sharing anchor's text must appear on as many lines of its file as the map cites for it.
+
+    find_anchor sends an anchor that left its line to the nearest other line with the same text, as "moved". When
+    that text repeats ("Report this link" in two footers), deleting one control would move its arrow onto the other
+    and pass. With every repeat cited, a deletion or an unmapped new copy changes the count and fails instead.
+    """
+    problems = []
+    for (name, anchor), lines in cited.items():
+        text = load_lines(cache, name)
+        hits = sum(anchor in line for line in text) if text else 0
+        if hits and hits != len(lines):
+            ids = ", ".join(i for at in sorted(lines, key=lambda at: at or 0) for i in lines[at])
+            problems.append(f"{name}: {anchor!r} is on {hits} lines but the map cites {len(lines)} ({ids}); a sharing "
+                            f"control with this text was removed or added: update the map, or give its anchor text "
+                            f"that matches one line")
+    return problems
+
+
 def check(flow, fix_lines=False, only_sharing=False):
     """Check anchors, rulings and captures. Returns (missing, moved, covered, problems)."""
     cache = {}
     missing, moved, problems = [], [], []
     covered = {}
     share_ids, share_edges = sharing_sets(flow)
+    cited = {}  # (file, anchor) -> {line: [ids]} for every sharing arrow and screen, before --fix-lines moves them
+    for item in share_edges + [s for s in flow["screens"] if s["id"] in share_ids]:
+        if item.get("file") and item.get("anchor"):
+            cited.setdefault((item["file"], item["anchor"]), {}).setdefault(item.get("line"), []).append(item["id"])
     edges = share_edges if only_sharing else flow["edges"]
     for edge in edges:
         if not edge.get("file"):
@@ -132,6 +155,7 @@ def check(flow, fix_lines=False, only_sharing=False):
                 problems.append(f"sharing screen {screen['id']}: a broken capture needs the commit it failed at")
             elif capture["status"] == "broken" and not capture.get("seen"):
                 problems.append(f"sharing screen {screen['id']}: a broken capture says what was seen")
+    problems += repeated_anchor_problems(cache, cited)
     for edge in flow["edges"]:
         for key in ("from", "to"):
             if edge[key] not in screen_ids:
