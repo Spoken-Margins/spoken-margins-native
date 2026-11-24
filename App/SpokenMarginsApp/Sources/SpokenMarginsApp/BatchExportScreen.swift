@@ -77,7 +77,7 @@ struct BatchExportScreen: View {
                             jumpToDestination(using: proxy)
                         }
                         .disabled(model.selectedBatchExportSessionIds.isEmpty)
-                        .accessibilityHint("Jumps to Included Material and the Export button.")
+                        .accessibilityHint(ExportScreenWords.batchJumpHint)
                         .accessibilityIdentifier("batchExport.jumpToDestination.button")
                     }
                 }
@@ -159,49 +159,31 @@ struct BatchExportScreen: View {
 
     private var exportOptions: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Included Material")
+            Text(ExportScreenWords.batchHeading)
                 .font(.headline)
             ProductPanel {
                 VStack(alignment: .leading, spacing: 14) {
-                    HStack {
-                        Label("Markdown", systemImage: "doc.text")
-                            .font(.subheadline.weight(.semibold))
-                        Spacer()
-                        Text("One file per session")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Label(ExportFormatChoice.markdown.label, systemImage: "doc.text")
+                                .font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Text("One file per session")
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                        ExportOptionCaption(text: ExportFormatChoice.markdown.caption)
+                            .accessibilityIdentifier("batchExport.format.caption")
                     }
-                    Picker("Scope", selection: $model.exportScope) {
-                        Text("Original").tag("original")
-                        Text("Margins").tag("source_interjections")
-                        Text("Full Session").tag("full_session")
-                    }
-                    .segmentedUnlessLargeText()
-                    .accessibilityIdentifier("batchExport.scope.picker")
-                    .onCompatibleChange(of: model.exportScope) { _ in model.exportOptionsChanged() }
-
-                    Toggle("Source Text", isOn: $model.exportIncludesSourceText)
-                        .accessibilityIdentifier("batchExport.includeSourceText.toggle")
-                        .onCompatibleChange(of: model.exportIncludesSourceText) { _ in model.exportOptionsChanged() }
-                    // A picked session on a spoken note follows the note's own text switch, shared with the single
-                    // Export screen (#4782); "Source Text" keeps applying to articles and PDFs.
-                    if model.batchExportRows.contains(where: { $0.isSpokenNote && model.selectedBatchExportSessionIds.contains($0.id) }) {
-                        Toggle("Spoken Note Text", isOn: $model.exportIncludesSpokenNoteText)
-                            .accessibilityIdentifier("batchExport.includeSpokenNoteText.toggle")
-                            .onCompatibleChange(of: model.exportIncludesSpokenNoteText) { _ in model.exportOptionsChanged() }
-                    }
-                    Toggle("Reference", isOn: $model.exportIncludesReference)
-                        .accessibilityIdentifier("batchExport.includeReference.toggle")
-                        .onCompatibleChange(of: model.exportIncludesReference) { _ in model.exportOptionsChanged() }
-                    Toggle("Listening Map", isOn: $model.exportIncludesListeningMap)
-                        .accessibilityIdentifier("batchExport.includeListeningMap.toggle")
-                        .onCompatibleChange(of: model.exportIncludesListeningMap) { _ in model.exportOptionsChanged() }
-                    Toggle("Margins", isOn: $model.exportIncludesInterjections)
-                        .accessibilityIdentifier("batchExport.includeInterjections.toggle")
-                        .onCompatibleChange(of: model.exportIncludesInterjections) { _ in model.exportOptionsChanged() }
-                    Toggle("AI Turns", isOn: $model.exportIncludesTurns)
-                        .accessibilityIdentifier("batchExport.includeTurns.toggle")
-                        .onCompatibleChange(of: model.exportIncludesTurns) { _ in model.exportOptionsChanged() }
+                    ExportContentsOptions(
+                        idPrefix: "batchExport",
+                        singleItemIsSpokenNote: false,
+                        sourceTextAvailable: true,
+                        showsSeparateSpokenNoteToggle: model.batchExportRows.contains(where: {
+                            $0.isSpokenNote && model.selectedBatchExportSessionIds.contains($0.id)
+                        }),
+                        spokenNoteFootnote: nil
+                    )
                 }
             }
         }
