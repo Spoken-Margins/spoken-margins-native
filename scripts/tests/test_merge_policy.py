@@ -62,9 +62,15 @@ class Repo:
 class FakeGitHub:
     repo = 'o/r'
 
-    def __init__(self, labels=(), comments=(), association='OWNER', login='owner', body='', issues=None):
+    def __init__(self, labels=(), comments=(), association='OWNER', login='owner', body='', issues=None, reviews=None):
         self.labels, self._comments = labels, list(comments)
         self.association, self.login, self.body, self.issues = association, login, body, issues or {}
+        self._reviews = reviews if isinstance(reviews, dict) else {None: list(reviews or ())}
+        self.review_reads = []
+
+    def reviews(self, number):
+        self.review_reads.append(number)
+        return self._reviews.get(number, self._reviews.get(None, []))
 
     def pull(self, number):
         return {'labels': [{'name': name} for name in self.labels], 'author_association': self.association,
@@ -256,6 +262,104 @@ class BlockerTests(unittest.TestCase):
         self.assertTrue(callable(policy.scope_policy().classify))
         self.assertEqual(policy.rules().OWNER_TAP_FILES, {'scripts/lane_merge_rules.py'})
         self.assertEqual(policy.rules().owner_tap_paths(scope_of(['.github/a.yml', 'b.py'], {})), ['.github/a.yml'])
+
+
+def review(state, commit, when, login='uncomposed', user_type='User'):
+    """A review in the REST pulls/N/reviews shape."""
+    return {'user': {'login': login, 'type': user_type}, 'state': state, 'commit_id': commit, 'submitted_at': when}
+
+
+class OwnerReviewTapTests(unittest.TestCase):
+    """The owner's approving review of the head is his tap, as the `owner-tap` label is (owner, 2026-11-24). On
+    2026-11-24 #5212, #5252 and #5256 were approved by him and stayed "Waiting for the owner's tap"."""
+
+    def check(self, files, github):
+        repo = Repo(files)
+        self.addCleanup(repo.close)
+        return policy.blockers(github, repo.tree, 'main', 7, repo.head, classify=scope_of,
+                               inherited=lambda comments: []), repo.head
+
+    def test_what_counts_as_the_tap(self):
+        old = 'a' * 40
+        cases = [
+            # (name, labels, reviews(head) -> list, tapped)
+            ('label only', ('owner-tap',), lambda h: [], True),
+            ('no label, no review', (), lambda h: [], False),
+            ('approval on the head', (), lambda h: [review('APPROVED', h, '2026-11-24T06:12:29Z')], True),
+            ('approval on an older commit', (), lambda h: [review('APPROVED', old, '2026-11-24T06:12:29Z')], False),
+            ('approval, then changes requested', (), lambda h: [review('APPROVED', h, '2026-11-24T06:00:00Z'),
+                                                               review('CHANGES_REQUESTED', h, '2026-11-24T07:00:00Z')], False),
+            ('approval dismissed (its state turns DISMISSED)', (),
+             lambda h: [review('DISMISSED', h, '2026-11-24T06:00:00Z')], False),
+            ('approval, then an older approval dismissed', (),
+             lambda h: [review('DISMISSED', h, '2026-11-24T05:00:00Z'), review('APPROVED', h, '2026-11-24T06:00:00Z')], True),
+            ('changes requested, then approval', (), lambda h: [review('CHANGES_REQUESTED', h, '2026-11-24T05:00:00Z'),
+                                                               review('APPROVED', h, '2026-11-24T06:00:00Z')], True),
+            ('approval, then a comment review', (), lambda h: [review('APPROVED', h, '2026-11-24T06:00:00Z'),
+                                                              review('COMMENTED', h, '2026-11-24T07:00:00Z')], True),
+            ('approval listed out of order', (), lambda h: [review('APPROVED', h, '2026-11-24T08:00:00Z'),
+                                                           review('CHANGES_REQUESTED', h, '2026-11-24T07:00:00Z')], True),
+            ('approval by another person', (), lambda h: [review('APPROVED', h, '2026-11-24T06:00:00Z', login='pat')], False),
+            ('approval by a bot', (), lambda h: [review('APPROVED', h, '2026-11-24T06:00:00Z',
+                                                        login='spoken-margins-agent[bot]', user_type='Bot')], False),
+            ('a look-alike bot login', (), lambda h: [review('APPROVED', h, '2026-11-24T06:00:00Z',
+                                                             login='uncomposed[bot]', user_type='Bot')], False),
+            ('an unsubmitted pending review', (), lambda h: [review('PENDING', h, None)], False),
+            ('the owner\'s login in another case', (), lambda h: [review('APPROVED', h, '2026-11-24T06:00:00Z',
+                                                                         login='Uncomposed')], True),
+        ]
+        for name, labels, reviews, tapped in cases:
+            with self.subTest(name):
+                class Lazy(FakeGitHub):
+                    def reviews(self, number):
+                        self.review_reads.append(number)
+                        return reviews(self.head)
+                github = Lazy(labels=labels)
+                repo = Repo({'.github/workflows/x.yml': 'on: push\n'})
+                self.addCleanup(repo.close)
+                github.head = repo.head
+                reasons = policy.blockers(github, repo.tree, 'main', 7, repo.head, classify=scope_of,
+                                          inherited=lambda comments: [])
+                self.assertEqual(reasons == [], tapped, reasons)
+                if not tapped:
+                    self.assertIn('his approving review', reasons[0])
+                    self.assertTrue(policy.is_waiting(reasons[0]))  # still a wait, not a failure
+                # The label is read first: with it, no reviews call is made.
+                self.assertEqual(github.review_reads, [] if labels else [7])
+
+    def test_no_reviews_call_when_no_tap_path_is_touched(self):
+        github = FakeGitHub()
+        reasons, _ = self.check({'scripts/tool.py': 'x\n'}, github)
+        self.assertEqual(reasons, [])
+        self.assertEqual(github.review_reads, [])
+
+    def test_a_merge_group_judges_each_pr_by_an_approval_of_its_own_head(self):
+        # In the queue the commit tested is the group's merge commit; the tap is on the PR's head (headRefOid).
+        repo = Repo({'.github/workflows/x.yml': 'on: push\n'})
+        self.addCleanup(repo.close)
+        group_head = 'b' * 40
+        entries = [{'position': 1, 'headCommit': {'oid': group_head},
+                    'pullRequest': {'number': 7, 'headRefOid': repo.head}}]
+        prs = policy.group_prs(entries, group_head)
+        for name, commit, tapped in (('approval on the PR head', repo.head, True),
+                                     ('approval naming the group commit', group_head, False)):
+            with self.subTest(name):
+                github = FakeGitHub(reviews={7: [review('APPROVED', commit, '2026-11-24T06:12:29Z')]})
+                found = policy.evaluate(github, repo.tree, 'main', prs, classify=scope_of, inherited=lambda c: [])
+                self.assertEqual(found[0][2] == [], tapped, found)
+                self.assertEqual(github.review_reads, [7])
+                self.assertEqual(policy.verdict(found, queue=True), 'success' if tapped else 'failure')
+
+    def test_the_reviews_are_read_through_gh_every_page(self):
+        calls = []
+
+        def run(cmd, **kwargs):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(review('APPROVED', 'c' * 40, 'x')) + '\n', '')
+        github = policy.GitHub('o/r', run=run, sleep=lambda s: None)
+        self.assertEqual(github.reviews(7), [review('APPROVED', 'c' * 40, 'x')])
+        self.assertEqual(calls[0][:3], ['gh', 'api', 'repos/o/r/pulls/7/reviews?per_page=100'])
+        self.assertIn('--paginate', calls[0])
 
 
 class JudgeTests(unittest.TestCase):

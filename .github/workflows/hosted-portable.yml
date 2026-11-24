@@ -754,6 +754,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             scripts/owner_tap_alert.py
+            scripts/owner_review_tap.py
             scripts/comment_trust.py
             scripts/trunk.py
           sparse-checkout-cone-mode: false

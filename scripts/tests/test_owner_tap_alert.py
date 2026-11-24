@@ -13,6 +13,7 @@ from unittest import mock
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import owner_tap_alert as alert  # noqa: E402
+import owner_review_tap  # noqa: E402
 
 spec = importlib.util.spec_from_file_location('lane_merge_rules_for_tap_alert', SCRIPTS / 'lane_merge_rules.py')
 lane = importlib.util.module_from_spec(spec)
@@ -51,8 +52,12 @@ GREEN = [run('lane'), run('check', conclusion='skipped'), GUARD]
 CLEAN = [audit(HEAD, 'No blocking findings.')]
 
 
-def ready(p=None, files=WORKFLOW, runs=GREEN, statuses=(), comments=CLEAN, stale=''):
-    return alert.readiness(p or pr(), files, list(runs), list(statuses), list(comments), REPO, stale)
+def ready(p=None, files=WORKFLOW, runs=GREEN, statuses=(), comments=CLEAN, stale='', reviews=()):
+    return alert.readiness(p or pr(), files, list(runs), list(statuses), list(comments), REPO, stale, list(reviews))
+
+
+def review(state, commit=HEAD, at='2026-11-24T06:12:29Z', login='uncomposed'):
+    return {'user': {'login': login}, 'state': state, 'commit_id': commit, 'submitted_at': at}
 
 
 class ReadinessTable(unittest.TestCase):
@@ -73,6 +78,18 @@ class ReadinessTable(unittest.TestCase):
             ('fork deleted', {'p': pr(head={'sha': HEAD, 'repo': None})}, False, 'not in this'),
             ('mergeability unknown', {'p': pr(mergeable=None)}, False, 'not worked out'),
             ('owner already tapped', {'p': pr(labels=[{'name': 'owner-tap'}])}, False, 'already tapped'),
+            # 2026-11-24: his approving review of the head is the same tap (owner_review_tap.py).
+            ('owner approved the head', {'reviews': [review('APPROVED')]}, False, 'already tapped (his approval'),
+            ('owner approved an older head', {'reviews': [review('APPROVED', OLD)]}, True, 'ready'),
+            ('owner approved, then asked for changes', {'reviews': [review('APPROVED'),
+                                                                   review('CHANGES_REQUESTED', at='2026-11-24T07:00:00Z')]},
+             True, 'ready'),
+            ('owner approval dismissed', {'reviews': [review('DISMISSED')]}, True, 'ready'),
+            ('owner approved, then commented', {'reviews': [review('APPROVED'),
+                                                           review('COMMENTED', at='2026-11-24T07:00:00Z')]},
+             False, 'already tapped'),
+            ('someone else approved', {'reviews': [review('APPROVED', login='pat')]}, True, 'ready'),
+            ('a bot approved', {'reviews': [review('APPROVED', login='github-actions[bot]')]}, True, 'ready'),
             ('another label', {'p': pr(labels=[{'name': 'needs-mac'}])}, True, 'ready'),
             ('conflict', {'p': pr(mergeable=False, mergeable_state='dirty')}, False, 'conflicts'),
             ('failing check', {'runs': GREEN + [run('host', conclusion='failure')]}, False, 'checks failed: host'),
@@ -189,11 +206,14 @@ class SameRulesAsTheMergeRules(unittest.TestCase):
         self.assertEqual(alert.AUDITS, lane.AUDITS)
         self.assertEqual(alert.AUDIT_SHA.pattern, lane.AUDIT_SHA.pattern)
         self.assertEqual(alert.CLEAN_AUDIT.pattern, lane.CLEAN_AUDIT.pattern)
+        self.assertEqual(alert.OWNER_LOGIN, owner_review_tap.OWNER_LOGIN)
+        self.assertIs(alert.owner_review_tap, owner_review_tap)  # the approval rule is the shared one, not a copy
 
 
 class FakeApi:
     def __init__(self, heads=(HEAD, HEAD), comments=CLEAN, labels=(), files=None, runs=None, closed=(),
-                 base_changes=(), workflow_run=None):
+                 base_changes=(), workflow_run=None, reviews=()):
+        self.reviews, self.review_reads = list(reviews), 0
         self.repo, self.heads, self.comments, self.posted, self.labels = REPO, list(heads), list(comments), [], []
         self.tap_ops, self.pr_labels, self.files, self.runs, self.closed = [], list(labels), files, runs, list(closed)
         self.base_changes, self.api_calls = list(base_changes), []  # paths the base changed since TESTED_BASE
@@ -221,6 +241,9 @@ class FakeApi:
             return GREEN if self.runs is None else self.runs
         if '/statuses' in path:
             return []
+        if path.startswith('pulls/7/reviews'):
+            self.review_reads += 1
+            return self.reviews
         return self.comments
 
     def comment(self, number, body):
@@ -353,6 +376,18 @@ class PersistentLabel(unittest.TestCase):
         self.assertEqual((api.labels, api.tap_ops, api.posted), ([('remove', 7, self.TAP)], [], []))
         api = self.check(labels=['owner-tap'])
         self.assertEqual((api.labels, api.tap_ops, api.posted), ([], [], []))
+
+    def test_a_pr_the_owner_approved_loses_the_label_and_gets_no_alert(self):
+        # 2026-11-24: #5212, #5252 and #5256 were approved by him and still listed as waiting for his tap.
+        api = self.check(labels=[self.TAP], reviews=[review('APPROVED')])
+        self.assertEqual((api.labels, api.tap_ops, api.posted, api.review_reads), ([('remove', 7, self.TAP)], [], [], 1))
+        api = self.check(reviews=[review('APPROVED', OLD)])  # an approval of an older head is no tap
+        self.assertEqual((api.tap_ops, len(api.posted)), ([('add', 7)], 1))
+
+    def test_the_reviews_are_read_only_when_the_label_does_not_already_say_tapped(self):
+        self.assertEqual(self.check(labels=['owner-tap']).review_reads, 0)
+        self.assertEqual(self.check(files=[{'filename': 'README.md'}]).review_reads, 0)
+        self.assertEqual(self.check().review_reads, 1)
 
     def test_unknown_mergeability_is_asked_again_before_giving_up(self):
         answers = [pr(mergeable=None), pr(mergeable=None), pr()]
@@ -596,6 +631,17 @@ class Workflow(unittest.TestCase):
         self.assertIn('types: [reopened, ready_for_review, labeled, unlabeled]', self.text)
         self.assertIn('"owner-tap-check","owner-tap"', self.text)
         self.assertRegex(self.text, r"(?m)^  schedule:\n    - cron: '\d+(,\d+)* \* \* \* \*'$")
+
+    def test_the_owners_review_starts_a_check(self):
+        # His approval is his tap (2026-11-24), so his review event re-decides the `needs-owner-tap` label.
+        self.assertIn('  pull_request_review:\n    types: [submitted, dismissed]\n', self.text)
+        self.assertIn(f"github.event.review.user.login == '{owner_review_tap.OWNER_LOGIN}'", self.text)
+
+    def test_every_alert_job_checks_out_the_shared_approval_rule(self):
+        for name in ('owner-tap-alert.yml', 'hosted-portable.yml', 'shipped-build-compat.yml'):
+            with self.subTest(name):
+                text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
+                self.assertIn('            scripts/owner_tap_alert.py\n            scripts/owner_review_tap.py\n', text)
 
     def test_concurrency_is_per_pr(self):
         self.assertIn("group: owner-tap-alert-${{ inputs.pr || github.event.pull_request.number || 'sweep' }}",

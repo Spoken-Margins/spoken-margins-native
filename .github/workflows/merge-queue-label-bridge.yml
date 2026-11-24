@@ -99,7 +99,10 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-          sparse-checkout: scripts/merge_queue_label_bridge.py
+          # owner_review_tap.py: the owner's approval of the head arms a PR as `owner-tap` does (2026-11-24).
+          sparse-checkout: |
+            scripts/merge_queue_label_bridge.py
+            scripts/owner_review_tap.py
           sparse-checkout-cone-mode: false
       - name: Act as the spoken-margins-agent App
         id: app-token

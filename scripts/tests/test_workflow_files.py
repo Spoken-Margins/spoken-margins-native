@@ -125,6 +125,70 @@ def all_steps():
                 yield path.name, job_id, job, step
 
 
+def evaluate_if(expression, context):
+    """A GitHub Actions `if:` built only from `github.*` lookups, string literals, ==, !=, !, && and ||, evaluated
+    against <context> (a missing field reads as None, as an absent event field reads empty in Actions)."""
+    def lookup(path):
+        value = context
+        for key in path.split('.')[1:]:
+            value = value.get(key) if isinstance(value, dict) else None
+        return value
+    python = re.sub(r'github(?:\.[A-Za-z_]+)+', lambda m: f'lookup({m.group(0)!r})', expression)
+    python = python.replace('&&', ' and ').replace('||', ' or ')
+    python = re.sub(r'!(?!=)', ' not ', python)
+    return bool(eval(python, {'lookup': lookup}))  # noqa: S307 - our own workflow text, in a test
+
+
+class OwnerReviewRunsTheMergePolicy(unittest.TestCase):
+    """2026-11-24: the owner approved #5212, #5252 and #5256 and all three stayed "Waiting for the owner's tap",
+    because merge-policy.yml never ran on a review. His approval of the head is now his tap (scripts/owner_review_tap.py),
+    and his review starts the check: only his, only on a same-repository PR into main."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = parse(ROOT / '.github/workflows/merge-policy.yml')
+        cls.job = cls.workflow['jobs']['policy']
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('owner_review_tap_for_workflows', ROOT / 'scripts/owner_review_tap.py')
+        cls.rule = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.rule)
+
+    def event(self, name, *, reviewer='uncomposed', repo='o/r', base='main'):
+        return {'event_name': name, 'repository': 'o/r',
+                'event': {'pull_request': {'number': 7, 'head': {'sha': 'a' * 40, 'repo': {'full_name': repo}},
+                                           'base': {'ref': base}},
+                          'review': {'user': {'login': reviewer}}}}
+
+    def test_a_submitted_or_dismissed_review_starts_it(self):
+        on = next(self.workflow[key] for key in ('on', True, 'true') if key in self.workflow)
+        self.assertEqual(on['pull_request_review'], {'types': ['submitted', 'dismissed']})
+
+    def test_only_the_owners_review_on_a_same_repo_pr_into_main_runs_the_job(self):
+        condition = self.job['if']
+        self.assertIn(f"github.event.review.user.login == '{self.rule.OWNER_LOGIN}'", condition)
+        cases = [
+            ('the owner reviews', self.event('pull_request_review'), True),
+            ('someone else reviews', self.event('pull_request_review', reviewer='pat'), False),
+            ('a bot reviews', self.event('pull_request_review', reviewer='github-actions[bot]'), False),
+            ('a fork PR is reviewed', self.event('pull_request_review', repo='eve/r'), False),
+            ('a PR into another branch', self.event('pull_request_review', base='next'), False),
+            ('a same-repo pull_request event', self.event('pull_request', reviewer=None), True),
+            ('a fork pull_request event', self.event('pull_request', repo='eve/r'), False),
+            ('a merge group', {'event_name': 'merge_group', 'repository': 'o/r', 'event': {}}, True),
+            ('a dispatch', {'event_name': 'workflow_dispatch', 'repository': 'o/r', 'event': {}}, True),
+        ]
+        for name, context, runs in cases:
+            with self.subTest(name):
+                self.assertEqual(evaluate_if(condition, context), runs)
+
+    def test_a_review_run_reports_on_the_pr_head_with_the_same_token(self):
+        step = next(s for s in self.job['steps'] if s.get('name') == 'Check the merge rules')
+        # The review event carries the same pull_request object, so these read the PR and its head unchanged.
+        self.assertEqual(step['env']['PR'], '${{ github.event.pull_request.number || inputs.pr }}')
+        self.assertEqual(step['env']['HEAD_SHA'], '${{ github.event.pull_request.head.sha }}')
+        self.assertEqual(self.workflow['permissions'], {'contents': 'read', 'pull-requests': 'read', 'statuses': 'write'})
+
+
 class WorkflowHonesty(unittest.TestCase):
     """A check that is green must have tested what its name says (#2596). These rules catch the ways it was not."""
 

@@ -34,6 +34,11 @@ on:
     # `owner-tap` labeled or unlabeled: the PR is tapped (or not any more), so the list drops it or takes it back (#4939).
     types: [reopened, ready_for_review, labeled, unlabeled]
     paths: ['.github/**', 'scripts/lane_merge_rules.py']
+  # The owner's review (2026-11-24): his approval of the head is his tap as the `owner-tap` label is
+  # (scripts/owner_review_tap.py), so the list drops the PR when he approves and takes it back when his approval is
+  # dismissed or he asks for changes. GitHub takes no `paths` filter here; the script reads the PR's files first.
+  pull_request_review:
+    types: [submitted, dismissed]
   push:
     branches: [main]
     paths: ['.github/workflows/**', 'scripts/tests/test_workflow_files.py']
@@ -68,9 +73,11 @@ jobs:
     # The script ignores its own job by this name (the same in linux-t1.yml and shipped-build-compat.yml).
     name: owner-tap-alert
     # A label event counts only for owner-tap-check and owner-tap; lane labels come and go on these PRs all day.
+    # A review counts only when it is the owner's (owner_review_tap.OWNER_LOGIN; a test keeps them equal).
     if: >-
-      github.event_name != 'pull_request' ||
+      (github.event_name != 'pull_request' && github.event_name != 'pull_request_review') ||
       (github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft &&
+       (github.event_name != 'pull_request_review' || github.event.review.user.login == 'uncomposed') &&
        (!contains(fromJSON('["labeled","unlabeled"]'), github.event.action) ||
         contains(fromJSON('["owner-tap-check","owner-tap"]'), github.event.label.name)))
     runs-on: ubuntu-latest
@@ -83,6 +90,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             scripts/owner_tap_alert.py
+            scripts/owner_review_tap.py
             scripts/comment_trust.py
             scripts/trunk.py
           sparse-checkout-cone-mode: false
