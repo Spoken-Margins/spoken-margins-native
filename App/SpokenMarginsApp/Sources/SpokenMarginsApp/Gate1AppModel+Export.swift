@@ -48,6 +48,7 @@ extension Gate1AppModel {
     func refreshExportPreview(reportStatus: Bool) -> Task<Void, Never>? {
         exportShareCandidates = []
         exportPreview = ""
+        exportSpokenNoteFootnote = nil
         guard let exportSessionId else {
             exportFileURL = nil
             return nil
@@ -69,6 +70,8 @@ extension Gate1AppModel {
                 do {
                     let export = try built.get()
                     exportPreview = try renderExport(export)
+                    exportSpokenNoteFootnote = SpokenNoteExportFootnote.text(
+                        for: export.item.noteTranscript, includesText: options.includeSpokenNoteText == true)
                     exportFileURL = format == "markdown"
                         ? try prepareIndividualMarkdownExportFile(markdown: exportPreview, export: export)
                         : nil
@@ -277,10 +280,26 @@ extension Gate1AppModel {
         }
     }
 
+    /// A podcast's or audio file's export carries only bounded context. A spoken note plays as native audio too, but its
+    /// words are the listener's own, so its Source Text is offered (#4782). `exportIncludesSpokenNoteText` is a note's
+    /// remembered Source Text (on by default, apart from articles'); `exportSpokenNoteFootnote` is the line under it
+    /// when the note's words aren't all there, set with the preview and cleared with it.
+    var exportSourceTextAvailable: Bool {
+        !selectedItem.isNativeAudio || selectedItem.isSpokenNote
+    }
+
+    /// Gives the engine a spoken note's own file for its Export (#4782). The engine reads it off the main thread, and
+    /// only in note mode.
+    func withSpokenNoteLoader(_ engine: SessionEngine) -> SessionEngine {
+        engine.spokenNoteLoader = SpokenNoteExportInput.loader(applicationSupport: try? applicationSupportDirectory())
+        return engine
+    }
+
     private func persistExportSettings() {
         UserDefaults.standard.set(exportFormat, forKey: "exportFormat")
         UserDefaults.standard.set(exportScope, forKey: "exportScope")
         UserDefaults.standard.set(exportIncludesSourceText, forKey: "exportIncludesSourceText")
+        UserDefaults.standard.set(exportIncludesSpokenNoteText, forKey: "exportIncludesSpokenNoteText")
         UserDefaults.standard.set(exportIncludesReference, forKey: "exportIncludesReference")
         UserDefaults.standard.set(exportIncludesListeningMap, forKey: "exportIncludesListeningMap")
         UserDefaults.standard.set(exportIncludesInterjections, forKey: "exportIncludesInterjections")
@@ -299,7 +318,8 @@ extension Gate1AppModel {
             includeListeningMap: exportIncludesListeningMap,
             includeInterjections: exportIncludesInterjections,
             includeTurns: exportIncludesTurns,
-            scope: exportScope
+            scope: exportScope,
+            includeSpokenNoteText: exportIncludesSpokenNoteText
         )
     }
 

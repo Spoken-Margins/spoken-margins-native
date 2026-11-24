@@ -6,6 +6,7 @@ GitHub's API and the live pages are replaced at the World and `api` boundaries.
 import contextlib
 import io
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -243,10 +244,39 @@ class Newest(unittest.TestCase):
         self.assertEqual(self.verdict('site', site)[0], 1)
 
 
+class WebSources(unittest.TestCase):
+    """The web deploy builds from a git archive, so a file the build reads outside Web/ must be in that archive.
+
+    Run 45133642168 (2026-11-23) failed because vite.config.ts began reading Contracts/fixtures/margins-control-center
+    and deploy-web.sh archived only Web/ and the share-link folder.
+    """
+
+    def archived(self):
+        script = (ROOT / 'research/B4/deploy/deploy-web.sh').read_text()
+        match = re.search(r'^sources=\(([^)]*)\)', script, re.M)
+        self.assertIsNotNone(match, 'deploy-web.sh no longer lists its sources=(...)')
+        return match.group(1).split()
+
+    def test_every_file_the_build_config_reads_is_archived(self):
+        sources = self.archived()
+        config = (ROOT / 'Web/vite.config.ts').read_text()
+        for relative in re.findall(r"new URL\('(\.\./[^']+)'", config):
+            path = (ROOT / 'Web' / relative).resolve().relative_to(ROOT).as_posix()
+            with self.subTest(path=path):
+                self.assertTrue(any(path == s or path.startswith(s + '/') for s in sources),
+                                f'vite.config.ts reads {path}, which deploy-web.sh does not archive')
+
+    def test_the_change_list_names_every_archived_folder(self):
+        paths = dc.TARGETS['web']['paths']
+        for source in self.archived():
+            self.assertIn(source, paths)
+
+
 class Workflows(unittest.TestCase):
     """The deploy key only ever reaches main, behind the owner's tap, with strict host checking."""
 
-    FILES = {'deploy-web.yml': ('web-deploy', 'web', ['Web/**', 'research/B4/deploy/deploy-web.sh']),
+    FILES = {'deploy-web.yml': ('web-deploy', 'web', ['Web/**', 'research/B4/deploy/deploy-web.sh',
+                                                       'Contracts/fixtures/margins-control-center/**']),
              'deploy-site.yml': ('site-deploy', 'site', ['Site/**', 'scripts/deploy-spoken-margins-site.sh'])}
 
     def test_each_deploy_is_main_only_gated_and_announced(self):

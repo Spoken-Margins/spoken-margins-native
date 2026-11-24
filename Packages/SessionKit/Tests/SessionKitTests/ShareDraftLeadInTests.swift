@@ -114,10 +114,10 @@ final class ShareDraftLeadInTests: XCTestCase {
         try store.saveInterjectionShareRevision(revision(for: two, id: "y", at: 1))
         try store.saveInterjectionShareRevision(revision(for: twoPlain, id: "b", at: 2))
         try store.saveInterjectionShareRevision(revision(for: three, id: "c", at: 2))
-        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: "item"), ["one": 30_000, "two": 120_000])
+        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: "item"), ["session::one": 30_000, "session::two": 120_000])
         // Taking a length back stores 20 s, so the next share knows the friend was told.
         try store.saveInterjectionShareRevision(revision(for: twoBack, id: "d", at: 3))
-        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: "item"), ["one": 30_000, "two": SenderLeadIn.defaultMs])
+        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: "item"), ["session::one": 30_000, "session::two": SenderLeadIn.defaultMs])
         XCTAssertEqual(try store.loadLastSentLeadIns(itemId: "another item"), [:])
     }
 
@@ -127,7 +127,7 @@ final class ShareDraftLeadInTests: XCTestCase {
         let (store, folder) = try openStore()
         defer { try? FileManager.default.removeItem(at: folder) }
         func next(_ at: Double, _ pick: (inout ShareInterjectionDraft) -> Void) throws -> Int? {
-            let last = try store.loadLastSentLeadIns(itemId: "item")["m"]
+            let last = try store.loadLastSentLeadIns(itemId: "item")["session::m"]
             var d = draft("m", lastSentLeadInMs: last)
             pick(&d)
             try store.saveInterjectionShareRevision(revision(for: d, id: "share-\(at)", at: at))

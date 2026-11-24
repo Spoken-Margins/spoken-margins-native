@@ -12,6 +12,7 @@ import { readPacket } from './read.ts';
 import { writePacket } from './write.ts';
 import type { WrittenPacket } from './write.ts';
 import type { Episode, Margin, Show } from '../shared/model.ts';
+import { packetShowFor, placeImport } from '../app/logic/import.ts';
 
 const fixtures = new URL('../../../Contracts/fixtures/web-packets/', import.meta.url);
 
@@ -115,6 +116,28 @@ async function writeReply(name: string, sender?: string): Promise<WrittenPacket>
   });
 }
 
+/**
+ * A friend who opened Ana's link on the web, where her episode is not followed, so the web filed it under "Shared by Ana"
+ * (#4689). `asShared` is what the web writes now: the show Ana's packet named. `holderTitled` is what earlier web builds
+ * wrote: the holder's title as the show, which made the iPhone import a second copy of the episode beside Ana's own.
+ */
+async function writeReplyFromSharedHolder(name: string, holderTitled: boolean): Promise<WrittenPacket> {
+  const parent = await appParent();
+  const placed = placeImport(parent, [], [], '2026-10-30T12:00:00Z');
+  const holder = placed.show as Show;
+  const replyToId = placed.margins[0]?.id;
+  const margins: Margin[] = [
+    { id: 'h1', episodeId: placed.episode.id, atSeconds: 755, createdAt: '2026-10-30T12:00:00Z', text: 'A reply from a friend who does not follow the show.', ...(replyToId && { replyToId }) },
+  ];
+  const show = holderTitled ? holder : packetShowFor(holder, placed.episode);
+  return writePacket(placed.episode, margins, {
+    ...(show && { show }), sender: 'Web friend', packageId: `package-web-fixture-${name}`, createdAt: new Date('2026-10-30T12:00:00.000Z'),
+  });
+}
+
+export const writeReplyFromShared = (): Promise<WrittenPacket> => writeReplyFromSharedHolder('reply-from-shared', false);
+export const writeReplyHolderTitled = (): Promise<WrittenPacket> => writeReplyFromSharedHolder('reply-holder-titled', true);
+
 export const writeReplyNamed = (): Promise<WrittenPacket> => writeReply('reply', 'Web fixture');
 export const writeReplyUnnamed = (): Promise<WrittenPacket> => writeReply('reply-unnamed');
 
@@ -128,5 +151,7 @@ if (import.meta.main) {
   writeFileSync(new URL('web-voice-placeholder.spokenmargins', fixtures), (await writePlaceholder()).bytes);
   writeFileSync(new URL('web-reply.spokenmargins', fixtures), (await writeReplyNamed()).bytes);
   writeFileSync(new URL('web-reply-unnamed.spokenmargins', fixtures), (await writeReplyUnnamed()).bytes);
-  console.log('wrote web-written, web-voice, web-voice-placeholder, web-reply and web-reply-unnamed (.spokenmargins)');
+  writeFileSync(new URL('web-reply-from-shared.spokenmargins', fixtures), (await writeReplyFromShared()).bytes);
+  writeFileSync(new URL('web-reply-holder-titled.spokenmargins', fixtures), (await writeReplyHolderTitled()).bytes);
+  console.log('wrote web-written, web-voice, web-voice-placeholder, web-reply, web-reply-unnamed, web-reply-from-shared and web-reply-holder-titled (.spokenmargins)');
 }

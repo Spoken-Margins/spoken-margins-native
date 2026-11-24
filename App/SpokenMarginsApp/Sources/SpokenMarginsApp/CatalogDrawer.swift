@@ -367,6 +367,13 @@ final class CatalogDrawerModel: ObservableObject {
         isPresented = false
     }
 
+    /// Done on the preview a Shortcut opened (#4290): the whole drawer closes, back to wherever the listener was, and
+    /// nothing plays. Bringing shows in from Apple Podcasts is not a first pick, so the first-run play doesn't apply.
+    func finishAfterShortcutImport() {
+        playsOnDismiss = false
+        isPresented = false
+    }
+
     /// The sheet closed, however it closed.
     func didDismiss() {
         shortcutImport = nil
@@ -777,7 +784,8 @@ struct CatalogDrawerView: View {
             )) {
                 if let importer = drawer.shortcutImport {
                     // A new list from the Shortcut is a new screen, not the old one's state.
-                    OPMLImportScreen(importer: importer).id(ObjectIdentifier(importer))
+                    OPMLImportScreen(importer: importer, onDone: importer.origin == .shortcut ? { drawer.finishAfterShortcutImport() } : nil)
+                        .id(ObjectIdentifier(importer))
                 }
             }
         }
@@ -820,6 +828,12 @@ struct CatalogDrawerView: View {
     @ViewBuilder
     private var importLink: some View {
         if let makeOPMLImport = drawer.makeOPMLImport {
+            #if !SPOKEN_MARGINS_LEGACY
+            // Above the file import: most iPhone listeners are in Apple Podcasts, which has no export (#4290).
+            ApplePodcastsImportRow()
+                .padding(.horizontal, 16)
+                .accessibilityIdentifier("catalog.drawer.importApplePodcasts")
+            #endif
             NavigationLink {
                 OPMLImportScreen(importer: makeOPMLImport())
             } label: {

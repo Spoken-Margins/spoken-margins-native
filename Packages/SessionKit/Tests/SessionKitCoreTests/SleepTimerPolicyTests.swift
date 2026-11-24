@@ -101,3 +101,22 @@ final class SleepTimerPolicyTests: XCTestCase {
         }
     }
 }
+
+final class SleepTimerCompactButtonTextTests: XCTestCase {
+    func testCompactButtonText() {
+        let deadline = Date(timeIntervalSince1970: 2_000)
+        let rows: [(SleepTimerState, Int?, String?, String)] = [
+            (.inactive, nil, nil, "inactive"),
+            (.inactive, 120, nil, "inactive with stale seconds"),
+            (.armed(mode: .minutes15, deadline: deadline, chapterId: nil), 754, "12:34", "timed, time known"),
+            (.armed(mode: .minutes60, deadline: deadline, chapterId: nil), 0, "0:00", "timed, at zero"),
+            (.armed(mode: .minutes30, deadline: deadline, chapterId: nil), nil, nil, "timed, time unknown"),
+            (.armed(mode: .endOfChapter, deadline: nil, chapterId: "a"), nil, "End of Chapter", "end of chapter"),
+            (.expiryDeferred(mode: .minutes15), 0, "Pauses after recording", "deferred"),
+            (.expiryDeferred(mode: .minutes15), nil, "Pauses after recording", "deferred, no seconds"),
+        ]
+        for (state, seconds, expected, label) in rows {
+            XCTAssertEqual(SleepTimerPolicy.compactButtonText(state: state, remainingSeconds: seconds), expected, label)
+        }
+    }
+}

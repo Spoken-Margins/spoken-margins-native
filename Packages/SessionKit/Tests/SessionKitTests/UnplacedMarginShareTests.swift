@@ -65,8 +65,8 @@ final class UnplacedMarginShareTests: XCTestCase {
         let summary = SharedMarginSelectionSummary(drafts, isIncluded: \.isIncluded, text: \.approvedTranscript)
         XCTAssertEqual(summary.packetCount, 1)
         XCTAssertEqual(summary.leftOutCount, 0)
-        XCTAssertEqual(drafts.filter(\.isIncluded).map(\.id), ["p"])
-        XCTAssertEqual(ShareableMargins.filter(drafts.filter(\.isIncluded), margin: \.interjection).map(\.id), ["p"])
+        XCTAssertEqual(drafts.filter(\.isIncluded).map(\.id), ["session::p"])
+        XCTAssertEqual(ShareableMargins.filter(drafts.filter(\.isIncluded), margin: \.interjection).map(\.id), ["session::p"])
         // Every Margin listed has no place: nothing is selectable.
         let none = [draft(margin("u1", unplaced: true)), draft(margin("u2", unplaced: true))]
         XCTAssertEqual(none.filter(\.isIncluded).count, 0)
