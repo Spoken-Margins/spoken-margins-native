@@ -4,6 +4,14 @@ import Foundation
 /// 400 KB on the clipboard, which most apps truncate or refuse; a file goes to Mail, Messages,
 /// Files or a chat as one attachment.
 public enum DiagnosticsExportFile {
+    /// What the file holds, in the listener's words. Settings › Share Diagnostics and the Export Diagnostics
+    /// Shortcuts action (#5126) both show this one text, so the two can't drift apart. It follows
+    /// `DiagnosticsExport`: links and paths leave as placeholders and item ids (a web import's id starts with the
+    /// page title) leave as salted tokens (#3548). Before #5126 the Settings footer said the file "includes the
+    /// titles and links of what is in your Library", which stopped being true when that redaction landed.
+    public static let contentsDescription =
+        "App state and recent playback events, as a file for a bug report. Web links and file paths in it are replaced with placeholders, and episodes, articles and PDFs in your Library appear as codes, not by their titles. It holds no Margin text, recordings or audio."
+
     /// "Spoken Margins diagnostics 0.1 (30) 41a591e 2026-10-08 0937.json": the build and the local
     /// time, so a few exports from one test session sort and can be told apart. Only letters,
     /// digits and `.()-` survive from the build, so the name is safe in any file system.
