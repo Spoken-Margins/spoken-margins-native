@@ -57,7 +57,7 @@ final class SharedMarginAudioGuardTests: XCTestCase {
             Excuse(file: app + "Gate1AppModel+ShareDrafts.swift", line: ".interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:))",
                    reason: "sharing the listener's own Margins"),
             Excuse(file: app + "Gate1AppModel+ShareDrafts.swift", line: "let sourcePath = sharingState.drafts[index].interjection.audioPath,",
-                   reason: "sharing the listener's own Margins", count: 2),
+                   reason: "sharing the listener's own Margins"),
             Excuse(file: app + "Gate1AppModel+ShareExport.swift", line: "return draft.interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:))",
                    reason: "sharing the listener's own Margins"),
             Excuse(file: app + "Gate1AppModel+ShareExport.swift", line: "guard let url = draft.interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)),",
