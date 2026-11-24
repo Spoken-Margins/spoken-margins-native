@@ -26,6 +26,10 @@ final class SharedMarginAudioGuardTests: XCTestCase {
         let app = "SpokenMarginsApp/Sources/SpokenMarginsApp/"
         let fromWatch = "a Margin the Watch recorded: the listener's own"
         return [
+            Excuse(file: app + "Gate1AppModel+LiveMarginMove.swift", line: #"if margin.audioPath != nil, margin.transcriptionStatus == "pending" {"#,
+                   reason: "a Margin the listener moved from their own live session onto an item (#4233): their own recording"),
+            Excuse(file: app + "Gate1AppModel+CatchUp.swift", line: "margin.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) != nil",
+                   reason: "the minutes on a catch-up button count the listener's own parent Margins (`ownMargins`) whose recording is on this phone (#4785)"),
             Excuse(file: app + "ExperienceModels.swift", line: "var canPlayRecording: Bool { !isWritten && interjection.audioPath != nil }",
                    reason: "the row of the listener's own Margin (`MarginRow`)"),
             Excuse(file: app + "ExperienceModels.swift", line: #"var canRetryTranscription: Bool { !isWritten && !["transcribed", "complete"].contains(interjection.transcriptionStatus) && interjection.audioPath != nil }"#,
