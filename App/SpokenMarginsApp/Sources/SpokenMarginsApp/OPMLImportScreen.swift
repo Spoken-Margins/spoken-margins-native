@@ -218,7 +218,8 @@ struct OPMLImportScreen: View {
     /// Following's Follow sheet opens this screen from "Import from another app" (#3205): the file picker
     /// opens at once instead of waiting for a second tap.
     private let opensFilePickerOnAppear: Bool
-    /// What Done does instead of popping this screen: a Shortcut's import closes the whole drawer (#4290).
+    /// What Done does instead of popping this screen: a Shortcut's import closes the whole drawer (#4290), and an
+    /// import from Following's Follow sheet closes that sheet (#5052). Cancel and the back button still pop.
     private let onDone: (() -> Void)?
 
     init(importer: @autoclosure @escaping () -> OPMLImportModel, opensFilePickerOnAppear: Bool = false, onDone: (() -> Void)? = nil) {

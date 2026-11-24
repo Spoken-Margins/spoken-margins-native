@@ -21,6 +21,7 @@ public enum MarginRowRepair: Equatable, Sendable {
     public static func of(
         isWritten: Bool,
         speechRecognitionOff: Bool,
+        speechRecognitionNotYetAsked: Bool = false,
         transcriptionStatus: String,
         contextStatus: AnchorContextStatus?,
         recordingMissing: Bool,
@@ -33,6 +34,7 @@ public enum MarginRowRepair: Equatable, Sendable {
         let status = TranscriptionFailureWording.marginAttention(
             transcriptionStatus: transcriptionStatus,
             speechRecognitionOff: speechRecognitionOff,
+            speechRecognitionNotYetAsked: speechRecognitionNotYetAsked,
             contextUnavailable: contextStatus == .unavailable,
             recordingMissing: recordingMissing)
         switch status {

@@ -20,6 +20,9 @@ public struct ListeningMoment: Sendable, Equatable {
         /// Each shared Margin the listener hasn't heard, one after another (#474). Twenty seconds, the owner's call
         /// on #3059: ten gave no context for an episode the listener hadn't heard, and a minute would be too slow to skim.
         case reviewNewMargins
+        /// A new listener's first Margin, played back in place right after it is saved (#4713). Five seconds is "a few
+        /// seconds of the source" and keeps the playback short.
+        case hearItLand
     }
 
     /// What plays after the Margin.
@@ -65,6 +68,8 @@ public struct ListeningMoment: Sendable, Equatable {
         case .reviewNewMargins:
             // The source carries on from the Margin only until the next lead-in starts; the review owns that hop.
             Rule(leadInMs: 20_000, carryOn: .sourceContinues, fallbacks: [.stream])
+        case .hearItLand:
+            Rule(leadInMs: 5_000, carryOn: .sourceContinues, fallbacks: [])
         }
     }
 

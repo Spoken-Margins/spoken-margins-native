@@ -162,7 +162,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
 
     /// "Skip to the Margins" and a can't-play listening are a review: the Margins follow one another and Next Margin moves
     /// between them. "Play this moment" is a moment. A Margin that plays when the episode reaches it is in no run.
-    public enum Run: Equatable, Sendable { case none, moment, review }
+    public enum Run: Equatable, Sendable { case none, moment, review, hearItLand }
 
     public init(
         subject: Subject, stage: Stage, position: String? = nil, voiceTime: String? = nil,
@@ -261,6 +261,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
         case .loading: return "Hold on, this is getting ready."
         case .failed:
             return "Tap Retry, or skip this Margin."
+        case .comingUp where run == .hearItLand: return "That's yours now, pinned to this moment."
         case .comingUp: return "It plays by itself when the \(self.noun.inSentence) gets there."
         case .waitingForTap: return "Tap Listen to hear it."
         case .silentHere(let words, _):

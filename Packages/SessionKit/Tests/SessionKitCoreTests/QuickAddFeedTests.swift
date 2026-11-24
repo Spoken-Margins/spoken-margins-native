@@ -424,23 +424,23 @@ final class QuickAddFeedTests: XCTestCase {
         XCTAssertEqual(scan.files.first?.modifiedAt, Date(timeIntervalSince1970: 1_090))
     }
 
-    /// #3767: the Quick Add list stays at eight, and the inbox that feeds the play queue gets every file.
-    func testScanKeepsTheQuickAddListAtEightAndGivesTheInboxTheWholeFolder() throws {
+    /// #3767, #4274: the Quick Add list stays at eight, and `allFiles` lists the whole folder for Following.
+    func testScanKeepsTheQuickAddListAtEightAndListsTheWholeFolder() throws {
         let directory = try makeFolder()
         for index in 0..<20 {
             try write("note-\(index).md", in: directory, modifiedAt: 1_000 + Double(index) * 10)
         }
         let scan = QuickAccessFolderScanner.scan(directory)
         XCTAssertEqual(scan.files.count, QuickAccessFolderScanner.quickAddLimit)
-        XCTAssertEqual(scan.inboxFiles.count, 20)
-        XCTAssertEqual(scan.inboxFiles.prefix(8).map(\.id), scan.files.map(\.id), "the Quick Add list is the inbox list's newest eight")
-        XCTAssertEqual(scan.inboxFiles.last?.id, "note-0.md")
+        XCTAssertEqual(scan.allFiles.count, 20)
+        XCTAssertEqual(scan.allFiles.prefix(8).map(\.id), scan.files.map(\.id), "the Quick Add list is the full list's newest eight")
+        XCTAssertEqual(scan.allFiles.last?.id, "note-0.md")
     }
 
-    func testAScanBuiltWithoutAnInboxListUsesItsFilesForBoth() {
+    func testAScanBuiltWithoutAFullListUsesItsFilesForBoth() {
         let candidate = QuickAccessFileCandidate(id: "a.md", name: "a", relativePath: "a.md", modifiedAt: Date(timeIntervalSince1970: 1))
         let scan = QuickAccessFolderScan(files: [candidate], errorDescription: nil)
-        XCTAssertEqual(scan.inboxFiles.map(\.id), ["a.md"])
+        XCTAssertEqual(scan.allFiles.map(\.id), ["a.md"])
     }
 
     func testScanOfAnUnreadableFolderReportsTheErrorAndNoFiles() throws {
@@ -531,7 +531,7 @@ final class QuickAddFeedTests: XCTestCase {
         XCTAssertEqual(scan.files.first?.id, "list-new.json")
         XCTAssertEqual(scan.files[1].id, "list-mid.json")
         XCTAssertFalse(scan.files.map(\.id).contains("list-old.json"))
-        XCTAssertTrue(scan.inboxFiles.map(\.id).contains("list-old.json"), "the inbox sees every file, so it is queued in a later pass")
+        XCTAssertTrue(scan.allFiles.map(\.id).contains("list-old.json"), "the full list holds every file, so Following can still reach it")
     }
 
     func testScanReadsAtMostTheJSONReadCapSoAFolderOfEditionsStaysCheap() throws {

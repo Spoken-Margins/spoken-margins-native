@@ -437,6 +437,7 @@ extension Gate1AppModel: MarginVoicePlayerHost {
         let playedID = playingInterjectionAudioId, playedSessionID = playingInterjectionAudioSessionID
         let recordedOver = marginVoicePlayer.ownRecordedOverMarginIdentities
         let returnsSource = sharedMarginReturn.returnsSourceWhenVoiceEnds(resumeSource: true)
+        noteMarginHeard(MarginHearing(isListenersOwn: true, kind: .spoken, outcome: .reachedEnd))
         stopInterjectionAudioPlayback()
         guard returnsSource, snapshot.status == .paused else { return }
         resumePlayback(returningFromMargin: true)

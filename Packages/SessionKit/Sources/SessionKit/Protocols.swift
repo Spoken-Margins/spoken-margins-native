@@ -299,15 +299,19 @@ public protocol LinkResolutionClient {
     func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult
 }
 
+/// Every method takes `purpose` with no default (#4715): the system client hands it to the Speech Recognition gate, which
+/// reports a hold with it, so the card is armed at the hold whichever caller met it. A caller that doesn't say what the
+/// transcript is for doesn't compile.
 public protocol SourceTranscriptionClient: Sendable {
-    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription) async throws -> TranscriptTimeline
     func transcribeSourceAudioWindow(
         url: URL,
         itemId: String,
         anchorMediaTimeMs: Int,
         durationMs: Int?,
         windowBeforeMs: Int,
-        windowAfterMs: Int
+        windowAfterMs: Int,
+        for purpose: HeldTranscription
     ) async throws -> TranscriptTimeline
     func transcribeSourceAudioWindowWithEvidence(
         url: URL,
@@ -315,7 +319,8 @@ public protocol SourceTranscriptionClient: Sendable {
         anchorMediaTimeMs: Int,
         durationMs: Int?,
         windowBeforeMs: Int,
-        windowAfterMs: Int
+        windowAfterMs: Int,
+        for purpose: HeldTranscription
     ) async throws -> SourceAudioWindowTranscription
 }
 
@@ -348,7 +353,8 @@ public extension SourceTranscriptionClient {
         anchorMediaTimeMs: Int,
         durationMs: Int?,
         windowBeforeMs: Int = 60_000,
-        windowAfterMs: Int = 60_000
+        windowAfterMs: Int = 60_000,
+        for purpose: HeldTranscription
     ) async throws -> TranscriptTimeline {
         throw SessionKitError.persistenceFailed("source_audio_window_transcription_unavailable")
     }
@@ -359,7 +365,8 @@ public extension SourceTranscriptionClient {
         anchorMediaTimeMs: Int,
         durationMs: Int?,
         windowBeforeMs: Int = 60_000,
-        windowAfterMs: Int = 60_000
+        windowAfterMs: Int = 60_000,
+        for purpose: HeldTranscription
     ) async throws -> SourceAudioWindowTranscription {
         let timeline = try await transcribeSourceAudioWindow(
             url: url,
@@ -367,7 +374,8 @@ public extension SourceTranscriptionClient {
             anchorMediaTimeMs: anchorMediaTimeMs,
             durationMs: durationMs,
             windowBeforeMs: windowBeforeMs,
-            windowAfterMs: windowAfterMs
+            windowAfterMs: windowAfterMs,
+            for: purpose
         )
         return SourceAudioWindowTranscription(
             timeline: timeline,

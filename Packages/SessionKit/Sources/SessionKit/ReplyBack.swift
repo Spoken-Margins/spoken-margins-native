@@ -32,12 +32,13 @@ public struct ReplyBackOffer: Equatable, Sendable {
     /// the ordinary Share's own rule: the Margins starred for sharing if any candidate is starred, otherwise every
     /// candidate, so the sheet never opens with nothing picked (#3792, Design 2026-11-10, piece 2).
     public func isPreselected(_ interjection: Interjection) -> Bool {
-        if !replies.isEmpty { return replyIds.contains(interjection.id) }
+        if !replies.isEmpty { return replyIds.contains(interjection.sessionScopedId) }
         let anyStarred = others.contains { $0.isStarredForSharing == true }
         return !anyStarred || interjection.isStarredForSharing == true
     }
 
-    private var replyIds: Set<String> { Set(replies.map(\.id)) }
+    /// By session and id (#4688): the offer spans the item's passes, and each numbers its Margins from "ij-001".
+    private var replyIds: Set<String> { Set(replies.map(\.sessionScopedId)) }
 
     /// The offer for an item, or nil when the listener has made no Margin since they imported a friend's packet.
     ///
@@ -76,7 +77,7 @@ public struct ReplyBackOffer: Equatable, Sendable {
     }
 
     private static func madeBefore(_ lhs: Interjection, _ rhs: Interjection) -> Bool {
-        lhs.createdAt == rhs.createdAt ? lhs.id < rhs.id : lhs.createdAt < rhs.createdAt
+        lhs.createdAt == rhs.createdAt ? lhs.sessionScopedId < rhs.sessionScopedId : lhs.createdAt < rhs.createdAt
     }
 
     static func names(_ labels: [String]) -> String {

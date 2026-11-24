@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { Page, TestInfo } from '@playwright/test';
+import { expect, type Page, type TestInfo } from '@playwright/test';
 
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
 export const FEED_ORIGIN = 'https://feeds.test';
@@ -89,6 +89,22 @@ export async function startFromBeginning(page: Page, button: 'Start from the beg
 /** The Now tab of Now Playing. */
 export async function nowTab(page: Page): Promise<void> {
   await page.locator('.now-playing').getByRole('tab', { name: 'Now' }).click();
+}
+
+/**
+ * After a follow, puts episodes in the Library the way a listener does (#4425): Following, the show's row, Add on each
+ * title, then Back to the Following list. The Library holds only what is added, so a spec that expects Library rows
+ * after a follow calls this. `episodeTitles` are the exact titles; a title that has no Add button fails here.
+ */
+export async function followAndAdd(page: Page, showTitle: string | RegExp, episodeTitles: readonly string[]): Promise<void> {
+  await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Following' }).click();
+  await page.getByRole('button', { name: typeof showTitle === 'string' ? `Open ${showTitle}` : showTitle }).click();
+  for (const title of episodeTitles) {
+    const add = page.getByRole('button', { name: `Add ${title} to your Library`, exact: true });
+    await add.click();
+    await expect(add).toHaveCount(0);
+  }
+  await page.locator('.back-button').click();
 }
 
 /** Clock text like "1:05" to seconds. */
