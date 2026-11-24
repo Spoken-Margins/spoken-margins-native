@@ -27,6 +27,17 @@ struct ExperienceMarginDetailView: View {
 
     private var isStarred: Bool { current.interjection.isStarredForSharing == true }
 
+    /// The details screen's Paper note row (#4340): setting a role takes the Margin into that slot; None takes it out.
+    private var paperRoleBinding: Binding<PaperNoteRole?> {
+        Binding(
+            get: { current.interjection.paperRole },
+            set: { role in
+                guard role != current.interjection.paperRole else { return }
+                model.setPaperRole(role, for: current.interjection)
+            }
+        )
+    }
+
     private var playButton: some View {
         let playing = model.isPlayingInterjectionAudio(current.interjection)
         return Button(playing ? "Stop playing" : "Hear my recording", systemImage: playing ? "stop.fill" : "play.fill") {
@@ -160,6 +171,17 @@ struct ExperienceMarginDetailView: View {
                         .foregroundStyle(AppColors.secondaryText)
                     LabeledContent("Attached to", value: current.targetDescription)
                     LabeledContent("Position", value: InterjectionPositionPresentation.detailDescription(for: current.interjection, durationMs: nil))
+                    // Which slot of the paper's Paper note this Margin fills, for an item-level Margin on a PDF (#4340).
+                    if current.interjection.targetType == .item, model.offersPaperNote(itemId: current.interjection.itemId) {
+                        Picker("Paper note", selection: paperRoleBinding) {
+                            Text("None").tag(PaperNoteRole?.none)
+                            ForEach(PaperNoteRole.allCases, id: \.self) { role in
+                                Text(PaperNoteSlots.roleName(role)).tag(PaperNoteRole?.some(role))
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .accessibilityIdentifier("marginDetail.paperNote.picker")
+                    }
                     if let movedFrom = MarginPlacePresentation.movedFromLine(for: current.interjection) {
                         Text(movedFrom)
                             .font(.subheadline)

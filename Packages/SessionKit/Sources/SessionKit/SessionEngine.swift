@@ -81,6 +81,10 @@ public final class SessionEngine {
     /// goes out with it and any other source's stays on the phone (#3449). Nil makes no request: every source is then
     /// treated as unmarked unless it already holds a mark.
     public var publicSourceMarker: PublicSourceMarker?
+    /// Reads a spoken note's own file and joined timeline for the Export screen and Export Sessions (#4782). Called off
+    /// the main thread, and only in note mode. Nil, or a nil result, exports the note from its row's text and the
+    /// stored timeline of its last playback.
+    public var spokenNoteLoader: (@Sendable (Item) -> SpokenNoteExportInput?)?
     /// Where unsaved recordings are noted so a launch after a kill can find them (#951). Nil keeps no notes.
     public var recordingDraftJournal: RecordingDraftJournal?
     /// Why the last note could not be written or removed. A failed note never stops a recording.
@@ -2221,6 +2225,26 @@ public final class SessionEngine {
         try updateInterjection(interjectionId, sessionId: sessionId) { $0.paperRole = role }
     }
 
+    /// "Change answer" on a Paper note slot (#4340): gives `interjectionId` the role and takes it off `replacing`, the
+    /// Margin that answered the slot before, in one transaction, so a crash never leaves both or neither answering. The
+    /// old Margin keeps everything but its role. A `replacing` that is the same Margin, is gone, or no longer carries
+    /// `role` is left alone. Throws, writing nothing, when the session or the new Margin is not found.
+    public func changePaperAnswer(
+        _ role: PaperNoteRole,
+        interjectionId: String,
+        sessionId: String,
+        replacing: (interjectionId: String, sessionId: String)?
+    ) throws {
+        try inRepositoryTransaction {
+            try updateInterjectionUnlocked(interjectionId, sessionId: sessionId) { $0.paperRole = role }
+            guard let replacing, (replacing.interjectionId, replacing.sessionId) != (interjectionId, sessionId),
+                  try repository.loadSession(id: replacing.sessionId) != nil,
+                  let old = try loadInterjection(replacing.interjectionId, inSession: replacing.sessionId),
+                  old.paperRole == role else { return }
+            try updateInterjectionUnlocked(replacing.interjectionId, sessionId: replacing.sessionId) { $0.paperRole = nil }
+        }
+    }
+
     @discardableResult
     public func cancelWrittenInterjection(captureId: String) throws -> SessionSnapshot {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
@@ -3616,6 +3640,9 @@ public final class SessionEngine {
         /// Read beforehand, off the main thread (#2505); nil means "read it when the export needs it".
         var listeningMap: ListeningMap?? = nil
         var pageDocument: StructuredDocument?? = nil
+        /// A spoken note's own file and joined timeline, read off the main thread in note mode (#4782). Nil gives the
+        /// fallback built from the row's text and stored timeline.
+        var spokenNote: SpokenNoteExportInput? = nil
     }
 
     /// What `buildExportReadingOffMain` reads on a background thread: everything the export would otherwise read
@@ -3628,6 +3655,7 @@ public final class SessionEngine {
         var timeline: TranscriptTimeline??
         var listeningMap: ListeningMap??
         var pageDocument: StructuredDocument??
+        var spokenNote: SpokenNoteExportInput? = nil
     }
 
     /// The export the Export screen shows, with its store reads off the main thread (#2505): the item's whole text,
@@ -3639,6 +3667,9 @@ public final class SessionEngine {
         guard let sessionId = options.sessionId else { return try buildExport(options: options) }
         let repository = repository
         let includeFullText = options.includeFullText, includeListeningMap = options.includeListeningMap
+        let includeSpokenNoteText = options.includeSpokenNoteText
+        // Captured before the detach, so the loader runs off the main thread (#4782).
+        let spokenNoteLoader = spokenNoteLoader
         // The export tap (the Export screen or a batch share): the Listening Map's model-written text goes only for a source
         // marked public, so look at the source's public copy first. A short wait; the export carries no such text if the
         // check finds nothing (#3449).
@@ -3650,7 +3681,9 @@ public final class SessionEngine {
         // "pattern that the region based isolation checker does not understand"; macOS accepts both.
         let inputs = try await Task.detached(priority: .userInitiated) {
             try SessionEngine.readExportInputs(sessionId: sessionId, includeFullText: includeFullText,
-                                               includeListeningMap: includeListeningMap, repository: repository)
+                                               includeListeningMap: includeListeningMap, repository: repository,
+                                               includeSpokenNoteText: includeSpokenNoteText,
+                                               spokenNoteLoader: spokenNoteLoader)
         }.value
         guard let inputs else { return try buildExport(options: options) } // not stored: the engine's own session
         let itemId = inputs.item.id
@@ -3659,20 +3692,23 @@ public final class SessionEngine {
         return try buildExport(options: options, source: ExportSource(
             session: inputs.session, item: inputs.item, sourceTimeline: sourceTimeline,
             allInterjections: inputs.allInterjections, allTurns: inputs.allTurns,
-            listeningMap: inputs.listeningMap, pageDocument: inputs.pageDocument))
+            listeningMap: inputs.listeningMap, pageDocument: inputs.pageDocument, spokenNote: inputs.spokenNote))
     }
 
     /// The reads `loadExportSource` and `buildExport(options:source:)` make, done ahead in one go. The timeline is
     /// read when any export these options could shape needs it: a superset of `buildExport`'s own test, since the
     /// Margins' scope isn't applied yet. nil when the session isn't stored.
     nonisolated static func readExportInputs(
-        sessionId: String, includeFullText: Bool, includeListeningMap: Bool, repository: SessionRepository
+        sessionId: String, includeFullText: Bool, includeListeningMap: Bool, repository: SessionRepository,
+        includeSpokenNoteText: Bool? = nil, spokenNoteLoader: (@Sendable (Item) -> SpokenNoteExportInput?)? = nil
     ) throws -> ExportInputs? {
         guard let session = try repository.loadSession(id: sessionId) else { return nil }
         let item = try repository.loadItem(id: session.itemId)
         let interjections = try activeExportInterjections(repository.loadInterjections(sessionId: session.id))
         let turns = try exportTurns(repository.loadTurns(sessionId: session.id), activeInterjections: interjections)
-        let needsTimeline = includeFullText || includeListeningMap
+        // Note mode always reads the stored timeline: placing Margins and the fallback need it (#4782).
+        let noteMode = includeSpokenNoteText != nil && ExportSourceKind.of(item) == .spokenNote
+        let needsTimeline = includeFullText || includeListeningMap || noteMode
             || (isNativeAudioSource(item) && interjections.contains { $0.targetType == .item && $0.anchor.mediaTimeMs != nil })
         let timeline: TranscriptTimeline?? = needsTimeline ? .some(try repository.loadTranscriptTimeline(itemId: item.id)?.timeline) : nil
         let map: ListeningMap?? = includeListeningMap
@@ -3682,8 +3718,9 @@ public final class SessionEngine {
             && interjections.contains { $0.targetType == .item }
             ? .some(pageDocument(for: item, repository: repository))
             : nil
+        let spokenNote = noteMode ? spokenNoteLoader?(item) : nil
         return ExportInputs(session: session, item: item, allInterjections: interjections, allTurns: turns,
-                            timeline: timeline, listeningMap: map, pageDocument: pageDocument)
+                            timeline: timeline, listeningMap: map, pageDocument: pageDocument, spokenNote: spokenNote)
     }
 
     private nonisolated static func activeExportInterjections(_ all: [Interjection]) -> [Interjection] {
@@ -3737,11 +3774,22 @@ public final class SessionEngine {
     func buildExport(options: ExportOptions, source: ExportSource) throws -> SessionExport {
         let session = source.session, item = source.item
         let allInterjections = source.allInterjections, allTurns = source.allTurns
-        let exposesFullSourceText = options.includeFullText && !Self.isNativeAudioSource(item)
-        let interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
+        // Note mode (#4782): the listener's own spoken note, exported from the Export screen or Export Sessions. Its
+        // own switch decides whether its words go, and `includeFullText` (the article value) is ignored for it.
+        let noteMode = options.includeSpokenNoteText != nil && ExportSourceKind.of(item) == .spokenNote
+        let includesNoteText = noteMode && options.includeSpokenNoteText == true
+        let exposesFullSourceText = !noteMode && options.includeFullText && !Self.isNativeAudioSource(item)
+        var interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
+        if noteMode {
+            // The note's Margins in the order they were made, which is the order they read under one sentence.
+            let onNote = interjections.filter { $0.targetType == .item }
+                .sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
+            interjections = onNote + interjections.filter { $0.targetType != .item }
+        }
         // Read only when this export uses it (#2506): the full text of a transcribed source, the words around a
-        // recording's Margins, or the Listening Map's length. An article's Margin note needs none of them.
-        let needsTimeline = exposesFullSourceText || options.includeListeningMap
+        // recording's Margins, or the Listening Map's length. An article's Margin note needs none of them. Note mode
+        // always reads it: placing Margins and the fallback need it.
+        let needsTimeline = exposesFullSourceText || options.includeListeningMap || noteMode
             || (Self.isNativeAudioSource(item) && interjections.contains { $0.targetType == .item && $0.anchor.mediaTimeMs != nil })
         let sourceTimeline = try needsTimeline ? source.sourceTimeline.value() : nil
         let sourceTranscript = exposesFullSourceText
@@ -3757,6 +3805,10 @@ public final class SessionEngine {
         let pageDocument = interjections.contains { $0.targetType == .item } && item.documentStructure?.bibliography != nil
             ? source.pageDocument ?? exportPageDocument(for: item)
             : nil
+        let noteLayout = noteMode
+            ? SpokenNoteExportLayout(input: source.spokenNote, itemId: item.id, itemText: item.text ?? "",
+                                     storedTimeline: sourceTimeline, margins: interjections)
+            : nil
         let export = SessionExport(
             item: ExportItem(
                 id: item.id,
@@ -3764,11 +3816,13 @@ public final class SessionEngine {
                 externalReference: options.includeReference ? ShareableLinkPolicy.shareableLink(item.externalReference) : nil,
                 sourceURL: options.includeReference ? ShareableLinkPolicy.shareableLink(item.media?.url) : nil,
                 mediaSourceType: item.media?.sourceType.rawValue,
-                includedFullText: exposesFullSourceText,
-                text: exposesFullSourceText ? item.text : nil,
+                includedFullText: noteMode ? includesNoteText : exposesFullSourceText,
+                text: noteMode ? (includesNoteText ? noteLayout?.text : nil) : exposesFullSourceText ? item.text : nil,
                 sourceTranscript: sourceTranscript,
                 author: item.author.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 },
-                bibliography: options.includeReference ? item.documentStructure?.bibliography : nil
+                bibliography: options.includeReference ? item.documentStructure?.bibliography : nil,
+                sourceKind: noteMode ? SpokenNoteItem.mediaType : nil,
+                noteTranscript: noteLayout.map { Self.exportNoteTranscript($0, includesText: includesNoteText) }
             ),
             session: ExportSession(id: session.id, status: session.status, completionPercent: session.completionPercent),
             listeningMap: options.includeListeningMap
@@ -3781,7 +3835,11 @@ public final class SessionEngine {
                 // A moved Margin captured with no playback position has no place, so no source passage, page, offset or
                 // media time goes with it: its stored zeros would read as 0% or 0:00 (#4233).
                 let placed = interjection.hasPlace
+                // A note's Margin carries its own sentence and the next one, never the stored window (#4782).
+                let notePlaced = noteMode && interjection.targetType == .item
+                let notePlacement = notePlaced ? noteLayout?.placements[interjection.id] : nil
                 let shouldResolveNativeContext = Self.isNativeAudioSource(item)
+                    && !noteMode
                     && interjection.targetType == .item
                     && interjection.anchor.mediaTimeMs != nil
                     && sourceTimeline != nil
@@ -3814,13 +3872,13 @@ public final class SessionEngine {
                             text: generatedTurnNavigationText(for: $0)
                         )
                     } ?? interjection.roughPercent,
-                    anchorBefore: !placed ? "" : shouldResolveNativeContext
+                    anchorBefore: !placed ? "" : notePlaced ? notePlacement?.sentence ?? "" : shouldResolveNativeContext
                         ? resolvedContext?.anchorBefore ?? ""
                         : turnContext?.before ?? interjection.anchor.anchorBefore,
-                    anchorAfter: !placed ? "" : shouldResolveNativeContext
+                    anchorAfter: !placed ? "" : notePlaced ? notePlacement?.nextSentence ?? "" : shouldResolveNativeContext
                         ? resolvedContext?.anchorAfter ?? ""
                         : turnContext?.after ?? interjection.anchor.anchorAfter,
-                    mediaTimeMs: placed ? interjection.anchor.mediaTimeMs : nil,
+                    mediaTimeMs: placed ? notePlacement?.startMs ?? interjection.anchor.mediaTimeMs : nil,
                     transcriptionStatus: interjection.transcriptionStatus,
                     transcript: interjection.captureKind == .written
                         ? interjection.transcript
@@ -3830,8 +3888,11 @@ public final class SessionEngine {
                     page: interjection.targetType == .item && placed
                         ? pageDocument?.pageNumber(atCharacter: interjection.anchor.startChar)
                         : nil,
-                    sourceCharOffset: interjection.targetType == .item && placed ? interjection.anchor.startChar : nil,
-                    noPlace: interjection.hasPlace ? nil : true
+                    sourceCharOffset: interjection.targetType == .item && placed
+                        ? notePlacement?.startChar ?? interjection.anchor.startChar
+                        : nil,
+                    noPlace: interjection.hasPlace ? nil : true,
+                    sourceSegmentId: notePlacement?.segmentId
                 )
             }
         )
@@ -3846,6 +3907,25 @@ public final class SessionEngine {
         let document = Self.pageDocument(for: item, repository: repository)
         exportPageDocumentCache = (item.id, item.text, document)
         return document
+    }
+
+    /// A note's transcript as the export carries it (#4782). The recordings go only when its words do.
+    static func exportNoteTranscript(_ layout: SpokenNoteExportLayout, includesText: Bool) -> ExportNoteTranscript {
+        let isNote = layout.source == .note
+        return ExportNoteTranscript(
+            source: isNote ? ExportNoteTranscript.noteSource : ExportNoteTranscript.lastPlaybackSource,
+            recordingCount: isNote ? layout.recordingCount : nil,
+            recordingsWithWords: isNote ? layout.recordingsWithWords : nil,
+            complete: isNote ? layout.isComplete : nil,
+            recordings: includesText
+                ? layout.recordings.map { recording in
+                    ExportNoteRecording(
+                        number: recording.number, hasWords: recording.hasWords,
+                        sentences: recording.sentences.map { ExportNoteSentence(segmentId: $0.segmentId, text: $0.text) }
+                    )
+                }
+                : nil
+        )
     }
 
     private nonisolated static func isNativeAudioSource(_ item: Item) -> Bool {

@@ -31,7 +31,9 @@ class TapTargetStyleTests(unittest.TestCase):
 
     def test_playback_secondary_controls_expand_their_hit_area(self):
         playback = _strip((APP / "PlaybackScreen.swift").read_text())
-        self.assertGreaterEqual(playback.count(".expandedHitArea("), 8)
+        # Text, Mix, Sleep (moon alone or with the time left) and Speed. #4781 dropped the Labeled branches, which
+        # were drawn instead of, never beside, the compact ones, so every control still expands its hit area.
+        self.assertGreaterEqual(playback.count(".expandedHitArea("), 6)
 
     def test_live_activity_buttons_expand_their_hit_area(self):
         widget = _strip(WIDGET.read_text())

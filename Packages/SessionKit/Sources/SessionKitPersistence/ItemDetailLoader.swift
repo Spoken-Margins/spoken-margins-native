@@ -147,6 +147,7 @@ public struct ItemDetailLoader {
             listeningMapSummarySpans: sceneStarts.summarySpans,
             mediaDurationMs: item.media?.durationMs ?? timelineSummary?.durationMs,
             isNativeAudio: isNativeAudio,
+            isSpokenNote: isNote,
             lengthMs: PlayableLength.ms(media: item.media),
             lengthTextCharacterCount: isNativeAudio ? nil : item.textCharacterCount,
             documentStructure: item.documentStructure,

@@ -183,6 +183,13 @@ struct BatchExportScreen: View {
                     Toggle("Source Text", isOn: $model.exportIncludesSourceText)
                         .accessibilityIdentifier("batchExport.includeSourceText.toggle")
                         .onCompatibleChange(of: model.exportIncludesSourceText) { _ in model.exportOptionsChanged() }
+                    // A picked session on a spoken note follows the note's own text switch, shared with the single
+                    // Export screen (#4782); "Source Text" keeps applying to articles and PDFs.
+                    if model.batchExportRows.contains(where: { $0.isSpokenNote && model.selectedBatchExportSessionIds.contains($0.id) }) {
+                        Toggle("Spoken Note Text", isOn: $model.exportIncludesSpokenNoteText)
+                            .accessibilityIdentifier("batchExport.includeSpokenNoteText.toggle")
+                            .onCompatibleChange(of: model.exportIncludesSpokenNoteText) { _ in model.exportOptionsChanged() }
+                    }
                     Toggle("Reference", isOn: $model.exportIncludesReference)
                         .accessibilityIdentifier("batchExport.includeReference.toggle")
                         .onCompatibleChange(of: model.exportIncludesReference) { _ in model.exportOptionsChanged() }
