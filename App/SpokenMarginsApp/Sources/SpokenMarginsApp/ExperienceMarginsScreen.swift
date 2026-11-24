@@ -547,7 +547,7 @@ struct ExperienceMarginsScreen: View, Equatable {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
-        .tint(AppColors.primaryAction)
+        .tint(AppColors.evergreen)
         .accessibilityLabel(Self.retryLabel(repair))
         .accessibilityHint(repair == .retryContext
             ? "Tries again to find the words around this Margin."

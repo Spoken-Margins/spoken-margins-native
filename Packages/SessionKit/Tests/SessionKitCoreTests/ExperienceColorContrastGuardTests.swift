@@ -342,6 +342,126 @@ final class AppColorUsageGuardTests: XCTestCase {
             XCTAssertTrue(names.contains { $0.contains(marker) }, "\(key) is listed as audited but no pair measures text on it")
         }
     }
+    // MARK: Tint tokens (#4953)
+
+    /// Every `AppColors` token the app passes to `.tint(`, and why it is safe there. A `.bordered` control draws its words
+    /// in its tint, so a token that is only safe as a fill becomes unreadable text: `primaryAction` was 1.9:1 in dark mode
+    /// on the Margins Retry (#4953), and `plum` 4.1:1 on Share's Stop. Neither is listed, on purpose. The key is the token,
+    /// not the call site, as with `tints` above: a listed token reused on a new surface is not seen.
+    private enum TintTokenKind { case borderedLabel, plainText, swipe, alwaysDark, prominentFill, nonText }
+
+    private static let classifiedTintTokens: [String: TintTokenKind] = [
+        // The app accent: `accentPairs` audits it as a bordered button label on bone and the panel.
+        "evergreen": .borderedLabel,
+        // A disclosure tint on bone and the panel: the "reading body on bone" and panel body pairs.
+        "text": .plainText,
+        // White words on a swipe button, audited; `swipeTintsThatAreNotSwipeTokens` owns them.
+        "swipeEvergreen": .swipe, "swipeOchre": .swipe, "swipePlum": .swipe, "swipeSlate": .swipe,
+        // Drawn on the always-dark playback, recording or live surfaces, where the plate pairs measure them.
+        "accent": .alwaysDark, "listeningAccent": .alwaysDark, "ochre": .alwaysDark, "watchControl": .alwaysDark,
+        "watchDanger": .alwaysDark,
+        // A `.borderedProminent` fill under `captureText`: the "capture action" pair.
+        "captureBackground": .prominentFill,
+        // A spinner on an evergreen fill, and a progress bar: no words drawn in them.
+        "onEvergreen": .nonText, "ochreText": .nonText
+    ]
+
+    private static let tintTokenPattern = try! NSRegularExpression(pattern: #"(?<![\w.])AppColors\.(\w+)"#)
+
+    /// The `AppColors` tokens inside each `.tint(…)` argument of a Swift file, in order, duplicates kept. Strings and
+    /// comments are stripped first, as the swipe guard does, so a `//` in a string cannot hide a real use. Block comments
+    /// are not handled, the same as the swipe guard.
+    static func tintTokens(in text: String) -> [String] {
+        let collapsed = text
+            .replacingOccurrences(of: #""(?:\\.|[^"\\\n])*""#, with: "\"\"", options: .regularExpression)
+            .replacingOccurrences(of: #"//[^\n]*"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        var tokens: [String] = []
+        var searchRange = collapsed.startIndex..<collapsed.endIndex
+        while let tint = collapsed.range(of: #"\.tint\("#, options: .regularExpression, range: searchRange) {
+            var depth = 1
+            var end = tint.upperBound
+            while end < collapsed.endIndex, depth > 0 {
+                if collapsed[end] == "(" { depth += 1 } else if collapsed[end] == ")" { depth -= 1 }
+                end = collapsed.index(after: end)
+            }
+            let argument = String(collapsed[tint.upperBound..<end])
+            let range = NSRange(argument.startIndex..., in: argument)
+            for match in tintTokenPattern.matches(in: argument, range: range) {
+                if let token = Range(match.range(at: 1), in: argument) { tokens.append(String(argument[token])) }
+            }
+            searchRange = tint.upperBound..<collapsed.endIndex
+        }
+        return tokens
+    }
+
+    func testTheTintTokenScanSeesEveryToken() {
+        let cases: [(String, [String])] = [
+            (".tint(AppColors.primaryAction)", ["primaryAction"]),
+            (".tint(\n  AppColors.primaryAction\n)", ["primaryAction"]),
+            (".tint(isActive ? AppColors.plum : AppColors.evergreen)", ["plum", "evergreen"]),
+            (".tint(AppColors.swipePlum.opacity(0.5))", ["swipePlum"]),
+            ("// .tint(AppColors.plum)\n.tint(AppColors.evergreen)", ["evergreen"]),
+            ("Text(\"// x\").tint(AppColors.plum)", ["plum"]),
+            (".background(AppColors.primaryAction)", []),
+            (".tint(.white)", []),
+            (".tint(LiveSessionActivityStyle.buttonTint)", []),
+            (".tint(AppColors.evergreen).foregroundStyle(AppColors.plum)", ["evergreen"]),
+            ("", [])
+        ]
+        for (input, expected) in cases {
+            XCTAssertEqual(Self.tintTokens(in: input), expected, input)
+        }
+    }
+
+    func testEveryTintTokenIsClassified() throws {
+        var unlisted: Set<String> = []
+        var seen: Set<String> = []
+        for file in try appSwiftFiles() {
+            let tokens = Self.tintTokens(in: try String(contentsOf: file, encoding: .utf8))
+            seen.formUnion(tokens)
+            for token in tokens where Self.classifiedTintTokens[token] == nil {
+                unlisted.insert("\(file.lastPathComponent): \(token)")
+            }
+        }
+        XCTAssertTrue(seen.contains("evergreen"), "the scan must see the app accent")
+        XCTAssertGreaterThanOrEqual(seen.count, 10, "the scan must see the app's tint tokens")
+        XCTAssertEqual(
+            unlisted.sorted(), [],
+            "a tint token with no decision: a `.bordered` control draws its words in its tint. Use `AppColors.evergreen`, or add the token with the pair that measures it (#4953)"
+        )
+    }
+
+    func testEveryBorderedLabelTokenHasAnAuditedPair() {
+        let colors = Dictionary(AppSemanticColorRGB.all.map { ($0.name, $0.color) }, uniquingKeysWith: { first, _ in first })
+        for token in Self.classifiedTintTokens.keys {
+            XCTAssertNotNil(colors[token], "\(token) is not a token in AppSemanticColorRGB.all")
+        }
+        let borderedLabels = AppColorContrastAudit.accentPairs.filter { $0.name.hasPrefix("bordered button label") }
+        for (token, kind) in Self.classifiedTintTokens where kind == .borderedLabel {
+            let color = colors[token]
+            XCTAssertTrue(
+                borderedLabels.contains { $0.foreground == color },
+                "\(token) is listed as a bordered label but no \"bordered button label\" pair measures it"
+            )
+        }
+    }
+
+    /// The two tints #4953 took out, measured the way the audit measures a bordered label: each fails in dark mode, which
+    /// is why neither is in `classifiedTintTokens`.
+    func testTheTwoUnlistedTintsFailAsBorderedLabelsInDarkMode() {
+        let primaryAction = AppSemanticColorRGB.primaryAction
+        let plum = AppSemanticColorRGB.plum
+        let cases: [(String, AppDynamicRGB, AppDynamicRGB)] = [
+            ("primaryAction over bone", primaryAction, primaryAction.composited(over: AppSemanticColorRGB.bone, alpha: 0.25)),
+            ("plum over panel", plum, plum.composited(over: AppSemanticColorRGB.panel, alpha: 0.25))
+        ]
+        for (name, foreground, background) in cases {
+            let ratio = AppColorContrastAudit.contrastRatio(foreground: foreground.dark, background: background.dark)
+            XCTAssertLessThan(ratio, 4.5, name)
+        }
+    }
+
 
     // MARK: Destructive buttons on the dark live-session cards (#4443)
 

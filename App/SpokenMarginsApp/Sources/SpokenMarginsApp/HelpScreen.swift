@@ -21,7 +21,7 @@ struct HelpScreen: View {
                             value: Double(model.onboardingCoreCompletedCount),
                             total: Double(OnboardingStep.core.count)
                         )
-                        .tint(AppColors.primaryAction)
+                        .tint(AppColors.evergreen)
                     }
                     .padding(.vertical, 4)
                     OnboardingChecklistRow(
