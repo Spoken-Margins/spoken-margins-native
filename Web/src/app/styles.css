@@ -1920,6 +1920,15 @@ body:not(:has(.mini-player)) .toasts {
   color: var(--tint);
 }
 
+/* "Get help" for a friend whose link got stuck (#5268): underlined, never colour alone. */
+.help-link {
+  color: var(--tint);
+  text-decoration: underline;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+
 /* ---------- Search (one box on every tab: #4422, #4018) ---------- */
 
 .search {
