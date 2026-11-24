@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { PacketError } from './errors.ts';
-import { appParent, episode, show, voiceMargins, writePlaceholder, writeReplyNamed, writeReplyUnnamed, writeVoice, writeWritten, writtenMargins } from './fixtures.ts';
+import { appParent, episode, show, voiceMargins, writePlaceholder, writeReplyFromShared, writeReplyHolderTitled, writeReplyNamed, writeReplyUnnamed, writeVoice, writeWritten, writtenMargins } from './fixtures.ts';
 import { packetMarginId, readPacket } from './read.ts';
 import { conversationId, sharedWords, writePacket } from './write.ts';
 import type { Margin } from '../shared/model.ts';
@@ -18,6 +18,7 @@ test('the committed web fixtures are what the writer writes now', async () => {
   for (const [name, write] of [
     ['web-written.spokenmargins', writeWritten], ['web-voice.spokenmargins', writeVoice], ['web-voice-placeholder.spokenmargins', writePlaceholder],
     ['web-reply.spokenmargins', writeReplyNamed], ['web-reply-unnamed.spokenmargins', writeReplyUnnamed],
+    ['web-reply-from-shared.spokenmargins', writeReplyFromShared], ['web-reply-holder-titled.spokenmargins', writeReplyHolderTitled],
   ] as const) {
     const committed = await readPacket(load(name));
     const fresh = await write();
