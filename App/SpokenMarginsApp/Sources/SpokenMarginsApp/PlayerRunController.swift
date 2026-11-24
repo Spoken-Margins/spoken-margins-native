@@ -36,6 +36,11 @@ enum PlayerRunController {
         }
     }
 
+    /// Which file each item had attached, and since when, newest last (#4779).
+    static func filesAttached() -> [LiveSessionFiling.FileAttachment] {
+        recorder.filesAttached
+    }
+
     /// Runs a Watch transport command on the player, through the same compact command path as the Lock Screen (#3494).
     /// Nothing runs with no item loaded, or while a Margin records on the phone, which a skip or a play would end.
     static func runWatchTransport(_ transport: WatchTransport) {

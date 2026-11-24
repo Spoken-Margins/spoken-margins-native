@@ -144,6 +144,26 @@ public enum LiveSessionFiling {
         }
     }
 
+    /// Which file of an item our player had attached from `since` on: a spoken note moves between its recording and its
+    /// Shorter pauses version, each on its own clock, playing or paused (#4779). Kept even when nothing plays, so a place
+    /// the Watch saw on a paused note can be read on the clock it was on.
+    public struct FileAttachment: Codable, Equatable, Sendable {
+        public var itemId: String
+        public var mediaURL: String?
+        public var since: Date
+
+        public init(itemId: String, mediaURL: String?, since: Date) {
+            self.itemId = itemId
+            self.mediaURL = mediaURL
+            self.since = since
+        }
+    }
+
+    /// The file of `itemId` attached at `time`, from `files` (oldest first). Nil when none was seen by then.
+    static func attachedFile(of itemId: String, at time: Date, files: [FileAttachment]) -> String? {
+        files.last { $0.itemId == itemId && $0.since <= time }?.mediaURL
+    }
+
     /// A Watch that pauses the phone as it starts recording reaches the phone a moment after the recording began, so a
     /// run of the chosen item that ended within this long of the Margin's start still holds it (#3494).
     public static let itemRunGrace: TimeInterval = 10
@@ -171,7 +191,7 @@ public enum LiveSessionFiling {
     /// For a Margin handed to the player's item it is the item and position the decision gave, so that if the item refuses it and it files into a
     /// session (`fileAsQuickSession`), the session keeps where it was meant to go. Nil for a refused or already-filed Margin.
     public static func playingThen(
-        for margin: Incoming, decision: Decision, playerRuns: [PlayerRun]
+        for margin: Incoming, decision: Decision, playerRuns: [PlayerRun], filesAttached: [FileAttachment] = []
     ) -> LiveSessionPlayingThen? {
         let time = margin.phoneTime
         switch decision {
@@ -181,8 +201,10 @@ public enum LiveSessionFiling {
             // Exactly where the decision put it.
             let holding = holdingRun(of: itemId, at: time, runs: playerRuns)
             let fromWatch = margin.itemTarget != nil && holding == nil
+            // With no run, the Watch's position is on the file attached when the Margin was taken (#4779).
+            let file = holding.map(\.mediaURL) ?? attachedFile(of: itemId, at: time, files: filesAttached)
             return .init(itemId: itemId, positionMs: positionMs, source: fromWatch ? .watchTarget : .playerRun,
-                         playingMediaURL: holding?.mediaURL)
+                         playingMediaURL: file)
         case .session, .newNamedSession, .joinQuick, .newQuick:
             break
         }
@@ -191,7 +213,8 @@ public enum LiveSessionFiling {
                 return .init(itemId: target.itemId, positionMs: run.positionMs(at: min(time, run.endedAt)), source: .playerRun,
                              playingMediaURL: run.mediaURL)
             }
-            return .init(itemId: target.itemId, positionMs: target.positionMs, source: .watchTarget)
+            return .init(itemId: target.itemId, positionMs: target.positionMs, source: .watchTarget,
+                         playingMediaURL: attachedFile(of: target.itemId, at: time, files: filesAttached))
         }
         guard let run = holdingRun(of: nil, at: time, runs: playerRuns) else { return nil }
         return .init(itemId: run.itemId, positionMs: run.positionMs(at: min(time, run.endedAt)), source: .playerRun,

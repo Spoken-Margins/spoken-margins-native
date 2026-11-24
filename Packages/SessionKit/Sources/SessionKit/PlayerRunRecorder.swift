@@ -82,6 +82,10 @@ public struct PlayerRunRecorder: Equatable, Sendable {
     /// An item loaded and paused: a stretch at rate 0, so a Margin taken while it waits files at its place (#4079).
     private var parked: Open?
 
+    /// Each change of the file an item has attached, playing or not, oldest first (#4779). A Watch position on a paused
+    /// note has no run to carry its file, so it is read by the file attached when the Margin was taken.
+    public private(set) var filesAttached: [LiveSessionFiling.FileAttachment] = []
+
     /// An article read aloud that was paused: where, and from when until reading resumed (#4561).
     private struct TextPause: Equatable, Sendable {
         var itemId: String
@@ -98,6 +102,7 @@ public struct PlayerRunRecorder: Equatable, Sendable {
 
     /// Notes what the player reports at `time`.
     public mutating func observe(_ observation: Observation, at time: Date) {
+        noteFile(observation, at: time)
         observeParked(observation, at: time)
         observeReadingAloud(observation, at: time)
         guard observation.isPlaying, let itemId = observation.itemId, let positionMs = observation.mediaTimeMs,
@@ -204,6 +209,13 @@ public struct PlayerRunRecorder: Equatable, Sendable {
         }
     }
 
+
+    private mutating func noteFile(_ observation: Observation, at time: Date) {
+        guard let itemId = observation.itemId else { return }
+        if let last = filesAttached.last(where: { $0.itemId == itemId }), last.mediaURL == observation.mediaURL { return }
+        filesAttached.append(.init(itemId: itemId, mediaURL: observation.mediaURL, since: time))
+    }
+
     private mutating func closeOpen(at end: Date) {
         guard let current = open else { return }
         open = nil
@@ -211,10 +223,18 @@ public struct PlayerRunRecorder: Equatable, Sendable {
         finished.append(current.run(endingAt: end))
     }
 
+
     private mutating func drop(before now: Date) {
         let oldest = now.addingTimeInterval(-Self.keepFor)
         finished.removeAll { $0.endedAt < oldest }
         if finished.count > Self.capacity { finished.removeFirst(finished.count - Self.capacity) }
+        // An old change of file goes once a newer one of the same item has also aged out; each item keeps its latest.
+        if let first = filesAttached.first, first.since < oldest {
+            filesAttached = filesAttached.enumerated().filter { index, file in
+                file.since >= oldest || !filesAttached[(index + 1)...].contains { $0.itemId == file.itemId && $0.since < oldest }
+            }.map(\.element)
+        }
+        if filesAttached.count > Self.capacity { filesAttached.removeFirst(filesAttached.count - Self.capacity) }
         textPauses.removeAll { ($0.resumedAt ?? $0.at.addingTimeInterval(Self.parkedHold)) < oldest }
         if textPauses.count > Self.capacity { textPauses.removeFirst(textPauses.count - Self.capacity) }
     }
