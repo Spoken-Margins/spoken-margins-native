@@ -26,7 +26,8 @@ enum PlayerRunController {
     /// Notes what the player reports now. Cheap: a few comparisons.
     static func note(_ snapshot: SessionSnapshot, in model: Gate1AppModel, at time: Date = Date()) {
         self.model = model
-        recorder.observe(observation(of: snapshot), at: time)
+        // The file the engine plays, so a place is kept with the clock it is on (#4779).
+        recorder.observe(PlayerRunRecorder.observation(of: snapshot, mediaURL: model.openSessionMediaURL), at: time)
         // The Watch moves the position on by itself, so only a change it could not predict is sent (#3494).
         let next = WatchNowPlayingFeed.nowPlaying(from: snapshot, at: time)
         if WatchNowPlayingFeed.shouldPublish(previous: publishedNowPlaying, next: next) {

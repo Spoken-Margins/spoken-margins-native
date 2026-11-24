@@ -123,33 +123,43 @@ public enum LiveMarginMove {
             throw Failure.noSession
         }
         let canPlace = PlayerItemMargin.canPlace(itemId: itemId, repository: repository)
-        let durationMs = item.media?.durationMs
-        // A player position is on the clock of the file that played. A spoken note's Margins are saved on the recording's
-        // clock (#4779), so a place taken while its Shorter pauses version is attached is moved onto the recording's, and
-        // the length the percent is worked out on is the recording's too. Read here, off the main thread.
-        let noteClock = SpokenNoteItem.isSpokenNote(mediaType: item.mediaType) ? SpokenNoteCleanClock.map(forMediaURL: item.media?.url) : nil
+        // A player position is on the clock of the file that played then. A spoken note's Margins are saved on the
+        // recording's clock (#4779), so a place taken on its Shorter pauses version is moved onto the recording's, by the
+        // map of the file that played (kept with the place), never the file attached now: the version can be made or
+        // chosen between the mark and the move. The place is checked against, and its percent worked out on, the
+        // recording's length. The maps are read here, off the main thread.
+        let isNote = SpokenNoteItem.isSpokenNote(mediaType: item.mediaType)
+        let durationMs = isNote
+            ? (SpokenNoteCleanClock.map(forMediaURL: item.media?.url)?.recordedDurationMs ?? item.media?.durationMs)
+            : item.media?.durationMs
         let planned = chosen.map { margin -> PlannedMargin in
-            guard canPlace, let durationMs, let (position, source) = savedPlace(of: margin, on: itemId, runs: runs),
-                  position >= 0, position < durationMs else {
+            guard canPlace, let durationMs, let place = savedPlace(of: margin, on: itemId, runs: runs) else {
                 return PlannedMargin(margin: margin, positionMs: nil, placeSource: nil)
             }
-            return PlannedMargin(margin: margin, positionMs: noteClock?.recordedMs(fromCleanMs: position) ?? position, placeSource: source)
+            let position = isNote
+                ? (SpokenNoteCleanClock.map(forMediaURL: place.mediaURL)?.recordedMs(fromCleanMs: place.positionMs) ?? place.positionMs)
+                : place.positionMs
+            guard position >= 0, position < durationMs else { return PlannedMargin(margin: margin, positionMs: nil, placeSource: nil) }
+            return PlannedMargin(margin: margin, positionMs: position, placeSource: place.source)
         }
         return Plan(
             session: session, itemId: itemId, itemTitle: item.title, targetSessionId: target.id,
-            itemHasMediaClock: PlayerItemMargin.hasMediaClock(target), itemDurationMs: noteClock?.recordedDurationMs ?? durationMs, margins: planned,
+            itemHasMediaClock: PlayerItemMargin.hasMediaClock(target), itemDurationMs: durationMs, margins: planned,
             removesSession: removesSession(session, movingIds: Set(chosen.map(\.id)))
         )
     }
 
     /// The place on `itemId` the app saved for `margin` at capture: its `playingThen` for that item with a position, else a
     /// player run of that item still in memory that held its time. Never anything else.
-    static func savedPlace(of margin: LiveSessionMargin, on itemId: String, runs: [LiveSessionFiling.PlayerRun]) -> (Int, String)? {
+    /// `mediaURL` is the file that played, whose clock the position is on, when it was kept.
+    static func savedPlace(
+        of margin: LiveSessionMargin, on itemId: String, runs: [LiveSessionFiling.PlayerRun]
+    ) -> (positionMs: Int, source: String, mediaURL: String?)? {
         if let hint = margin.playingThen, hint.itemId == itemId, let position = hint.positionMs {
-            return (position, hint.source == .watchTarget ? placeSourceWatchTarget : placeSourceSavedRun)
+            return (position, hint.source == .watchTarget ? placeSourceWatchTarget : placeSourceSavedRun, hint.playingMediaURL)
         }
         if let run = LiveSessionFiling.holdingRun(of: itemId, at: margin.markedAt, runs: runs) {
-            return (run.positionMs(at: min(margin.markedAt, run.endedAt)), placeSourceSavedRun)
+            return (run.positionMs(at: min(margin.markedAt, run.endedAt)), placeSourceSavedRun, run.mediaURL)
         }
         return nil
     }

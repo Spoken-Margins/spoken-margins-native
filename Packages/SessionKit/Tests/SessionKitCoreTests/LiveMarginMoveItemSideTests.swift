@@ -64,8 +64,9 @@ final class LiveMarginMoveItemSideTests: XCTestCase {
         try LiveMarginMove.plan(margins: margins, session: quick(margins), itemId: itemId, repository: store)
     }
 
-    /// #4779: a note playing its Shorter pauses version. One 4 s take; the version keeps 0–1 s and 2.5–4 s (2.5 s long).
-    private func noteOnShorterPauses() throws -> Item {
+    /// #4779: a spoken note with a Shorter pauses version. One 4 s take; the version keeps 0–1 s and 2.5–4 s (2.5 s long).
+    /// `attachShorter` says which file the item names when the move runs.
+    private func note(attachShorter: Bool) throws -> (item: Item, recordedURL: String, shorterURL: String) {
         let folder = directory.appending(path: "note", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let take = SpokenNoteWholeAudioLayout.Requested(id: "a", audioFileName: "take-a.m4a", durationMs: 4_000)
@@ -80,24 +81,47 @@ final class LiveMarginMoveItemSideTests: XCTestCase {
             durationMs: 2_500, result: .made(savedMs: 1_500)
         ), to: SpokenNoteCleanFiles.layoutURL(inNoteFolder: folder))
         try Data([0]).write(to: SpokenNoteCleanFiles.audioURL(inNoteFolder: folder))
-        return Item(
+        let recordedURL = SpokenNoteWholePlayback.audioURL(inFolder: folder).absoluteString
+        let shorterURL = SpokenNoteCleanFiles.audioURL(inNoteFolder: folder).absoluteString
+        let item = Item(
             id: "note", title: "A note", mediaType: SpokenNoteItem.mediaType, text: nil, externalReference: "note://n",
             status: "ready", externalReferenceType: SpokenNoteItem.referenceType,
-            media: ItemMedia(sourceType: .nativeMediaFile, url: SpokenNoteCleanFiles.audioURL(inNoteFolder: folder).absoluteString,
-                             durationMs: 2_500, nativeMediaId: "note-audio"))
+            media: ItemMedia(sourceType: .nativeMediaFile, url: attachShorter ? shorterURL : recordedURL,
+                             durationMs: attachShorter ? 2_500 : 4_000, nativeMediaId: "note-audio"))
+        return (item, recordedURL, shorterURL)
     }
 
-    func testAMarginMovedOntoANotePlayingShorterPausesIsSavedOnTheRecordingsClock() throws {
-        try seed(try noteOnShorterPauses(), session(for: "note", resumeMs: 1_000))
-        // Marked at 1.5 s on the shorter file: 3 s into the recording.
-        let margin = spoken("p", at: 1, hint: .init(itemId: "note", positionMs: 1_500, source: .playerRun))
+    private func movedPlace(hintMs: Int, playedURL: String?, attachShorter: Bool) throws -> (Int?, Int?) {
+        let note = try note(attachShorter: attachShorter)
+        try seed(note.item, session(for: "note", resumeMs: 1_000))
+        let url = playedURL == "recorded" ? note.recordedURL : playedURL == "shorter" ? note.shorterURL : nil
+        let margin = spoken("p", at: 1, hint: .init(itemId: "note", positionMs: hintMs, source: .playerRun, playingMediaURL: url))
         let planned = try plan([margin], itemId: "note")
-        XCTAssertEqual(planned.margins.first?.positionMs, 3_000, "the player's time would name earlier words")
-        XCTAssertEqual(planned.itemDurationMs, 4_000)
+        XCTAssertEqual(planned.itemDurationMs, 4_000, "the percent is on the recording's length")
         _ = try LiveMarginMove.execute(plan: planned, repository: store, movedAt: at(500))
-        let saved = try XCTUnwrap(try store.loadInterjections(sessionId: "s-note").first { $0.id == "ij-moved-p" })
-        XCTAssertEqual(saved.anchor.mediaTimeMs, 3_000)
-        XCTAssertEqual(saved.roughPercent, 75)
+        let saved = try store.loadInterjections(sessionId: "s-note").first { $0.id == "ij-moved-p" }
+        return (saved?.anchor.mediaTimeMs, saved?.roughPercent)
+    }
+
+    func testAMarginMarkedOnShorterPausesIsSavedOnTheRecordingsClock() throws {
+        // Marked at 1.5 s on the shorter file: 3 s into the recording.
+        let (ms, percent) = try movedPlace(hintMs: 1_500, playedURL: "shorter", attachShorter: true)
+        XCTAssertEqual(ms, 3_000, "the player's time would name earlier words")
+        XCTAssertEqual(percent, 75)
+    }
+
+    func testTheClockIsTheOnePlayingWhenItWasMarkedNotAtTheMove() throws {
+        // Marked on the recording; the version was made (and attached) before the move.
+        XCTAssertEqual(try movedPlace(hintMs: 3_000, playedURL: "recorded", attachShorter: true).0, 3_000)
+    }
+
+    func testAMarginMarkedOnShorterPausesKeepsItsWordsAfterAsRecordedIsChosen() throws {
+        XCTAssertEqual(try movedPlace(hintMs: 1_500, playedURL: "shorter", attachShorter: false).0, 3_000)
+    }
+
+    func testAPlaceWithNoKnownFileIsTakenAsTheRecordings() throws {
+        // A hint saved before the file was kept, or a Watch's own position.
+        XCTAssertEqual(try movedPlace(hintMs: 3_000, playedURL: nil, attachShorter: true).0, 3_000)
     }
 
     // MARK: What is kept

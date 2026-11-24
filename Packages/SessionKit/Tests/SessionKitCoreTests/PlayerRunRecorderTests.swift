@@ -19,6 +19,23 @@ final class PlayerRunRecorderTests: XCTestCase {
 
     private let paused = PlayerRunRecorder.Observation(itemId: "ep", mediaTimeMs: 0, rate: 1, isPlaying: false)
 
+    func testARunKeepsTheFileItPlayedAndAnotherFileOfTheItemStartsANewRun() {
+        // #4779: a spoken note moved to its Shorter pauses version restarts at the same words on another clock.
+        var recorder = PlayerRunRecorder()
+        let recordedFile = "file:///notes/n/whole-note.m4a", shorterFile = "file:///notes/n/clean/whole-note.m4a"
+        recorder.observe(.init(itemId: "note", mediaTimeMs: 3_000, rate: 1, isPlaying: true, mediaURL: recordedFile), at: at(0))
+        recorder.observe(.init(itemId: "note", mediaTimeMs: 3_500, rate: 1, isPlaying: true, mediaURL: recordedFile), at: at(0.5))
+        // The same item and a steady-looking time would have kept one run had the file not been compared.
+        recorder.observe(.init(itemId: "note", mediaTimeMs: 4_000, rate: 1, isPlaying: true, mediaURL: shorterFile), at: at(1))
+        recorder.observe(.init(itemId: "note", mediaTimeMs: 4_500, rate: 1, isPlaying: true, mediaURL: shorterFile), at: at(1.5))
+        let runs = recorder.runs(at: at(1.5))
+        XCTAssertEqual(runs.map(\.mediaURL), [recordedFile, shorterFile])
+        let hint = LiveSessionFiling.playingThen(
+            for: .init(marginId: "m", markedAt: at(1.5)), decision: .newQuick, playerRuns: runs)
+        XCTAssertEqual(hint?.positionMs, 4_500)
+        XCTAssertEqual(hint?.playingMediaURL, shorterFile, "the place is kept with the clock it is on")
+    }
+
     func testASteadyRunPlacesAMarginAtTheTimeItWasTaken() {
         var recorder = PlayerRunRecorder()
         recorder.observe(playing(60_000), at: at(0))

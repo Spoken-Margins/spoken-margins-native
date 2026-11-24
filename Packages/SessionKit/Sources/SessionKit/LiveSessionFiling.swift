@@ -127,13 +127,16 @@ public enum LiveSessionFiling {
         public var endedAt: Date
         public var startPositionMs: Int
         public var rate: Double
+        /// The file that played, whose clock the positions are on (#4779). Nil when not known.
+        public var mediaURL: String?
 
-        public init(itemId: String, startedAt: Date, endedAt: Date, startPositionMs: Int, rate: Double) {
+        public init(itemId: String, startedAt: Date, endedAt: Date, startPositionMs: Int, rate: Double, mediaURL: String? = nil) {
             self.itemId = itemId
             self.startedAt = startedAt
             self.endedAt = endedAt
             self.startPositionMs = startPositionMs
             self.rate = rate
+            self.mediaURL = mediaURL
         }
 
         public func positionMs(at time: Date) -> Int {
@@ -176,19 +179,23 @@ public enum LiveSessionFiling {
             return nil
         case let .playerItem(itemId, positionMs):
             // Exactly where the decision put it.
-            let fromWatch = margin.itemTarget != nil && holdingRun(of: itemId, at: time, runs: playerRuns) == nil
-            return .init(itemId: itemId, positionMs: positionMs, source: fromWatch ? .watchTarget : .playerRun)
+            let holding = holdingRun(of: itemId, at: time, runs: playerRuns)
+            let fromWatch = margin.itemTarget != nil && holding == nil
+            return .init(itemId: itemId, positionMs: positionMs, source: fromWatch ? .watchTarget : .playerRun,
+                         playingMediaURL: holding?.mediaURL)
         case .session, .newNamedSession, .joinQuick, .newQuick:
             break
         }
         if let target = margin.itemTarget {
             if let run = holdingRun(of: target.itemId, at: time, runs: playerRuns) {
-                return .init(itemId: target.itemId, positionMs: run.positionMs(at: min(time, run.endedAt)), source: .playerRun)
+                return .init(itemId: target.itemId, positionMs: run.positionMs(at: min(time, run.endedAt)), source: .playerRun,
+                             playingMediaURL: run.mediaURL)
             }
             return .init(itemId: target.itemId, positionMs: target.positionMs, source: .watchTarget)
         }
         guard let run = holdingRun(of: nil, at: time, runs: playerRuns) else { return nil }
-        return .init(itemId: run.itemId, positionMs: run.positionMs(at: min(time, run.endedAt)), source: .playerRun)
+        return .init(itemId: run.itemId, positionMs: run.positionMs(at: min(time, run.endedAt)), source: .playerRun,
+                     playingMediaURL: run.mediaURL)
     }
 
     public enum Placement: String, Codable, Equatable, Sendable {
