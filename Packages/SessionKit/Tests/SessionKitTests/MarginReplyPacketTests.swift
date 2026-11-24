@@ -239,7 +239,7 @@ final class MarginReplyPacketTests: XCTestCase {
                   case .linked(let toBob) = aliceGraph.states[.imported(carolReply.id)] else {
                 return XCTFail("replies not linked for A: \(aliceGraph.states)")
             }
-            XCTAssertEqual(toAlice.parent, .local("a-1"))
+            XCTAssertEqual(toAlice.parent, .local(Interjection.sessionScopedId(sessionId: alice.sessionId, id: "a-1")))
             XCTAssertEqual(toBob.parent, .imported(bobReply.id))
             for listener in [alice, bob, carol] { XCTAssertEqual(try listener.store.quarantinedRecordCount(), 0) }
         }

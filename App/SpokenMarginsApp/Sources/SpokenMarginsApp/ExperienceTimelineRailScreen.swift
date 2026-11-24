@@ -483,7 +483,7 @@ struct ExperienceTimelineRailScreen: View {
                         : MarginPlacePresentation.timelineDetail(for: row.interjection, position: position)].compactMap { $0 }.joined(separator: " · "),
                     action: .margin(row),
                     precisePosition: preciseSourcePosition(row.interjection, in: item, durationMs: knownDuration),
-                    reference: .local(row.interjection.id),
+                    reference: .local(row.interjection.sessionScopedId),
                     // A Margin with no place (#4233) says so in the corner and sorts after the last placed entry.
                     positionLabel: row.interjection.hasPlace
                         ? TimelinePositionLabel.label(kind: kind, startMs: row.interjection.anchor.mediaTimeMs, percent: position)
