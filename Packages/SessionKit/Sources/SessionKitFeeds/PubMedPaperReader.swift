@@ -36,9 +36,11 @@ public enum PubMedPaperReader {
         parser.shouldProcessNamespaces = true
         parser.shouldResolveExternalEntities = false
         parser.delegate = delegate
-        // A reply cut off at the item or depth cap still gives the items read before it.
-        _ = parser.parse()
-        guard delegate.sawRSS, delegate.sawChannel else {
+        // Only our own stop at the item or depth cap keeps what was read before it. A reply that breaks off or is
+        // malformed is an error, never a shorter list: a refresh replaces the stored papers with what it read.
+        let parsed = parser.parse()
+        // The closing `</rss>` is required too: an XMLParser can report success on a document that simply stops.
+        guard (parsed && delegate.closedRSS) || delegate.stoppedAtCap, delegate.sawRSS, delegate.sawChannel else {
             throw PubMedPaperReaderError.notPubMedRSS
         }
         var entries: [PaperEntry] = []
@@ -204,6 +206,9 @@ public enum PubMedPaperReader {
         var sawChannel = false
         var channelTitle: String?
         var items: [RawItem] = []
+        /// Set when this delegate stopped the parse itself, at `maximumItems` or `maximumDepth`.
+        var stoppedAtCap = false
+        var closedRSS = false
         private var current: RawItem?
         private var path: [String] = []
         private var text = ""
@@ -213,13 +218,13 @@ public enum PubMedPaperReader {
         func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
             let name = key(elementName, namespaceURI)
             path.append(name)
-            if path.count > Self.maximumDepth { parser.abortParsing(); return }
+            if path.count > Self.maximumDepth { stoppedAtCap = true; parser.abortParsing(); return }
             text = ""
             switch (path.count, name) {
             case (1, "rss"): sawRSS = true
             case (2, "channel") where path.first == "rss": sawChannel = true
             case (3, "item") where path.dropLast().elementsEqual(["rss", "channel"]):
-                if items.count >= Self.maximumItems { parser.abortParsing(); return }
+                if items.count >= Self.maximumItems { stoppedAtCap = true; parser.abortParsing(); return }
                 current = RawItem()
             default: break
             }
@@ -231,6 +236,7 @@ public enum PubMedPaperReader {
         func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
             let name = key(elementName, namespaceURI)
             defer { path.removeLast(); text = "" }
+            if path.count == 1, name == "rss" { closedRSS = true }
             if path.count == 3, name == "title", path.dropLast().elementsEqual(["rss", "channel"]) {
                 channelTitle = text
                 return

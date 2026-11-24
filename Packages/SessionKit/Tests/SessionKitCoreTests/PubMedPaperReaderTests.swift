@@ -162,6 +162,25 @@ final class PubMedPaperReaderTests: XCTestCase {
         XCTAssertThrowsError(try PubMedPaperReader.read(Data(count: PubMedPaperReader.maximumBytes + 1)))
     }
 
+    /// A refresh replaces the stored papers with what it read, so a reply that breaks off must not read as a shorter list.
+    func testAReplyCutOffPartWayIsAnErrorNotAShorterList() throws {
+        let whole = try fixture()
+        let cut = whole.prefix(whole.count / 3)
+        XCTAssertThrowsError(try PubMedPaperReader.read(Data(cut))) {
+            XCTAssertEqual($0 as? PubMedPaperReaderError, .notPubMedRSS)
+        }
+    }
+
+    func testRequestsArrivingTogetherAreSpacedApart() async {
+        let pacer = PubMedRequestPacer()
+        let clock = ContinuousClock()
+        let start = clock.now
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<3 { group.addTask { await pacer.wait() } }
+        }
+        XCTAssertGreaterThanOrEqual(clock.now - start, PubMedRequestPacer.minimumSpacing * 2, "three callers take three slots")
+    }
+
     // MARK: Following, end to end on the host
 
     final class FakePubMed: @unchecked Sendable {

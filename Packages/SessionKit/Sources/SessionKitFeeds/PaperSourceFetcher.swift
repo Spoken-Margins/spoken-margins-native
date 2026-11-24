@@ -145,6 +145,7 @@ public struct PaperSourceFetcher: Sendable {
         request.httpShouldHandleCookies = false
         request.setValue("application/rss+xml, application/xml;q=0.9", forHTTPHeaderField: "Accept")
         await PubMedRequestPacer.shared.wait()
+        if Task.isCancelled { throw .unreachable }
         let reply: PaperFetchReply
         do {
             reply = try await transport(request)
@@ -252,12 +253,12 @@ actor PubMedRequestPacer {
 
     private var last: ContinuousClock.Instant?
 
+    /// Each caller takes its slot before it sleeps, so callers that arrive together leave one spacing apart.
     func wait() async {
         let clock = ContinuousClock()
-        if let last {
-            let next = last.advanced(by: Self.minimumSpacing)
-            if clock.now < next { try? await clock.sleep(until: next) }
-        }
-        last = clock.now
+        let now = clock.now
+        let slot = last.map { max(now, $0.advanced(by: Self.minimumSpacing)) } ?? now
+        last = slot
+        if slot > now { try? await clock.sleep(until: slot) }
     }
 }
