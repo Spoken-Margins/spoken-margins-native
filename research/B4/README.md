@@ -99,8 +99,30 @@ week, a month, then permanent) has someone to pause. The flow:
    today's behaviour and the default, so the app that exists keeps working. With
    `serve -links-require-permit` an upload with none is 403 `permit_required`. The
    app sends permits since #4130, but don't turn it on yet: older builds, phones
-   without App Attest and any phone whose sender check fails send none, and the app
-   shows that refusal as "busy". #4134 lists what has to land first.
+   without App Attest and any phone whose sender check fails send none. Follow
+   "Turning on link permits" below.
+
+#### Turning on link permits (#4134)
+
+Builds 35 to 37 send no permit, and the app before #4134 shows `permit_required` as
+"busy" (35) or the generic failure (36). Since #4134 the app shows it as "Links can't
+be made from this iPhone right now", with no retry, and a build below the `links`
+service's `minimumBuild` hides "Share link" and says to update. Builds 35 and 36
+already read `minimumBuild` and hide the button below it (Build 37 has no tag in the
+repository; this plan assumes it matches 36). So the order is:
+
+1. Ship build N: the first build with #4134, refuse mode on
+   (`SMShareLinkRefuseUnchecked` in the Release Info.plist) and the App Attest
+   entitlement (#1593).
+2. `smserver switch -public DIR -minimum-build N links on`. Older builds lose
+   "Share link" and keep "Send as a file".
+3. Only then restart `serve` with `-links-require-permit`.
+4. To undo, reverse the order: drop `-links-require-permit` first, then lower or
+   remove the minimum build (`-minimum-build 0`).
+
+When steps 2 and 3 happen is the owner's call. His answer of 2026-11-21 (option B,
+`docs/decisions.md`): keep permits off until he has looked at which builds his testers
+are on and says the old ones are gone.
 
 DeviceCheck (#1728) keeps the ladder step across a reinstall. Off by default; start
 `serve -devicecheck-key AuthKey_XXXX.p8 -devicecheck-key-id XXXX` (the team id is read
