@@ -89,6 +89,9 @@ struct SpokenMarginsApp: App {
         if !runningTests {
             LaunchRecorder.shared = LaunchRecorder()
         }
+        // iOS's Speech Recognition prompt waits for the listener's Yes (#5016). Unit tests and scripted journeys have no card
+        // (it is hidden under the first-run suppression) and no way to say Yes, so they keep the gate open as before.
+        if !runningTests, !UITestingHooks.suppressesFirstRun { SpeechAskController.installGate() }
         let model = Gate1AppModel.makeApplicationModel()
         // Memory use and memory kills, in Diagnostics (#122). Unit tests keep nothing on disk.
         let pinnedDiagnostics = PinnedDiagnostics(diagnostics: model.runtimeDiagnostics)
@@ -183,6 +186,11 @@ struct SpokenMarginsApp: App {
             model?.aiFollowSuggestionsModel.remove(urls: importer.settledFeedLinks())
         }
         _catalogDrawer = StateObject(wrappedValue: drawer)
+        // Where the presenter is wired to the drawer, before any failure can exist (#4834): the one place the drawer is told.
+        model.packetOpenFailures.onCloseNotice = { [weak model, weak drawer] in
+            guard let model, let drawer else { return }
+            drawer.friendFileFailed(at: drawer.isPresented ? .elsewhere : FirstLaunchWelcomeOrder.Place(model))
+        }
         #if !SPOKEN_MARGINS_LEGACY
         FollowPodcastsShortcutBridge.catalogDrawer = drawer
         FollowPodcastsShortcutBridge.prepare = { [weak model] in
@@ -232,6 +240,8 @@ struct SpokenMarginsApp: App {
                 .onCompatibleChange(of: scenePhase) { phase in
                     if phase == .active {
                         MainThreadOperationLabels.shared.scoped("scene.active") { model.handleAppBecameActive() }
+                        // A decision made in iOS Settings, or Margins that waited through a relaunch, are settled wherever the listener is (#4715).
+                        SpeechAskController.shared.reconcile(model: model)
                     } else if phase == .inactive || phase == .background {
                         MainThreadOperationLabels.shared.scoped("scene.inactiveOrBackground") { model.handleAppBecameInactiveOrBackground(entersBackground: phase == .background) }
                         #if canImport(BackgroundTasks) && canImport(UIKit)
@@ -252,6 +262,7 @@ struct SpokenMarginsApp: App {
                 #endif
                 .task {
                     MainThreadOperationLabels.shared.scoped("launch.sourceLinkHandoffs") { model.importPendingSourceLinkHandoffs() }
+                    SpeechAskController.shared.reconcile(model: model)
                     #if DEBUG
                     // The screen tour's packets (#3237) open the way a listener's tap does.
                     if let packet = UITestingHooks.packetToOpen() { open(packet) }

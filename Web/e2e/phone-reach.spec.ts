@@ -3,7 +3,7 @@
 // edge, beside the volume buttons, in roughly the top half of the screen. Nothing on Now Playing that a listener
 // taps may sit there. Runs at iPhone size in Chrome and WebKit (`phone-*` projects).
 import { expect, test } from '@playwright/test';
-import { FEED_ORIGIN, serveFixtures, shot } from './fixtures.ts';
+import { FEED_ORIGIN, followAndAdd, serveFixtures, shot } from './fixtures.ts';
 
 const FEED = `${FEED_ORIGIN}/enclosure-only-episodes.rss`;
 
@@ -25,8 +25,9 @@ test('on Now Playing, speed is on the right and nothing to tap sits under the vo
   await sheet.getByLabel('Show name, or a feed or Substack address').fill(FEED);
   await sheet.getByRole('button', { name: 'Follow' }).click();
   await expect(page.getByText(/Following Spoken Margins Test Show/)).toBeVisible();
+  await followAndAdd(page, 'Spoken Margins Test Show', ['Episode 3: No link, GUID and audio']);
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Library' }).click();
-  await page.getByRole('button', { name: /Episode 3: No link, GUID and audio/ }).click();
+  await page.getByRole('button', { name: /^(?!More for ).*Episode 3: No link, GUID and audio/ }).click();
   const nowPlaying = page.getByRole('dialog', { name: 'Episode 3: No link, GUID and audio' });
   await expect(nowPlaying.getByRole('button', { name: /Speed 1 times/ })).toBeVisible();
   await shot(page, info, '3037-now-playing');

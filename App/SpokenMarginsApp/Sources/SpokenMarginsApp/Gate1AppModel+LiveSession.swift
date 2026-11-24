@@ -83,8 +83,9 @@ extension Gate1AppModel {
             }.value
             if recordSaved { SavedMarginPhotoIndex.shared.add(record) }
         }
-        // The session stays in the session store as saved, so a late copy of one of its Margins is still known (#2487).
+        // Kept as saved, so a late Margin copy is known (#2487); the sweep skips it, so the Margin transcription takes any wordless spoken Margin (#4715).
         await LiveSessionFileWorker.shared.markSaved(sessionId: session.id, itemId: itemId)
+        for margin in LiveSessionWrites.spokenAwaitingWords(linked) { scheduleTranscription(for: margin) }
         // Nothing below reads the rows back, so the Library and the item are read off the main thread (#2505).
         try await reloadLibraryRowsOffMain(store: store)
         refreshMarginRowsInBackground(forItem: itemId)

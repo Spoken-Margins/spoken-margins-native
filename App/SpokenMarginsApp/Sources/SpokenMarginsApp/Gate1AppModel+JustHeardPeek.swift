@@ -96,12 +96,12 @@ extension Gate1AppModel {
         do {
             let analysis = try await transcriber.transcribeSourceAudioWindowWithEvidence(
                 url: file.url, itemId: scratchID, anchorMediaTimeMs: 0, durationMs: file.durationMs,
-                windowBeforeMs: 0, windowAfterMs: file.durationMs
+                windowBeforeMs: 0, windowAfterMs: file.durationMs, for: .justHeardPeek
             )
             let cue = JustHeardCue.excerpt(from: analysis.timeline.segments.map(\.text).joined(separator: " "))
             return (cue, cue == nil ? "no_speech" : "shown:\(file.durationMs)ms")
         } catch {
-            return (nil, "transcription_failed")
+            return (nil, HeldTranscription.isHold(error) ? "waiting_for_speech_recognition" : "transcription_failed")
         }
     }
 }

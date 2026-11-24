@@ -2,7 +2,7 @@
 // play leaves the page usable (#4433: a friend's shared Substack podcast link said "no voice", and after Close nothing on
 // the page could be tapped). Phone size only; every network answer is served from the repo's fixtures.
 import { expect, test, type Page } from '@playwright/test';
-import { feedFixture, seconds, serveAudio, serveFixtures } from './fixtures.ts';
+import { feedFixture, followAndAdd, seconds, serveAudio, serveFixtures } from './fixtures.ts';
 
 const POST = 'https://thezvi.substack.com/p/leaked-anthropic-draft-ai-regulatory';
 const TITLE = 'Leaked Anthropic Draft AI Regulatory Bill Is Unacceptable and Troubling';
@@ -29,6 +29,7 @@ async function followAndOpenLibrary(page: Page) {
   await page.getByLabel('Show name, or a feed or Substack address').fill('https://thezvi.substack.com/feed');
   await page.getByRole('dialog', { name: 'Follow a show' }).getByRole('button', { name: 'Follow' }).click();
   await expect(page.getByText(/Following /)).toBeVisible();
+  await followAndAdd(page, /^Open Don.t Worry About the Vase/, [TITLE]);
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Library' }).click();
 }
 
@@ -37,7 +38,7 @@ test('a Substack post that is a podcast episode plays the episode itself (#4433)
   await serveAudio(page, 'https://audio.example/**');
   await followAndOpenLibrary(page);
 
-  await page.getByRole('button', { name: new RegExp(TITLE) }).click();
+  await page.getByRole('button', { name: new RegExp(`^(?!More for ).*${TITLE}`) }).click();
   const nowPlaying = page.getByRole('dialog', { name: TITLE });
   await expect(nowPlaying).toBeVisible();
   await expect(page.getByText(/has no voice to play/)).toHaveCount(0);
@@ -60,7 +61,7 @@ for (const [name, html, notice] of NOTHING_TO_PLAY) {
     await servePostPage(page, html());
     await followAndOpenLibrary(page);
 
-    await page.getByRole('button', { name: new RegExp(TITLE) }).click();
+    await page.getByRole('button', { name: new RegExp(`^(?!More for ).*${TITLE}`) }).click();
     await expect(page.getByText(notice)).toBeVisible();
     await page.getByRole('button', { name: 'Close' }).click();
     await expect(page.getByText(notice)).toHaveCount(0);
@@ -69,7 +70,7 @@ for (const [name, html, notice] of NOTHING_TO_PLAY) {
     await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Settings' }).click({ timeout: 3000 });
     await expect(page.getByRole('heading', { name: 'Settings' }).first()).toBeVisible();
     await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Library' }).click({ timeout: 3000 });
-    await page.getByRole('button', { name: new RegExp(TITLE) }).click({ timeout: 3000 });
+    await page.getByRole('button', { name: new RegExp(`^(?!More for ).*${TITLE}`) }).click({ timeout: 3000 });
     await expect(page.getByText(notice)).toBeVisible();
     expect(errors).toEqual([]);
   });

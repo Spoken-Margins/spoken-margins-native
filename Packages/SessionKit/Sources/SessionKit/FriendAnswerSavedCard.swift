@@ -10,12 +10,13 @@ extension PinnedMarginCard {
     public static let answerSavedWindow: TimeInterval = 45
 
     /// The card for the listener's newest Margin on an item that holds a friend's packet, until `answerSavedWindow` has
-    /// passed. Nil on the listener's own items (no live friend layer), when nothing was made since the friend's packet
+    /// passed (counted from `windowStart` when hear it land ran). Nil on the listener's own items (no live friend layer), when nothing was made since the friend's packet
     /// arrived, and once the window is over. `localMargins` and `layers` are the open item's.
-    public static func answerSaved(now: Date, localMargins: [Interjection], layers: [ImportedCommentaryLayer]) -> PinnedMarginCard? {
+    public static func answerSaved(now: Date, localMargins: [Interjection], layers: [ImportedCommentaryLayer], windowStart: Date? = nil) -> PinnedMarginCard? {
         guard let offer = ReplyBackOffer.make(localMargins: localMargins, layers: layers),
               let saved = offer.candidates.last else { return nil }
-        let age = now.timeIntervalSince(saved.createdAt)
+        // After hear it land (#4713) the window counts from the playback's end; it never starts before the save.
+        let age = now.timeIntervalSince(max(saved.createdAt, windowStart ?? saved.createdAt))
         guard age >= 0, age < answerSavedWindow else { return nil }
         return PinnedMarginCard(subject: .yours, stage: .answerSaved(atMs: saved.anchor.mediaTimeMs, sentTo: offer.friendName))
     }
