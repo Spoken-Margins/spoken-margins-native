@@ -54,6 +54,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             tap("queue.start.\(itemId)")
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
             try waitUntilPlaying("Episode never reached the playing state")
+            flowMapCapture("PlaybackScreen")
             try scrub(to: 0.8)
             waitUntil("Scrub did not land near 20:00; clock shows \(element("playback.progress.label").label)", timeout: 10) {
                 self.currentPosition().map { (17 * 60...23 * 60).contains($0) } ?? false
@@ -73,6 +74,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
             // One list for every share that isn't a reply (#4647), with Share pinned.
             XCTAssertTrue(element("build23.sender.stage.list").waitForExistence(timeout: 8), "Share did not open on the Share Margins list")
+            flowMapCapture("Build23SenderSharingExperience")
             // Tap 2 is Share here, which opens the iOS share sheet. It has to be on screen without scrolling.
             let share = element("build23.sender.review.share")
             XCTAssertTrue(share.waitForExistence(timeout: 5) && share.isHittable, "Share is not reachable on the review step without scrolling")
@@ -104,11 +106,13 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             tap("queue.start.\(itemId)")
             let hear = offerButton("newMarginsOffer.review", orLabel: "Hear new Margins first")
             XCTAssertTrue(hear.waitForExistence(timeout: 5), "Continue did not offer the friend's Margin first")
+            flowMapCapture("ExperienceLibraryScreen", "new-margins-offer")
             endStep("offer shown")
             beginStep()
             hear.tap()
             taps += 1
             XCTAssertTrue(element("review.playing").waitForExistence(timeout: 40), "The friend's Margin never started playing")
+            flowMapCapture("PlaybackScreen", "friend-margin")
             endStep("friend's Margin playing (import to first audio is this step plus the one before it)")
             XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
         }
@@ -164,6 +168,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             XCTAssertFalse(app.alerts["Remove ums and long pauses?"].waitForExistence(timeout: 2),
                            "The cleanup question showed on the reply sheet")
             XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 8), "The reply sheet did not open on its review")
+            flowMapCapture("Build23SenderSharingExperience", "reply")
             let heading = element("build23.sender.heading").label // "Share replies with <friend>", or "Share your Margins with <friend>" when none is linked as a reply (#3906)
             XCTAssertTrue(heading.hasPrefix("Share replies with") || heading.hasPrefix("Share your Margins with"), "The sheet is not the reply sheet: \(element("build23.sender.heading").label)")
             XCTAssertFalse(element("build23.sender.review.navigator").exists, "The reply review drew the Margin navigator")
@@ -202,6 +207,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             XCTAssertTrue(element("library.row.\(itemId)").waitForExistence(timeout: 8), "Episode is missing from the Library after relaunch")
             tap("library.row.\(itemId)")
             XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "The item screen did not open")
+            flowMapCapture("ExperienceItemDetailScreen")
         }
 
         XCTContext.runActivity(named: "J12 item, step 3: Share in the header opens the review in two taps") { _ in
@@ -301,6 +307,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "The item screen did not open")
             let skip = app.buttons["item.reviewNewMargins.button"].firstMatch
             XCTAssertTrue(skip.waitForExistence(timeout: 30), "The item screen never offered \"Skip to …\"")
+            flowMapCapture("ExperienceItemDetailScreen", "friend-arrival")
             let skipShownAt = Date().timeIntervalSince(opened)
             note(String(format: "item screen to \"Skip to …\" shown: %.1fs", skipShownAt))
             // The intro first, never "Mark complete" or a placement status, on the first frame the choice shows (#3788).
@@ -428,6 +435,15 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
         XCTAssertTrue(control.isHittable, "Control can't be tapped: \(identifier)")
         control.tap()
         taps += 1
+    }
+
+    /// A screenshot for Design/flow-map (#5280), named for the map's screen id. `scripts/flow-map-captures.py`
+    /// copies these from a cut's journey attachments onto the map, with the commit the run was taken at.
+    private func flowMapCapture(_ screenID: String, _ variant: String? = nil) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "flowmap-" + screenID + (variant.map { "--" + $0 } ?? "")
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func element(_ identifier: String) -> XCUIElement {
