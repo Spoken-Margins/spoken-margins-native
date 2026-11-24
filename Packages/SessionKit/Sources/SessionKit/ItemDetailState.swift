@@ -49,6 +49,8 @@ public struct ItemDetailState: Equatable, Sendable {
         id == itemId ? text : nil
     }
     public var isNativeAudio = false
+    /// The listener's own spoken note (#4782): its Export offers the whole transcript, which other native audio doesn't.
+    public var isSpokenNote = false
     public var timelineSource = TimelineSourceContent(text: "")
     public var documentStructure: PDFDocumentStructure?
     /// What the Now tab needs to place a PDF's table and figure cards (#4588): the document's floats and where its
@@ -102,6 +104,7 @@ public struct ItemDetailState: Equatable, Sendable {
         listeningMapSummarySpans: [SceneSummarySpan] = [],
         mediaDurationMs: Int? = nil,
         isNativeAudio: Bool = false,
+        isSpokenNote: Bool = false,
         lengthMs: Int? = nil,
         lengthTextCharacterCount: Int? = nil,
         timelineSource: TimelineSourceContent = TimelineSourceContent(text: ""),
@@ -136,6 +139,7 @@ public struct ItemDetailState: Equatable, Sendable {
         self.listeningMapSummarySpans = listeningMapSummarySpans
         self.mediaDurationMs = mediaDurationMs
         self.isNativeAudio = isNativeAudio
+        self.isSpokenNote = isSpokenNote
         self.lengthMs = lengthMs
         self.lengthTextCharacterCount = lengthTextCharacterCount
         self.timelineSource = timelineSource

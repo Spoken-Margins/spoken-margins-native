@@ -51,7 +51,7 @@ class LiveActivityDynamicTypeTests(unittest.TestCase):
         # The Dynamic Island lines, the small and medium titles and chapters, and the next-chapter title.
         self.assertGreaterEqual(text.count(".adaptiveLineLimit()"), 8)
         # What keeps a bare one-line limit is a short word or a button label that shrinks to fit.
-        self.assertEqual(text.count(".lineLimit(1)"), 7)
+        self.assertEqual(text.count(".lineLimit(1)"), 6)
 
     def test_the_circles_are_fixed_size_controls_that_never_drop_below_a_touch_target(self):
         text = _text()
@@ -60,6 +60,24 @@ class LiveActivityDynamicTypeTests(unittest.TestCase):
         helper = _between(text, "enum Gate2ControlSize", "private struct AdaptiveLineLimit")
         for name in ("skim", "skip", "play", "marginColumnWidth"):
             self.assertGreaterEqual(_constant(helper, name), MIN_TOUCH_TARGET, name)
+
+    def test_the_margin_control_is_a_glyph_in_a_fixed_circle(self):
+        # The real Lock Screen card is often only a header tall (about 56 pt), so a Margin pill that took the card's
+        # height became a near-circle and its "Margin" caption ran past the curve (#4764). The control is a fixed
+        # circle with only the glyph, centred in a tap column that still takes the card's full height (#3771).
+        text = _text()
+        control = re.sub(r"\s+", " ", _between(text, "struct Gate2MarginControl", "private struct Gate2SharedMarginButtons"))
+        self.assertNotIn("Text(", control, "no caption inside the Margin circle (#4764)")
+        self.assertIn("Circle()", control)
+        self.assertIn("glyphCeiling", control)
+        self.assertIn(
+            ".frame(width: Gate2ControlSize.marginColumnWidth, height: Gate2ControlSize.marginColumnWidth)", control
+        )
+        # Pixels can't see a hit area: these keep the tap column the card's full height.
+        self.assertIn(".frame(maxHeight: .infinity)", control)
+        self.assertIn(".contentShape(Rectangle())", control)
+        self.assertEqual(text.count('"Add a Margin"'), 2, "VoiceOver names the start control in both builds")
+        self.assertEqual(text.count('"Finish Margin"'), 2, "VoiceOver names the finish control in both builds")
 
     def test_the_transport_is_one_row_so_the_card_keeps_its_height(self):
         # A second row put the card at about 186 pt; the Lock Screen cuts off anything over 160 pt (audit on 71aed00).

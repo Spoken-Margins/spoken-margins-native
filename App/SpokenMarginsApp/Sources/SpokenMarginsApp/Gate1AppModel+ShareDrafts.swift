@@ -180,6 +180,12 @@ extension Gate1AppModel {
         sharingState.drafts[index].readAloud = readAloud
     }
 
+    /// The sender's "Before your Margin" length (#4171), clamped to what a reader accepts.
+    func setShareDraftLeadIn(_ id: String, ms: Int) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        sharingState.drafts[index].leadInMs = SenderLeadIn.clamped(ms)
+    }
+
     func setShareDraftAnchorBefore(_ id: String, value: String) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         sharingState.drafts[index].setAnchorBefore(value)

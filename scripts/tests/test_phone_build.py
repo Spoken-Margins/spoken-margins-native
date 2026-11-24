@@ -576,7 +576,19 @@ def bot_comment(body):
 with open(os.environ["FAKE_LOG"], "a") as log:
     log.write("gh " + " ".join(args) + "\n")
 tip = os.environ["FAKE_TIP"]
-if args[:1] == ["api"] and args[1].endswith("/issues/12/comments"):
+if args[:1] == ["api"] and "/statuses" in args[1]:
+    # #5145: the commit's main-slow status, from FAKE_SLOW_STATE: green unless a test says otherwise ("none": no status).
+    state = os.environ.get("FAKE_SLOW_STATE", "success")
+    print(json.dumps([] if state == "none" else
+                     [{"context": "main-slow", "state": state, "created_at": "2026-11-23T08:00:00Z"}]))
+elif args[:2] == ["api", "graphql"] and any("main-slow" in a for a in args):
+    # #5145: main's history with each commit's main-slow result; FAKE_SLOW_HISTORY replaces the default, which is the
+    # tip alone with FAKE_SLOW_STATE.
+    state = os.environ.get("FAKE_SLOW_STATE", "success")
+    nodes = json.loads(os.environ["FAKE_SLOW_HISTORY"]) if os.environ.get("FAKE_SLOW_HISTORY") else [
+        {"oid": tip, "status": None if state == "none" else {"context": {"state": state.upper()}}}]
+    print(json.dumps({"data": {"repository": {"object": {"history": {"nodes": nodes}}}}}))
+elif args[:1] == ["api"] and args[1].endswith("/issues/12/comments"):
     if os.environ.get("FAKE_SAFE_REMERGE"):
         print(bot_comment("**Merge check (triage desk) on `1234567`: PASS, re-merged onto the newest next without re-testing.**\n"
               "- Tested this PR merged with next at `7654321`. Ran: host tests (--plan fast).\n"
@@ -808,10 +820,14 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertIn('fast hot-file-ok=1 scripts/verify-tests.py --plan fast', self.log.read_text())
 
-    def commit_the_host_check_python(self, subject):
+    def commit_the_host_check_python(self, subject, slow_tier=False):
         """Commit a fake `.venv/bin/python` (what the build runs verify-tests.py with) as the new tip.
 
-        It logs its command line to FAKE_LOG and exits with FAKE_FAST_EXIT."""
+        It logs its command line to FAKE_LOG and exits with FAKE_FAST_EXIT. `slow_tier`: the commit has
+        scripts/slow_tier.py, so it is from after the slow tier (#5145)."""
+        if slow_tier:
+            (self.repo / 'scripts/slow_tier.py').write_text('SLOW_SWIFT_TESTS = {}\n')
+            self.git('add', 'scripts/slow_tier.py')
         (self.repo / '.venv/bin').mkdir(parents=True)
         python = self.repo / '.venv/bin/python'
         python.write_text('#!/bin/sh\necho "fast $*" >> "$FAKE_LOG"\nexit ${FAKE_FAST_EXIT:-0}\n')
@@ -820,9 +836,9 @@ class PhoneBuildTests(unittest.TestCase):
         self.git('commit', '-q', '-m', subject)
         self.tip = self.git('rev-parse', 'HEAD')
 
-    def build_the_merge_commit(self, runs_checks, **extra):
+    def build_the_merge_commit(self, runs_checks, slow_tier=False, **extra):
         """Build a tip that reads "Merge pull request #12: ..." (the fake gh serves PR 12's merge check)."""
-        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing')
+        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing', slow_tier=slow_tier)
         done = self.run_build(**{'FAKE_TIP': self.tip, **extra})
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         calls = self.log.read_text()
@@ -834,6 +850,32 @@ class PhoneBuildTests(unittest.TestCase):
 
     def test_a_merge_check_that_passed_and_pushed_this_commit_skips_the_host_checks(self):
         self.build_the_merge_commit(runs_checks=False)
+
+    def test_a_lane_tested_commit_without_a_green_slow_tier_runs_it_first(self):
+        # #5145: PRs leave the slow tier out, so a lane-tested commit main-slow hasn't passed gets it before the build.
+        self.build_the_merge_commit(runs_checks=False, slow_tier=True, FAKE_SLOW_STATE='none')
+        calls = self.log.read_text()
+        self.assertIn('fast scripts/verify-tests.py --plan slow', calls)
+        checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
+        self.assertIn('slow tier (--plan slow) ran on this exact commit', checks)
+
+    def test_a_green_slow_tier_on_the_commit_is_not_run_again(self):
+        self.build_the_merge_commit(runs_checks=False, slow_tier=True, FAKE_SLOW_STATE='success')
+        self.assertNotIn('--plan slow', self.log.read_text())
+        checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
+        self.assertIn('main-slow passed on this exact commit', checks)
+
+    def test_a_commit_from_before_the_slow_tier_is_built_without_it(self):
+        # Its own verify-tests.py has no --plan slow, and its merge checks ran every test (#5145 audit).
+        self.build_the_merge_commit(runs_checks=False, FAKE_SLOW_STATE='none')
+        self.assertNotIn('--plan slow', self.log.read_text())
+        checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
+        self.assertIn('from before the slow tier', checks)
+
+    def test_a_red_slow_tier_stops_the_build(self):
+        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing', slow_tier=True)
+        done = self.run_build(FAKE_TIP=self.tip, FAKE_SLOW_STATE='failure', FAKE_FAST_EXIT='1')
+        self.assert_build_stopped(done, 'the slow tier (--plan slow) failed', builds_after=False)
 
     def test_a_safe_remerge_builds_release_without_repeating_host_or_simulator_checks(self):
         self.build_the_merge_commit(runs_checks=False, FAKE_SAFE_REMERGE='1')
@@ -1032,6 +1074,21 @@ else:
 """
 
 
+class NearestSlowResultTests(unittest.TestCase):
+    """#5145: the newest main-slow pass or failure in a commit's history, the commit itself first."""
+
+    def test_the_nearest_pass_or_failure_wins_and_pending_or_error_is_passed_over(self):
+        module = load_phone_build()
+        node = lambda oid, state: {'oid': oid, 'status': {'context': {'state': state}} if state else None}
+        self.assertEqual(module.nearest_slow_result([node('a', None), node('b', 'PENDING'), node('c', 'ERROR'),
+                                                     node('d', 'FAILURE'), node('e', 'SUCCESS')]), ('failure', 'd'))
+        self.assertEqual(module.nearest_slow_result([node('a', 'SUCCESS'), node('b', 'FAILURE')]), ('success', 'a'))
+        self.assertEqual(module.nearest_slow_result([node('a', None), {'oid': 'b', 'status': {'context': None}}]),
+                         (None, None))
+        self.assertEqual(module.nearest_slow_result([]), (None, None))
+        self.assertIn('"main-slow"', module.SLOW_HISTORY_QUERY)
+
+
 @unittest.skipUnless(shutil.which('ditto') and shutil.which('codesign'), 'needs the Mac\'s ditto and codesign')
 class HostedPhoneBuildTests(unittest.TestCase):
     """--source hosted (#2357): the Mac takes the GitHub-hosted build instead of building."""
@@ -1064,6 +1121,31 @@ class HostedPhoneBuildTests(unittest.TestCase):
         archive = app.parent / 'SpokenMarginsApp.app.zip'
         subprocess.check_call(['ditto', '-c', '-k', '--keepParent', str(app), str(archive)])
         return archive
+
+    def test_refuses_a_hosted_build_main_slow_found_red(self):
+        # #5145 audit: nothing here can run the slow tier, so a commit it failed on never reaches the phone.
+        done = self.run_build(FAKE_SLOW_STATE='failure')
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn('main-slow failed on it', done.stdout)
+        self.assertFalse((self.phone / 'latest').exists())
+
+    def test_refuses_a_hosted_build_when_the_nearest_main_slow_before_it_is_red(self):
+        # #5145 audit on b1a3b69: main-slow runs on whichever commit was main's head at its tick, so the hosted commit
+        # usually has no status; a red result on an earlier commit means the break is likely in this one too.
+        history = [{'oid': self.tip, 'status': None}, {'oid': 'b' * 40, 'status': {'context': None}},
+                   {'oid': 'c' * 40, 'status': {'context': {'state': 'FAILURE'}}},
+                   {'oid': 'd' * 40, 'status': {'context': {'state': 'SUCCESS'}}}]
+        done = self.run_build(FAKE_SLOW_STATE='none', FAKE_SLOW_HISTORY=json.dumps(history))
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn('main-slow failed on ccccccc, the nearest result in its history', done.stdout)
+        self.assertFalse((self.phone / 'latest').exists())
+
+    def test_a_hosted_build_after_a_green_main_slow_says_so_in_its_checks(self):
+        history = [{'oid': self.tip, 'status': None}, {'oid': 'd' * 40, 'status': {'context': {'state': 'SUCCESS'}}}]
+        done = self.run_build(FAKE_SLOW_STATE='none', FAKE_SLOW_HISTORY=json.dumps(history))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        info = json.loads((self.phone / 'latest' / 'build.json').read_text())
+        self.assertIn('nearest result: passed on ddddddd', info['checks'])
 
     def test_refuses_a_hosted_build_without_the_phone_settings(self):
         """#3354: the hosted archive dropped SM_PHONE_BUILD and SM_SHARE_LINK_CREATION, and nothing noticed."""

@@ -39,6 +39,7 @@ extension Gate1AppModel {
             let fallbackId = libraryItems.first?.id
             activeItemId = fallbackId ?? "item-pill"
             exportPreview = ""
+            exportSpokenNoteFootnote = nil
             selectedItem = ItemDetailState() // the screen is Home; the replacement's detail arrives from a background read (#2505)
             if let fallbackId { selectFallbackItemInBackground(id: fallbackId, store: store) }
         }

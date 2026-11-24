@@ -319,8 +319,8 @@ def say_could_not_queue(github, number, text, out):
         if QUEUE_FAILED_MARKER in github.comments(number):
             return
         if REFUSED.search(text):
-            why = (' The bridge\'s token (`MERGE_QUEUE_TOKEN`, #4745) may have expired or lost its access; nothing '
-                   'in the PR needs changing.')
+            why = (' The bridge\'s token (the spoken-margins-agent App token, or `MERGE_QUEUE_TOKEN` when that could '
+                   'not be minted, #4915) may have expired or lost its access; nothing in the PR needs changing.')
         else:   # #4942 audit: a conflict or a dirty branch is the PR's own, so don't say nothing needs doing in it
             why = ' If that names something in the PR (a conflict, a draft), fix it and push.'
         github.comment(number, f'{QUEUE_FAILED_MARKER}\n`{LABEL}` is on, but this PR could not be queued for '

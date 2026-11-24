@@ -29,6 +29,17 @@ cd "$PACKAGE"
 # #1956: XCTest's output to a file is block-buffered, so a hung run's log ended hundreds of results before the test
 # that hung. Unbuffered, each test's "started" line reaches the log as it starts.
 export NSUnbufferedIO=YES
+# #5145: a trailing `--skip <regex>` (verify-tests.py --leave-out-slow, scripts/slow_tier.py) leaves those tests out of
+# --core-parallel, --core-serial and --rest; `--only <regex>` runs just those tests (verify-tests.py --plan slow).
+ARGS=()
+SKIP=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --skip) [[ -n "${2:-}" ]] || { echo "usage: --skip <regex>" >&2; exit 2; }; SKIP=(--skip "$2"); shift 2 ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+set -- ${ARGS[@]+"${ARGS[@]}"}
 SANDBOX=()
 if [[ -n "${CODEX_SANDBOX:-}" ]]; then
   SANDBOX=(--disable-sandbox)
@@ -39,12 +50,15 @@ WORKERS=4  # the Mac also runs builds and other jobs: leave it room
 case "${1:-}" in
   --core-parallel)
     [[ -n "${2:-}" ]] || { echo "usage: $0 --core-parallel <xunit file>" >&2; exit 2; }
-    exec "$ROOT/scripts/host-test-lane" swift test --skip-build --parallel --num-workers "$WORKERS" --filter "$CORE" --xunit-output "$2" ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
-  --core-serial) exec "$ROOT/scripts/host-test-lane" swift test --skip-build --filter "$CORE" ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
-  --rest) exec "$ROOT/scripts/host-test-lane" swift test --skip-build --filter "$REST" ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
+    exec "$ROOT/scripts/host-test-lane" swift test --skip-build --parallel --num-workers "$WORKERS" --filter "$CORE" --xunit-output "$2" ${SKIP[@]+"${SKIP[@]}"} ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
+  --core-serial) exec "$ROOT/scripts/host-test-lane" swift test --skip-build --filter "$CORE" ${SKIP[@]+"${SKIP[@]}"} ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
+  --rest) exec "$ROOT/scripts/host-test-lane" swift test --skip-build --filter "$REST" ${SKIP[@]+"${SKIP[@]}"} ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
+  --only)
+    [[ -n "${2:-}" ]] || { echo "usage: $0 --only <regex>" >&2; exit 2; }
+    exec "$ROOT/scripts/host-test-lane" swift test --skip-build --filter "$2" ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   --build-only) exec "$ROOT/scripts/host-test-lane" swift build --build-tests ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   --tools) bash "$ROOT/scripts/seed-sessionkit-tools-state.sh" "$PACKAGE"; exec "$ROOT/scripts/host-test-lane" swift test --package-path "$ROOT/Packages/SessionKitTools" --scratch-path "$PACKAGE/.build/tools" ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   --skip-build) exec "$ROOT/scripts/host-test-lane" swift test --skip-build ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   "") exec "$ROOT/scripts/host-test-lane" swift test ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
-  *) echo "usage: $0 [--build-only | --skip-build | --core-parallel <xunit file> | --core-serial | --rest | --tools]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--build-only | --skip-build | --core-parallel <xunit file> | --core-serial | --rest | --only <regex> | --tools] [--skip <regex>]" >&2; exit 2 ;;
 esac

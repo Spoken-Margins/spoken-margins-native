@@ -14,6 +14,11 @@ extension Gate1AppModel {
         SleepTimerPolicy.description(state: sleepTimerState, remainingSeconds: sleepTimerRemainingSeconds)
     }
 
+    /// The words beside the moon on the Sleep button in Listening options, or nil for the moon alone (#4781).
+    var sleepTimerCompactButtonText: String? {
+        SleepTimerPolicy.compactButtonText(state: sleepTimerState, remainingSeconds: sleepTimerRemainingSeconds)
+    }
+
     var canUseEndOfChapterSleepTimer: Bool {
         SleepTimerPolicy.endOfChapterTarget(chapters: selectedItem.mediaChapters, currentMediaTimeMs: snapshot.currentMediaTimeMs) != nil
     }
