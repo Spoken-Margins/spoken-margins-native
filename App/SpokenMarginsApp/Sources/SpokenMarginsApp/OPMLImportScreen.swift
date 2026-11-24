@@ -21,6 +21,15 @@ final class OPMLImportModel: ObservableObject {
 
         /// A list of links rather than a file: the screen says "list", never "file", and Cancel leaves.
         var isLinkList: Bool { self != .file }
+
+        /// The same origin, for the preview's words in SessionKit (#4858).
+        var wordsSource: OPMLImportPreviewWords.Source {
+            switch self {
+            case .file: return .file
+            case .shortcut: return .shortcut
+            case .assistant: return .assistant
+            }
+        }
     }
 
     enum Phase: Equatable {
@@ -140,6 +149,7 @@ final class OPMLImportModel: ObservableObject {
         if !origin.isLinkList { passedFeedLinks = [] }
         do {
             let preview = OPMLImportPlanner.preview(try document(), existing: subscriptions())
+            // A home-network feed starts unticked (#4858); the listener can still tick it.
             setSelection(OPMLImportSelection(preview: preview, startingTicks: preview.defaultSelection))
             previewed = preview
             phase = .preview(preview)
@@ -330,12 +340,13 @@ struct OPMLImportScreen: View {
 
     @ViewBuilder
     private func previewSections(_ preview: OPMLImportPreview) -> some View {
+        let source = importer.origin.wordsSource
         if let selection = importer.selection, let matches = importer.matches {
             newSection(preview, selection: selection, matches: matches)
             if !matches.alreadyFollowed.isEmpty {
                 Section {
                     ForEach(matches.alreadyFollowed) { row in
-                        feedLabel(row.feed.title, detail: nil)
+                        feedLabel(OPMLImportPreviewWords.title(row.feed.title, feedURL: row.feed.feedURL), detail: nil)
                     }
                 } header: {
                     countHeader("Already followed", matches.alreadyFollowed.count, of: matches.isSearching ? selection.alreadyFollowed.count : nil)
@@ -346,7 +357,7 @@ struct OPMLImportScreen: View {
             if !matches.repeated.isEmpty {
                 Section {
                     ForEach(matches.repeated) { row in
-                        feedLabel(row.feed.title, detail: nil)
+                        feedLabel(OPMLImportPreviewWords.title(row.feed.title, feedURL: row.feed.feedURL), detail: nil)
                     }
                 } header: {
                     countHeader(importer.origin.isLinkList ? "Repeated in the list" : "Repeated in the file", matches.repeated.count,
@@ -356,17 +367,31 @@ struct OPMLImportScreen: View {
                 }
             }
             // The search is for shows to follow: sections with nothing to tick are hidden while one is typed.
-            if preview.unusableOutlineCount > 0, !matches.isSearching {
+            if !matches.isSearching, let unusable = OPMLImportPreviewWords.unusableSection(preview, source: source) {
                 Section {
-                    Text("\(preview.unusableOutlineCount) \(preview.unusableOutlineCount == 1 ? "entry has" : "entries have") no feed link Spoken Margins can use, so \(preview.unusableOutlineCount == 1 ? "it's" : "they're") skipped.")
+                    if unusable.names.isEmpty {
+                        Text(unusable.note)
+                    } else {
+                        ForEach(Array(unusable.names.enumerated()), id: \.offset) { _, name in
+                            feedLabel(name, detail: nil)
+                        }
+                        if let more = unusable.more {
+                            Text(more).foregroundStyle(AppColors.secondaryText)
+                        }
+                    }
                 } header: {
-                    countHeader("Unusable", preview.unusableOutlineCount)
+                    Text(unusable.header)
+                } footer: {
+                    if !unusable.names.isEmpty {
+                        Text(unusable.note)
+                    }
                 }
             }
         } else {
             // Not reachable: the preview and its selection are set together. Drawn as an empty preview.
             Section {
-                Text(importer.origin.isLinkList ? "Nothing new to follow in this list." : "Nothing new to follow in this file.")
+                Text(OPMLImportPreviewWords.emptyNewLine(preview, source: source)
+                     ?? (importer.origin.isLinkList ? "Nothing new to follow in this list." : "Nothing new to follow in this file."))
             } header: {
                 countHeader("New", 0)
             }
@@ -375,31 +400,38 @@ struct OPMLImportScreen: View {
 
     @ViewBuilder
     private func newSection(_ preview: OPMLImportPreview, selection: OPMLImportSelection, matches: OPMLImportSelection.Matches) -> some View {
+        let source = importer.origin.wordsSource
         let hidden = selection.hiddenTickedCount(matches)
         Section {
-            if selection.newRows.isEmpty {
-                Text(importer.origin.isLinkList ? "Nothing new to follow in this list." : "Nothing new to follow in this file.")
+            if let line = OPMLImportPreviewWords.emptyNewLine(preview, source: source) {
+                Text(line)
             } else if matches.new.isEmpty {
                 Text("No new shows match.")
                     .foregroundStyle(AppColors.secondaryText)
                     .accessibilityIdentifier("opml.import.noMatch")
             }
             ForEach(matches.new) { candidate in
+                let row = OPMLImportPreviewWords.row(candidate, source: source)
                 Toggle(isOn: Binding(
                     get: { importer.isSelected(candidate) },
                     set: { importer.setSelected(candidate, $0) }
                 )) {
-                    feedLabel(candidate.title, detail: candidate.feed.map { URLComponents(string: $0.url)?.host ?? $0.url })
+                    feedLabel(row.title, detail: row.detail)
                 }
                 .tint(AppColors.evergreen)
+                .accessibilityLabel(row.accessibilityLabel)
+                // Keyed by the parsed title, as before #4858, so journey steps that tap a row keep working.
                 .accessibilityIdentifier("opml.import.toggle.\(candidate.title)")
             }
         } header: {
             newHeader(selection: selection, matches: matches)
         } footer: {
+            // During a search the footer counts hidden ticks; otherwise a Shortcut list with nameless rows says how to fix it (#4858).
             if hidden > 0 {
                 Text(hidden == 1 ? "1 selected show is hidden by this search." : "\(hidden) selected shows are hidden by this search.")
                     .accessibilityIdentifier("opml.import.hiddenSelected")
+            } else if !matches.isSearching, let footer = OPMLImportPreviewWords.newFooter(preview, source: source) {
+                Text(footer)
             }
         }
     }
@@ -472,7 +504,7 @@ struct OPMLImportScreen: View {
                 Text("No feeds were followed.")
             }
             ForEach(Self.sortedCandidates(result.followed)) { candidate in
-                Label(candidate.title, systemImage: "checkmark")
+                Label(OPMLImportPreviewWords.title(candidate.title, feedURL: candidate.feed?.url), systemImage: "checkmark")
             }
         } header: {
             countHeader("Followed", result.followed.count)
@@ -484,7 +516,7 @@ struct OPMLImportScreen: View {
         if !result.failed.isEmpty {
             Section {
                 ForEach(OPMLImportOrder.sorted(result.failed, title: \.candidate.title, feedURL: { $0.candidate.feed?.url }), id: \.candidate.id) { failure in
-                    feedLabel(failure.candidate.title, detail: failure.reason)
+                    feedLabel(OPMLImportPreviewWords.title(failure.candidate.title, feedURL: failure.candidate.feed?.url), detail: failure.reason)
                 }
             } header: {
                 countHeader("Couldn't follow", result.failed.count)
@@ -494,7 +526,7 @@ struct OPMLImportScreen: View {
         if !result.notTried.isEmpty {
             Section {
                 ForEach(Self.sortedCandidates(result.notTried)) { candidate in
-                    feedLabel(candidate.title, detail: nil)
+                    feedLabel(OPMLImportPreviewWords.title(candidate.title, feedURL: candidate.feed?.url), detail: nil)
                 }
             } header: {
                 countHeader("Stopped before", result.notTried.count)
