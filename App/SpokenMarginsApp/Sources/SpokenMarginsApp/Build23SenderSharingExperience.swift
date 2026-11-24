@@ -6,6 +6,7 @@ import SwiftUI
 @MainActor
 struct Build23SenderSharingExperience: View {
     @ObservedObject var coordinator: Build23SharingCoordinator
+    @EnvironmentObject private var model: Gate1AppModel
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var hasBegun = false
@@ -47,6 +48,59 @@ struct Build23SenderSharingExperience: View {
         #endif
     }
 
+    /// The heading with Cancel, and Export for the same item (#5306). With Export the row is an `AdaptiveStack`: side by
+    /// side while all three fit on one line each, otherwise the heading above Export and Cancel, and at accessibility
+    /// sizes each on its own line, so no label breaks mid-word and Cancel stays on screen. A reply sheet offers no
+    /// Export and keeps its row as it was.
+    @ViewBuilder
+    private func senderHeader(_ snapshot: Build23SharingSnapshot) -> some View {
+        if ShareExportSwitch.offersExport(isReplyBack: snapshot.isReplyBack) {
+            AdaptiveStack(spacing: 12) {
+                senderHeading
+                AdaptiveSpacer()
+                AdaptiveStack(spacing: 16) {
+                    Button(ShareExportSwitch.exportButtonTitle, systemImage: "doc.text") {
+                        switchToExport()
+                    }
+                    .labelStyle(.titleAndIcon)
+                    .disabled(model.exportSessionForShareSwitch() == nil)
+                    .accessibilityHint(ShareExportSwitch.exportButtonHint)
+                    .accessibilityIdentifier("build23.sender.export")
+                    senderCancel
+                }
+            }
+        } else {
+            HStack(alignment: .center) {
+                senderHeading
+                Spacer()
+                senderCancel
+            }
+        }
+    }
+
+    private var senderHeading: some View {
+        Text(coordinator.senderHeading)
+            .font(.headline)
+            .foregroundStyle(AppColors.text)
+            .accessibilityIdentifier("build23.sender.heading")
+    }
+
+    private var senderCancel: some View {
+        Button("Cancel", role: .cancel) {
+            coordinator.send(.cancel)
+        }
+        .accessibilityIdentifier("build23.sender.cancel")
+    }
+
+    /// The header's Export (#5306): close this sheet the way Cancel does, then open the Export screen on the same item.
+    /// The session is read first, while the sheet still names the one it was sharing from.
+    /// Nothing closes when Export could not open: no session to export, or a Margin being recorded.
+    private func switchToExport() {
+        guard let sessionId = model.exportSessionForShareSwitch(), !model.recordingNavigationIsLocked else { return }
+        coordinator.send(.cancel)
+        model.openExportFromShareSheet(sessionId: sessionId)
+    }
+
     /// Whether the main Share button makes a link. False in a build without links, while the server says no, and when this
     /// build is below the server's minimum (#4134).
     private var sharesLink: Bool {
@@ -80,17 +134,7 @@ struct Build23SenderSharingExperience: View {
 
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                HStack(alignment: .center) {
-                    Text(coordinator.senderHeading)
-                        .font(.headline)
-                        .foregroundStyle(AppColors.text)
-                        .accessibilityIdentifier("build23.sender.heading")
-                    Spacer()
-                    Button("Cancel", role: .cancel) {
-                        coordinator.send(.cancel)
-                    }
-                    .accessibilityIdentifier("build23.sender.cancel")
-                }
+                senderHeader(snapshot)
                 backToSelectionLink(snapshot)
                 if let error = shareError(snapshot) {
                     FailureMessageLabel(error)
