@@ -300,7 +300,7 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
     func testAVoiceMarginWithoutWordsIsSharedWithReplaceablePlaceholderWords() throws {
         let (model, coordinator) = makeModelAndCoordinator(marginCount: 2, voiceMarginsWithoutWords: [0])
         coordinator.send(.begin)
-        let id = "margin-build-23-sender-0"
+        let id = "session-build-23-sender::margin-build-23-sender-0"
         let placeholder = SharedMarginPlaceholder.words(
             mediaTimeMs: nil, itemTitle: model.selectedItem.title, recordedAt: Date(timeIntervalSince1970: 1)
         )

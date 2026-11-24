@@ -46,6 +46,7 @@ WORKFLOWS = {
     'merge-queue-label-bridge.yml': 15,
     'lane-conflicts.yml': 60,
     'main-t3.yml': 180,
+    'open-cloud-prs.yml': 20,  # a cloud session's own dispatch is the start (#4915); this catches a failed one
 }
 
 

@@ -75,6 +75,25 @@ final class ReadwiseHighlightTests: XCTestCase {
         XCTAssertEqual(try gather([(item, pending)]), [])
     }
 
+    /// Settings' Readwise footer says which Margins are sent (#5034): spoken and written ones alike, once they have
+    /// words. Held to what the gatherer actually sends, so the words can't drift from the rule.
+    func testTheReadwiseFooterNamesTheMarginsThatAreSent() throws {
+        let item = Item(id: "item-article", title: "An essay", mediaType: "text", text: "Source text.",
+                        externalReference: nil, status: "ready")
+        let spoken = margin(item: item, id: "m1", kind: .audio)
+        let written = margin(item: item, id: "m2", kind: .written)
+        var untranscribed = margin(item: item, id: "m3", kind: .audio)
+        untranscribed.transcript = nil
+        untranscribed.transcriptionStatus = "failed"
+        let sent = try gather([(item, spoken), (item, written), (item, untranscribed)]).map(\.marginKey)
+        XCTAssertEqual(sent, ["session-item-article:m1", "session-item-article:m2"])
+
+        let lead = MarginNoteCoverage.readwiseLead
+        XCTAssertTrue(lead.contains("spoken or written"), "Spoken and written Margins are both sent: \(lead)")
+        XCTAssertTrue(lead.contains("once it has words"), "A Margin with no words yet is not sent: \(lead)")
+        XCTAssertFalse(lead.localizedCaseInsensitiveContains("Margin with text"), lead)
+    }
+
     func testPrivateFeedLinksNeverReachTheRequest() async throws {
         let privateLink = "https://www.patreon.com/rss/show?auth=abc123SECRET456def789ghi012jkl345"
         let privateMedia = "https://c10.patreonusercontent.com/episode.mp3?token-hash=zyx987SECRET654wvu321tsr098qpo765"

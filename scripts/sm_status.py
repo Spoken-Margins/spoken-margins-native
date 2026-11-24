@@ -383,6 +383,15 @@ def check_summary(check_runs: list[dict]) -> dict:
     return {'failing': failing, 'running': sorted(running), 'ok': len(newest) - len(failing)}
 
 
+def status_rows(statuses: list[dict]) -> list[dict]:
+    """Commit statuses as check-run-like rows for check_summary (`merge policy` is a status, #5162). Each context's
+    statuses keep their own order by id, which is all check_summary compares within one name."""
+    conclusion = {'success': 'success', 'failure': 'failure', 'error': 'failure'}
+    return [{'id': s.get('id', 0), 'name': s.get('context') or '',
+             'status': 'in_progress' if s.get('state') == 'pending' else 'completed',
+             'conclusion': conclusion.get(s.get('state'))} for s in statuses]
+
+
 def scope_of(paths: list[str], classify=None) -> dict:
     """What scripts/test-scope.py says about the changed paths: tier, audit kinds, lane paths. Path-based only.
 
@@ -432,6 +441,8 @@ def fetch_bundle(api, summary: dict, sleep=time.sleep) -> dict:
             'events': read('events', f'issues/{number}/events', paged=True, default=[]),
             'files': read('files', f'pulls/{number}/files', paged=True, default=[]),
             'check_runs': read('checks', f'commits/{head}/check-runs', paged=True, default=[]) if head else [],
+            # `merge policy` is a commit status (#5162), not a check run
+            'statuses': read('statuses', f'commits/{head}/statuses', paged=True, default=[]) if head else [],
             'errors': errors}
 
 
@@ -477,7 +488,7 @@ def analyse(bundle: dict, classify=None) -> dict:
     other_audit = newest(audit_list, lambda a: a['shas'] and not any(same(sha, head) for sha in a['shas']))
     armed_at = armed_since(bundle['events'])
     armed = 'automerge' in labels
-    checks = check_summary(bundle['check_runs'])
+    checks = check_summary(bundle['check_runs'] + status_rows(bundle.get('statuses') or []))
     scope = scope_of([f['filename'] for f in bundle['files']], classify) if bundle['files'] else {'known': False,
                                                                                                     'why': 'no file list'}
     flags: list[dict] = []
