@@ -609,6 +609,11 @@ def scenarios() -> list[Scenario]:
                  'lane.yml and fails, the audit reads that red check as "checks failed" and never audits, so merge '
                  'policy never turns green.',
                  ['scripts/lane_dedupe.py'], steps=[(0, 'label', 'automerge', 'user')]),
+        Scenario('b5-lane-conflicts-cancelled', 'As b, but the head\'s lane-conflicts `check` ends cancelled (its one '
+                 'concurrency group cancels older runs on a burst of pushes; not a required check): before #5249 the '
+                 'audit read it as "checks failed" and never audited, as #5161, #5177, #5185 and #5186 sat 3 to 4 hours.',
+                 ['scripts/lane_dedupe.py'], steps=[(0, 'label', 'automerge', 'user')],
+                 flags={'cancelled_jobs': {('lane-conflicts.yml', 'check')}}),
         Scenario('c-token-label', 'automerge added with GITHUB_TOKEN (by another workflow): the bridge does not start, '
                  'and only the 15-minute sweep queues it.',
                  ['docs/contributing/example.md'], steps=[(1, 'label', 'automerge', 'github_token')]),
@@ -885,6 +890,8 @@ class World:
                         result, outputs = behaviour(self, run, job, ctx, cause_event)
                     if self.defects & DEFECT_CATCHERS.get((file, job_id), set()):
                         result = 'failure'
+                    if (file, job_id) in self.flags.get('cancelled_jobs', ()):  # its concurrency group cancelled it
+                        result = 'cancelled'
                     results[job_id] = {'result': result, 'outputs': outputs}
                 if sha:
                     held = results[job_id]['outputs'].get('check') == 'pending'

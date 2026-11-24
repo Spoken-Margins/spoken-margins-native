@@ -96,6 +96,12 @@ OWN_CHECKS = {'owner-tap-alert'}
 # The job is named apart from the check it writes (#4986), and that check is a commit status, not a check run (#5162),
 # so both lists below skip these names.
 GATE_CHECKS = {'merge policy', 'merge policy run'}
+# Checks whose cancelled run is no failure (#5249). lane-conflicts' `check` runs in one concurrency group and every run
+# sweeps all armed PRs, so a burst of pushes cancels older runs by design and the newest run covers the cancelled one.
+# Read as failed, it kept the audit off #5161, #5177, #5185 and #5186 for 3 to 4 hours until each was re-run by hand.
+# Only names listed here: a cancelled `compat` or `signoff` has checked nothing, so it still holds the audit and the
+# alert. A test keeps each name a lane-conflicts job and out of the required set (scripts/required_checks.py).
+CANCEL_SUPERSEDED_CHECKS = {'check'}
 LABEL = 'owner-tap-check'  # the Mac's and the audit script's way to ask Actions for a check (--via-label)
 OWNER_TAP_LABEL = 'owner-tap'  # the owner's own tap (merge_policy.py reads it); a PR that carries it no longer waits on him
 MERGEABLE_TRIES = 4  # GitHub works `mergeable` out on the first read after a push; ask again a few times (#4939)
@@ -159,6 +165,8 @@ def checks_state(check_runs: list[dict], statuses: list[dict]) -> tuple[str, lis
             continue
         if run.get('status') != 'completed':
             pending.append(name)
+        elif run.get('conclusion') == 'cancelled' and name in CANCEL_SUPERSEDED_CHECKS:
+            continue  # superseded by a newer sweep (#5249), above
         elif run.get('conclusion') in FAILED:
             failed.append(name)
     seen = set()

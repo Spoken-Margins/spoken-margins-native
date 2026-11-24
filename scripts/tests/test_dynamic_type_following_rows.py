@@ -45,5 +45,48 @@ class FollowingRowDynamicTypeTests(unittest.TestCase):
         self.assertIn("HStack(alignment: .center, spacing: 12)", default)
 
 
+FRIEND_ROWS = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp" / "FollowingFriendRows.swift"
+
+
+def _between(text: str, start: str, end: str) -> str:
+    begin = text.index(start)
+    return text[begin:text.index(end, begin)]
+
+
+class FollowingShowAndFriendRowStackTests(unittest.TestCase):
+    """#4723: the "N new" count sits on the picture, and at accessibility sizes both rows stack the way #4104 matched them."""
+
+    def test_show_row_stacks_picture_line_above_the_text_at_accessibility_sizes(self):
+        text = _strip(SCREEN.read_text())
+        view = _between(text, "struct FollowingShowRowView", "struct FollowingShowStatusView")
+        body = view[view.index("var body: some View"):view.index("private var pictureWithTag")]
+        accessibility = body[body.index("if dynamicTypeSize.isAccessibilitySize {"):body.index("} else {")]
+        self.assertIn("VStack(alignment: .leading", accessibility)
+        self.assertLess(accessibility.index("pictureWithTag"), accessibility.index("playButton"))
+        self.assertLess(accessibility.index("playButton"), accessibility.index("chevronButton"))
+        self.assertLess(accessibility.index("chevronButton"), accessibility.index("textColumn"))
+        self.assertIn("size: 56", view)
+        self.assertNotIn("row.newLabel", view)
+        self.assertIn("row.newBadgeText", view)
+
+    def test_in_library_is_one_text_with_an_inline_glyph_in_an_adaptive_stack(self):
+        text = _strip(SCREEN.read_text())
+        self.assertIn('Text("\\(Image(systemName: "checkmark.circle")) In Library")', text)
+        view = _between(text, "struct FollowingShowRowView", "struct FollowingShowStatusView")
+        status = _between(text, "struct FollowingShowStatusView", "struct FollowingArtworkNewBadge")
+        self.assertNotIn('Label("In Library"', status)
+        self.assertIn("AdaptiveStack(", view)
+
+    def test_friend_row_stacks_and_keeps_the_exact_count_for_voiceover(self):
+        text = _strip(FRIEND_ROWS.read_text())
+        view = _between(text, "struct FollowingFriendRowView", "struct FollowingFriendItemsScreen")
+        accessibility = view[view.index("if dynamicTypeSize.isAccessibilitySize {"):view.index("} else {")]
+        self.assertIn("VStack(alignment: .leading", accessibility)
+        self.assertLess(accessibility.index("initialWithTag"), accessibility.index("textColumn"))
+        self.assertIn("friend.newBadgeText", view)
+        self.assertEqual(view.count("friend.newLabel"), 1)
+        self.assertIn(".accessibilityLabel([friend.name, friend.summary, friend.newLabel]", view)
+
+
 if __name__ == "__main__":
     unittest.main()
