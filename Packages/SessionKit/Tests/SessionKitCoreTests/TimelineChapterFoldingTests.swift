@@ -124,6 +124,7 @@ final class TimelineChapterFoldingTests: XCTestCase {
         let playing = folding.summary(forChapter: "ch1", in: rows, currentIDs: ["tab1"])
         XCTAssertEqual(playing, .init(hiddenCount: 3, hasNew: false, containsCurrent: true))
         XCTAssertEqual(playing?.text, "3 rows hidden")
+        XCTAssertEqual(playing?.countText, "3")
 
         let elsewhere = folding.summary(forChapter: "ch1", in: rows, currentIDs: ["fig2"])
         XCTAssertEqual(elsewhere?.containsCurrent, false)
@@ -137,6 +138,7 @@ final class TimelineChapterFoldingTests: XCTestCase {
         let summary = folding.summary(forChapter: "ch4", in: rows, currentIDs: [])
         XCTAssertEqual(summary, .init(hiddenCount: 1, hasNew: true, containsCurrent: false))
         XCTAssertEqual(summary?.text, "1 row hidden, new inside")
+        XCTAssertEqual(summary?.countText, "1", "the fold control shows the bare count; VoiceOver reads the words (#4778)")
     }
 
     func testPruneDropsChaptersThatLeftTheRailOrEmptied() {

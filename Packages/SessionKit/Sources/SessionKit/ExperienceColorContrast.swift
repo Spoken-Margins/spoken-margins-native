@@ -155,6 +155,8 @@ public enum AppSemanticColorRGB {
         light: .init(red: 0.37, green: 0.43, blue: 0.40),
         dark: .init(red: 0.66, green: 0.72, blue: 0.68)
     )
+    /// The filled primary button's fill, under a white label. A fill only, never a tint: as a `.bordered` tint it is
+    /// 1.9:1 in dark mode (#4953), and `AppColorUsageGuardTests.classifiedTintTokens` leaves it out on purpose.
     public static let primaryAction = AppDynamicRGB(
         light: .init(red: 0.08, green: 0.32, blue: 0.22),
         dark: .init(red: 0.12, green: 0.36, blue: 0.23)

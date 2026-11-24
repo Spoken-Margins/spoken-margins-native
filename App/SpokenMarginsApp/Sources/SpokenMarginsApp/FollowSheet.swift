@@ -49,7 +49,8 @@ struct FollowSheet: View {
                             .foregroundStyle(AppColors.text)
                             .accessibilityIdentifier("sources.follow.problem")
                     } else {
-                        Text("Or type a link to a show’s feed.")
+                        Text(FollowPasteDecision.sheetFooter)
+                            .accessibilityIdentifier("sources.follow.footer")
                     }
                 }
                 Section {
