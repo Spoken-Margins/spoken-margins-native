@@ -134,10 +134,11 @@ extension Gate1AppModel {
         var next: String?
         PlayQueueController.update(self) { next = $0.popNext(isAvailable: { available.contains($0) }) }
         guard let next else { return }
-        // After this snapshot change has settled: starting a session writes the snapshot again.
+        // After this snapshot change has settled: starting a session writes the snapshot again. The queue moved on
+        // by itself, so no new publisher page is read for it (#4640, the 2026-10-21 rule).
         Task { @MainActor [weak self] in
             guard let self else { return }
-            hangTelemetry.labels.scoped("playQueueAdvance") { _ = startItem(id: next) }
+            hangTelemetry.labels.scoped("playQueueAdvance") { _ = startItem(id: next, trigger: .queueAdvance) }
         }
     }
 }

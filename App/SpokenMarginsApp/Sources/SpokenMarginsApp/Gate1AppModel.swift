@@ -1560,8 +1560,8 @@ final class Gate1AppModel: ObservableObject {
     /// `catchUp` (#4785) starts by `PlayRule.catchUpStart`, which never moves a finished or 99% session. Returns what it
     /// tried, nil when nothing was tried.
     @discardableResult
-    func startItem(id: String, catchUp: Bool = false) -> PlayRule.StartAction? {
-        guard prepareToStartItem(id: id) else { return nil }
+    func startItem(id: String, catchUp: Bool = false, trigger: VoiceoverLookupDecision.Trigger = .play) -> PlayRule.StartAction? {
+        guard prepareToStartItem(id: id, trigger: trigger) else { return nil }
         silentMarginLanding = nil
         do {
             let store = try requireStore()

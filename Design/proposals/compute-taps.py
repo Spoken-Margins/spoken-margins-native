@@ -12,6 +12,14 @@ final_cost. Optional "via_edges" is a list of edge ids (base or proposal) the
 route must take: for each one in order, shortest path to that edge's "from",
 then the edge itself (its own cost), then continue from its "to". via_edges
 are applied first, then the via screens, then the target (no interleaving).
+
+A two-person job (the sharing loop) has "legs" instead of a start and target:
+each leg names its "person", its own start, via, via_edges, target and
+final_cost, and a leg that changes person says in "handoff" what passes from
+one person to the next (a link in Messages, a packet file). An arrow whose
+control_kind is "auto" (a page that moves on by itself) costs 0. Each leg is counted
+as a job of its own; the job's taps are the sum, and the route names each
+person's taps.
 """
 import heapq
 import json
@@ -28,6 +36,8 @@ def load(path):
 
 
 def edge_cost(e):
+    if e.get("control_kind") == "auto":
+        return 0
     return 2 if e.get("control_kind") in DOUBLE_KINDS else 1
 
 
@@ -106,6 +116,17 @@ def shortest(edges, src, dst):
 
 
 def compute_job(job, edges, default_start):
+    if "legs" in job:
+        total, route = 0, []
+        for leg in job["legs"]:
+            r = compute_job(leg, edges, default_start)
+            if r is None:
+                return None
+            if leg.get("handoff"):
+                route.append("hand-off: %s" % leg["handoff"])
+            route += ["%s: %s" % (leg["person"], x) for x in r[1]]
+            total += r[0]
+        return total, route
     start = job.get("start", default_start)
     by_id = {e["id"]: e for e in edges}
     total, route, pos = 0, [], start
@@ -127,6 +148,29 @@ def compute_job(job, edges, default_start):
         route += [e["control"] for e in p]
         pos = b
     return total + job.get("final_cost", 0), route
+
+
+def person_taps(job, edges, default_start):
+    """Each person's taps in a two-person job, in leg order (None for a one-person job or an unreachable leg)."""
+    if "legs" not in job:
+        return None
+    out = OrderedDict()
+    for leg in job["legs"]:
+        r = compute_job(leg, edges, default_start)
+        if r is None:
+            return None
+        out[leg["person"]] = out.get(leg["person"], 0) + r[0]
+    return out
+
+
+def taps_label(job, result, edges, start):
+    """A job's taps for a table: the number, and for a two-person job each person's share."""
+    if result is None:
+        return "UNREACHABLE"
+    people = person_taps(job, edges, start)
+    if not people:
+        return result[0]
+    return "%d (%s)" % (result[0], ", ".join("%s %d" % kv for kv in people.items()))
 
 
 def compute_all(edges, jobs, start):
@@ -160,17 +204,25 @@ def check(base, prop, screens, edges, jobs, start):
                 problems.append('proposal edge %s lacks "proposed": true' % e.get("id"))
             if e["id"] in base_edge_ids:
                 problems.append("proposal edge id %s collides with a base edge" % e["id"])
+        # An arrow the base map retired (its control left the app) is already gone, as the proposal wanted.
+        retired = set(base.get("retired_edges", {}))
         for rid in prop.get("removed_edges", []):
-            if rid not in base_edge_ids:
+            if rid not in base_edge_ids and rid not in retired:
                 problems.append("removed_edges id %s not in base" % rid)
     eids = {e["id"] for e in edges}
     for j in jobs:
-        for x in j.get("via_edges", []):
-            if x not in eids:
-                problems.append("job %s via_edges unknown edge %s" % (j["id"], x))
-        for s in [j.get("start", start)] + list(j.get("via", [])) + [j["target"]]:
-            if s not in ids:
-                problems.append("job %s refers to unknown screen %s" % (j["id"], s))
+        legs = j.get("legs") or [j]
+        for n, leg in enumerate(legs):
+            if "legs" in j and not leg.get("person"):
+                problems.append("job %s leg %d names no person" % (j["id"], n + 1))
+            if "legs" in j and n and leg.get("person") != legs[n - 1].get("person") and not leg.get("handoff"):
+                problems.append("job %s leg %d names no hand-off" % (j["id"], n + 1))
+            for x in leg.get("via_edges", []):
+                if x not in eids:
+                    problems.append("job %s via_edges unknown edge %s" % (j["id"], x))
+            for s in [leg.get("start", start)] + list(leg.get("via", [])) + [leg["target"]]:
+                if s not in ids:
+                    problems.append("job %s refers to unknown screen %s" % (j["id"], s))
     for jid, r in compute_all(edges, jobs, start).items():
         if r is None:
             problems.append("UNREACHABLE job %s" % jid)
@@ -224,7 +276,7 @@ def main(argv):
             r = result[j["id"]]
             ab = asbuilt.get(j["id"])
             abn = ab[0] if ab else None
-            pn = r[0] if r else "UNREACHABLE"
+            pn = taps_label(j, r, edges, start)
             route = " > ".join(r[1]) if r else ""
             rows.append([j["id"], j["name"], pn, abn if abn is not None else "-", route, j.get("final_cost", 0)])
             md.append("| %s | %s | %s | %s |" % (j["name"], abn if abn is not None else "-", pn, route.replace("|", "\\|")))
@@ -252,7 +304,7 @@ def main(argv):
         rows, md = [], []
         for j in jobs:
             r = result[j["id"]]
-            pn = r[0] if r else "UNREACHABLE"
+            pn = taps_label(j, r, edges, start)
             route = " > ".join(r[1]) if r else ""
             rows.append([j["id"], j["name"], pn, route, j.get("final_cost", 0)])
             md.append("| %s | %s | %s | %s |" % (j["name"], pn, pn, route.replace("|", "\\|")))

@@ -11,6 +11,7 @@
     "build": "tsc -p tsconfig.json && vite build",
     "preview": "vite preview --port 4173 --strictPort",
     "test:e2e": "playwright test -c e2e/playwright.config.ts",
+    "capture:flow-map": "playwright test -c e2e/capture/playwright.config.ts loop.capture.ts",
     "cap": "cap",
     "android:sync": "npm run build && cap sync android",
     "android:build": "npm run android:sync && cd android && ./gradlew assembleDebug"
