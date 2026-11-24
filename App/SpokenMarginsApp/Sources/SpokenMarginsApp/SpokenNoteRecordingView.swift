@@ -211,6 +211,9 @@ struct SpokenNoteRecordingView: View {
                     ProgressView()
                     Text("Writing this down…").foregroundStyle(AppColors.secondaryText)
                 }
+            } else if recorder.snapshot?.heldTranscriptTakeIds.contains(take.id) == true {
+                // Waiting for the listener's answer on Speech Recognition, worded as a waiting spoken Margin; no Try again.
+                Text(TranscriptionFailureWording.transcriptNotYetAsked).foregroundStyle(AppColors.secondaryText)
             } else if recorder.snapshot?.failedTranscriptTakeIds.contains(take.id) == true {
                 Text("Couldn't write this take down. The audio is saved. It may have been silent, or speech recognition may be off.")
                     .foregroundStyle(AppColors.secondaryText)

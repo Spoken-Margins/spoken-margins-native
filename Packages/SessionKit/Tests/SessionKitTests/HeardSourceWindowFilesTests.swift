@@ -108,6 +108,42 @@ final class HeardSourceWindowFilesTests: XCTestCase {
         XCTAssertEqual(try folders().count, 1, "only the newer, untaken window is left")
     }
 
+    /// #4715, the audit on #5124 (`e1eeb7c`, finding 1): a transcription the Speech Recognition hold stopped gives its
+    /// window back, so the retry Allow runs finds it; any other ending hands the files to the caller to delete.
+    func testAHeldTranscriptionGivesItsWindowBackForTheRetry() throws {
+        let files = HeardSourceWindowFiles(rootDirectory: root)
+        try files.store(window(runsMs: [60_000]), key: "session::ij-001")
+        let taken = try XCTUnwrap(files.take("session::ij-001"))
+
+        let toDelete = files.finishTranscription(of: taken, key: "session::ij-001", outcome: .waitingForAnswer)
+        XCTAssertEqual(toDelete, [], "nothing is deleted while the Margin waits for the answer")
+        XCTAssertEqual(files.segments(for: "session::ij-001"), taken, "the retry finds the window")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: taken[0].url.path))
+
+        let retried = try XCTUnwrap(files.take("session::ij-001"))
+        XCTAssertEqual(files.finishTranscription(of: retried, key: "session::ij-001", outcome: .completed), retried)
+        XCTAssertNil(files.segments(for: "session::ij-001"))
+    }
+
+    func testAFailedTranscriptionHandsItsWindowBackToDelete() throws {
+        let files = HeardSourceWindowFiles(rootDirectory: root)
+        try files.store(window(runsMs: [60_000]), key: "session::ij-001")
+        let taken = try XCTUnwrap(files.take("session::ij-001"))
+        XCTAssertEqual(files.finishTranscription(of: taken, key: "session::ij-001", outcome: .unavailable), taken)
+        XCTAssertNil(files.segments(for: "session::ij-001"))
+    }
+
+    /// A newer hand-over kept while the held transcription ran is the one the retry uses.
+    func testAHeldTranscriptionDoesNotReplaceANewerWindow() throws {
+        let files = HeardSourceWindowFiles(rootDirectory: root)
+        try files.store(window(runsMs: [60_000]), key: "session::ij-001")
+        let taken = try XCTUnwrap(files.take("session::ij-001"))
+        let newer = try files.store(window(runsMs: [30_000]), key: "session::ij-001")
+
+        XCTAssertEqual(files.finishTranscription(of: taken, key: "session::ij-001", outcome: .waitingForAnswer), taken)
+        XCTAssertEqual(files.segments(for: "session::ij-001"), newer)
+    }
+
     /// #2510: the app writes the audio from a background task and only then keeps it on the main thread, so the
     /// file half must work from a detached task and leave the map alone until `adopt`.
     func testTheFilesAreWrittenFromABackgroundTaskAndKeptAfterwards() async throws {

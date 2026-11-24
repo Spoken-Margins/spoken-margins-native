@@ -11,8 +11,27 @@ import UIKit
 @MainActor
 final class NowSceneController: ObservableObject {
     @Published private(set) var state: PlaybackNowSceneState?
-    /// Whether the Now header, with the Library arrow in it, is on screen. Following scrolls it away.
-    @Published var headerIsVisible = true
+    /// Whether the Now header, with the Library arrow in it, is on screen. Following scrolls it away. Two thresholds
+    /// decide it (`NowHeaderVisibility`), so the toolbar arrow it brings can't move the header back and forth (#4739).
+    @Published private(set) var headerIsVisible = true
+    private var header = NowHeaderVisibility()
+
+    /// Whether at least `NowHeaderVisibility.goneBelow` of the header is on screen.
+    func headerReachedGoneThreshold(_ visible: Bool) {
+        header.reachedGoneThreshold(visible)
+        publishHeader()
+    }
+
+    /// Whether at least `NowHeaderVisibility.backAt` of the header is on screen.
+    func headerReachedBackThreshold(_ visible: Bool) {
+        header.reachedBackThreshold(visible)
+        publishHeader()
+    }
+
+    /// Published only on a change, so a threshold report that changes nothing redraws nothing.
+    private func publishHeader() {
+        if headerIsVisible != header.isVisible { headerIsVisible = header.isVisible }
+    }
     /// The ids (first Character offsets) of the sentences on screen. Not published: a scroll changes it constantly, and
     /// only `playingIsAbove` is drawn.
     private(set) var visibleSentenceIDs: Set<Int> = []

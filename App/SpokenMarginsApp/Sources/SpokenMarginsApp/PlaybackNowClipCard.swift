@@ -49,11 +49,16 @@ enum NowClipImageCache {
 enum NowClipCardCounter {
     private(set) static var bodies = 0
     private(set) static var floatIds: [String] = []
-    static func count(floatId: String) {
+    /// Bodies by the item whose card was drawn. A card of an earlier view can still redraw once its picture decodes,
+    /// after a test moved on to another item, so a test asks about its own item, never the global count (#4921).
+    private(set) static var bodiesByItem: [String: Int] = [:]
+    static func count(floatId: String, itemId: String) {
         bodies += 1
+        bodiesByItem[itemId, default: 0] += 1
         if !floatIds.contains(floatId) { floatIds.append(floatId) }
     }
-    static func reset() { floatIds = []; bodies = 0 }
+    static func bodies(forItem itemId: String) -> Int { bodiesByItem[itemId] ?? 0 }
+    static func reset() { floatIds = []; bodies = 0; bodiesByItem = [:] }
 }
 #endif
 
@@ -90,7 +95,7 @@ struct NowClipCard: View {
 
     var body: some View {
         #if DEBUG
-        let _ = NowClipCardCounter.count(floatId: anchor.floatId)
+        let _ = NowClipCardCounter.count(floatId: anchor.floatId, itemId: cards.source.itemId)
         #endif
         Button(action: openViewer) {
             // The frame comes first and the picture is laid over it, fitted and centred: a card narrower than its

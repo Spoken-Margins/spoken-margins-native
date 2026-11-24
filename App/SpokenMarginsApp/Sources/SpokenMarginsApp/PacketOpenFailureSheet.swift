@@ -103,9 +103,7 @@ private struct PacketOpenFailureSheetModifier: ViewModifier {
                 get: { hosts ? presenter.presented : nil },
                 set: { if $0 == nil, hosts { presenter.close() } }
             ),
-            onDismiss: {
-                if presenter.takeCloseNotice() { drawer.friendFileFailed(at: FirstLaunchWelcomeOrder.Place(model)) }
-            },
+            onDismiss: { presenter.sheetDismissed() },
             content: { presented in PacketOpenFailureSheet(presenter: presenter, presented: presented) }
         )
     }
@@ -125,10 +123,8 @@ private struct PacketOpenFailureDrawerSheetModifier: ViewModifier {
                 get: { hosts ? presenter.presented : nil },
                 set: { if $0 == nil, hosts { presenter.close() } }
             ),
-            onDismiss: {
-                // The drawer is up, so it was never withdrawn: it only needs to be told no friend's item is coming.
-                if presenter.takeCloseNotice() { drawer.friendFileFailed(at: .elsewhere) }
-            },
+            // The drawer is up, so it was never withdrawn: `onCloseNotice` only tells it no friend's item is coming.
+            onDismiss: { presenter.sheetDismissed() },
             content: { presented in PacketOpenFailureSheet(presenter: presenter, presented: presented) }
         )
     }

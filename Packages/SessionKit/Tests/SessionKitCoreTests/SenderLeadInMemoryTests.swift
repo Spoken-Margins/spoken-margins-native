@@ -61,12 +61,12 @@ final class SenderLeadInMemoryTests: XCTestCase {
         try store.saveInterjectionShareRevision(revision("b", margin: "two", at: 2, sent: nil))    // wrote none: leaves 120 000
         try store.saveInterjectionShareRevision(revision("c", margin: "three", at: 2, sent: nil))
         try store.saveInterjectionShareRevision(revision("d", margin: "elsewhere", at: 2, sent: 45_000, item: "another item"))
-        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: "item"), ["one": 30_000, "two": 120_000])
-        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: "another item"), ["elsewhere": 45_000])
+        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: "item"), ["session::one": 30_000, "session::two": 120_000])
+        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: "another item"), ["session::elsewhere": 45_000])
         XCTAssertEqual(try store.loadLastSentLeadIns(itemId: "no such item"), [:])
         // Taking a length back stores 20 s, so the next share knows the friend was told.
         try store.saveInterjectionShareRevision(revision("e", margin: "two", at: 3, sent: SenderLeadIn.defaultMs))
-        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: "item")["two"], SenderLeadIn.defaultMs)
+        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: "item")["session::two"], SenderLeadIn.defaultMs)
     }
 
     /// The loop the sheet will run for one Margin: share at a minute, share again unchanged, take it back, share again
@@ -75,7 +75,7 @@ final class SenderLeadInMemoryTests: XCTestCase {
         let (store, folder) = try openStore()
         defer { try? FileManager.default.removeItem(at: folder) }
         func share(_ at: Double, picks chosen: Int?) throws -> Int? {
-            let last = try store.loadLastSentLeadIns(itemId: "item")["m"]
+            let last = try store.loadLastSentLeadIns(itemId: "item")["session::m"]
             let start = SenderLeadIn.startingMs(lastSent: last)
             let written = SenderLeadIn.valueToWrite(chosen: chosen ?? start, previous: last)
             try store.saveInterjectionShareRevision(revision("share-\(at)", margin: "m", at: at, sent: written))
@@ -85,6 +85,6 @@ final class SenderLeadInMemoryTests: XCTestCase {
         XCTAssertEqual(try share(2, picks: nil), 60_000, "left alone, the sheet starts at a minute and the friend's copy stays there")
         XCTAssertEqual(try share(3, picks: SenderLeadIn.defaultMs), SenderLeadIn.defaultMs)
         XCTAssertNil(try share(4, picks: nil), "after a share that said 20 s there is nothing more to say")
-        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: "item")["m"], SenderLeadIn.defaultMs)
+        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: "item")["session::m"], SenderLeadIn.defaultMs)
     }
 }

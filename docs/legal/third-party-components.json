@@ -34,7 +34,7 @@
     {
       "id": "zipfoundation",
       "name": "ZIPFoundation",
-      "version": "0.9.20",
+      "version": "0.9.21",
       "license": "MIT",
       "distribution": "bundled",
       "by": "Thomas Zoechling",

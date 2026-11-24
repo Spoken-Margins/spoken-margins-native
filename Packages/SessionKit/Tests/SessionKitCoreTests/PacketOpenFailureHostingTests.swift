@@ -23,9 +23,9 @@ final class PacketOpenFailureHostingTests: XCTestCase {
                       canRetry: false)
         XCTAssertNotNil(state.presented)
         XCTAssertEqual(PacketOpenFailureHost.hosting(drawerIsPresented: true), .drawer)
-        XCTAssertFalse(state.takeCloseNotice(), "no notice while the sheet is still up")
+        XCTAssertFalse(state.sheetDismissed(), "no notice while the sheet is still up")
         _ = state.close()
-        XCTAssertTrue(state.takeCloseNotice(), "closing the drawer's sheet tells the drawer once")
-        XCTAssertFalse(state.takeCloseNotice())
+        XCTAssertTrue(state.sheetDismissed(), "the drawer's sheet has left: tell the drawer once")
+        XCTAssertFalse(state.sheetDismissed())
     }
 }

@@ -13,19 +13,6 @@ public struct QuickFolderStatus: Sendable {
         case cantOpen
     }
 
-    /// Retired with the queue mode (#4274); PR 4 deletes it.
-    public struct ImportProblem: Codable, Equatable, Sendable {
-        public var fileName: String
-        public var reason: String
-        public var date: Date
-
-        public init(fileName: String, reason: String, date: Date) {
-            self.fileName = fileName
-            self.reason = reason
-            self.date = date
-        }
-    }
-
     /// The words for an elapsed time under a week: `spoken` false is the abbreviated style ("2 min. ago"), true the full one
     /// ("2 minutes ago"). On Apple platforms this is `RelativeDateTimeFormatter` with `dateTimeStyle = .named`; elsewhere (Linux
     /// host tests) it is a plain English version of the same.

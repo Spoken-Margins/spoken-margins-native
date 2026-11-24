@@ -1,0 +1,92 @@
+{
+  "schemaVersion": "spoken-margins.export.v1",
+  "item": {
+    "id": "spoken-note-n-1",
+    "title": "Nov 20 · Thinking",
+    "externalReference": "note://n-1",
+    "mediaSourceType": "native_media_file",
+    "includedFullText": true,
+    "text": "One. Two. Three. Four. Five.",
+    "sourceKind": "spoken_note",
+    "noteTranscript": {
+      "source": "note",
+      "recordingCount": 3,
+      "recordingsWithWords": 2,
+      "complete": false,
+      "recordings": [
+        {
+          "number": 1,
+          "hasWords": true,
+          "sentences": [
+            { "segmentId": "note-take-a-1-0", "text": "One." },
+            { "segmentId": "note-take-a-1-1", "text": "Two." },
+            { "segmentId": "note-take-a-1-2", "text": "Three." }
+          ]
+        },
+        { "number": 2, "hasWords": false, "sentences": [] },
+        {
+          "number": 3,
+          "hasWords": true,
+          "sentences": [
+            { "segmentId": "note-take-c-0", "text": "Four." },
+            { "segmentId": "note-take-c-1", "text": "Five." }
+          ]
+        }
+      ]
+    }
+  },
+  "session": {
+    "id": "session-note",
+    "status": "in_progress",
+    "completionPercent": 95
+  },
+  "turns": [],
+  "timeline": [
+    {
+      "type": "interjection",
+      "interjectionId": "on-two",
+      "targetType": "item",
+      "targetId": "spoken-note-n-1",
+      "percent": 40
+    },
+    {
+      "type": "interjection",
+      "interjectionId": "on-four-written",
+      "targetType": "item",
+      "targetId": "spoken-note-n-1",
+      "percent": 40
+    }
+  ],
+  "interjections": [
+    {
+      "id": "on-two",
+      "sessionId": "session-note",
+      "targetType": "item",
+      "targetId": "spoken-note-n-1",
+      "roughPercent": 40,
+      "anchorBefore": "Two.",
+      "anchorAfter": "Three.",
+      "mediaTimeMs": 2000,
+      "transcriptionStatus": "transcribed",
+      "transcript": "Margin on-two.",
+      "captureKind": "audio",
+      "sourceCharOffset": 5,
+      "sourceSegmentId": "note-take-a-1-1"
+    },
+    {
+      "id": "on-four-written",
+      "sessionId": "session-note",
+      "targetType": "item",
+      "targetId": "spoken-note-n-1",
+      "roughPercent": 40,
+      "anchorBefore": "Four.",
+      "anchorAfter": "Five.",
+      "mediaTimeMs": 7000,
+      "transcriptionStatus": "transcribed",
+      "transcript": "A written thought.",
+      "captureKind": "written",
+      "sourceCharOffset": 17,
+      "sourceSegmentId": "note-take-c-0"
+    }
+  ]
+}

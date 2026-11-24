@@ -108,6 +108,7 @@ final class CatalogDrawerModel: ObservableObject {
         self.subscriptions = subscriptions
         self.follow = follow
         self.makeOPMLImport = makeOPMLImport
+        packetOpenFailures?.onFriendItemOpened = { [weak self] in self?.friendItemOpened($0) }
     }
 
     /// The app's drawer: the bundled snapshot plus a cache in Application Support.
@@ -196,6 +197,19 @@ final class CatalogDrawerModel: ObservableObject {
         showsFriendLinkCard = false
         if isPresented, isFirstRunOpening { friendFileOpenedUnderneath = true }
         recordFriendFileArrival()
+    }
+
+    /// The import says a friend's item opened. If that is the first one of this first launch, it is remembered as the
+    /// arrival item, so its end can offer to follow its show (#4672). An item the listener opened themselves never is.
+    func friendItemOpened(_ itemId: String) {
+        let hadReached = welcomeOrder.reachedFriendItem
+        welcomeOrder.friendItemOpened()
+        // A file or link that arrives while the first-run drawer shows picks leaves the order where it was (the drawer
+        // stays), so that case is the file having opened underneath it.
+        let openedUnderPicks = isPresented && isFirstRunOpening && friendFileOpenedUnderneath
+        guard openedUnderPicks || (!hadReached && welcomeOrder.reachedFriendItem) else { return }
+        var arrival = FirstLaunchArrival(defaults: defaults)
+        arrival.recordItem(itemId)
     }
 
     /// The sheet that said a friend's link or file could not be opened has closed. The drawer that file withdrew comes
@@ -306,6 +320,13 @@ final class CatalogDrawerModel: ObservableObject {
         // Held back by a friend's file, Done with nothing picked plays nothing: the Library has the friend's episode (#3796).
         let nothingToPlay = !welcomeOrder.playsWelcomeSampleOnClose && picks.isEmpty
         playsOnDismiss = isFirstRunOpening && startFirstListen != nil && !friendFileOpenedUnderneath && !nothingToPlay
+        isPresented = false
+    }
+
+    /// Done on the preview a Shortcut opened (#4290): the whole drawer closes, back to wherever the listener was, and
+    /// nothing plays. Bringing shows in from Apple Podcasts is not a first pick, so the first-run play doesn't apply.
+    func finishAfterShortcutImport() {
+        playsOnDismiss = false
         isPresented = false
     }
 
@@ -533,7 +554,8 @@ struct CatalogDrawerView: View {
             )) {
                 if let importer = drawer.shortcutImport {
                     // A new list from the Shortcut is a new screen, not the old one's state.
-                    OPMLImportScreen(importer: importer).id(ObjectIdentifier(importer))
+                    OPMLImportScreen(importer: importer, onDone: importer.origin == .shortcut ? { drawer.finishAfterShortcutImport() } : nil)
+                        .id(ObjectIdentifier(importer))
                 }
             }
         }
@@ -576,6 +598,12 @@ struct CatalogDrawerView: View {
     @ViewBuilder
     private var importLink: some View {
         if let makeOPMLImport = drawer.makeOPMLImport {
+            #if !SPOKEN_MARGINS_LEGACY
+            // Above the file import: most iPhone listeners are in Apple Podcasts, which has no export (#4290).
+            ApplePodcastsImportRow()
+                .padding(.horizontal, 16)
+                .accessibilityIdentifier("catalog.drawer.importApplePodcasts")
+            #endif
             NavigationLink {
                 OPMLImportScreen(importer: makeOPMLImport())
             } label: {

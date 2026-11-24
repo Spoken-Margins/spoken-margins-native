@@ -349,14 +349,28 @@ class RateLimitTests(unittest.TestCase):
             github.pull(7)
         self.assertEqual(len([c for c in calls if 'rate_limit' in c]), 1)
 
-    def test_an_unreadable_reset_and_a_secondary_limit_are_ordinary_failures(self):
+    def test_an_unreadable_reset_is_an_ordinary_failure(self):
         github, _, sleeps = self.github([(1, '', self.LIMITED), (1, '', 'HTTP 500'), (0, '{"number": 7}', '')])
         self.assertEqual(github.pull(7), {'number': 7})
         self.assertEqual(sleeps, [policy.RETRY_WAIT])
+
+    def test_a_secondary_limit_waits_a_minute_once_without_asking_for_a_reset(self):
+        """#5224: a secondary limit names no reset; the ordinary 10 and 20 second retries came too soon for search."""
         secondary = 'gh: You have exceeded a secondary rate limit. Please wait a few minutes'
-        github, calls, _ = self.github([(1, '', secondary), (0, '{"number": 7}', '')])
+        github, calls, sleeps = self.github([(1, '', secondary), (0, '{"number": 7}', '')])
         self.assertEqual(github.pull(7), {'number': 7})
         self.assertFalse([c for c in calls if 'rate_limit' in c])
+        self.assertEqual(sleeps, [policy.SECONDARY_WAIT])
+
+    def test_a_limit_told_only_in_the_body_on_stdout_is_still_a_limit(self):
+        """#5224: `gh api` prints the error body on stdout; stderr alone can lack the reason."""
+        body = json.dumps({'message': 'API rate limit exceeded for installation ID 1.'})
+        github, calls, sleeps = self.github([(1, body, ''), (0, '1010', ''), (0, '{"number": 7}', '')])
+        self.assertEqual(github.pull(7), {'number': 7})
+        self.assertEqual(calls[1][:3], ['gh', 'api', 'rate_limit'])
+        github, _, _ = self.github([(1, json.dumps({'message': 'Not Found'}), 'gh: HTTP 404')] * 3)
+        with self.assertRaisesRegex(policy.ReadFailed, 'HTTP 404 Not Found'):
+            github.pull(7)
 
     def test_a_single_try_dispatch_never_waits(self):
         github, calls, sleeps = self.github([(1, '', self.LIMITED)])
@@ -395,6 +409,146 @@ class RetryTests(unittest.TestCase):
         github = policy.GitHub('o/r', run=lambda cmd, **k: subprocess.CompletedProcess(cmd, 0, out, ''),
                                sleep=lambda s: None)
         self.assertEqual([c['body'] for c in github.comments(7)], ['b', 'c'])
+
+
+FAKE_GH = r'''#!/usr/bin/env python3
+"""A fake `gh api` for the inherited-holds lookup: logs each call, answers the first search with a rate limit when
+FAKE_GH_LIMIT_SEARCH is set (the error body on stdout, nothing on stderr), and every PR with no comments."""
+import json, os, sys, time
+from pathlib import Path
+state = Path(os.environ['FAKE_GH_DIR'])
+args = sys.argv[1:]
+with open(state / 'calls.jsonl', 'a') as log:
+    log.write(json.dumps(args) + '\n')
+rest, path, skip = args[1:], None, False
+for arg in rest:
+    if skip:
+        skip = False
+    elif arg in ('--jq', '-f', '-F', '-X'):
+        skip = True
+    elif not arg.startswith('-'):
+        path = arg
+        break
+if path == 'rate_limit':
+    print(int(time.time()) + 5)
+elif path.startswith('search/'):
+    if os.environ.get('FAKE_GH_LIMIT_SEARCH') and not (state / 'limited').exists():
+        (state / 'limited').write_text('')
+        print(json.dumps({'message': 'API rate limit exceeded for installation ID 1.',
+                          'documentation_url': 'https://docs.github.com/rest/overview/resources-in-the-rest-api#rate-limiting'}))
+        sys.exit(1)
+    print(json.dumps({'total_count': 0, 'incomplete_results': False, 'items': []}))
+elif '/pulls/' in path and path.split('/pulls/')[1].isdigit():
+    print(json.dumps({'labels': [], 'author_association': 'OWNER', 'user': {'login': 'owner'}, 'body': ''}))
+elif path.endswith('/pulls?per_page=100'):
+    print('[]')
+elif '/comments' in path:
+    print('' if '--paginate' in args else '[]')
+else:
+    sys.stderr.write('fake gh: no answer for ' + path + '\n')
+    sys.exit(1)
+'''
+
+
+class SearchLimitTests(unittest.TestCase):
+    """#5224: merge group run 45291666840 failed whole when the inherited-holds search hit GitHub's search rate limit.
+    The real lookup (main's scripts/lane_inherited_holds.py) runs against a fake `gh` on PATH."""
+
+    def setUp(self):
+        self.repo = Repo({'scripts/a.py': 'a\n'})
+        self.addCleanup(self.repo.close)
+        tree = self.repo.tree
+        # main carries the lookup the check loads from it, as the real main does
+        (tree / 'scripts').mkdir(exist_ok=True)
+        (tree / 'scripts/lane_inherited_holds.py').write_text((SCRIPTS / 'lane_inherited_holds.py').read_text())
+        git(tree, 'add', 'scripts/lane_inherited_holds.py')
+        git(tree, 'commit', '-q', '-m', f'Lookup\n\n{SIGNED}')
+        git(tree, 'push', '-q', 'origin', 'main')
+        self.heads = []
+        for n in range(3):
+            git(tree, 'checkout', '-q', '-b', f'pr{n}', 'main')
+            (tree / f'scripts/p{n}.py').write_text(f'{n}\n')
+            git(tree, 'add', '.')
+            git(tree, 'commit', '-q', '-m', f'Change {n}\n\n{SIGNED}')
+            self.heads.append(git(tree, 'rev-parse', 'HEAD'))
+        git(tree, 'checkout', '-q', 'main')
+        self.state = Path(self.repo.dir.name) / 'gh'
+        bin_dir = self.state / 'bin'
+        bin_dir.mkdir(parents=True)
+        (bin_dir / 'gh').write_text(FAKE_GH)
+        (bin_dir / 'gh').chmod(0o755)
+        env = {'PATH': f'{bin_dir}{os.pathsep}{os.environ["PATH"]}', 'FAKE_GH_DIR': str(self.state)}
+        patches = [mock.patch.dict(os.environ, env),
+                   mock.patch.object(policy.rules(), 'INHERITED_CACHE', self.state / 'cache.json')]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def calls(self) -> list[list[str]]:
+        return [json.loads(line) for line in (self.state / 'calls.jsonl').read_text().splitlines()]
+
+    def judge(self, prs):
+        sleeps, out = [], io.StringIO()
+        github = policy.GitHub('o/r', sleep=sleeps.append, rate_wait=3700, out=io.StringIO())
+        code = policy.judge(github, self.repo.tree, 'main', prs, out=out, classify=scope_of)
+        return code, out.getvalue(), sleeps
+
+    def test_a_search_rate_limit_is_waited_out_and_the_pr_may_merge(self):
+        with mock.patch.dict(os.environ, {'FAKE_GH_LIMIT_SEARCH': '1'}):
+            code, out, sleeps = self.judge([(7, self.heads[0])])
+        self.assertEqual(out, f'#7 at {self.heads[0][:7]} may merge.\n')
+        self.assertEqual(code, 0)
+        searches = [c for c in self.calls() if any(a.startswith('search/') for a in c)]
+        self.assertEqual(len(searches), 3)  # closed-unmerged twice (refused, then read), open once
+        self.assertEqual(searches[0], searches[1])
+        self.assertTrue(any('.resources.search.reset' in c for c in self.calls()))
+        self.assertEqual(len(sleeps), 1)
+
+    def test_a_group_of_prs_searches_once_per_query(self):
+        code, out, _ = self.judge([(7 + n, head) for n, head in enumerate(self.heads)])
+        self.assertEqual(code, 0, out)
+        searches = [c for c in self.calls() if any(a.startswith('search/') for a in c)]
+        self.assertEqual(len(searches), 2, searches)  # closed-unmerged and open, for all three PRs
+
+    def test_a_search_that_never_answers_holds_the_pr_and_says_why(self):
+        (self.state / 'bin/gh').write_text(FAKE_GH.replace("elif path.startswith('search/'):",
+                                                           "elif path.startswith('search/') and False:"))
+        code, out, _ = self.judge([(7, self.heads[0])])
+        self.assertEqual(code, 1)
+        self.assertIn('may not merge: the check for inherited audit findings could not finish', out)
+        self.assertIn('no answer for search/issues', out)
+
+
+class SharedSearchTests(unittest.TestCase):
+    """SharedReads answers a later `updated:>=` day from the earlier search, and searches again for an earlier one."""
+
+    def test_a_later_day_is_filtered_from_memory_and_an_earlier_one_searches_again(self):
+        asked = []
+        items = [{'number': 1, 'updated_at': '2026-11-20T10:00:00Z'}, {'number': 2, 'updated_at': '2026-11-23T10:00:00Z'}]
+
+        class Fake:
+            def api(self, path, paginate=False):
+                asked.append(path)
+                return {'total_count': 2, 'incomplete_results': False, 'items': items}
+        reads = policy.SharedReads(Fake())
+
+        def ask(day, page=1):
+            q = f'repo:o/r is:pr is:open comments:>0 updated:>={day}'
+            return reads(f'search/issues?q={policy.urllib.parse.quote(q, safe="")}&sort=updated&order=desc&per_page=100&page={page}')
+        self.assertEqual([i['number'] for i in ask('2026-11-19')['items']], [1, 2])
+        self.assertEqual([i['number'] for i in ask('2026-11-22')['items']], [2])
+        self.assertEqual(ask('2026-11-22', page=2)['items'], [])
+        self.assertEqual(len(asked), 1)
+        ask('2026-11-01')
+        self.assertEqual(len(asked), 2)
+        self.assertIn('updated%3A%3E%3D2026-11-01', asked[1])
+
+    def test_an_incomplete_search_fails_closed(self):
+        class Fake:
+            def api(self, path, paginate=False):
+                return {'total_count': 5, 'incomplete_results': True, 'items': []}
+        with self.assertRaises(policy.ReadFailed):
+            policy.SharedReads(Fake())('search/issues?q=repo%3Ao%2Fr%20updated%3A%3E%3D2026-11-22&page=1')
 
 
 class WorkflowTests(unittest.TestCase):
