@@ -61,6 +61,9 @@ LANE_NOTE = ('Lane change: the runner merges it only after a Codex or Claude aud
 
 SESSIONKIT_RISK = {'SessionKitAudio': 'audio', 'SessionKitPersistence': 'persistence', 'SessionKitSharing': 'packet'}
 SESSIONKIT_PACKET_FILES = {'SharingModels.swift', 'ShareableLinkPolicy.swift'}
+# The on-device voice's player and its assembler moved from the app (#4691), where APP_AUDIO rated them audio by name;
+# only these (and PreparedChunkPlan, split from PreparedAudioCoordinator.swift) keep that rating, not the rest of SessionKitSupertonic.
+SESSIONKIT_AUDIO_FILES = {'SupertonicSpeechPlaybackClient.swift', 'SupertonicPreparedAudioAssembler.swift', 'PreparedChunkPlan.swift'}
 PACKET_SCHEMAS = {'spoken-margins-package.schema.json', 'shared-commentary-layer.schema.json',
                   'interjection-share-revision.schema.json', 'portable-listening-map-proposal.schema.json'}
 PACKET_FIXTURES = ('Contracts/fixtures/interjection-packages/', 'Contracts/fixtures/sharing/')
@@ -482,7 +485,8 @@ def classify_path(root, path, diff_text='', build_script_paths=frozenset()):
         parts = Path(path).parts
         target = parts[parts.index('Sources') + 1] if 'Sources' in parts else ''
         filters = sessionkit_filters(root, path)
-        risk = SESSIONKIT_RISK.get(target) or ('packet' if name in SESSIONKIT_PACKET_FILES else None)
+        risk = (SESSIONKIT_RISK.get(target) or ('packet' if name in SESSIONKIT_PACKET_FILES else None)
+                or ('audio' if name in SESSIONKIT_AUDIO_FILES else None))
         if risk:
             return Finding(path, 2, risk, swift_filters=filters, commands=T2_COMMANDS)
         if any(PUBLIC_API.match(line) for line in diff_text.splitlines()):
