@@ -207,7 +207,9 @@ struct ExportScreen: View {
     }
 
     /// The toolbar's Share (#5306): the Share Margins sheet when this item has Margins to send, otherwise an alert that
-    /// says why, by the item screen's own rule (`ItemShareStart`). A second tap while the check runs does nothing.
+    /// says why, by the item screen's own rule (`ItemShareStart`). It starts where the item screen's Share starts (the
+    /// review with the listener's Margins picked, or the reply sheet when a friend's answers are waiting), so the two doors
+    /// can't disagree (Default taken on #5306). A second tap while the check runs does nothing.
     private func switchToShare() {
         guard !checksShare, !model.isSharingInterjectionsPresented else { return }
         checksShare = true
