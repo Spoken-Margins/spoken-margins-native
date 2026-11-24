@@ -62,6 +62,8 @@ struct MarginTidyCard: View {
     /// The Margin as it is stored now.
     let margin: Interjection
     let card: MarginTidyCardModel
+    /// Called after the author taps an answer. The export sheet's review closes on it (#4338's "Tidy version to review").
+    var onAnswered: (() -> Void)? = nil
 
     var body: some View {
         switch MarginTidyCardState.state(for: margin) {
@@ -116,10 +118,14 @@ struct MarginTidyCard: View {
     @ViewBuilder private func actions(_ offer: MarginTidyOffer) -> some View {
         let use = Button("Use tidy version") {
             model.useTidyVersion(margin, proposal: offer.proposal, basedOn: offer.basedOn)
+            onAnswered?()
         }
         .buttonStyle(PrimaryButtonStyle())
         .accessibilityIdentifier("marginDetail.tidy.use.button")
-        let keep = Button("Keep mine") { model.keepMarginAsSpoken(margin) }
+        let keep = Button("Keep mine") {
+            model.keepMarginAsSpoken(margin)
+            onAnswered?()
+        }
             .buttonStyle(SecondaryButtonStyle())
             .accessibilityIdentifier("marginDetail.tidy.keep.button")
         if dynamicTypeSize.isAccessibilitySize {
@@ -143,6 +149,7 @@ struct MarginTidyCard: View {
                 .accessibilityIdentifier("marginDetail.tidy.used.label")
             Button("Use my original words", systemImage: "arrow.uturn.backward") {
                 model.useOriginalWords(of: margin)
+                onAnswered?()
             }
             .accessibilityIdentifier("marginDetail.tidy.original.button")
         }

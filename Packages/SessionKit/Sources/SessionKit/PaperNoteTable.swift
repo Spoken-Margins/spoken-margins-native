@@ -120,12 +120,12 @@ public struct PaperNoteTable: Equatable, Sendable {
     private static func row(for paper: Paper) -> (cells: [String], newest: Date, itemId: String)? {
         var byRole: [PaperNoteRole: [Answer]] = [:]
         var newest: Date?
-        for margin in paper.margins where margin.itemId == paper.itemId && margin.targetType == .item && margin.status == "active" {
+        for margin in paper.margins where PaperNoteOrder.isOwnOnPaper(margin, itemId: paper.itemId) {
             guard let role = margin.paperRole else { continue }
             let text = (margin.displayText ?? margin.cleanedTranscript ?? margin.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
             byRole[role, default: []].append(Answer(
-                text: text, page: paper.document?.pageNumber(atCharacter: margin.anchor.startChar),
+                text: text, page: PaperNoteOrder.page(of: margin, in: paper.document),
                 startChar: margin.anchor.startChar, createdAt: margin.createdAt, id: margin.id
             ))
             newest = max(newest ?? margin.createdAt, margin.createdAt)
@@ -133,15 +133,10 @@ public struct PaperNoteTable: Equatable, Sendable {
         guard let newest else { return nil }
         func answers(_ role: PaperNoteRole) -> [Answer] {
             (byRole[role] ?? []).sorted { lhs, rhs in
-                switch (lhs.page, rhs.page) {
-                case let (left?, right?) where left != right: return left < right
-                case (nil, .some): return false
-                case (.some, nil): return true
-                default: break
-                }
-                if lhs.startChar != rhs.startChar { return lhs.startChar < rhs.startChar }
-                if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
-                return lhs.id < rhs.id
+                PaperNoteOrder.precedes(
+                    .init(page: lhs.page, startChar: lhs.startChar, createdAt: lhs.createdAt, id: lhs.id),
+                    .init(page: rhs.page, startChar: rhs.startChar, createdAt: rhs.createdAt, id: rhs.id)
+                )
             }
         }
         func joined(_ answers: [Answer]) -> (String, String) {

@@ -155,6 +155,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
       if (placed.show) await current.follow(placed.show, [placed.episode]);
       else if (placed.newEpisode) await current.updateEpisode(placed.episode);
       for (const margin of placed.margins) await current.addMargin(margin);
+      await current.addToLibrary(placed.episode.id, { quiet: true });
     })();
     return { placed, saved };
   }, []);

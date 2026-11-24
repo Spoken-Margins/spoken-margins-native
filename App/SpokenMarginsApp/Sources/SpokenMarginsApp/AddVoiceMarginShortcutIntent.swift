@@ -79,7 +79,7 @@ enum AddVoiceMarginAction {
             // Words come off the main actor and never hold the Shortcut up; one that doesn't finish here is caught up
             // from the saved Margin (`LiveSessionSpokenMargins.transcribeMissing`).
             Task {
-                guard let text = await LiveSessionSpokenMargins.transcribe(audioPath: path) else { return }
+                guard let text = await LiveSessionSpokenMargins.transcribe(audioPath: path, for: .shortcutMargin) else { return }
                 await LiveSessionSpokenMargins.updateStored(in: files, marginId: marginId) { $0.setTranscript(text, forMarginId: marginId) }
             }
             return filed

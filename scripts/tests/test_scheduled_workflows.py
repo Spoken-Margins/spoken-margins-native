@@ -25,6 +25,9 @@ ON_EVENTS = {
     'lane-conflicts.yml': 'pull_request',
 }
 FIVE = set(ON_EVENTS) | {'main-t3.yml'}
+# Started by the cloud session's own workflow_dispatch, never by an event that would run branch code with its App token
+# (#4915); its cron is 20 minutes and the VPS dispatches it on the same interval.
+BACKSTOPPED = FIVE | {'open-cloud-prs.yml'}
 
 
 def triggers(workflow):
@@ -117,15 +120,29 @@ class ScheduleGuardTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertIn(event, triggers(parse(ROOT / '.github/workflows' / name)))
 
-    def test_the_backstop_covers_exactly_the_five_and_each_can_be_dispatched(self):
-        self.assertEqual(set(backstop.WORKFLOWS), FIVE)
+    def test_the_backstop_covers_exactly_the_five_and_the_pr_opener_and_each_can_be_dispatched(self):
+        self.assertEqual(set(backstop.WORKFLOWS), BACKSTOPPED)
         for name in backstop.WORKFLOWS:
             self.assertIn('workflow_dispatch', triggers(parse(ROOT / '.github/workflows' / name)), name)
 
     def test_the_backstop_interval_is_the_one_each_workflow_used_to_ask_for(self):
         self.assertEqual(backstop.WORKFLOWS, {'claude-audit.yml': 15, 'merge-stall.yml': 15,
                                               'merge-queue-label-bridge.yml': 15, 'lane-conflicts.yml': 60,
-                                              'main-t3.yml': 180})
+                                              'main-t3.yml': 180, 'open-cloud-prs.yml': 20})
+
+    def test_each_backstop_slot_is_a_daily_cron_in_its_workflow(self):
+        # #5154: the VPS checks phone-build and main-t3's fixed ticks by their times; a cron moved without the table
+        # would have it dispatch at the wrong time or miss a slot.
+        for name, slots in backstop.SLOTS.items():
+            on = triggers(parse(ROOT / '.github/workflows' / name))
+            self.assertIn('workflow_dispatch', on, name)
+            daily = set()
+            for entry in on.get('schedule') or []:
+                minute, hour, *rest = entry['cron'].split()
+                if rest == ['*', '*', '*'] and minute.isdigit() and hour.isdigit():
+                    daily.add(f'{int(hour):02d}:{int(minute):02d}')
+            with self.subTest(name):
+                self.assertEqual(set(slots), daily)
 
 
 if __name__ == '__main__':

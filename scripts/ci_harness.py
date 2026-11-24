@@ -488,8 +488,8 @@ class TimedWorld(M.World):
         job = wf['jobs'][job_id]
         outcome = event['outcome']
         if outcome in ('hang', 'cancel'):  # G5
-            # A job that writes its own check run (merge policy, #4986) is killed before it can mark it: GitHub marks
-            # a job's check cancelled itself, but this one stays in progress in a run that has ended.
+            # A job that writes its own check (merge policy, a commit status: #4986, #5162) is killed before it can post
+            # its verdict: GitHub marks a job's check cancelled itself, but this one stays pending in a run that ended.
             self.finish_job(run, job_id, 'cancelled', {'check': 'pending'} if job.get('own_check') else {})
             return
         if outcome == 'fail':
@@ -646,7 +646,13 @@ class TimedWorld(M.World):
         if 'backstop' in self.c.token_403:
             self.note(event, 'backstop: every dispatch refused, HTTP 403')
             return
-        backstop.tick('token', now, out=out, get=fake_get)
+        # The harness models no phone-build runs, so only the slots of workflows it does model (#5154: main-t3's).
+        slots = getattr(backstop, 'SLOTS', None)
+        if slots is None:
+            backstop.tick('token', now, out=out, get=fake_get)
+        else:
+            backstop.tick('token', now, out=out, get=fake_get, workflows=backstop.WORKFLOWS,
+                          slots={name: times for name, times in slots.items() if name in backstop.WORKFLOWS})
         fired = [line for line in out.getvalue().splitlines() if 'dispatched' in line]
         if fired:
             self.note(event, 'backstop: ' + ' | '.join(fired))
@@ -703,13 +709,41 @@ class FakeRerunGitHub:
                     'head': {'sha': w.head}, 'labels': [{'name': n} for n in sorted(w.labels)]}
         if path.startswith('commits/'):
             sha = path.split('/')[1]
-            return {'check_runs': [{'id': row['id'], 'name': row['name'], 'conclusion': row['conclusion'],
+            rows = [row for row in w.rows if row['sha'] == sha]
+            if '/statuses' in path:
+                # A job that writes its own check posts it as a commit status (merge-policy.yml, #5162); none is posted
+                # before the job starts.
+                return [{'id': row['id'], 'context': row['name'], 'state': self.status_state(row),
+                         'target_url': f'https://github.com/{M.REPO}/actions/runs/{row["run"]}'}
+                        for row in sorted(rows, key=lambda r: -r['id'])
+                        if self.own(row) and row['status'] != 'queued']
+            return {'check_runs': [{'id': row['id'], 'name': self.job_name(row) if self.own(row) else row['name'],
+                                    'conclusion': self.job_conclusion(row) if self.own(row) else row['conclusion'],
                                     'details_url': f'https://github.com/{M.REPO}/actions/runs/{row["run"]}/job/'
                                                    f'{row["id"]}'}
-                                   for row in w.rows if row['sha'] == sha]}
+                                   for row in rows]}
         if path.startswith('actions/jobs/'):
             return self.jobs.get(path)
         raise KeyError(path)
+
+    def job(self, row):
+        return self.w.tree.model['workflows'][row['file']]['jobs'][row['job']]
+
+    def own(self, row):
+        return bool(self.job(row).get('own_check'))
+
+    def job_name(self, row):
+        return self.job(row).get('job_name') or row['job']
+
+    def job_conclusion(self, row):
+        """The job's own check: what the job ended as, not the status it posts."""
+        return (self.w.runs[row['run'] - 1]['jobs'].get(row['job']) or {}).get('result')
+
+    @staticmethod
+    def status_state(row):
+        if row['status'] != 'completed':
+            return 'pending'
+        return {'success': 'success', 'cancelled': 'error'}.get(row['conclusion'], 'failure')
 
     def log_tail(self, job_id):
         return self.jobs.log_tail(job_id)

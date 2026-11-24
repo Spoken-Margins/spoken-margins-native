@@ -53,6 +53,7 @@ extension Gate1AppModel {
             }
             var rows = try loadLibraryRows(store: store)
             libraryWasEmptyAtLaunch = rows.isEmpty
+            if !UITestingHooks.suppressesFirstRun { runHeardFirstMarginMigration(libraryWasEmptyAtLaunch: rows.isEmpty) }
             let storedWelcomeSampleVersion = UserDefaults.standard.integer(
                 forKey: Self.welcomeSampleSeedVersionKey
             )
@@ -207,6 +208,7 @@ extension Gate1AppModel {
                 "database": databaseURL.lastPathComponent
             ]
             exportPreview = ""
+            exportSpokenNoteFootnote = nil
             refreshMarginRowsInBackground()
             tryRefreshOfflineStorageUsage()
             reportSuccess("Listening queue ready.")

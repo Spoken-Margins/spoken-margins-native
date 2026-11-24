@@ -31,13 +31,26 @@ public enum TranscriptionFailureWording {
     public static let contextNeedsRetry = "Couldn't find the source words near this Margin"
     public static let transcriptionNeedsRetry = "Transcription needs retry"
 
+    /// The error the transcription clients throw while the listener has not been asked yet (#4715): the app holds iOS's
+    /// prompt until its own card has asked. A Margin that meets it is waiting, not failed.
+    public static let speechRecognitionNotYetAskedError = "speech_recognition_not_yet_asked"
+
+    /// What a waiting Margin's status line says.
+    public static let transcriptNotYetAsked = "No transcript yet."
+
     public static func isSpeechRecognitionOff(error: String) -> Bool {
         error.contains(speechRecognitionOffError)
     }
 
-    /// The banner after transcribing a saved voice Margin fails. `isRetry` is a retry of a
+    public static func isSpeechRecognitionNotYetAsked(error: String) -> Bool {
+        error.contains(speechRecognitionNotYetAskedError)
+    }
+
+    /// The banner after transcribing a saved voice Margin fails, or nil when the Margin is only waiting for the
+    /// listener's answer (no banner, so J11 doesn't read "transcript failed" for it). `isRetry` is a retry of a
     /// Margin that may already have words, which it keeps.
-    public static func notice(error: String, isRetry: Bool) -> Notice {
+    public static func notice(error: String, isRetry: Bool) -> Notice? {
+        if isSpeechRecognitionNotYetAsked(error: error) { return nil }
         if isSpeechRecognitionOff(error: error) {
             return Notice(
                 message: isRetry
@@ -60,11 +73,14 @@ public enum TranscriptionFailureWording {
     public static func marginAttention(
         transcriptionStatus: String,
         speechRecognitionOff: Bool,
+        speechRecognitionNotYetAsked: Bool = false,
         contextUnavailable: Bool,
         recordingMissing: Bool
     ) -> String {
-        let transcript = marginStatus(transcriptionStatus: transcriptionStatus, speechRecognitionOff: speechRecognitionOff)
-        if transcriptionStatus == "failed", speechRecognitionOff, let transcript { return transcript }
+        let transcript = marginStatus(
+            transcriptionStatus: transcriptionStatus, speechRecognitionOff: speechRecognitionOff,
+            speechRecognitionNotYetAsked: speechRecognitionNotYetAsked)
+        if transcriptionStatus == "failed", speechRecognitionOff || speechRecognitionNotYetAsked, let transcript { return transcript }
         if contextUnavailable { return contextNeedsRetry }
         if recordingMissing { return "Recording is unavailable" }
         return transcript ?? "Margin needs attention"
@@ -73,12 +89,14 @@ public enum TranscriptionFailureWording {
     /// The Margin's own status line for a transcript that isn't ready, or nil when it is.
     /// `speechRecognitionOff` is the permission now: a Margin whose transcript failed can
     /// only be transcribed once it's back on.
-    public static func marginStatus(transcriptionStatus: String, speechRecognitionOff: Bool) -> String? {
+    /// `speechRecognitionNotYetAsked` is true for a failed Margin that waits on the listener's answer to the app's card (#4715).
+    public static func marginStatus(
+        transcriptionStatus: String, speechRecognitionOff: Bool, speechRecognitionNotYetAsked: Bool = false
+    ) -> String? {
         switch transcriptionStatus {
         case "failed":
-            return speechRecognitionOff
-                ? "No transcript: Speech Recognition is off. Turn it on in Settings."
-                : transcriptionNeedsRetry
+            if speechRecognitionOff { return "No transcript: Speech Recognition is off. Turn it on in Settings." }
+            return speechRecognitionNotYetAsked ? transcriptNotYetAsked : transcriptionNeedsRetry
         case "pending":
             // Only live work is "pending": a launch settles the orphans as "failed" (#942).
             return "Transcribing…"

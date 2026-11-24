@@ -50,7 +50,8 @@ final class CatalogDrawerTests: XCTestCase {
             searcher: searcher,
             startFirstListen: startFirstListen,
             libraryHoldsFriendPacket: libraryHoldsFriendPacket,
-            openFriendLink: openFriendLink
+            openFriendLink: openFriendLink,
+            packetOpenFailures: PacketOpenFailurePresenter()
         )
     }
 
@@ -83,6 +84,42 @@ final class CatalogDrawerTests: XCTestCase {
         await drawer.playFirstListenIfRequested()
         XCTAssertEqual(started.count, 1, "plays once")
     }
+
+    /// #4290: Done on the preview a Shortcut opened closes the whole drawer and plays nothing, on the first-run opening
+    /// too (bringing shows in from Apple Podcasts is not a first pick). Cancel only pops back to the drawer's list.
+    func testDoneAfterAShortcutImportClosesTheDrawerAndPlaysNothing() async throws {
+        var started: [[String]] = []
+        let defaults = try freshDefaults()
+        let drawer = CatalogDrawerModel(
+            store: nil, defaults: defaults, subscriptions: { [] }, follow: { _ in "" },
+            makeOPMLImport: { OPMLImportModel(subscriptions: { [] }, follow: { _ in }, didFollow: {}) },
+            startFirstListen: { ids, _ in started.append(ids) }
+        )
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        XCTAssertTrue(drawer.isPresented)
+
+        // Cancel on the preview: the list closes, the drawer stays.
+        XCTAssertTrue(drawer.openShortcutImport(feedLinks: ["Pod One https://feeds.example.com/pod1.xml"]))
+        drawer.shortcutImport = nil
+        XCTAssertTrue(drawer.isPresented)
+
+        XCTAssertTrue(drawer.openShortcutImport(feedLinks: ["Pod One https://feeds.example.com/pod1.xml"]))
+        XCTAssertEqual(drawer.shortcutImport?.origin, .shortcut)
+        drawer.finishAfterShortcutImport()
+        XCTAssertFalse(drawer.isPresented, "Done closes the whole drawer")
+        drawer.didDismiss()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started, [], "nothing plays: a Shortcut import is not a pick")
+        XCTAssertNil(drawer.shortcutImport)
+        XCTAssertTrue(defaults.bool(forKey: CatalogDrawerModel.seenKey), "the first-run opening is spent")
+    }
+
+    #if !SPOKEN_MARGINS_LEGACY
+    /// #4290: the action's no-links error speaks to a listener who added our Shortcut, in the words the guide's tests pin.
+    func testTheShortcutsNoLinksErrorIsTheGuidesWording() {
+        XCTAssertEqual(FollowPodcastsShortcutError.noLinks.errorDescription, ApplePodcastsImportShortcut.noLinksMessage)
+    }
+    #endif
 
     func testDoneWithNothingFollowedStartsTheFirstListenWithNoPicksSoTheWelcomeSamplePlays() async throws {
         var started: [[String]] = []
@@ -299,6 +336,7 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.friendFileArrived()
         drawer.settleFirstRun(at: .library)
         XCTAssertFalse(drawer.isPresented, "the friend's item hasn't opened yet")
+        drawer.packetOpenFailures?.friendItemOpened(itemId: "friend-item")
         drawer.listenerMoved(to: .item)
         XCTAssertFalse(drawer.isPresented)
         drawer.listenerMoved(to: .library)
@@ -314,6 +352,7 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
         drawer.settleFirstRun(at: .library)
         XCTAssertFalse(drawer.isPresented)
+        drawer.packetOpenFailures?.friendItemOpened(itemId: "friend-item")
         drawer.listenerMoved(to: .item)
         drawer.listenerMoved(to: .library)
         XCTAssertTrue(drawer.isPresented)
@@ -345,6 +384,7 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
         drawer.friendFileArrived()
         drawer.settleFirstRun(at: .library)
+        drawer.packetOpenFailures?.friendItemOpened(itemId: "friend-item")
         drawer.listenerMoved(to: .item)
         drawer.listenerMoved(to: .library)
         XCTAssertTrue(drawer.isPresented)
@@ -361,6 +401,7 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
         drawer.friendFileArrived()
         drawer.settleFirstRun(at: .library)
+        drawer.packetOpenFailures?.friendItemOpened(itemId: "friend-item")
         drawer.listenerMoved(to: .item)
         drawer.listenerMoved(to: .library)
         await drawer.load()
@@ -381,6 +422,7 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.friendFileArrived()
         XCTAssertTrue(defaults.bool(forKey: CatalogDrawerModel.deferredByFriendFileKey), "owed to the next launch while held back")
         drawer.settleFirstRun(at: .library)
+        drawer.packetOpenFailures?.friendItemOpened(itemId: "friend-item")
         drawer.listenerMoved(to: .item)
         drawer.listenerMoved(to: .library)
         XCTAssertTrue(drawer.isPresented)
@@ -399,6 +441,7 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
         drawer.friendFileArrived()
         drawer.settleFirstRun(at: .library)
+        drawer.packetOpenFailures?.friendItemOpened(itemId: "friend-item")
         drawer.listenerMoved(to: .item)
         drawer.listenerMoved(to: .library)
         XCTAssertTrue(drawer.isPresented)
@@ -406,6 +449,7 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertFalse(drawer.isPresented, "withdrawn for the second friend's file")
         XCTAssertTrue(defaults.bool(forKey: CatalogDrawerModel.deferredByFriendFileKey))
         drawer.didDismiss()
+        drawer.packetOpenFailures?.friendItemOpened(itemId: "friend-item")
         drawer.listenerMoved(to: .item)
         drawer.listenerMoved(to: .library)
         XCTAssertTrue(drawer.isPresented, "back after the second friend's item")
@@ -488,6 +532,93 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.settleFirstRun(at: .library)
         drawer.friendFileFailed(at: .library)
         XCTAssertFalse(drawer.isPresented)
+    }
+
+    /// #4834: an item the listener opened themselves while a friend's link waited is not the friend's item, so that link
+    /// failing still brings the drawer back and Done plays the Welcome sample.
+    func testAFailedFriendLinkAfterTheListenerOpenedTheirOwnItemBringsTheDrawerBackAndDonePlays() async throws {
+        var started: [(ids: [String], allowsWelcome: Bool)] = []
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog()) { ids, allowsWelcome in started.append((ids, allowsWelcome)) }
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        drawer.didDismiss()
+        drawer.listenerMoved(to: .item)
+        drawer.listenerMoved(to: .elsewhere)
+
+        drawer.friendFileFailed(at: .elsewhere)
+        drawer.listenerMoved(to: .library)
+
+        XCTAssertTrue(drawer.isPresented)
+        drawer.finish()
+        drawer.didDismiss()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started.map(\.allowsWelcome), [true])
+    }
+
+    /// #4672 PR 3: the item a friend's file opened on a first launch is remembered as the arrival item, once; an
+    /// item opened with no friend's file waiting, or a second friend's item, never replaces it.
+    func testOnlyTheFirstFriendItemOfAFirstLaunchIsRememberedAsTheArrivalItem() throws {
+        let defaults = try freshDefaults()
+        let drawer = try makeDrawer(defaults: defaults, log: FollowLog())
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        drawer.didDismiss()
+        drawer.friendItemOpened("friend-episode")
+        drawer.friendItemOpened("second-friend-item")
+        XCTAssertEqual(FirstLaunchArrival(defaults: defaults).itemId, "friend-episode")
+
+        // A friend's link that arrives while the first-run drawer still shows picks opens its item underneath it.
+        let underPicks = try freshDefaults()
+        let picking = try makeDrawer(defaults: underPicks, log: FollowLog())
+        picking.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        picking.friendFileArrived()
+        picking.friendItemOpened("pasted-link-episode")
+        XCTAssertEqual(FirstLaunchArrival(defaults: underPicks).itemId, "pasted-link-episode")
+
+        let returning = try freshDefaults()
+        let notFirstLaunch = try makeDrawer(defaults: returning, log: FollowLog())
+        notFirstLaunch.friendItemOpened("friend-episode")
+        XCTAssertNil(FirstLaunchArrival(defaults: returning).itemId, "no first-launch drawer was owed, so this is not an arrival")
+    }
+
+    /// #4834: the drawer comes back only once the failure sheet has fully left (its `onDismiss`), never on the close that
+    /// starts it: a sheet presented while the old one is still dismissing is dropped by SwiftUI. A Try Again that is
+    /// refused, and a banner after the sheet closed, are told the same way.
+    func testTheFailedLinkNoticeReachesTheDrawerOnlyAfterTheSheetHasLeft() throws {
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog())
+        let presenter = try XCTUnwrap(drawer.packetOpenFailures)
+        presenter.onCloseNotice = { [weak drawer] in drawer?.friendFileFailed(at: .library) }
+        drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        drawer.settleFirstRun(at: .library)
+        XCTAssertFalse(drawer.isPresented)
+
+        presenter.present(PacketOpenFailureSheetContent(row: .offline), retry: {}, endsOpen: true)
+        presenter.close()
+        XCTAssertFalse(drawer.isPresented, "the sheet is still leaving")
+
+        presenter.sheetDismissed()
+        XCTAssertTrue(drawer.isPresented, "the sheet is gone: the drawer comes back")
+    }
+
+    func testARefusedFileAfterTryAgainTellsTheDrawerOnceTheSheetHasLeft() throws {
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog())
+        let presenter = try XCTUnwrap(drawer.packetOpenFailures)
+        presenter.onCloseNotice = { [weak drawer] in drawer?.friendFileFailed(at: .library) }
+        drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        drawer.settleFirstRun(at: .library)
+
+        presenter.present(PacketOpenFailureSheetContent(row: .offline), retry: {}, endsOpen: true)
+        presenter.tryAgain()
+        let since = presenter.openToken
+        presenter.present(PacketOpenFailureSheetContent(row: .expired), retry: nil)
+        presenter.close()
+        presenter.sheetDismissed()
+        XCTAssertFalse(drawer.isPresented, "the refused file's open has not ended yet")
+
+        presenter.openEnded(opened: false, since: since)
+        XCTAssertTrue(drawer.isPresented, "the open ended with nothing to show: the drawer comes back")
     }
 
     // MARK: The first-launch "Got a link from a friend?" card (#3782)

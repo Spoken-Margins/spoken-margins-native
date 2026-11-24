@@ -1040,6 +1040,25 @@ class SwiftTextRuleTests(unittest.TestCase):
             with self.subTest(label):
                 self.assertEqual(verdict(data), expected)
 
+    def test_entry_type_follows_zipfoundation_0_9_21(self):
+        # ZIPFoundation 0.9.21 lets a trailing slash win over a regular-file mode (#4969); the mirror must agree.
+        def info(name, mode, system=3):
+            entry = zipfile.ZipInfo(name, fmt.FIXED_ZIP_DATE)
+            entry.create_system = system
+            entry.external_attr = mode << 16
+            return entry
+        for label, entry, expected in [
+            ('a regular file', info('preview.md', 0o100644), 'file'),
+            ('a regular-file mode on a slash path', info('artifacts/', 0o100644), 'directory'),
+            ('a regular-file mode on a slash path made on macOS', info('artifacts/', 0o100644, 19), 'directory'),
+            ('a directory mode', info('artifacts/', 0o040755), 'directory'),
+            ('a symlink mode on a slash path', info('artifacts/', 0o120777), 'symlink'),
+            ('an unusual mode on a slash path', info('artifacts/', 0o010644), 'directory'),
+            ('an MS-DOS slash path', info('artifacts/', 0, 0), 'directory'),
+        ]:
+            with self.subTest(label):
+                self.assertEqual(fmt.zip_entry_type(entry), expected)
+
     def test_crlf_text_counts_as_swift_counts_it(self):
         base = fmt.unpack((EXAMPLES / 'article-embedded-text.spokenmargins').read_bytes())
         manifest, artifacts, assets = json.loads(json.dumps(base[0])), dict(base[1]), dict(base[2])

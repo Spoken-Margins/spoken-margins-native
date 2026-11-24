@@ -1218,7 +1218,8 @@ RUNNER_TESTS_TIMEOUT = 600
 # stream of passing dots, so two runs of #2409 failed with "executed zero tests". It gets #1767's rule: a run still
 # printing at its budget goes on until the ceiling; one silent for the stall time is a hang and stops.
 # #4763 set 1800 by hand on 2026-11-20 after passing hosted runs took up to 1180 s and two PRs were killed at 1200 s;
-# the table now derives the same 1800 from the last 30 passing runs (1.5 x p95, ci_step_budgets.json).
+# the table derived the same 1800 from the last 30 passing runs (1.5 x p95, ci_step_budgets.json). Since the slow tier
+# left PR runs (#5145) the samples give 900 s, but the table never lowers a limit (#5009), so 1800 stays.
 RUNNER_TESTS_CEILING = STEP_BUDGETS['RUNNER_TESTS_CEILING']['seconds']
 RUNNER_TESTS_STALL_SECONDS = PACKAGE_STALL_SECONDS  # one test compiles Swift, silent for minutes at high load
 RUNNER_TESTS_LIMITS = {'timeout': RUNNER_TESTS_TIMEOUT, 'ceiling': RUNNER_TESTS_CEILING,

@@ -60,7 +60,7 @@ struct PlaybackScreen: View {
     @State private var timelinePull = TimelinePullHolder()
     @State private var playbackTick = 0 // bumped by each progress tick, so this screen follows the clock (#2074)
     @StateObject private var nowScene = NowSceneController()
-    @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
+    @State private var firstMarginPromptAnnounced = false // said once per showing (#5036)
 
     /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
     /// looks first. On Now it sits in line with the title, so the screen gets no taller (#2262).
@@ -70,9 +70,16 @@ struct PlaybackScreen: View {
         }
         // On the always-dark plate the default tint is too dark in light mode (#3733); the tint is set on the button, never a container.
         .tint(AppColors.listeningAccent)
-        .accessibilityLabel("Library")
+        // "Back to Library", not "Library": the bottom row's Library button is on screen too, and a swipe-through heard
+        // "Library" twice (#5036). The bottom button keeps its visible word as its name.
+        .accessibilityLabel("Back to Library")
         .accessibilityHint("Leaves this screen. Playback keeps going.")
         .accessibilityIdentifier("playback.exit.button")
+    }
+
+    /// The first-Margin prompt is on screen: it is due and the Now pane, the only one that draws it, is showing (#5036).
+    private var firstMarginPromptIsInView: Bool {
+        model.isFirstMarginPromptShowing && selectedPane == .now
     }
 
     private var leadingControlPane: PlaybackLeadingControl.Pane {
@@ -96,11 +103,19 @@ struct PlaybackScreen: View {
                                 VStack(alignment: .leading, spacing: 20) {
                                     if model.snapshot.phase == .finished {
                                         Text("Finished").font(.headline).foregroundStyle(AppColors.listeningAccent)
+                                        ArrivalFollowCard()
                                     }
                                     if model.isFirstMarginPromptShowing { FirstMarginPromptCard() }
                                     playbackHeader
                                         // The Library arrow lives in the header; once following scrolls it away, the toolbar shows it (#4453).
-                                        .onScrollVisibilityChange(threshold: 0.01) { nowScene.headerIsVisible = $0 }
+                                        // Gone below one threshold, back above another, so the toolbar arrow's own bar
+                                        // layout can't flip it on every pass (#4739).
+                                        .onScrollVisibilityChange(threshold: NowHeaderVisibility.goneBelow) {
+                                            nowScene.headerReachedGoneThreshold($0)
+                                        }
+                                        .onScrollVisibilityChange(threshold: NowHeaderVisibility.backAt) {
+                                            nowScene.headerReachedBackThreshold($0)
+                                        }
                                     capturePermissionRecovery
                                     importedCommentaryControl
                                     if model.selectedItem.isNativeAudio {
@@ -192,6 +207,8 @@ struct PlaybackScreen: View {
                             if selectedPane == .now { PinnedMarginCardView() }
                             // A note read where it is cited: the same slot, never beside a friend's card (#3777).
                             if selectedPane == .now { FootnoteCardPinnedView() }
+                            // The app's line before iOS asks about Speech Recognition; a friend's card keeps the slot first (#4715).
+                            if selectedPane == .now { SpeechAskCardSlot() }
                             if !model.recordingNavigationIsLocked, let feedback = model.playbackFeedbackTag {
                                 PlaybackFeedbackTagView(event: feedback.event, tag: feedback.tag)
                                     .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
@@ -244,22 +261,11 @@ struct PlaybackScreen: View {
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
-                // One meaning for the top-left arrow on every tab: leave the screen. The exception is the Timeline editor
-                // with the keyboard up, where the tab switch is hidden and this is the way back to Now (#4027).
-                let leading = PlaybackLeadingControl.control(
+                PlaybackLeadingToolbar(
                     pane: leadingControlPane, timelineEditorHasFocus: timelineDock.hidesDock,
-                    nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio)
-                if leading == .libraryExit {
-                    ToolbarItem(placement: .topBarLeading) { libraryExitButton }
-                } else if leading == .returnToNow {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button { selectedPane = .now } label: {
-                            Label("Now Playing", systemImage: "arrow.left")
-                        }
-                        .tint(AppColors.listeningAccent)
-                        .accessibilityIdentifier("timeline.nowPlaying.button")
-                    }
-                }
+                    nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio,
+                    returnToNow: { selectedPane = .now }
+                ) { libraryExitButton }
             }
             .scrollDismissesKeyboard(.interactively)
             .trackedSheet(item: $selectedInterjection) { interjection in
@@ -312,6 +318,16 @@ struct PlaybackScreen: View {
         // (#3790). The card lives on that pane, so another pane showing never marks it.
         .onChange(of: model.friendListenState, initial: true) { _, _ in
             if selectedPane == .now { model.noteFriendListen() }
+        }
+        // The first-Margin prompt appears above the header while VoiceOver's focus is usually on the play controls: say so
+        // once when it comes into view, without moving focus (#5036). It is drawn only on the Now pane, so "in view" is "due
+        // and Now showing"; `initial` covers a screen that opens with it already there, and the flag keeps a trip to the
+        // Timeline and back from repeating it. `VoiceOverAnnouncements` decides; VoiceOver off makes the post silent.
+        .onChange(of: firstMarginPromptIsInView, initial: true) { _, isInView in
+            if let text = VoiceOverAnnouncements.firstMarginPrompt(alreadyAnnounced: firstMarginPromptAnnounced, isInView: isInView) {
+                AccessibilityNotification.Announcement(text).post()
+                firstMarginPromptAnnounced = true
+            }
         }
         .onChange(of: selectedPane) { _, pane in
             // Now's scroll view is built fresh each time, so a drag or overscroll from the last one is stale (#4816).
@@ -954,18 +970,14 @@ struct PlaybackScreen: View {
             itemText: model.selectedItem.text,
             itemHasNativeAudio: model.selectedItem.isNativeAudio
         ) {
+            // One look since #4781: the icon. VoiceOver and the Large Content Viewer still name it.
             Button(action: openSourceText) {
-                if usesVerbosePlaybackActions {
-                    PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")
-                    .frame(minHeight: 32)
-                    .expandedHitArea(vertical: 6)
-                } else {
-                    Image(systemName: "doc.plaintext")
-                    .frame(minWidth: 24, minHeight: 32)
-                    .expandedHitArea(horizontal: 10, vertical: 6)
-                }
+                Image(systemName: "doc.plaintext")
+                .frame(minWidth: 24, minHeight: 32)
+                .expandedHitArea(horizontal: 10, vertical: 6)
             }
             .accessibilityLabel("View native source text")
+            .accessibilityShowsLargeContentViewer { Label("Text", systemImage: "doc.plaintext") }
             .accessibilityIdentifier("playback.sourceText.button")
         }
 
@@ -991,8 +1003,9 @@ struct PlaybackScreen: View {
         Button {
             isSleepTimerPresented = true
         } label: {
-            if usesVerbosePlaybackActions {
-                PlaybackControlLabel(title: model.sleepTimerIsActive ? model.sleepTimerDescription : "Sleep", systemImage: "moon.zzz")
+            // The moon alone, with the time left beside it while a timer runs (#4781).
+            if let text = model.sleepTimerCompactButtonText {
+                PlaybackControlLabel(title: text, systemImage: "moon.zzz")
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .frame(minHeight: 32)
                     .expandedHitArea(vertical: 6)
@@ -1003,6 +1016,7 @@ struct PlaybackScreen: View {
             }
         }
         .accessibilityLabel(model.sleepTimerDescription)
+        .accessibilityShowsLargeContentViewer { Label(model.sleepTimerDescription, systemImage: "moon.zzz") }
         .accessibilityIdentifier("playback.sleepTimer.button")
         .popover(isPresented: $isSleepTimerPresented, arrowEdge: .top) {
             sleepTimerPopover
@@ -1012,18 +1026,11 @@ struct PlaybackScreen: View {
         Button {
             model.cyclePlaybackRate()
         } label: {
-            if usesVerbosePlaybackActions {
-                PlaybackControlLabel(title: model.compactPlaybackRateDescription, systemImage: "speedometer")
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .frame(minHeight: 32)
-                    .expandedHitArea(vertical: 6)
-            } else {
-                Text(model.compactPlaybackRateDescription)
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .frame(minHeight: 32)
-                    .expandedHitArea(vertical: 6)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
+            Text(model.compactPlaybackRateDescription)
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .frame(minHeight: 32)
+                .expandedHitArea(vertical: 6)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
         .accessibilityHint("Advances to the next playback speed")
@@ -2036,7 +2043,7 @@ private func interjectionPreview(_ interjection: Interjection) -> String {
        !transcript.isEmpty {
         return transcript
     }
-    return TranscriptionFailureWording.marginStatus(transcriptionStatus: interjection.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff) ?? interjection.transcriptionStatus
+    return TranscriptionFailureWording.marginStatus(transcriptionStatus: interjection.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff, speechRecognitionNotYetAsked: SpeechAskController.marginIsWaitingForAnswer(MarginIdentity.make(sessionId: interjection.sessionId, interjectionId: interjection.id))) ?? interjection.transcriptionStatus
 }
 
 private struct LightButtonStyle: ButtonStyle {

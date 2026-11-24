@@ -4,6 +4,15 @@ import SessionKitPersistence
 
 /// Summary and pasted response entry points. Moved out of `Gate1AppModel.swift` (#960).
 extension Gate1AppModel {
+    /// Moved out of `Gate1AppModel.swift` unchanged (#4781), so that file stays under its ceiling.
+    var localFoundationModelAvailable: Bool {
+        localFoundationModelAvailability.isAvailable
+    }
+
+    var localFoundationModelAvailabilityDescription: String {
+        localFoundationModelAvailability.description
+    }
+
     /// The AI jobs (and, for a failed summary, its notes) behind the Summarize / Retry controls. Those controls ask on
     /// every render of the playback screen, so this reads the store once per state of the session, off the main
     /// thread, and answers from the last read meanwhile (#2508). The key is the session's own snapshot fields, which
