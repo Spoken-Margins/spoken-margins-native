@@ -11,6 +11,22 @@ final class FindInTextSeekPlanTests: XCTestCase {
     }
 }
 
+final class FindInTextSeekGuardTests: XCTestCase {
+    func testSeekOnlyWhenTheSearchedItemIsLoaded() {
+        // the open returned early or threw: the other item is still loaded
+        XCTAssertFalse(FindInTextSeekPlan.shouldSeek(loadedItemId: "b", searchedItemId: "a"))
+        // the open switched items
+        XCTAssertTrue(FindInTextSeekPlan.shouldSeek(loadedItemId: "a", searchedItemId: "a"))
+        // already loaded: seek in place
+        XCTAssertEqual(FindInTextSeekPlan.plan(loadedItemId: "a", selectedItemId: "a"), .seekInPlace)
+        XCTAssertTrue(FindInTextSeekPlan.shouldSeek(loadedItemId: "a", searchedItemId: "a"))
+        // nothing loaded
+        XCTAssertFalse(FindInTextSeekPlan.shouldSeek(loadedItemId: nil, searchedItemId: "a"))
+        XCTAssertFalse(FindInTextSeekPlan.shouldSeek(loadedItemId: "", searchedItemId: "a"))
+        XCTAssertFalse(FindInTextSeekPlan.shouldSeek(loadedItemId: "", searchedItemId: ""))
+    }
+}
+
 final class FindInTextPresentationTests: XCTestCase {
     private func match(excerpt: String = "see the cat sat", s: Int = 8, e: Int = 11, before: Bool = false, after: Bool = false,
                        title: String? = "Methods", span: ItemTextSearch.SkippedSpan? = nil) -> ItemTextSearch.Match {

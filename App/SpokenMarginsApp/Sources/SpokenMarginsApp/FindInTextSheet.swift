@@ -71,16 +71,18 @@ struct FindInTextSheet: View {
     }
 
     /// The Timeline row's seek, then close. No play call when the item is loaded: a paused item stays paused. An item
-    /// the player doesn't hold is opened first by the Timeline's "Play source from beginning" call, because the
-    /// engine's text seek throws for any other item.
+    /// the player doesn't hold is opened first by the Timeline's "Play source from beginning" call, and the seek runs
+    /// only if that open loaded it (the engine's text seek never checks item ids).
     private func select(_ match: ItemTextSearch.Match) {
-        switch FindInTextSeekPlan.plan(loadedItemId: model.snapshot.itemId, selectedItemId: model.selectedItem.id) {
-        case .seekInPlace:
-            break
-        case .openThenSeek:
+        let searchedId = model.selectedItem.id
+        if FindInTextSeekPlan.plan(loadedItemId: model.snapshot.itemId, selectedItemId: searchedId) == .openThenSeek {
             model.playSourceFromBeginning(fromTimeline: true)
         }
-        model.seekText(toCharOffset: match.playbackOffset)
+        // The open may have returned early (Terms gate) or thrown, leaving another item loaded; the engine's text seek
+        // would then move that item and save its place. A queued open plays as it would.
+        if FindInTextSeekPlan.shouldSeek(loadedItemId: model.snapshot.itemId, searchedItemId: searchedId) {
+            model.seekText(toCharOffset: match.playbackOffset)
+        }
         dismiss()
     }
 }

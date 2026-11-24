@@ -12,6 +12,14 @@ public enum FindInTextSeekPlan: Equatable, Sendable {
     public static func plan(loadedItemId: String?, selectedItemId: String) -> FindInTextSeekPlan {
         loadedItemId == selectedItemId ? .seekInPlace : .openThenSeek
     }
+
+    /// Whether the text seek may run now. `SessionEngine.seekText` never checks item ids: it moves whatever session is
+    /// loaded and saves that position. So the seek runs only when the loaded item is the one the sheet searched, both
+    /// on the in-place path and after an open (which may have returned early at the Terms gate, or thrown).
+    public static func shouldSeek(loadedItemId: String?, searchedItemId: String) -> Bool {
+        guard let loadedItemId, !loadedItemId.isEmpty else { return false }
+        return loadedItemId == searchedItemId
+    }
 }
 
 /// The words and shapes of the "Find in text" sheet (#5035), kept out of the view so they can be host-tested.
