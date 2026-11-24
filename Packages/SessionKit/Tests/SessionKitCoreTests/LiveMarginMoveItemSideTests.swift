@@ -119,9 +119,11 @@ final class LiveMarginMoveItemSideTests: XCTestCase {
         XCTAssertEqual(try movedPlace(hintMs: 1_500, playedURL: "shorter", attachShorter: false).0, 3_000)
     }
 
-    func testAPlaceWithNoKnownFileIsTakenAsTheRecordings() throws {
-        // A hint saved before the file was kept, or a Watch's own position.
-        XCTAssertEqual(try movedPlace(hintMs: 3_000, playedURL: nil, attachShorter: true).0, 3_000)
+    func testANotePlaceWithNoKnownFileMovesWithNoPlace() throws {
+        // #4779 audit on 9443c0a: a Watch's position from a build that sends no file, with the phone's record gone. Its
+        // clock is not known, so it is not guessed, as the Watch's placement path refuses it too.
+        XCTAssertNil(try movedPlace(hintMs: 3_000, playedURL: nil, attachShorter: true).0)
+        XCTAssertNil(try movedPlace(hintMs: 3_000, playedURL: nil, attachShorter: false).0)
     }
 
     // MARK: What is kept

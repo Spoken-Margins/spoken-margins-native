@@ -28,6 +28,9 @@ public enum PlayerItemMargin {
         /// `placeSpoken` was given no recording; a Mark goes through `placeMark`.
         case noRecording
         case notWritten
+        /// A spoken note's place came with no file, so its clock is not known: its recording and its Shorter pauses
+        /// version run on different clocks, and a guess would anchor it on the wrong words (#4779). It files elsewhere.
+        case clockUnknown
     }
 
     /// Where on an article read aloud with the on-device voice a Watch Margin aimed at it goes (#4561). That reading
@@ -194,10 +197,12 @@ public enum PlayerItemMargin {
 
     /// A time taken on `playedOn` as a time on the file `item` names now, which the engine converts from when it
     /// saves (#4779). A spoken note can move between its recording and its Shorter pauses version while a Watch
-    /// Margin records, and their clocks differ; the saved place must be the words that played. With no file known,
-    /// or any other item, the time is taken as on the attached file, as before.
-    static func timeOnAttachedFile(_ playedMs: Int, playedOn: String?, item: Item) -> Int {
-        guard let playedOn, playedOn != item.media?.url, SpokenNoteItem.isSpokenNote(mediaType: item.mediaType) else { return playedMs }
+    /// Margin records, and their clocks differ; the saved place must be the words that played. Any other item keeps its
+    /// time. A note's time with no file known throws `clockUnknown`, never a guess.
+    static func timeOnAttachedFile(_ playedMs: Int, playedOn: String?, item: Item) throws -> Int {
+        guard SpokenNoteItem.isSpokenNote(mediaType: item.mediaType) else { return playedMs }
+        guard let playedOn else { throw Failure.clockUnknown }
+        guard playedOn != item.media?.url else { return playedMs }
         let recordedMs = SpokenNoteCleanClock.recordedMs(playingMs: playedMs, mediaURL: playedOn)
         return SpokenNoteCleanClock.playingMs(recordedMs: recordedMs, mediaURL: item.media?.url)
     }
@@ -222,7 +227,7 @@ public enum PlayerItemMargin {
             guard let original = StoredSessionMargin.targetSession(in: try repository.loadSessions(itemId: itemId)) else {
                 throw Failure.noSession
             }
-            let mediaTimeMs = PlayerItemMargin.timeOnAttachedFile(playedMs, playedOn: playedOnMediaURL, item: item)
+            let mediaTimeMs = try PlayerItemMargin.timeOnAttachedFile(playedMs, playedOn: playedOnMediaURL, item: item)
             func clamped(_ durationMs: Int?) -> Int {
                 durationMs.map { min(max(0, mediaTimeMs), max(0, $0 - 1)) } ?? max(0, mediaTimeMs)
             }

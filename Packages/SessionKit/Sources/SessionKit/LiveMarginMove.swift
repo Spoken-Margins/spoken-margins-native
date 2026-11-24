@@ -133,11 +133,13 @@ public enum LiveMarginMove {
             ? (SpokenNoteCleanClock.map(forMediaURL: item.media?.url)?.recordedDurationMs ?? item.media?.durationMs)
             : item.media?.durationMs
         let planned = chosen.map { margin -> PlannedMargin in
-            guard canPlace, let durationMs, let place = savedPlace(of: margin, on: itemId, runs: runs) else {
+            // A note's place with no file has no known clock: it moves with no place rather than a guess (#4779).
+            guard canPlace, let durationMs, let place = savedPlace(of: margin, on: itemId, runs: runs),
+                  !isNote || place.mediaURL != nil else {
                 return PlannedMargin(margin: margin, positionMs: nil, placeSource: nil)
             }
             let position = isNote
-                ? (SpokenNoteCleanClock.map(forMediaURL: place.mediaURL)?.recordedMs(fromCleanMs: place.positionMs) ?? place.positionMs)
+                ? SpokenNoteCleanClock.recordedMs(playingMs: place.positionMs, mediaURL: place.mediaURL)
                 : place.positionMs
             guard position >= 0, position < durationMs else { return PlannedMargin(margin: margin, positionMs: nil, placeSource: nil) }
             return PlannedMargin(margin: margin, positionMs: position, placeSource: place.source)

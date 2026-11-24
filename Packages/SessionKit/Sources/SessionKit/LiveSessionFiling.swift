@@ -159,6 +159,12 @@ public enum LiveSessionFiling {
         }
     }
 
+    /// The file a Watch position is on: the one the board named, which the Watch hands back, else the one attached at
+    /// `time` by the phone's own record. Nil when neither is known; a spoken note then takes no place (#4779).
+    static func watchFile(of target: WatchItemTarget, at time: Date, files: [FileAttachment]) -> String? {
+        target.mediaFile ?? attachedFile(of: target.itemId, at: time, files: files)
+    }
+
     /// The file of `itemId` attached at `time`, from `files` (oldest first). Nil when none was seen by then.
     static func attachedFile(of itemId: String, at time: Date, files: [FileAttachment]) -> String? {
         files.last { $0.itemId == itemId && $0.since <= time }?.mediaURL
@@ -201,8 +207,8 @@ public enum LiveSessionFiling {
             // Exactly where the decision put it.
             let holding = holdingRun(of: itemId, at: time, runs: playerRuns)
             let fromWatch = margin.itemTarget != nil && holding == nil
-            // With no run, the Watch's position is on the file attached when the Margin was taken (#4779).
-            let file = holding.map(\.mediaURL) ?? attachedFile(of: itemId, at: time, files: filesAttached)
+            // With no run, the Watch's position is on the file the board named, else the one attached then (#4779).
+            let file = holding.map(\.mediaURL) ?? margin.itemTarget.flatMap { watchFile(of: $0, at: time, files: filesAttached) }
             return .init(itemId: itemId, positionMs: positionMs, source: fromWatch ? .watchTarget : .playerRun,
                          playingMediaURL: file)
         case .session, .newNamedSession, .joinQuick, .newQuick:
@@ -214,7 +220,7 @@ public enum LiveSessionFiling {
                              playingMediaURL: run.mediaURL)
             }
             return .init(itemId: target.itemId, positionMs: target.positionMs, source: .watchTarget,
-                         playingMediaURL: attachedFile(of: target.itemId, at: time, files: filesAttached))
+                         playingMediaURL: watchFile(of: target, at: time, files: filesAttached))
         }
         guard let run = holdingRun(of: nil, at: time, runs: playerRuns) else { return nil }
         return .init(itemId: run.itemId, positionMs: run.positionMs(at: min(time, run.endedAt)), source: .playerRun,

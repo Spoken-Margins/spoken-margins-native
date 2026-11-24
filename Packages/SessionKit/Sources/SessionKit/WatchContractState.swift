@@ -521,7 +521,8 @@ public struct WatchRecordingPlan: Equatable, Sendable {
     public static func begin(target: WatchRecordingTarget, nowPlaying: WatchNowPlaying?, phoneNow: Date) -> WatchRecordingPlan {
         var itemTarget: WatchItemTarget?
         if target == .episode, let nowPlaying {
-            itemTarget = WatchItemTarget(itemId: nowPlaying.itemId, positionMs: nowPlaying.position(at: phoneNow))
+            itemTarget = WatchItemTarget(
+                itemId: nowPlaying.itemId, positionMs: nowPlaying.position(at: phoneNow), mediaFile: nowPlaying.mediaFile)
         }
         let pauses = nowPlaying?.isPlaying == true
         return WatchRecordingPlan(target: target, itemTarget: itemTarget, pausedPhone: pauses, pausedItemId: pauses ? nowPlaying?.itemId : nil)

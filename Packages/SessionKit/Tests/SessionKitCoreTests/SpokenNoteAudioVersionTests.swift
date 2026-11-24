@@ -162,12 +162,18 @@ final class SpokenNoteAudioVersionTests: XCTestCase {
     func testAWatchMarginKeepsItsWordsWhenTheNoteMovedToTheOtherVersionWhileItRecorded() throws {
         try writeNote()
         // Taken at 3 s on the recording; the version was attached before the Margin was written: 1.5 s on that file.
-        XCTAssertEqual(PlayerItemMargin.timeOnAttachedFile(3_000, playedOn: recordedURL, item: noteItem(attached: cleanURL)), 1_500)
+        XCTAssertEqual(try PlayerItemMargin.timeOnAttachedFile(3_000, playedOn: recordedURL, item: noteItem(attached: cleanURL)), 1_500)
         // Taken at 1.5 s on the version; As recorded was chosen before it was written: 3 s on the recording.
-        XCTAssertEqual(PlayerItemMargin.timeOnAttachedFile(1_500, playedOn: cleanURL, item: noteItem(attached: recordedURL)), 3_000)
-        XCTAssertEqual(PlayerItemMargin.timeOnAttachedFile(1_500, playedOn: cleanURL, item: noteItem(attached: cleanURL)), 1_500, "same file")
-        XCTAssertEqual(PlayerItemMargin.timeOnAttachedFile(1_500, playedOn: nil, item: noteItem(attached: cleanURL)), 1_500, "no file known")
-        XCTAssertEqual(PlayerItemMargin.timeOnAttachedFile(
+        XCTAssertEqual(try PlayerItemMargin.timeOnAttachedFile(1_500, playedOn: cleanURL, item: noteItem(attached: recordedURL)), 3_000)
+        XCTAssertEqual(try PlayerItemMargin.timeOnAttachedFile(1_500, playedOn: cleanURL, item: noteItem(attached: cleanURL)), 1_500, "same file")
+        // #4779 audit on 9443c0a: a note's place with no file has no known clock, so it is never guessed.
+        XCTAssertThrowsError(try PlayerItemMargin.timeOnAttachedFile(1_500, playedOn: nil, item: noteItem(attached: cleanURL))) {
+            XCTAssertEqual($0 as? PlayerItemMargin.Failure, .clockUnknown)
+        }
+        XCTAssertThrowsError(try PlayerItemMargin.timeOnAttachedFile(1_500, playedOn: nil, item: noteItem(attached: recordedURL)))
+        XCTAssertEqual(try PlayerItemMargin.timeOnAttachedFile(
+            1_500, playedOn: nil, item: noteItem(attached: recordedURL, mediaType: "podcast")), 1_500, "any other item keeps its time")
+        XCTAssertEqual(try PlayerItemMargin.timeOnAttachedFile(
             1_500, playedOn: cleanURL, item: noteItem(attached: recordedURL, mediaType: "podcast")), 1_500, "only a note has two clocks")
     }
 

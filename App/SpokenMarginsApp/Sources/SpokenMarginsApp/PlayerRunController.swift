@@ -29,7 +29,11 @@ enum PlayerRunController {
         // The file the engine plays, so a place is kept with the clock it is on (#4779).
         recorder.observe(PlayerRunRecorder.observation(of: snapshot, mediaURL: model.openSessionMediaURL), at: time)
         // The Watch moves the position on by itself, so only a change it could not predict is sent (#3494).
-        let next = WatchNowPlayingFeed.nowPlaying(from: snapshot, at: time)
+        // A spoken note's file goes with the board, so a Watch Margin carries the clock its place is on (#4779). Only a
+        // note has two clocks; other items send none and keep the board small.
+        let item = model.engine?.currentItem
+        let noteFile = item.flatMap { SpokenNoteItem.isSpokenNote(mediaType: $0.mediaType) ? $0.media?.url : nil }
+        let next = WatchNowPlayingFeed.nowPlaying(from: snapshot, at: time, mediaFile: noteFile)
         if WatchNowPlayingFeed.shouldPublish(previous: publishedNowPlaying, next: next) {
             publishedNowPlaying = next
             WatchMarginReceiver.shared.nowPlayingChanged(next)
