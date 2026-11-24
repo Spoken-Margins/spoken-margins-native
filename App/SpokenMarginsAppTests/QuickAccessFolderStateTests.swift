@@ -372,10 +372,14 @@ final class QuickAccessFolderStateTests: XCTestCase {
         fixture.bench.finishScan(2, with: Self.scan(["stale"]))
         try await waitFor("stale scan's access stops") { fixture.bench.count("stop") == 3 }
         XCTAssertEqual(fixture.state.problem, .cantOpen, "a replaced scan clears nothing")
-        XCTAssertEqual(ticks.value, 1, "and writes no time")
+        // Judged by the stored time, not by how often the clock was read: the state also reads it in `init` for an upgraded
+        // folder's chosen-at date (#4274), and counting every read broke this test on main (#5217).
+        XCTAssertEqual(fixture.state.lastCheckedAt, firstTime, "and writes no time")
+        let readsBeforeTheGoodScan = ticks.value
         fixture.bench.finishScan(3, with: Self.scan(["b"]))
         try await waitFor("the good scan clears the mark") { fixture.state.problem == nil }
-        XCTAssertEqual(ticks.value, 2, "exactly one completion wrote a time")
+        XCTAssertEqual(ticks.value, readsBeforeTheGoodScan + 1, "exactly one completion wrote a time")
+        XCTAssertEqual(fixture.state.lastCheckedAt, Self.checkedAt.addingTimeInterval(Double(readsBeforeTheGoodScan + 1)))
         XCTAssertNil(fixture.defaults.object(forKey: "quickAccessFolderProblem"))
     }
 

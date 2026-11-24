@@ -268,8 +268,8 @@ final class QueueSwipeAppTests: XCTestCase {
         }
         model.refreshQuickAccessFolder()
         try await pollUntil { !model.quickAccess.isRefreshing && folderFiles().count == 3 }
-        // Give anything a finished refresh might start (the old inbox started its import in the same turn) a moment to show.
-        try await Task.sleep(for: .milliseconds(300))
+        // No wait for "nothing happened": the old inbox started its import in the same main-actor turn the refresh ended
+        // (`finishRefresh` called it directly), so on that code `sourceImportTask` is already set when the poll above returns.
 
         XCTAssertEqual(folderFiles().count, 3, "all three new files wait on Following")
         XCTAssertEqual(queuedIds, ["swipe-a", "swipe-b"], "the queue is untouched")
@@ -279,8 +279,9 @@ final class QueueSwipeAppTests: XCTestCase {
         XCTAssertFalse(model.feedbackEvent?.message.hasPrefix("Queued") ?? false)
         XCTAssertEqual(model.activeItemId, loadedItem, "the loaded item is untouched")
 
-        // The listener's own Add to Queue still queues the file.
-        let one = try XCTUnwrap(folderFiles().first { $0.name == "one.md" })
+        // The listener's own Add to Queue still queues the file. A row's `name` drops the extension (`QuickAccessFolderScanner`);
+        // the file name is its `id`.
+        let one = try XCTUnwrap(folderFiles().first { $0.id == "one.md" })
         model.addQuickFolderFileToQueue(one)
         try await pollUntil { queuedIds.count == 3 }
         XCTAssertEqual(queuedIds.count, 3)
