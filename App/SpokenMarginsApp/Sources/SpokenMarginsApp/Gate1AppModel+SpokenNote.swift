@@ -31,6 +31,7 @@ extension Gate1AppModel {
         guard let support = try? applicationSupportDirectory() else { return }
         SpokenNoteHeldTranscripts.start(applicationSupport: support, store: store) { [weak self] in
             self?.refreshLibraryRowsInBackground(mustPublish: true) // #2505
+            NotificationCenter.default.post(name: .spokenNoteChanged, object: nil) // words written after Allow reach an open Now (#4780)
         }
     }
 }
