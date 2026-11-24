@@ -60,14 +60,24 @@ struct ExportScreen: View {
                             .accessibilityIdentifier("export.scope.picker")
                             .onCompatibleChange(of: model.exportScope) { _ in model.exportOptionsChanged() }
 
-                            Toggle("Source Text", isOn: $model.exportIncludesSourceText)
+                            // A spoken note is the listener's own words: its Source Text has its own remembered value,
+                            // on by default, and is never disabled (#4782).
+                            Toggle("Source Text", isOn: model.selectedItem.isSpokenNote
+                                   ? $model.exportIncludesSpokenNoteText : $model.exportIncludesSourceText)
                                 .accessibilityIdentifier("export.includeSourceText.toggle")
                                 .onCompatibleChange(of: model.exportIncludesSourceText) { _ in model.exportOptionsChanged() }
+                                .onCompatibleChange(of: model.exportIncludesSpokenNoteText) { _ in model.exportOptionsChanged() }
                                 .disabled(!model.exportSourceTextAvailable)
                             if !model.exportSourceTextAvailable {
                                 Text("Native audio exports include only bounded listening context, not full source text.")
                                     .font(.footnote)
                                     .foregroundStyle(AppColors.secondaryText)
+                            }
+                            if model.selectedItem.isSpokenNote, let footnote = model.exportSpokenNoteFootnote {
+                                Text(footnote)
+                                    .font(.footnote)
+                                    .foregroundStyle(AppColors.secondaryText)
+                                    .accessibilityIdentifier("export.spokenNoteFootnote")
                             }
                             Toggle("Reference", isOn: $model.exportIncludesReference)
                                 .accessibilityIdentifier("export.includeReference.toggle")

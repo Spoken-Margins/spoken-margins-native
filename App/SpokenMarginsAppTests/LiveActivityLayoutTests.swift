@@ -47,23 +47,23 @@ final class LiveActivityLayoutTests: XCTestCase {
     }
 
     func testTheControlRowFitsTheNarrowestLockScreenAtEveryTextSize() throws {
-        for status in ["playing", "paused"] {
+        for card in [state(status: "playing"), state(status: "paused")] + lockScreenCards {
             for size in [DynamicTypeSize.large, .xxxLarge, .accessibility5] {
-                let rendered = try render(state(status: status), size: size)
+                let rendered = try render(card, size: size)
                 XCTAssertLessThanOrEqual(
                     rendered.width, Self.narrowestCardWidth + 0.5,
-                    "\(status) at \(size): the card is wider than the Lock Screen, so a control is cut off"
+                    "\(describe(card)) at \(size): the card is wider than the Lock Screen, so a control is cut off"
                 )
             }
         }
     }
 
     func testTheCardFitsTheLockScreenHeightAtTheDefaultTextSize() throws {
-        for card in [state(status: "playing"), state(status: "paused"), recordingState()] {
+        for card in [state(status: "playing"), state(status: "paused"), recordingState()] + lockScreenCards {
             let rendered = try render(card, size: .large)
             XCTAssertLessThanOrEqual(
                 rendered.height, Self.lockScreenHeightLimit,
-                "\(card.status) with a next chapter: the system may cut the card off"
+                "\(describe(card)) with a next chapter: the system may cut the card off"
             )
         }
     }
@@ -71,11 +71,11 @@ final class LiveActivityLayoutTests: XCTestCase {
     /// Every card keeps its controls through the largest size before the accessibility range. The paused prompt shares
     /// the chapter line, so a paused card is held to the same limit as a playing one (#3692).
     func testEveryCardFitsTheLockScreenHeightThroughTheLargestStandardTextSize() throws {
-        for card in [state(status: "playing"), state(status: "paused"), recordingState()] {
+        for card in [state(status: "playing"), state(status: "paused"), recordingState()] + lockScreenCards {
             for size in [DynamicTypeSize.xLarge, .xxLarge, .xxxLarge] {
                 let rendered = try render(card, size: size)
                 XCTAssertLessThanOrEqual(
-                    rendered.height, Self.lockScreenHeightLimit, "\(card.status) at \(size): the system may cut the card off"
+                    rendered.height, Self.lockScreenHeightLimit, "\(describe(card)) at \(size): the system may cut the card off"
                 )
             }
         }
@@ -92,37 +92,67 @@ final class LiveActivityLayoutTests: XCTestCase {
         }
     }
 
-    /// #3692: the Margin control is 60 pt wide and runs the full height of the card's content, with nothing above it.
-    func testTheMarginColumnRunsTheFullHeightOfTheCard() throws {
-        for card in [state(status: "playing"), state(status: "paused"), recordingState()] {
+    /// #4764: the Margin control is a fixed 60 pt circle centred in its column, on every card the Lock Screen really
+    /// gets. The card is often only a header tall, and a pill that took the card's height squashed its caption there.
+    func testTheMarginCircleIsCentredInTheColumn() throws {
+        for card in lockScreenCards {
             let image = try renderImage(card, size: .large)
             let middle = image.size.height / 2
-            let rightEdge = Self.columnLeft + Gate2ControlSize.marginColumnWidth
+            let name = describe(card)
 
-            XCTAssertGreaterThanOrEqual(image.size.height - 2 * Self.verticalPadding, 88, "\(card.status): too short")
-            XCTAssertTrue(try isFilled(image, x: Self.columnCentre, y: Self.verticalPadding + 2), "\(card.status): stops short of the top")
-            XCTAssertTrue(
-                try isFilled(image, x: Self.columnCentre, y: image.size.height - Self.verticalPadding - 2),
-                "\(card.status): stops short of the bottom"
+            XCTAssertGreaterThanOrEqual(
+                image.size.height - 2 * Self.verticalPadding, Gate2ControlSize.marginColumnWidth, "\(name): the circle is cut"
             )
-            XCTAssertTrue(try isFilled(image, x: Self.columnLeft + 2, y: middle), "\(card.status): narrower on the left")
-            XCTAssertTrue(try isFilled(image, x: rightEdge - 2, y: middle), "\(card.status): narrower on the right")
-            XCTAssertFalse(try isFilled(image, x: Self.columnLeft - 2, y: middle), "\(card.status): the gap beside it is gone")
+            XCTAssertTrue(try isFilled(image, x: Self.columnCentre, y: middle - 22), "\(name): no circle at the column's middle")
+            XCTAssertFalse(try isFilled(image, x: Self.columnLeft + 3, y: middle - 27), "\(name): a corner is drawn, not a circle")
+            XCTAssertFalse(try isFilled(image, x: Self.columnLeft - 2, y: middle), "\(name): the gap beside it is gone")
+        }
+        // The tallest real card: a shape that followed the card's height would fill the column's top.
+        let skims = try renderImage(startWithSkims, size: .large)
+        XCTAssertFalse(
+            try isFilled(skims, x: Self.columnCentre, y: Self.verticalPadding + 4), "a pill above the circle: it follows the card's height"
+        )
+    }
+
+    /// Start and finish must differ without colour (#3692, #4764): a soft fill with a bright ring against a solid white
+    /// disc, and the microphone against the checkmark. Both are read as brightness, so the check holds for a red-green
+    /// colourblind listener too.
+    func testStartAndFinishDifferByFillAndRing() throws {
+        let start = try renderImage(startNoSkims, size: .large)
+        let finish = try renderImage(recordingOnLockScreen, size: .large)
+        let startMiddle = start.size.height / 2
+        let finishMiddle = finish.size.height / 2
+
+        XCTAssertLessThan(try red(start, x: Self.columnCentre, y: startMiddle - 22), 0.4, "start should be a soft fill")
+        XCTAssertGreaterThan(try red(finish, x: Self.columnCentre, y: finishMiddle - 22), 0.9, "finish should be solid white")
+        XCTAssertGreaterThan(try red(start, x: Self.columnCentre, y: startMiddle - 29), 0.6, "start should have its ring")
+    }
+
+    /// #4764: nothing is written under the glyph. The band is where "Margin" and "Finish" sat; the glyph reaches about
+    /// 13 pt from the centre and the ring starts at 28 pt.
+    func testNoCaptionUnderTheMarginGlyph() throws {
+        for (card, finishes) in [(startNoSkims, false), (recordingOnLockScreen, true)] {
+            let image = try renderImage(card, size: .large)
+            let pixels = try PixelBuffer(image)
+            let middle = image.size.height / 2
+            var marks = 0
+            for y in stride(from: middle + 18, through: middle + 24, by: 0.5) {
+                for x in stride(from: Self.columnCentre - 12, through: Self.columnCentre + 12, by: 0.5) {
+                    let red = pixels.red(x: x, y: y)
+                    if finishes ? red < 0.4 : red > 0.6 { marks += 1 }
+                }
+            }
+            XCTAssertEqual(marks, 0, "\(describe(card)): something is drawn under the glyph")
         }
     }
 
-    /// Start and finish must differ without colour (#3692): solid white against a soft fill, and a squarer outline
-    /// against a pill. Both are read as brightness, so the check holds for a red-green colourblind listener too.
-    func testStartAndFinishDifferByFillAndOutline() throws {
-        let start = try renderImage(state(status: "playing"), size: .large)
-        let finish = try renderImage(recordingState(), size: .large)
-        let cornerX = Self.columnLeft + 7
-        let cornerY = Self.verticalPadding + 4
-
-        XCTAssertLessThan(try red(start, x: Self.columnCentre, y: Self.verticalPadding + 2), 0.4, "start should be a soft fill")
-        XCTAssertGreaterThan(try red(finish, x: Self.columnCentre, y: Self.verticalPadding + 2), 0.9, "finish should be solid white")
-        XCTAssertFalse(try isFilled(start, x: cornerX, y: cornerY), "start should be a pill")
-        XCTAssertTrue(try isFilled(finish, x: cornerX, y: cornerY), "finish should be squarer than the pill")
+    /// #4764: at the largest text size the glyph stops growing at AX1, so it stays inside the ring.
+    func testTheMarginGlyphStaysInsideTheRingAtTheLargestTextSize() throws {
+        let image = try renderImage(startNoSkims, size: .accessibility5)
+        let middle = image.size.height / 2
+        XCTAssertLessThan(try red(image, x: Self.columnCentre - 24, y: middle), 0.4, "the glyph reaches the ring on the left")
+        XCTAssertLessThan(try red(image, x: Self.columnCentre + 24, y: middle), 0.4, "the glyph reaches the ring on the right")
+        XCTAssertGreaterThan(try red(image, x: Self.columnCentre, y: middle - 29), 0.6, "the ring is gone")
     }
 
     /// With no Margin to start, the column's space stays empty.
@@ -130,7 +160,7 @@ final class LiveActivityLayoutTests: XCTestCase {
         var card = state(status: "playing")
         card.availableCommands.removeAll { $0 == "beginInterjection" }
         let image = try renderImage(card, size: .large)
-        XCTAssertFalse(try isFilled(image, x: Self.columnCentre, y: image.size.height - Self.verticalPadding - 4))
+        XCTAssertFalse(try isFilled(image, x: Self.columnCentre, y: image.size.height / 2))
     }
 
     /// A Shared Margin's buttons take the full width: where the gap beside the column would be, Dismiss is drawn.
@@ -153,6 +183,40 @@ final class LiveActivityLayoutTests: XCTestCase {
             let latePNG = try XCTUnwrap(try renderImage(late, size: .large).pngData())
             XCTAssertEqual(earlyPNG, latePNG, "\(status): the card still draws playback progress")
         }
+    }
+
+    // The cards the Lock Screen really gets. Its policy keeps only start and finish Margin and the two skims, and drops
+    // the skims while recording (`Gate2CompactControlController.swift:108-119, 622-626`), so it never shows the five
+    // transport circles of `state(status:)` (#4764).
+    private var lockScreenCards: [Gate2LiveActivityAttributes.ContentState] {
+        [startNoSkims, startWithSkims, recordingOnLockScreen]
+    }
+
+    private var startNoSkims: Gate2LiveActivityAttributes.ContentState {
+        var card = state(status: "playing")
+        card.availableCommands = ["beginInterjection"]
+        card.skimForwardDestinationMs = nil
+        card.skimBackwardDestinationMs = nil
+        return card
+    }
+
+    private var startWithSkims: Gate2LiveActivityAttributes.ContentState {
+        var card = state(status: "playing")
+        card.availableCommands = ["skimBackward", "skimForward", "beginInterjection"]
+        return card
+    }
+
+    private var recordingOnLockScreen: Gate2LiveActivityAttributes.ContentState {
+        var card = state(status: "recording")
+        card.isRecording = true
+        card.availableCommands = ["finishInterjection"]
+        card.skimForwardDestinationMs = nil
+        card.skimBackwardDestinationMs = nil
+        return card
+    }
+
+    private func describe(_ card: Gate2LiveActivityAttributes.ContentState) -> String {
+        "\(card.status) [\(card.availableCommands.joined(separator: ", "))]"
     }
 
     private func recordingState() -> Gate2LiveActivityAttributes.ContentState {
@@ -179,6 +243,36 @@ final class LiveActivityLayoutTests: XCTestCase {
         ))
         context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
         return CGFloat(rgba[0]) / 255
+    }
+
+    /// The image's pixels read once, for a scan over many points.
+    private struct PixelBuffer {
+        let width: Int
+        let height: Int
+        let scale: CGFloat
+        let rgba: [UInt8]
+
+        init(_ image: UIImage) throws {
+            let cgImage = try XCTUnwrap(image.cgImage)
+            width = cgImage.width
+            height = cgImage.height
+            scale = image.scale
+            var bytes = [UInt8](repeating: 0, count: width * height * 4)
+            let colorSpace = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+            let context = try XCTUnwrap(CGContext(
+                data: &bytes, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ))
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            rgba = bytes
+        }
+
+        /// Row 0 is the top: a bitmap context drawn this way keeps the image's own row order in memory.
+        func red(x: CGFloat, y: CGFloat) -> CGFloat {
+            let column = min(max(Int(x * scale), 0), width - 1)
+            let row = min(max(Int(y * scale), 0), height - 1)
+            return CGFloat(rgba[(row * width + column) * 4]) / 255
+        }
     }
 
     private func render(_ state: Gate2LiveActivityAttributes.ContentState, size: DynamicTypeSize) throws -> CGSize {
