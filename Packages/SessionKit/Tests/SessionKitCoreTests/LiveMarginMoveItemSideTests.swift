@@ -233,6 +233,7 @@ final class LiveMarginMoveItemSideTests: XCTestCase {
             ("shared", { $0.sharedAs = [MarginPacketIdentity(packageDigest: "d", packageScopedId: "x")] }),
             ("edited words", { $0.displayText = "My own words" }),
             ("tidy answered", { $0.tidyDecision = MarginTidyDecision(choice: .keptOriginal, decidedAt: Date(timeIntervalSince1970: 1)) }),
+            ("Paper note role", { $0.paperRole = .purpose }),
         ]
         for (name, change) in changes {
             try setUpWithError()
@@ -251,6 +252,30 @@ final class LiveMarginMoveItemSideTests: XCTestCase {
             $0.anchor.anchorBefore = "before"
         }
         XCTAssertFalse(LiveMarginMove.listenerChanged(moved, repository: store))
+    }
+
+    /// Every field a Margin has is either one Undo compares or one listed as not the listener's, so a field added later
+    /// (as `paperRole` was) can't be edited on the item and then lost to an Undo unnoticed.
+    func testEveryMarginFieldIsSortedForUndo() throws {
+        try seed(episode(), session(for: "ep"))
+        let moved = try LiveMarginMove.execute(plan: try plan([spoken("a", at: 1)]), repository: store)
+        let fields = Set(Mirror(reflecting: moved[0]).children.compactMap(\.label).map { $0.hasPrefix("_") ? String($0.dropFirst()) : $0 })
+        let compared = Set(LiveMarginMove.listenerEdits.map(\.field))
+        let notEdited = Set(LiveMarginMove.fieldsTheListenerDoesNotEdit.keys)
+        XCTAssertEqual(compared.intersection(notEdited), [])
+        XCTAssertEqual(fields.subtracting(compared).subtracting(notEdited), [],
+                       "a new Margin field: add it to LiveMarginMove.listenerEdits if the listener can change it, else to fieldsTheListenerDoesNotEdit")
+        XCTAssertEqual(compared.union(notEdited).subtracting(fields), [], "a listed field the Margin no longer has")
+    }
+
+    func testAPaperNoteRoleSetOnAMovedMarginRefusesUndoAndKeepsTheRows() async throws {
+        let (plan, moved, files) = try await movedWithLiveSide([spoken("a", at: 1), spoken("b", at: 2)])
+        _ = try store.updateInterjection(id: moved[0].id, sessionId: "s-ep") { $0.paperRole = .purpose }
+        let outcome = await LiveMarginMove.undo(plan: plan, moved: moved, repository: store, files: files)
+        XCTAssertEqual(outcome, .refused(.changedOnItem(title: plan.itemTitle)))
+        let rows = try store.loadInterjections(sessionId: "s-ep")
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows.first { $0.id == moved[0].id }?.paperRole, .purpose)
     }
 
     // MARK: Undo's order (audit on #5172): the live side first, the item rows last

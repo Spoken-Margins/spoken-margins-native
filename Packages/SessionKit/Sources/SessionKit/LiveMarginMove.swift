@@ -297,31 +297,47 @@ public enum LiveMarginMove {
         }
     }
 
-    /// Whether the listener changed any of `moved` on the item since the move: deleted it, starred it, wrote a private
-    /// note, shared it, answered its tidy version, edited its words, or replied to it. A transcription or a context job
-    /// finishing is not the listener's change and doesn't count. A Margin no longer in the store counts as changed.
+    /// The Margin fields the listener edits on the item, each with how Undo tells it changed since the move. Every
+    /// other `Interjection` field is in `fieldsTheListenerDoesNotEdit`, with why; a test fails when a field is in neither
+    /// list, so a new listener edit can't slip past Undo (audit on #5172: `paperRole`, added after the list was written).
+    static let listenerEdits: [(field: String, changed: @Sendable (_ now: Interjection, _ moved: Interjection) -> Bool)] = [
+        ("status", { $0.status != $1.status }),
+        ("isStarredForSharing", { ($0.isStarredForSharing ?? false) != ($1.isStarredForSharing ?? false) }),
+        ("privateSharingNote", { ($0.privateSharingNote ?? "") != ($1.privateSharingNote ?? "") }),
+        // Shared at all, or answered by a reply: a reply to the listener's own Margin finds it through `sharedAs`.
+        ("sharedAs", { now, _ in !(now.sharedAs ?? []).isEmpty }),
+        ("tidyDecision", { $0.tidyDecision != $1.tidyDecision }),
+        ("paperRole", { $0.paperRole != $1.paperRole }),
+        // Edited words: shown words that are neither the moved copy's nor what a transcription wrote meanwhile.
+        ("displayText", { now, moved in
+            guard let shown = now.displayText else { return false }
+            return shown != moved.displayText && shown != now.transcript && shown != now.cleanedTranscript
+        }),
+    ]
+
+    /// The `Interjection` fields the listener doesn't edit on the item, and what writes them.
+    static let fieldsTheListenerDoesNotEdit: [String: String] = [
+        "id": "fixed by the move", "itemId": "fixed by the move", "sessionId": "fixed by the move",
+        "targetType": "fixed by the move", "targetId": "fixed by the move", "createdAt": "the capture time, kept",
+        "roughPercent": "the move", "anchor": "the move, then the context job", "audioPath": "the move: the same recording",
+        "audioStatus": "the move", "transcriptionStatus": "the transcription job", "transcript": "the transcription job",
+        "cleanedTranscript": "the transcription job", "anchorContextStatus": "the context job",
+        "alignedTranscript": "the transcription job", "podcastAnchorEvidence": "the evidence job (never for a moved Margin)",
+        "sourceExactEditionSHA256": "the evidence job", "podcastAnchorEvidenceCaptureStatus": "the move: unavailable",
+        "podcastAnchorEvidenceFailureReason": "the evidence job", "captureKind": "fixed by the move",
+        "replyTo": "fixed at capture: a moved Margin answers nothing new",
+        "movedOrigin": "the move's own record (not stored on the row)",
+    ]
+
+    /// Whether the listener changed any of `moved` on the item since the move (`listenerEdits`). A transcription or a
+    /// context job finishing is not the listener's change and doesn't count. A Margin no longer in the store counts as
+    /// changed.
     public static func listenerChanged(_ moved: [Interjection], repository: Repository) -> Bool {
         for original in moved {
             guard let now = (try? repository.loadInterjections(sessionId: original.sessionId))?.first(where: { $0.id == original.id }) else {
                 return true
             }
-            if now.status != original.status { return true }
-            if (now.isStarredForSharing ?? false) != (original.isStarredForSharing ?? false) { return true }
-            if (now.privateSharingNote ?? "") != (original.privateSharingNote ?? "") { return true }
-            if !(now.sharedAs ?? []).isEmpty { return true }
-            if now.tidyDecision != original.tidyDecision { return true }
-            if let shown = now.displayText, shown != original.displayText, shown != now.transcript, shown != now.cleanedTranscript {
-                return true
-            }
-            let identities = Set(now.sharedAs ?? [])
-            if !identities.isEmpty,
-               let sessions = try? repository.loadSessions(itemId: now.itemId),
-               sessions.contains(where: { session in
-                   ((try? repository.loadInterjections(sessionId: session.id)) ?? [])
-                       .contains { $0.replyTo.map { identities.contains($0.parent) } ?? false }
-               }) {
-                return true
-            }
+            if listenerEdits.contains(where: { $0.changed(now, original) }) { return true }
         }
         return false
     }
