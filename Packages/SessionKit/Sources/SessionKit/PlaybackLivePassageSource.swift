@@ -17,8 +17,12 @@ extension PlaybackLivePassage {
             let end: Int
         }
         private let spans: [Span]
+        /// How footnote markers show (#5109). A fragment's text is shown text; its `start` stays a stored-text offset.
+        private let footnotes: FootnoteDisplayText
 
-        public init(_ source: TimelineSourceContent) {
+        /// - Parameter footnotes: the item's markers as shown, from `FootnoteDisplayText(text:)` of the same text.
+        public init(_ source: TimelineSourceContent, footnotes: FootnoteDisplayText = .none) {
+            self.footnotes = footnotes
             let values = source.entries.map { Span(entry: $0, end: $0.start + $0.text.count) }
             // I13 segments must not overlap. Fall back to the exact source sentence for malformed metadata.
             var previousEnd = 0
@@ -50,7 +54,8 @@ extension PlaybackLivePassage {
                 let end = min(limit, owner?.end ?? span?.entry.start ?? limit)
                 guard end > cursor else { break }
                 result.append(Fragment(id: "\(cursor)::\(owner?.entry.id ?? "source.gap")", start: cursor,
-                                       text: String(characters[(cursor - sentence.start)..<(end - sentence.start)]),
+                                       text: footnotes.render(String(characters[(cursor - sentence.start)..<(end - sentence.start)]),
+                                                              from: cursor),
                                        role: owner?.entry.role ?? .body, label: owner?.entry.label,
                                        pageIndex: owner?.entry.pageIndex))
                 cursor = end

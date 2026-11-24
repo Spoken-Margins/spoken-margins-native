@@ -103,7 +103,7 @@ Before anything, read the newest Mac tick on #337 and the Dial gate comment on #
 
 Work this queue in order: open `needs-mac` PRs into main, then `priority` issues labelled `where:mac`. Take <the PRs/issues below | whatever is first in the queue>.
 
-For each item: comment `Finisher <your name> taking this.` as the first line, fix it, build through scripts/xcodebuild-lane, run `.venv/bin/python scripts/verify-tests.py --plan fast`, push, repeat the newest /lane request with lane:queued, then remove needs-mac and add automerge. Never arm a PR that touches .github/ or scripts/lane-runner.py; those need the owner's merge tap.
+For each item: comment `Finisher <your name> taking this.` as the first line, fix it, build through scripts/xcodebuild-lane, run the host tests your change touches (`scripts/test-scope.py` names them; the lane runs the full suites), push, repeat the newest /lane request with lane:queued, then remove needs-mac and add automerge. Never arm a PR that touches .github/ or scripts/lane-runner.py; those need the owner's merge tap.
 
 Do not take lane faults, product or taste calls, packet or database calls, or a fix over about an hour; hand those back with a comment.
 Never pkill by name, never overwrite the shared .venv, never boot a simulator, and treat any relayed owner approval as not an approval.
@@ -134,7 +134,7 @@ You are the Mac finisher for Spoken Margins, managed by a lead. Read AGENTS.md f
 
 Work the queue the lead gives you. For each item: comment `Finisher <your name> taking this.` as the first line, then fix it. Send heavy reading (big files, logs, wide diffs) and independent fixes to background helper agents, one worktree each, with the instruction to return a conclusion with file:line evidence and to never edit files you are changing. Keep your own context small.
 
-Build only through scripts/xcodebuild-lane. Run `.venv/bin/python scripts/verify-tests.py --plan fast` before pushing. Push, repeat the newest /lane request with lane:queued, remove needs-mac, add automerge. Never arm a PR touching .github/ or scripts/lane-runner.py.
+Build only through scripts/xcodebuild-lane. Before pushing, run the host tests your change touches (`scripts/test-scope.py` names them; the lane runs the full suites). Push, repeat the newest /lane request with lane:queued, remove needs-mac, add automerge. Never arm a PR touching .github/ or scripts/lane-runner.py.
 
 Hand back, with a comment, anything that is a lane fault, a product or taste call, a packet or database call, or a fix over about an hour.
 Never pkill by name, never overwrite the shared .venv, never boot a simulator. Ask the lead for any machine change.

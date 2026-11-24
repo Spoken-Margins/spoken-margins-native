@@ -46,14 +46,14 @@ final class BulkShareDraftPreparationTests: XCTestCase {
         XCTAssertEqual(result.representationChoice, .cleaned)
         XCTAssertEqual(result.cleanedAudioDurationMs, 1_234)
         let cleaned = try XCTUnwrap(result.cleanedAudioURL)
-        XCTAssertEqual(cleaned.lastPathComponent, "cleaned-a.m4a")
+        XCTAssertEqual(cleaned.lastPathComponent, "cleaned-session--a.m4a", "named by pass and Margin, so two passes' ij-001 never share a copy (#4688)")
         XCTAssertTrue(cleaned.path.hasPrefix(folder.path), "the copy goes in the folder the host gave")
         XCTAssertEqual(try String(contentsOf: cleaned, encoding: .utf8), "cleaned")
         XCTAssertFalse(result.isAnalyzingPauses)
         XCTAssertFalse(result.isPreparingCleanup)
         XCTAssertNil(result.preparationMessage)
         XCTAssertGreaterThan(result.renderGeneration, 0, "every change of the words and the render itself move it")
-        XCTAssertEqual(host.bulkAutomaticallyCleanedDraftIDs, ["a"])
+        XCTAssertEqual(host.bulkAutomaticallyCleanedDraftIDs, [a])
         XCTAssertEqual(renders.values.count, 1)
         XCTAssertTrue(try XCTUnwrap(renders.values.first).contains("acoustic"), "the render gets the pauses the analysis found")
         XCTAssertTrue(host.failures.isEmpty)
@@ -167,7 +167,7 @@ final class BulkShareDraftPreparationTests: XCTestCase {
         await gate.open()
         try await waitUntil("the stale copy is deleted") { !discarded.values.isEmpty }
         let copy = try XCTUnwrap(discarded.values.first)
-        XCTAssertTrue(copy.hasSuffix("cleaned-a.m4a"))
+        XCTAssertTrue(copy.hasSuffix("cleaned-session--a.m4a"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: copy))
         XCTAssertNil(try XCTUnwrap(host.bulkShareDrafts.first).cleanedAudioURL)
         XCTAssertTrue(host.log.isEmpty, "a cancelled run counts nothing and never completes")
@@ -262,7 +262,7 @@ final class BulkShareDraftPreparationTests: XCTestCase {
         host.startLikeTheSwitch()
         try await waitUntil("a's render is out") { await gate.isParked }
         host.bulkShareDrafts[1].setIncluded(false)
-        XCTAssertTrue(host.run.skip(id: "b"))
+        XCTAssertTrue(host.run.skip(id: b))
         await gate.open()
         try await waitUntil("the run completes") { host.log.contains(.completed) }
         XCTAssertEqual(host.log, [.skipped, .finishedOne(prepared: true), .completed])
@@ -342,7 +342,7 @@ final class BulkShareDraftPreparationTests: XCTestCase {
             try await waitUntil("the run completes") { host.log.contains(.completed) }
             XCTAssertEqual(host.log, [.skipped, .completed], "a left-out Margin is not counted")
             host.bulkShareDrafts[0].setIncluded(true)
-            XCTAssertFalse(BulkShareDraftPreparation.includePass(id: "a", host: host), "its voice is already made")
+            XCTAssertFalse(BulkShareDraftPreparation.includePass(id: a, host: host), "its voice is already made")
             let result = try XCTUnwrap(host.bulkShareDrafts.first)
             XCTAssertEqual(result.representationChoice, .cleaned, "pick: \(picksWithoutUms)")
             XCTAssertNotNil(result.cleanedAudioURL)
@@ -389,8 +389,8 @@ final class BulkShareDraftPreparationTests: XCTestCase {
         noTiming.interjection.alignedTranscript = nil
         let host = Host(folder: folder, drafts: [draft("a"), asRecorded, wordsOnly, excluded, noTiming])
 
-        XCTAssertEqual(BulkShareDraftPreparation.startPass(host: host), ["a"])
-        XCTAssertEqual(host.bulkAutomaticallyCleanedDraftIDs, ["a", "b", "c"])
+        XCTAssertEqual(BulkShareDraftPreparation.startPass(host: host), [a])
+        XCTAssertEqual(host.bulkAutomaticallyCleanedDraftIDs, [a, b, c])
         for index in 0...2 {
             XCTAssertTrue(host.bulkShareDrafts[index].currentEditState.automaticCleanupEnabled)
             XCTAssertEqual(host.bulkShareDrafts[index].approvedTranscript, "Keep going.", "cleaned words show at once")
@@ -402,13 +402,13 @@ final class BulkShareDraftPreparationTests: XCTestCase {
     }
 
     func testTheIncludePassTouchesOnlyThatMargin() {
-        var b = draft("b")
-        b.isIncluded = false
-        let host = Host(folder: folder, drafts: [draft("a"), b])
-        XCTAssertFalse(BulkShareDraftPreparation.includePass(id: "b", host: host), "not included")
+        var other = draft("b")
+        other.isIncluded = false
+        let host = Host(folder: folder, drafts: [draft("a"), other])
+        XCTAssertFalse(BulkShareDraftPreparation.includePass(id: b, host: host), "not included")
         host.bulkShareDrafts[1].setIncluded(true)
-        XCTAssertTrue(BulkShareDraftPreparation.includePass(id: "b", host: host))
-        XCTAssertEqual(host.bulkAutomaticallyCleanedDraftIDs, ["b"])
+        XCTAssertTrue(BulkShareDraftPreparation.includePass(id: b, host: host))
+        XCTAssertEqual(host.bulkAutomaticallyCleanedDraftIDs, [b])
         XCTAssertFalse(host.bulkShareDrafts[0].currentEditState.automaticCleanupEnabled, "a is not swept up")
         XCTAssertTrue(host.bulkShareDrafts[1].currentEditState.automaticCleanupEnabled)
     }
@@ -418,9 +418,9 @@ final class BulkShareDraftPreparationTests: XCTestCase {
         _ = made.recordEdit(hasOriginalAudio: true, renderCleanedAudio: false) { $0.automaticCleanupEnabled = true }
         made.cleanedAudioURL = URL(fileURLWithPath: "/tmp/cleaned.m4a")
         let host = Host(folder: folder, drafts: [draft("a"), made])
-        XCTAssertTrue(BulkShareDraftPreparation.needsVoice("a", pending: [], host: host))
-        XCTAssertFalse(BulkShareDraftPreparation.needsVoice("a", pending: ["a"], host: host))
-        XCTAssertFalse(BulkShareDraftPreparation.needsVoice("b", pending: [], host: host))
+        XCTAssertTrue(BulkShareDraftPreparation.needsVoice(a, pending: [], host: host))
+        XCTAssertFalse(BulkShareDraftPreparation.needsVoice(a, pending: [a], host: host))
+        XCTAssertFalse(BulkShareDraftPreparation.needsVoice(b, pending: [], host: host))
         XCTAssertFalse(BulkShareDraftPreparation.needsVoice("gone", pending: [], host: host))
     }
 
@@ -430,14 +430,14 @@ final class BulkShareDraftPreparationTests: XCTestCase {
         // b got a hand edit after its automatic cleanup; c already finished.
         _ = host.bulkShareDrafts[1].toggleWord(segmentID: "keep", hasOriginalAudio: true, renderCleanedAudio: false)
 
-        BulkShareDraftPreparation.rollBackInFlightDrafts(host: host, pending: ["a", "b"])
+        BulkShareDraftPreparation.rollBackInFlightDrafts(host: host, pending: [a, b])
 
         XCTAssertFalse(host.bulkShareDrafts[0].currentEditState.automaticCleanupEnabled)
         XCTAssertNil(host.bulkShareDrafts[0].cleanup, "words back as recorded")
         XCTAssertFalse(host.bulkShareDrafts[1].currentEditState.automaticCleanupEnabled)
         XCTAssertEqual(host.bulkShareDrafts[1].currentEditState.manuallyDeletedSegmentIds, ["keep"], "the hand edit stays")
         XCTAssertTrue(host.bulkShareDrafts[2].currentEditState.automaticCleanupEnabled, "a finished Margin keeps its cleanup")
-        XCTAssertEqual(host.bulkAutomaticallyCleanedDraftIDs, ["c"])
+        XCTAssertEqual(host.bulkAutomaticallyCleanedDraftIDs, [c])
     }
 
     /// Cancel while the pause analysis is out: it can't be stopped, so its result is dropped when it lands, and no
@@ -462,7 +462,7 @@ final class BulkShareDraftPreparationTests: XCTestCase {
         host.run.invalidateAndCancel()
         BulkShareDraftPreparation.rollBackInFlightDrafts(host: host)
         gate.open()
-        try await waitUntil("the late result has come back to the host") { host.returned == ["a"] }
+        try await waitUntil("the late result has come back to the host") { host.returned == [a] }
 
         let result = try XCTUnwrap(host.bulkShareDrafts.first)
         XCTAssertTrue(result.acousticPauseDecisions.isEmpty, "the late analysis is not applied")
@@ -502,7 +502,7 @@ final class BulkShareDraftPreparationTests: XCTestCase {
         var byHand = draft("b")
         _ = byHand.recordEdit(hasOriginalAudio: true, renderCleanedAudio: false) { $0.automaticCleanupEnabled = true }
         let host = Host(folder: folder, drafts: [cleaned, byHand])
-        host.bulkAutomaticallyCleanedDraftIDs = ["a", "gone"]
+        host.bulkAutomaticallyCleanedDraftIDs = [a, "gone"]
 
         BulkShareDraftPreparation.undoAutomaticCleanup(host: host)
 
@@ -524,6 +524,11 @@ final class BulkShareDraftPreparationTests: XCTestCase {
     }
 
     // MARK: Helpers
+
+    /// The draft id of `draft("a")`: drafts are keyed by session and Margin id (#4688).
+    private let a = Interjection.sessionScopedId(sessionId: "session", id: "a")
+    private let b = Interjection.sessionScopedId(sessionId: "session", id: "b")
+    private let c = Interjection.sessionScopedId(sessionId: "session", id: "c")
 
     private func draft(_ id: String) -> ShareInterjectionDraft {
         let text = "um Keep going."

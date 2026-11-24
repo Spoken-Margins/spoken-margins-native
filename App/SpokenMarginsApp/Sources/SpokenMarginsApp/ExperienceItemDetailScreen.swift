@@ -115,6 +115,8 @@ struct ExperienceItemDetailScreen: View {
                     SourceFollowSuggestionCard()
                     ManualSourceFollowButton()
                     if !model.selectedItem.overview.isEmpty { overview }
+                    // A PDF's Paper note: purpose, findings and evidence from the listener's own Margins (#4340).
+                    if model.offersPaperNote(itemId: model.selectedItem.id) { PaperNoteSection() }
                     sessions
                     structure
                     if let edition = model.selectedListeningEdition { ListeningEditionScenes(edition: edition) }
@@ -245,6 +247,7 @@ struct ExperienceItemDetailScreen: View {
                 PDFCommentExportSheet(export: export) { count in
                     model.presentFeedback(UserFeedbackEvent(kind: .success, message: PDFCommentExportState.doneMessage(count: count)))
                 }
+                .environmentObject(model) // the Tidy version card it opens acts through the model (#4339)
             }
             .trackedSheet(item: $collectionItem) { item in
                 ItemCollectionSheet(item: item).environmentObject(model)

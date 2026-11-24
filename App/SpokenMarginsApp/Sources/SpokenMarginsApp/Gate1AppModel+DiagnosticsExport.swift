@@ -14,11 +14,20 @@ extension Gate1AppModel {
     /// The same file, built off the main actor so the button can show "Preparing diagnostics…" meanwhile (#1191).
     /// The app state is copied first, on the main actor; only the store scan, the JSON and the file write move off it.
     func prepareDiagnosticsExportFileURL() async -> URL? {
+        do {
+            return diagnosticsExportOutcome(.success(try await writeDiagnosticsExportFileOffMain()))
+        } catch {
+            return diagnosticsExportOutcome(.failure(error))
+        }
+    }
+
+    /// The one off-main write, shared by the Settings button and the Export Diagnostics Shortcuts action (#5126).
+    /// It throws instead of showing a toast, so a Shortcut can show the error and never hand on an empty file.
+    func writeDiagnosticsExportFileOffMain() async throws -> URL {
         let inputs = diagnosticsExportInputs()
-        let outcome = await Task.detached(priority: .userInitiated) {
-            Result { try inputs.writeFile() }
+        return try await Task.detached(priority: .userInitiated) {
+            try inputs.writeFile()
         }.value
-        return diagnosticsExportOutcome(outcome)
     }
 
     private func diagnosticsExportOutcome(_ outcome: Result<URL, Error>) -> URL? {

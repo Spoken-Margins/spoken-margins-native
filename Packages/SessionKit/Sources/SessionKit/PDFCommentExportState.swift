@@ -126,7 +126,14 @@ public struct PDFCommentExportState: Equatable, Sendable {
         public var text: String
         public var status: RowStatus
         public var isIncluded: Bool
+        /// The author has a tidy version of this spoken Margin to answer (#4339). The row says so and opens the Tidy
+        /// version card; until they approve it, the comment carries their own words.
+        public var tidyToReview: Bool = false
     }
+
+    /// The row line for a Margin with a tidy version waiting (#4338's Design), and its SF Symbol.
+    public static let tidyToReviewWords = "Tidy version to review"
+    public static let tidyToReviewSystemImage = "wand.and.stars"
 
     public enum Phase: Equatable, Sendable {
         /// Finding where each Margin goes (placement runs off the main thread).
@@ -224,7 +231,8 @@ public struct PDFCommentExportState: Equatable, Sendable {
                 pageLabel: page.map { "p. \($0 + 1)" },
                 text: words.isEmpty ? "Spoken Margin" : words,
                 status: status,
-                isIncluded: status.canBeIncluded
+                isIncluded: status.canBeIncluded,
+                tidyToReview: entry.status == .included && entry.tidyToReview
             )
             return (page, row)
         }
@@ -245,6 +253,15 @@ public struct PDFCommentExportState: Equatable, Sendable {
     public var canExport: Bool { phase == .ready && includedCount > 0 }
     /// Rows can be toggled and the name edited only while the sheet is waiting for the listener.
     public var isEditable: Bool { phase == .ready }
+
+    /// Whether a row's "Tidy version to review" can be opened: not while the comments are being placed or the copy made,
+    /// since the words would change under them.
+    public var canReviewTidy: Bool {
+        switch phase {
+        case .loading, .exporting: return false
+        default: return true
+        }
+    }
 
     /// Whether the sheet is asking for the PDF: no copy on this iPhone, or the chosen file was refused.
     public var asksForFile: Bool {
@@ -326,6 +343,18 @@ public struct PDFCommentExportState: Equatable, Sendable {
     public mutating func toggle(_ id: String) {
         guard isEditable, let index = rows.firstIndex(where: { $0.id == id }), rows[index].status.canBeIncluded else { return }
         rows[index].isIncluded.toggle()
+    }
+
+    /// Takes each row's words and "Tidy version to review" from `plan` again, after the author answered a tidy version
+    /// (#4339). What is included, the order, where each comment lands and the sheet's phase stay as they were.
+    public mutating func updateWords(from plan: MarginCommentPlan) {
+        let byId = Dictionary(plan.entries.map { ($0.marginId, $0) }, uniquingKeysWith: { first, _ in first })
+        for index in rows.indices {
+            guard let entry = byId[rows[index].id], entry.status == .included else { continue }
+            let words = entry.commentText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !words.isEmpty { rows[index].text = words }
+            rows[index].tidyToReview = entry.tidyToReview
+        }
     }
 
     /// Starts an export. False (and no change) when one is running already or there is nothing to send, so a second tap

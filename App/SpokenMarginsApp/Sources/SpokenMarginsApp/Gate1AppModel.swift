@@ -176,6 +176,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var exportFormat = UserDefaults.standard.string(forKey: "exportFormat") ?? "markdown"
     @Published var exportScope = UserDefaults.standard.string(forKey: "exportScope") ?? "full_session"
     @Published var exportIncludesSourceText = UserDefaults.standard.object(forKey: "exportIncludesSourceText") as? Bool ?? false
+    @Published var exportIncludesSpokenNoteText = UserDefaults.standard.object(forKey: "exportIncludesSpokenNoteText") as? Bool ?? true
+    @Published var exportSpokenNoteFootnote: String?
     @Published var exportIncludesReference = UserDefaults.standard.object(forKey: "exportIncludesReference") as? Bool ?? true
     @Published var exportIncludesListeningMap = UserDefaults.standard.object(forKey: "exportIncludesListeningMap") as? Bool ?? true
     @Published var exportIncludesInterjections = UserDefaults.standard.object(forKey: "exportIncludesInterjections") as? Bool ?? true
@@ -307,6 +309,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var sourceImportProgressMessage: String?
     @Published var importInbox: [ImportInboxEntry] = []
     @Published var sourceLinksWaitingForNetwork = 0 // shared links left pending while offline (#1546)
+    @Published var requestedSettingsPage: SettingsPage? // "See why" asks Settings to show the Import Inbox (#4781)
     @Published var selectedProfileId = "phone-tablet-online"
     @Published var importTitle = ""
     @Published var importText = ""
@@ -813,14 +816,6 @@ final class Gate1AppModel: ObservableObject {
             playSourceFromBeginning(fromTimeline: fromTimeline)
         case .playFootnote(let label, let fromTimeline): playFootnote(label: label, fromTimeline: fromTimeline)
         }
-    }
-
-    var localFoundationModelAvailable: Bool {
-        localFoundationModelAvailability.isAvailable
-    }
-
-    var localFoundationModelAvailabilityDescription: String {
-        localFoundationModelAvailability.description
     }
 
     var aiSummaryExperienceAvailable: Bool {
@@ -2044,10 +2039,6 @@ final class Gate1AppModel: ObservableObject {
         return selectedItem.title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    var exportSourceTextAvailable: Bool {
-        !selectedItem.isNativeAudio
-    }
-
     func openCurrentPlaybackItem() {
         guard let itemId = snapshot.itemId ?? (selectedItem.id.isEmpty ? nil : selectedItem.id) else { return }
         openItem(id: itemId)
@@ -2478,7 +2469,7 @@ final class Gate1AppModel: ObservableObject {
         let loadedProfile = try loadProfile(id: selectedProfileId)
         let profile = loadedProfile.limitedToOnDeviceAI(foundationModelAvailable: localFoundationModelAvailable)
         let provider: AIProviderClient = AppleFoundationAIProvider()
-        return PublicSourceChecks.attached(to: SessionEngine(
+        return withSpokenNoteLoader(PublicSourceChecks.attached(to: SessionEngine(
             profile: profile,
             repository: store,
             audio: try makeAudioPlaybackClient(),
@@ -2486,7 +2477,7 @@ final class Gate1AppModel: ObservableObject {
             aiProvider: provider,
             linkResolver: sourceLinkResolver ?? PublicPodcastLinkResolver(),
             textAudio: try makeTextAudioPreparationClient()
-        ))
+        )))
     }
 
     private func makeTextAudioPreparationClient() throws -> TextAudioPreparationClient? {

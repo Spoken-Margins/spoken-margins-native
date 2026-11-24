@@ -30,12 +30,12 @@ final class J1TextChaptersJourneyUITests: XCTestCase {
             start.tap()
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
             // Start paused, so "playback is unchanged" is a position that holds, not a clock that keeps moving.
-            // The bundled fixture is not on the live-speech path the J1 text seed uses: on a fresh simulator it can
-            // open Now Playing still reading "Play" while its audio is prepared (#1815: "Play" for the whole 10 s
-            // on Build 34, 7257db6 and a7ffe49). Starting playback is J1 step 2's claim, but "unchanged" means
-            // nothing about a player that never ran, so an article that does not start ends the test as skipped
-            // (INCONCLUSIVE): the hosted T3 check counts a skipped requested test as not passed, and a pass can
-            // never come from a paused-at-0:00 article.
+            // The fixture seed's generated timeline used to pause every start of this article, so Now Playing read
+            // "Play" and this test skipped at every cut from 2026-10-30 (#1815, cause found in #5204:
+            // UITestingGeneratedTimeline). Starting playback is J1 step 2's claim, but "unchanged" means nothing about
+            // a player that never ran, so an article that does not start still ends the test as skipped
+            // (INCONCLUSIVE): a gating script that skips is not a pass, and a pass can never come from a
+            // paused-at-0:00 article.
             let playPause = app.buttons["playback.play.button"]
             XCTAssertTrue(playPause.waitForExistence(timeout: 8), "Playback control is missing")
             let started = XCTNSPredicateExpectation(

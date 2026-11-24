@@ -499,7 +499,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         let state = model.sharingState
         // The steps read the stored Margin each time, not the copy the draft took when the sheet opened, so a step clears
         // by itself when the sample lands (#3839).
-        let stored = Dictionary(model.selectedItem.interjections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let stored = Dictionary(model.selectedItem.interjections.map { ($0.sessionScopedId, $0) }, uniquingKeysWith: { first, _ in first })
         let isNativeAudio = model.selectedItem.isNativeAudio
         let playing = Self.isPlaying(itemID: model.selectedItem.id, in: model.snapshot)
         var waiting: [ShareReviewSteps.Margin] = []
@@ -1087,7 +1087,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     @discardableResult
     private func refreshDraftsFromStoredMargins() -> Build23DraftRefresh {
         guard stage == .select || stage == .review else { return Build23DraftRefresh() }
-        let stored = Dictionary(model.selectedItem.interjections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let stored = Dictionary(model.selectedItem.interjections.map { ($0.sessionScopedId, $0) }, uniquingKeysWith: { first, _ in first })
         var drafts = model.sharingState.drafts
         var refresh = Build23DraftRefresh()
         for index in drafts.indices {

@@ -33,7 +33,9 @@ public struct ShareMarginEditState: Equatable, Sendable {
 }
 
 public struct ShareInterjectionDraft: Identifiable {
-    public var id: String { interjection.id }
+    /// The Margin's session and id (#4688): the sheet holds Margins from every pass of an item, and each pass numbers
+    /// its own from "ij-001", so the Margin's `id` alone would name two drafts.
+    public var id: String { interjection.sessionScopedId }
     public var interjection: Interjection
     public var isIncluded = true
     public var approvedTranscript: String
@@ -278,7 +280,7 @@ extension ShareInterjectionDraft {
     /// Returns whether anything changed; the Margin's words and the sender's edits are never touched.
     @discardableResult
     public mutating func refreshAnchorEvidence(from stored: Interjection) -> Bool {
-        guard stored.id == interjection.id,
+        guard stored.sessionScopedId == interjection.sessionScopedId,
               interjection.podcastAnchorEvidence != stored.podcastAnchorEvidence
                 || interjection.podcastAnchorEvidenceCaptureStatus != stored.podcastAnchorEvidenceCaptureStatus
                 || interjection.podcastAnchorEvidenceFailureReason != stored.podcastAnchorEvidenceFailureReason
@@ -304,7 +306,7 @@ extension ShareInterjectionDraft {
         from stored: Interjection, hasVoice: Bool, itemTitle: String?, timeZone: TimeZone = .current
     ) -> Bool {
         let standsIn = isShowingPlaceholder || !SharedMarginTextRequirement.hasReviewedText(approvedTranscript)
-        guard stored.id == interjection.id,
+        guard stored.sessionScopedId == interjection.sessionScopedId,
               stored.transcriptionStatus != "pending",
               ["pending", "failed"].contains(interjection.transcriptionStatus),
               interjection.transcriptionStatus != stored.transcriptionStatus,

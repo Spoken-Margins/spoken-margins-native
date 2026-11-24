@@ -18,6 +18,17 @@ public enum SleepTimerPolicy {
         }
     }
 
+    /// The words beside the moon on the compact Sleep button, or nil for the icon alone (#4781).
+    /// Nil while no timer runs, and while a timed timer's time left isn't known yet.
+    public static func compactButtonText(state sleepTimerState: SleepTimerState, remainingSeconds sleepTimerRemainingSeconds: Int?) -> String? {
+        switch sleepTimerState {
+        case .inactive: return nil
+        case .armed(let mode, _, _) where mode != .endOfChapter && sleepTimerRemainingSeconds == nil: return nil
+        case .armed, .expiryDeferred:
+            return description(state: sleepTimerState, remainingSeconds: sleepTimerRemainingSeconds)
+        }
+    }
+
     public static func arm(_ mode: SleepTimerMode, now: Date, chapters: [MediaTimelineChapter], currentMediaTimeMs: Int?) -> SleepTimerState? {
         let deadline: Date?
         let chapterId: String?

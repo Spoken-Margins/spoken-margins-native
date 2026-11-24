@@ -17,8 +17,7 @@ public enum MarginPlacePresentation {
     public static let timelineSortPosition = 101
 
     /// The Timeline card's corner for a Margin with no place: "No place", never a percent made from its stored zeros.
-    public static let timelineLabel = TimelinePositionLabel.Label(
-        corner: MarginRowWording.noPlace, spoken: MarginRowWording.noPlace, chapterDetail: MarginRowWording.noPlace)
+    public static let timelineLabel = TimelinePositionLabel.Label(corner: MarginRowWording.noPlace, spoken: MarginRowWording.noPlace)
 
     /// The Timeline card's detail line for one of the listener's own Margins: "Captured at 40%", or "No place".
     public static func timelineDetail(for margin: Interjection, position: Int) -> String {

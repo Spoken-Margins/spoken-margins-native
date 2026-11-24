@@ -158,7 +158,7 @@ final class ShareVoiceWaitAppTests: XCTestCase {
         try await pollUntil { await fixture.gate.heldCount == 1 }
         XCTAssertTrue(fixture.coordinator.snapshot.readiness.isWaiting)
 
-        fixture.coordinator.send(.setRepresentation(id: "margin-wait-0", choice: .original))
+        fixture.coordinator.send(.setRepresentation(id: "session-share-wait::margin-wait-0", choice: .original))
         XCTAssertEqual(fixture.coordinator.snapshot.readiness, .ready(count: 1))
         XCTAssertEqual(fixture.coordinator.snapshot.margins[0].displayedVersion, .original)
 
@@ -173,10 +173,10 @@ final class ShareVoiceWaitAppTests: XCTestCase {
         defer { fixture.cleanUp() }
         fixture.model.prepareAllIncludedShareDrafts()
         try await fixture.drain()
-        fixture.model.restoreOriginalShareDraft("margin-wait-0")
+        fixture.model.restoreOriginalShareDraft("session-share-wait::margin-wait-0")
         XCTAssertEqual(fixture.model.sharingState.drafts[0].approvedTranscript, "Keep um words.")
 
-        fixture.model.setShareDraftsIncluded(["margin-wait-0", "margin-wait-1"], included: true)
+        fixture.model.setShareDraftsIncluded(["session-share-wait::margin-wait-0", "session-share-wait::margin-wait-1"], included: true)
         XCTAssertEqual(fixture.model.sharingState.drafts[0].approvedTranscript, "Keep um words.", "the undo holds")
         XCTAssertTrue(fixture.model.sharingState.queuedVoiceIDs.isEmpty, "nothing joins the run")
         XCTAssertFalse(fixture.model.sharingState.isBulkPreparing)
