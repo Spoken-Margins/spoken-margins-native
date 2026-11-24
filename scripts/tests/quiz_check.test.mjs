@@ -153,6 +153,7 @@ const MIXED = [
   `Show — Invented | 20 min | clean | 01:00 | ${APPLE}/s/id1?i=33`,
   `Show — A Whole Show | 20 min | clean | 01:00 | (show link) ${APPLE}/s/id1`,
   "Other — On Spotify | 20 min | clean | 01:00 | https://open.spotify.com/episode/abc",
+  `Show — Broken Id | 20 min | clean | 01:00 | ${APPLE}/s/id1?i=12abc`,
   `Busy — Down | 20 min | clean | 01:00 | ${APPLE}/busy/id2?i=44`,
 ].join("\n");
 
@@ -183,6 +184,7 @@ test("each line gets a row with an icon and words, and each show named by an App
     ["failed", "✕ Couldn't find an episode at this link."],
     ["show", "⚠ This is a whole show, not an episode."],
     ["other", "– Not checked here. Open it to see."],
+    ["failed", "✕ Couldn't find an episode at this link."],
     ["error", "? Couldn't check this one just now."],
   ]);
   assert.equal(page.rows()[0].name, "Show — The Right One");
@@ -194,11 +196,11 @@ test("each line gets a row with an icon and words, and each show named by an App
   for (const icon of page.$("check-results").querySelectorAll(".check-icon")) {
     assert.equal(icon.getAttribute("aria-hidden"), "true", "the words carry the meaning, not the icon");
   }
-  assert.equal(page.$("check-message").textContent, "Checked 6 links. 1 of 6 plays the episode named.");
+  assert.equal(page.$("check-message").textContent, "Checked 7 links. 1 of 7 plays the episode named.");
   assert.equal(page.$("none-worked").hidden, true);
   assert.equal(page.$("follow-up").hidden, false);
-  assert.equal(page.$("follow-up-text").value, renderFollowUp(quiz, [MIXED.split("\n")[3], MIXED.split("\n")[4]]),
-    "only the invented link and the show link, never the lookup error or the unchecked Spotify link");
+  assert.equal(page.$("follow-up-text").value, renderFollowUp(quiz, [3, 4, 6].map((i) => MIXED.split("\n")[i])),
+    "the invented link, the show link and the broken id, never the lookup error or the unchecked Spotify link");
 });
 
 test("when no link works the page says to turn on web search", async () => {

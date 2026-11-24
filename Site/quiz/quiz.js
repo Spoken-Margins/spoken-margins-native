@@ -125,6 +125,11 @@ export function appleEpisodeId(urlString) {
   return /^\d{1,19}$/.test(id) ? id : null;
 }
 
+/** An Apple episode link whose `i` is not an episode id: it can't open an episode. */
+export function hasBadEpisodeId(urlString) {
+  return linkKind(urlString) === "apple_episode" && appleEpisodeId(urlString) === null;
+}
+
 /** The Apple show id (the "id123" path part) of an Apple link, or null. */
 export function appleShowId(urlString) {
   const url = parsedURL(urlString);
@@ -196,14 +201,34 @@ export function parsePaste(text) {
 
 const IGNORED_WORDS = new Set(["the", "a", "an", "and", "of", "ep", "episode", "part", "pt"]);
 
-function normalizedTokens(text) {
+// Foundation's folding(.caseInsensitive, .diacriticInsensitive, .widthInsensitive), as SessionKit's tests see it:
+// accents from the combining-diacritics blocks go, other marks (Devanagari vowel signs) stay, ß becomes ss, a final
+// sigma becomes σ, and Hangul stays composed. title-match.json pins each of these on both sides.
+const COMBINING_DIACRITICS = /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g;
+
+function folded(text) {
   return String(text)
     .normalize("NFKD")
-    .replace(/\p{M}/gu, "")
+    .replace(COMBINING_DIACRITICS, "")
+    .normalize("NFC")
     .toLowerCase()
+    .replace(/ß/g, "ss")
+    .replace(/ς/g, "σ");
+}
+
+// Swift's Character count: extended grapheme clusters.
+function characterCount(word) {
+  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+    return [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(word)].length;
+  }
+  return [...word].length;
+}
+
+function normalizedTokens(text) {
+  return folded(text)
     .replace(/&/g, " and ")
     .replace(/[\u2018\u2019']/g, "")
-    .split(/[^\p{L}\p{N}]+/u)
+    .split(/[^\p{L}\p{M}\p{N}]+/u)
     .filter((word) => word !== "" && !IGNORED_WORDS.has(word));
 }
 
@@ -219,7 +244,7 @@ export function titlesMatch(lhs, rhs) {
   const joinedB = b.join(" ");
   const shorter = a.length <= b.length ? a : b;
   const longer = a.length <= b.length ? b : a;
-  if (shorter.length >= 2 || [...shorter[0]].length >= 6) {
+  if (shorter.length >= 2 || characterCount(shorter[0]) >= 6) {
     if (joinedA === joinedB || joinedB.includes(joinedA) || joinedA.includes(joinedB)) return true;
   } else if (joinedA === joinedB) {
     return true;

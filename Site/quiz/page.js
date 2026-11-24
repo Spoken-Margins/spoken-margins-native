@@ -6,7 +6,7 @@
 // `document` and `env` are passed in, so a test can drive the page with a fake DOM and fake clocks. The last lines
 // of the file are the only code that touches the real browser.
 import {
-  answerLines, appleEpisodeId, appleShowId, audience, hintFor, judgeLookup, labelFor, lookupURL, optionLabel, optionsFor, parsePaste,
+  answerLines, appleEpisodeId, appleShowId, audience, hasBadEpisodeId, hintFor, judgeLookup, labelFor, lookupURL, optionLabel, optionsFor, parsePaste,
   renderFollowUp, renderPrompt,
 } from "./quiz.js";
 
@@ -319,6 +319,7 @@ async function lookUp(ctx, showId) {
 // lookup within a check.
 async function judge(ctx, entry, shows) {
   if (entry.kind === "apple_show" || entry.markedShowLink) return { state: "show" };
+  if (hasBadEpisodeId(entry.url)) return { state: "failed" };
   const episodeId = appleEpisodeId(entry.url);
   const showId = appleShowId(entry.url);
   if (!episodeId) return { state: "other" };
@@ -396,6 +397,7 @@ async function copyFollowUp(ctx) {
     if (!env.clipboard || typeof env.clipboard.writeText !== "function") throw new Error("no clipboard");
     await env.clipboard.writeText(page.followUpText.value);
   } catch {
+    if (generation !== ctx.checkGeneration) return;
     cancelFollowUpTimer(ctx);
     page.copyFollowUp.textContent = "Copy follow-up prompt";
     env.selectAll(page.followUpText);

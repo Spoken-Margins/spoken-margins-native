@@ -130,6 +130,58 @@
       "b": "The Kirkbride Plan",
       "match": true,
       "why": "a one-word title of six or more letters inside the other"
+    },
+    {
+      "a": "Straße der Zukunft",
+      "b": "Strasse der Zukunft",
+      "match": true,
+      "why": "ß folds to ss"
+    },
+    {
+      "a": "Søren Kierkegaard",
+      "b": "Soren Kierkegaard",
+      "match": false,
+      "why": "ø is a letter of its own, not o with an accent"
+    },
+    {
+      "a": "ΣΟΦΟΣ",
+      "b": "σοφος",
+      "match": true,
+      "why": "Greek case, final sigma included"
+    },
+    {
+      "a": "안녕",
+      "b": "안녕하세요 친구",
+      "match": false,
+      "why": "a two-letter Hangul title is short: only an exact match counts"
+    },
+    {
+      "a": "안녕하세요",
+      "b": "안녕하세요",
+      "match": true
+    },
+    {
+      "a": "ﬁsh Tales",
+      "b": "fish tales",
+      "match": true,
+      "why": "the fi ligature"
+    },
+    {
+      "a": "Łódź Stories",
+      "b": "Lodz Stories",
+      "match": false,
+      "why": "ł is a letter of its own"
+    },
+    {
+      "a": "हिन्दी",
+      "b": "हिन्दी समाचार",
+      "match": false,
+      "why": "Devanagari vowel signs stay, and a short one-word title matches only exactly"
+    },
+    {
+      "a": "İstanbul Nights",
+      "b": "istanbul nights",
+      "match": true
     }
   ]
 }
