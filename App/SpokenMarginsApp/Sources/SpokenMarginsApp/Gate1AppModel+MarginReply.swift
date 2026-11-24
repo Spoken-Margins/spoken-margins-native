@@ -68,8 +68,8 @@ extension Gate1AppModel {
     /// Plays the Margin a reply answers, with the same lead-in as tapping it anywhere else.
     func playMarginParent(_ context: MarginThreadPresentation.ParentContext) {
         switch context.parent {
-        case .local(let id):
-            if let row = marginRows.first(where: { $0.interjection.id == id }) { _ = playMarginMoment(row) }
+        case .local:
+            if let row = marginRows.first(where: { context.parent.isOwnMargin($0.interjection) }) { _ = playMarginMoment(row) }
         case .imported(let id):
             if let row = sharedMarginRows.first(where: { $0.interjection.id == id }) { playSharedMarginMoment(row) }
         }

@@ -948,6 +948,8 @@ struct Build23ReviewMarginCard: View {
 
 struct Build23VerifiedRecipientPreviewPanel: View {
     let preview: Build23VerifiedRecipientPreview
+    /// Scenes whose model-written title and summary the packet left out (#4635); the map line says so when above zero.
+    var withheldMapSceneCount: Int = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1009,7 +1011,7 @@ struct Build23VerifiedRecipientPreviewPanel: View {
                     Build23StatusLabel(
                         icon: "map",
                         title: preview.listeningMapProposalCount > 0
-                            ? "Listening Map included"
+                            ? MapTextDisclosure.withheldMapLine(sceneCount: withheldMapSceneCount) ?? "Listening Map included"
                             : "Listening Map still preparing or unavailable; share remains usable"
                     )
                     Build23StatusLabel(

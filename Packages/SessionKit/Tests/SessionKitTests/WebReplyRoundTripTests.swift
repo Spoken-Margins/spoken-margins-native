@@ -79,7 +79,7 @@ final class WebReplyRoundTripTests: XCTestCase {
             guard case .yours(let parentId, let parentMs)? = entry.replyContext?.parent else {
                 return XCTFail("\(entry.interjection.packageScopedId) does not answer Ana's Margin: \(String(describing: entry.replyContext))")
             }
-            XCTAssertEqual(parentId, "a-1")
+            XCTAssertEqual(parentId, Interjection.sessionScopedId(sessionId: ana.sessionId, id: "a-1"))
             XCTAssertEqual(parentMs, 754_000)
             XCTAssertEqual(entry.replyContext?.caption, "Reply to your Margin at 12:34")
         }
@@ -89,7 +89,7 @@ final class WebReplyRoundTripTests: XCTestCase {
             guard case .linked(let link)? = graph.states[.imported(margin.id)] else {
                 return XCTFail("\(margin.packageScopedId) should link to its parent: \(String(describing: graph.states))")
             }
-            XCTAssertEqual(link.parent, .local("a-1"))
+            XCTAssertEqual(link.parent, .local(Interjection.sessionScopedId(sessionId: ana.sessionId, id: "a-1")))
         }
         XCTAssertEqual(try ana.store.quarantinedRecordCount(), 0)
     }
