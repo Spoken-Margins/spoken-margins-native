@@ -224,6 +224,33 @@ final class PrivateFeedFollowTests: XCTestCase {
         XCTAssertFalse(text.contains("Private Show"), "everything attached to a private feed is left out too")
     }
 
+    // MARK: What the Follow sheet says (Design PR 2)
+
+    /// The sheet's footer is where a listener with a paid show learns the link works and where to find it. Its exact
+    /// words are the Design's, and #5094 gives the web Follow sheet the same line (not enforced across the two).
+    func testTheFollowSheetFooterSaysAPaidShowsPrivateLinkComesFromTheCreatorsPage() {
+        XCTAssertEqual(
+            FollowPasteDecision.sheetFooter,
+            "Or type a show\u{2019}s feed link. For a paid show, such as one on Patreon, copy your private RSS link from the creator\u{2019}s page.")
+        XCTAssertFalse(FollowPasteDecision.sheetFooter.contains("podcast app"), "members find the link on the creator's page, not in a podcast app")
+        XCTAssertFalse(FollowPasteDecision.sheetFooter.contains("'"), "typographic apostrophes only")
+    }
+
+    /// The sheet shows a failed follow through `ListenerErrorText.message(for:)` (`Gate1AppModel+FollowFromLink`). The
+    /// refused sentence must come through whole, not as the generic "Something went wrong" line.
+    func testARefusalReachesTheFollowSheetInItsOwnWords() async throws {
+        let link = "https://www.patreon.com/rss/sheet-refused?auth=SHEETTOKEN"
+        PrivateFeedStubProtocol.serve(link, status: 403, body: Data("denied".utf8))
+        let error = try await XCTUnwrapAsyncError {
+            _ = try await self.coordinator(InMemorySessionRepository()).follow(urlString: link)
+        }
+
+        let line = ListenerErrorText.message(for: error)
+        XCTAssertEqual(line, Self.refusedWords)
+        XCTAssertFalse(line.contains("SHEETTOKEN"), "the token is never repeated back")
+        XCTAssertFalse(line.contains("patreon.com"), "nor the host")
+    }
+
     // MARK: Helpers
 
     private func XCTUnwrapAsyncError(_ body: () async throws -> Void, file: StaticString = #filePath, line: UInt = #line) async throws -> Error {
