@@ -14,6 +14,7 @@ extension Gate1AppModel {
         syncPlaybackProgressForLifecycle()
         exportSessionId = nil
         exportPreview = ""
+        exportSpokenNoteFootnote = nil
         batchExportFilter = .withInterjections
         selectedBatchExportSessionIds = []
         batchExportResult = nil

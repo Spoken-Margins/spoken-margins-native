@@ -60,7 +60,6 @@ struct PlaybackScreen: View {
     @State private var timelinePull = TimelinePullHolder()
     @State private var playbackTick = 0 // bumped by each progress tick, so this screen follows the clock (#2074)
     @StateObject private var nowScene = NowSceneController()
-    @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
 
     /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
     /// looks first. On Now it sits in line with the title, so the screen gets no taller (#2262).
@@ -101,7 +100,14 @@ struct PlaybackScreen: View {
                                     if model.isFirstMarginPromptShowing { FirstMarginPromptCard() }
                                     playbackHeader
                                         // The Library arrow lives in the header; once following scrolls it away, the toolbar shows it (#4453).
-                                        .onScrollVisibilityChange(threshold: 0.01) { nowScene.headerIsVisible = $0 }
+                                        // Gone below one threshold, back above another, so the toolbar arrow's own bar
+                                        // layout can't flip it on every pass (#4739).
+                                        .onScrollVisibilityChange(threshold: NowHeaderVisibility.goneBelow) {
+                                            nowScene.headerReachedGoneThreshold($0)
+                                        }
+                                        .onScrollVisibilityChange(threshold: NowHeaderVisibility.backAt) {
+                                            nowScene.headerReachedBackThreshold($0)
+                                        }
                                     capturePermissionRecovery
                                     importedCommentaryControl
                                     if model.selectedItem.isNativeAudio {
@@ -946,18 +952,14 @@ struct PlaybackScreen: View {
             itemText: model.selectedItem.text,
             itemHasNativeAudio: model.selectedItem.isNativeAudio
         ) {
+            // One look since #4781: the icon. VoiceOver and the Large Content Viewer still name it.
             Button(action: openSourceText) {
-                if usesVerbosePlaybackActions {
-                    PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")
-                    .frame(minHeight: 32)
-                    .expandedHitArea(vertical: 6)
-                } else {
-                    Image(systemName: "doc.plaintext")
-                    .frame(minWidth: 24, minHeight: 32)
-                    .expandedHitArea(horizontal: 10, vertical: 6)
-                }
+                Image(systemName: "doc.plaintext")
+                .frame(minWidth: 24, minHeight: 32)
+                .expandedHitArea(horizontal: 10, vertical: 6)
             }
             .accessibilityLabel("View native source text")
+            .accessibilityShowsLargeContentViewer { Label("Text", systemImage: "doc.plaintext") }
             .accessibilityIdentifier("playback.sourceText.button")
         }
 
@@ -983,8 +985,9 @@ struct PlaybackScreen: View {
         Button {
             isSleepTimerPresented = true
         } label: {
-            if usesVerbosePlaybackActions {
-                PlaybackControlLabel(title: model.sleepTimerIsActive ? model.sleepTimerDescription : "Sleep", systemImage: "moon.zzz")
+            // The moon alone, with the time left beside it while a timer runs (#4781).
+            if let text = model.sleepTimerCompactButtonText {
+                PlaybackControlLabel(title: text, systemImage: "moon.zzz")
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .frame(minHeight: 32)
                     .expandedHitArea(vertical: 6)
@@ -995,6 +998,7 @@ struct PlaybackScreen: View {
             }
         }
         .accessibilityLabel(model.sleepTimerDescription)
+        .accessibilityShowsLargeContentViewer { Label(model.sleepTimerDescription, systemImage: "moon.zzz") }
         .accessibilityIdentifier("playback.sleepTimer.button")
         .popover(isPresented: $isSleepTimerPresented, arrowEdge: .top) {
             sleepTimerPopover
@@ -1004,18 +1008,11 @@ struct PlaybackScreen: View {
         Button {
             model.cyclePlaybackRate()
         } label: {
-            if usesVerbosePlaybackActions {
-                PlaybackControlLabel(title: model.compactPlaybackRateDescription, systemImage: "speedometer")
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .frame(minHeight: 32)
-                    .expandedHitArea(vertical: 6)
-            } else {
-                Text(model.compactPlaybackRateDescription)
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .frame(minHeight: 32)
-                    .expandedHitArea(vertical: 6)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
+            Text(model.compactPlaybackRateDescription)
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .frame(minHeight: 32)
+                .expandedHitArea(vertical: 6)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
         .accessibilityHint("Advances to the next playback speed")
