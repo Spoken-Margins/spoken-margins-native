@@ -133,6 +133,16 @@ final class SpokenNoteAudioVersionTests: XCTestCase {
         XCTAssertEqual(onClock[0].anchor.anchorType, .media, "only the time moves")
     }
 
+    func testTheTimelinePlacesMarginsOnTheShorterFileWithTheMapItRead() throws {
+        try writeNote()
+        let margins = [spokenMargin("m1", savedMs: 3_000), spokenMargin("m2", savedMs: nil)]
+        let map = try XCTUnwrap(SpokenNoteCleanClock.map(forMediaURL: cleanURL))
+        let placed = SpokenNoteCleanClock.moved(margins, by: map)
+        XCTAssertEqual(placed[0].anchor.mediaTimeMs, 1_500, "a row at the recording's 3 s sits past its words on the shorter file")
+        XCTAssertNil(placed[1].anchor.mediaTimeMs)
+        XCTAssertEqual(SpokenNoteCleanClock.moved(margins, by: nil), margins, "the recording plays: as saved")
+    }
+
     func testMarginsStayAsSavedOnTheRecordingAndWithNoTime() throws {
         try writeNote()
         let margins = [spokenMargin("m1", savedMs: 3_000), spokenMargin("m2", savedMs: nil)]

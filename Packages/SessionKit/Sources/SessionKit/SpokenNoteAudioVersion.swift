@@ -53,7 +53,13 @@ public enum SpokenNoteCleanClock {
     /// recording's clock (#4779); this is the one place a list of them is read on the playing clock. Nothing changes,
     /// and no file is read, unless `mediaURL` names a note's Shorter pauses version.
     public static func onPlayingClock(_ margins: [Interjection], mediaURL: String?) -> [Interjection] {
-        guard let map = map(forMediaURL: mediaURL) else { return margins }
+        moved(margins, by: map(forMediaURL: mediaURL))
+    }
+
+    /// `onPlayingClock(_:mediaURL:)` with the map already read (nil when the recording plays), for a screen that read it
+    /// off the main thread. Reads no file.
+    public static func moved(_ margins: [Interjection], by map: SpokenNoteCleanMap?) -> [Interjection] {
+        guard let map else { return margins }
         return margins.map { margin in
             var moved = margin
             moved.anchor.mediaTimeMs = margin.anchor.mediaTimeMs.map { map.cleanMs(fromRecordedMs: $0) }
