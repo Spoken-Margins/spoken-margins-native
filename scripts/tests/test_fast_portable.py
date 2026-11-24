@@ -107,12 +107,14 @@ class PortableStepTable(unittest.TestCase):
             self.assertIn(name, printed)
         self.assertEqual(slots, [], 'the Mac-wide host-test slot is not for a hosted job')
 
-    def test_the_pr_quick_tier_leaves_only_runner_tests_to_the_merge_group(self):
-        full = [name for name, _ in self.run_portable()[0]]
+    def test_the_pr_quick_tier_runs_only_the_swift_scans_as_its_runner_tests(self):
+        # #5220: with no runner tests at all, #5157 passed its PR checks and failed three Swift scans in the queue.
+        full = self.run_portable()[0]
         calls, skipped, slots, printed = self.run_portable(pr_quick=True)
-        self.assertEqual([name for name, _ in calls], [name for name in full if name != 'runner-tests'])
-        self.assertEqual(skipped, {**verification.PORTABLE_LEFT_OUT, **verification.PR_QUICK_LEFT_OUT})
-        self.assertIn('runner-tests: skipped (the PR quick tier leaves it to the merge group', printed)
+        self.assertEqual([name for name, _ in calls], [name for name, _ in full])
+        self.assertEqual(dict(calls)['runner-tests'], [sys.executable, 'scripts/swift_scan_tests.py'])
+        self.assertEqual(skipped, verification.PORTABLE_LEFT_OUT)
+        self.assertIn('runner-tests: the PR quick tier runs only the Swift source scans', printed)
         self.assertNotIn('fast-portable runner-tests left out', printed)
         self.assertEqual(slots, [])
 

@@ -879,12 +879,14 @@ PORTABLE_RUNNER_TESTS_LEFT_OUT = {
 }
 # --plan fast-portable --pr-quick (2026-11-20): a PR's first signal. In the merge queue (MERGE_QUEUE_MAC=queue-only)
 # the long suites run once per merge group, where batching shares their cost; on a PR push the portable job ran
-# them too, and its runner-tests took 1,180 s of the job's 28 minutes. With --pr-quick the plan leaves runner-tests to
-# the merge group and runs every other portable step (about 90 s together). hosted-portable.yml passes it on PRs only.
-PR_QUICK_LEFT_OUT = {
-    'runner-tests': 'the PR quick tier leaves it to the merge group, which runs the whole fast-portable plan '
-                    '(hosted-portable.yml; for an early run, dispatch it on the branch)',
-}
+# them too, and its runner-tests took 1,180 s of the job's 28 minutes. With --pr-quick the plan runs every other
+# portable step (about 90 s together) and, as its runner-tests, only the tests that scan the Swift sources
+# (scripts/swift_scan_tests.py, #5220: 25 s): a PR that breaks one learns it on its own check, not when the merge
+# group drops it (#5157, 2026-11-23). The merge group still runs every runner test. hosted-portable.yml passes it on
+# PRs only.
+PR_QUICK_RUNNER_TESTS = {'runner-tests': [sys.executable, 'scripts/swift_scan_tests.py']}
+PR_QUICK_NOTE = ('the PR quick tier runs only the Swift source scans (scripts/swift_scan_tests.py); the merge group '
+                 'runs every runner test')
 PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snapshots and the Mac-only caches'}
 # --plan fast-hosted-sessionkit and --plan fast-mac-rest (#1389): the fast plan split three ways once the repo is
 # public. hosted-portable.yml runs fast-portable on Linux and fast-hosted-sessionkit (SessionKit's build and
@@ -2057,7 +2059,7 @@ class Run:
         No host-test slot: that is the Mac's shared pool, and a hosted job is alone on its machine."""
         pr_quick = self.manifest.get('pr_quick', False)
         self.host_steps(portable=True, pr_quick=pr_quick)
-        if not pr_quick:  # with --pr-quick runner-tests did not run at all, so it left nothing out
+        if not pr_quick:  # with --pr-quick runner-tests ran only the Swift scans, none of which drive an Apple tool
             print('fast-portable runner-tests left out ' + ', '.join(PORTABLE_RUNNER_TESTS_LEFT_OUT), flush=True)
         for name, reason in PORTABLE_LEFT_OUT.items():
             self.skip(name, reason)
@@ -2068,7 +2070,9 @@ class Run:
     def host_steps(self, portable=False, pr_quick=False):
         scope, why = runner_test_scope(self.changed)
         if pr_quick:
-            self.skip('runner-tests', PR_QUICK_LEFT_OUT['runner-tests'])
+            self.manifest['runner_tests_note'] = PR_QUICK_NOTE
+            print('runner-tests: ' + PR_QUICK_NOTE, flush=True)
+            self.command('runner-tests', PR_QUICK_RUNNER_TESTS['runner-tests'], **RUNNER_TESTS_LIMITS)
         elif portable:
             self.command('runner-tests', [*PARALLEL_RUNNER, '--leave-out', *PORTABLE_RUNNER_TESTS_LEFT_OUT,
                                           *self.runner_leave_out()], **RUNNER_TESTS_LIMITS)
@@ -2616,7 +2620,7 @@ def main():
                         help='Lane runs: the PR\'s changed paths, one per line (renames name both sides). --plan fast then '
                              'skips the runner and ops tests nothing in the diff can affect; without it every step runs')
     parser.add_argument('--pr-quick', action='store_true',
-                        help='--plan fast-portable on a PR: leave runner-tests to the merge group (PR_QUICK_LEFT_OUT)')
+                        help='--plan fast-portable on a PR: runner-tests runs only the Swift source scans (PR_QUICK_RUNNER_TESTS)')
     parser.add_argument('--leave-out-slow', action='store_true',
                         help='PR and merge-group runs of the split plans: leave out the slow tier (scripts/slow_tier.py, '
                              '#5145), which --plan slow runs nightly and before builds')
@@ -2641,8 +2645,8 @@ def main():
     if args.list:
         print('\n'.join(f'{t} ({status})' for status, tests in journeys.items() for t in tests) if journeys
               else '\n'.join(sorted(plan_tests(ROOT, PLANS[args.plan][1]))) if args.plan in PLANS
-              else ('fast-portable runs ' + ', '.join(s for s in PORTABLE_STEPS if not (args.pr_quick and s in PR_QUICK_LEFT_OUT))
-                    + '; it leaves out ' + ', '.join([*PORTABLE_LEFT_OUT, *(PR_QUICK_LEFT_OUT if args.pr_quick else ())])
+              else ('fast-portable runs ' + ', '.join(PORTABLE_STEPS) + (' (runner-tests: ' + PR_QUICK_NOTE + ')' if args.pr_quick else '')
+                    + '; it leaves out ' + ', '.join(PORTABLE_LEFT_OUT)
                     if args.plan == 'fast-portable'
                     else 'slow tier (scripts/slow_tier.py): ' + ', '.join([*sorted(slow_tier.SLOW_RUNNER_MODULES),
                                                                            *sorted(slow_tier.SLOW_SWIFT_TESTS)])
