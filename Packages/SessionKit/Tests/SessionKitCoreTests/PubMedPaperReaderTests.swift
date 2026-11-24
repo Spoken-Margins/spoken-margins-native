@@ -116,6 +116,9 @@ final class PubMedPaperReaderTests: XCTestCase {
             ("  Sharon   C\tCunningham ", "Cunningham"),
             ("Consortium", "Consortium"),
             ("Van Morrison", "Morrison"),
+            ("John Smith Jr", "Smith"),
+            ("Robert A Jones III", "Jones"),
+            ("Jr Smith", "Smith"),
             ("", nil),
             ("   ", nil),
         ]
@@ -225,6 +228,42 @@ final class PubMedPaperReaderTests: XCTestCase {
         XCTAssertEqual(rows.filter { $0.statusTitle == "PDF" }.count, 6)
         XCTAssertEqual(rows.filter { $0.statusTitle == "Link only" }.map(\.entry.pmid), ["43070160"])
         XCTAssertEqual(rows.filter { $0.button == .add }.count, 14)
+    }
+
+    /// The feed publishes a day's papers hours after their 06:00 stamp. A paper first read after the listener opened
+    /// the list counts as new even though its own date is earlier (audit on #5241).
+    func testAPaperTheFeedAddsLaterCountsAsNewThoughItsDateIsEarlier() async throws {
+        let whole = try fixture()
+        let fake = FakePubMed(PaperFetchReply(status: 200, data: whole))
+        let store = try store()
+        let following = PaperSourceFollowing(store: store, fetcher: PaperSourceFetcher(transport: fake.transport))
+        let iso = ISO8601DateFormatter()
+        // Noon Eastern on Nov 23: after the day's 06:00 stamp, before the evening's batch.
+        let followed = iso.date(from: "2026-11-23T17:00:00Z")!
+        guard case .followed(var record) = await following.follow(pasted: Self.createRSSLink, apiKey: nil, zoteroConnected: false, now: followed)
+        else { return XCTFail("not followed") }
+        XCTAssertEqual(record.newCount, 0)
+        XCTAssertTrue(record.entries.allSatisfy { $0.dateJoined == followed }, "on the follow every paper joins at the follow")
+        let opened = iso.date(from: "2026-11-23T18:00:00Z")!
+        record = try XCTUnwrap(try following.markOpened(id: record.id, now: opened))
+
+        // The evening read: one more paper, stamped 06:00 Nov 23 like the rest of that day.
+        var text = String(decoding: whole, as: UTF8.self)
+        let firstItem = try XCTUnwrap(text.range(of: "<item>"))
+        let added = """
+        <item><title>A paper the feed added that evening</title><guid isPermaLink="false">pubmed:49999999</guid>        <pubDate>Mon, 23 Nov 2026 06:00:00 -0500</pubDate><dc:identifier>pmid:49999999</dc:identifier></item>
+            
+        """
+        text.insert(contentsOf: added, at: firstItem.lowerBound)
+        fake.reply = PaperFetchReply(status: 200, data: Data(text.utf8))
+        let evening = iso.date(from: "2026-11-24T02:00:00Z")!
+        guard case .success(let refreshed) = await following.refresh(record, apiKey: nil, now: evening) else { return XCTFail("refresh failed") }
+        XCTAssertEqual(refreshed.newCount, 1)
+        XCTAssertEqual(PaperSourceRow(record: refreshed).detail, "PubMed · 1 new paper")
+        XCTAssertEqual(refreshed.entries.first?.pmid, "49999999", "the newly seen paper sorts first")
+        XCTAssertEqual(refreshed.entries.first?.dateJoined, evening)
+        XCTAssertEqual(refreshed.entries.filter { $0.dateJoined == followed }.count, 15, "papers already read keep their date")
+        XCTAssertEqual(try store.loadPaperSources().first?.newCount, 1, "and so does the stored copy")
     }
 
     func testAPubMedListIsDueLikeAnyOther() {

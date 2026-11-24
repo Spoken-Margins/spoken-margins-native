@@ -249,9 +249,28 @@ public struct PaperSourceRecord: Codable, Equatable, Identifiable, Sendable {
     /// Replaces the papers with a fresh read. Papers the provider no longer lists leave; the newest 500 stay.
     public mutating func apply(title freshTitle: String?, entries fresh: [PaperEntry], totalCount count: Int?, at date: Date) {
         if let freshTitle, !freshTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { title = freshTitle }
-        entries = Self.capped(fresh)
+        entries = Self.capped(source.provider == .pubmed ? joinedWhenSeen(fresh, at: date) : fresh)
         totalCount = count
         lastRefreshedAt = date
+    }
+
+    /// #5201: a PubMed item's date is a day stamp the feed publishes hours later (papers dated 06:00 appear in the
+    /// evening), so it can't say when a paper joined the list: a listener who opened the list at noon would never see
+    /// that evening's batch counted as new. A paper keeps the date it was first read with; one read for the first
+    /// time joins at the later of its own date and this read. On the follow itself every paper joins at the follow,
+    /// so the row reads "N papers".
+    private func joinedWhenSeen(_ fresh: [PaperEntry], at date: Date) -> [PaperEntry] {
+        var known: [String: Date?] = [:]
+        for entry in entries where known[entry.id] == nil { known[entry.id] = entry.dateJoined }
+        return fresh.map { entry in
+            var entry = entry
+            if let stored = known[entry.id] {
+                entry.dateJoined = stored
+            } else {
+                entry.dateJoined = max(entry.dateJoined ?? date, date)
+            }
+            return entry
+        }
     }
 
     public static func capped(_ entries: [PaperEntry]) -> [PaperEntry] {

@@ -121,11 +121,15 @@ public enum PubMedPaperReader {
         "el", "al", "bin", "ibn", "st", "st.",
     ]
 
+    private static let suffixes: Set<String> = ["jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "2nd", "3rd"]
+
     /// "Magali Van den Kerkhof" → "Van den Kerkhof", "Anil K Challa" → "Challa". PubMed writes each author given
     /// names first; a one-word name (a group author's acronym) stands as written.
     static func familyName(_ raw: String) -> String? {
         guard let name = clean(raw) else { return nil }
-        let words = name.split(separator: " ").map(String.init)
+        var words = name.split(separator: " ").map(String.init)
+        // "John Smith Jr" → "Smith": a generational suffix is never the family name.
+        if words.count > 2, suffixes.contains(words[words.count - 1].lowercased()) { words.removeLast() }
         guard words.count > 1 else { return name }
         var start = words.count - 1
         while start > 1, particles.contains(words[start - 1].lowercased()) { start -= 1 }

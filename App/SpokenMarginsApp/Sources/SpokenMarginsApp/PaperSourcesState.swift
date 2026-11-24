@@ -330,7 +330,7 @@ final class PaperSourcesState: ObservableObject {
                 added[entry.id] = itemId
                 return
             case .pdf(let url):
-                if let itemId = try? await model.importRemotePDFInBackground(url: url, onboardingSteps: [.addedOwnSource], bibliography: citation) {
+                if let itemId = try? await model.importRemotePDFInBackground(url: url, onboardingSteps: [.addedOwnSource], fallbackTitle: entry.title, bibliography: citation) {
                     added[entry.id] = itemId
                     model.reportConfirmation(PaperAddMessage.added(title: entry.title))
                     return
