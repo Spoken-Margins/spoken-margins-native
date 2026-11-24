@@ -1,27 +1,21 @@
-import Foundation
-
-/// What playback does when the share flow opens and closes (#5050).
+/// What the share flow does to playback (#5050).
 ///
-/// Opening Share while an item plays used to leave the source talking under the "Share as a link?" dialog, the
-/// recipient preview and the system share sheet for about a minute. Share is a task that needs the listener's ears
-/// and eyes, so it pauses what is playing, as podcast players do. Closing it never resumes: the listener didn't ask
-/// for sound, so it stays paused until they press play. Pausing, not ducking, is the Default (#5050).
+/// Opening Share with a Friend while something is sounding (the source, a Margin voice, a Skim bridge) pauses it, and
+/// closing the flow leaves it paused: the listener is reading a review, a dialog and the system share sheet, and a
+/// source talking under them for a minute is noise they then have to rewind. Pausing and staying paused is what podcast
+/// players do. Ducking was the other choice (Default taken on #5050): it keeps the source moving past what the listener
+/// was hearing.
 ///
-/// This is only the decision. The app asks it once, when the share screen begins, and carries out the answer
-/// through the player's own pause, so there is no second playback state or resume flag.
-public enum ShareFlowPlayback {
-    public enum Action: Equatable, Sendable {
-        case pause
-        case leaveAlone
-    }
+/// Only the listener resumes. There is no close rule on purpose: the flow keeps no note that it paused, so nothing can
+/// resume on its behalf later. `Gate1AppModelWorkflowTests` checks that closing the sheet leaves the source paused.
+public enum ShareFlowPlayback: Equatable, Sendable {
+    /// Pause what is sounding, through the player's ordinary pause.
+    case pause
+    /// Leave playback as it is.
+    case leaveAlone
 
-    /// `isPlaying` is whether anything is sounding or advancing: the source, a friend's Margin or the listener's own.
-    public static func onOpen(isPlaying: Bool) -> Action {
+    /// The share sheet has just opened.
+    public static func onOpen(isPlaying: Bool) -> ShareFlowPlayback {
         isPlaying ? .pause : .leaveAlone
-    }
-
-    /// Closing the flow, by Cancel, a finished share or a swipe down, starts nothing.
-    public static func onClose() -> Action {
-        .leaveAlone
     }
 }

@@ -85,7 +85,7 @@ final class PublicMapTextPDFFromFilesTests: XCTestCase {
         await model.refreshWithheldMapNote()
         XCTAssertEqual(model.sharingState.withheldMapSceneCount, 2)
         let note = try XCTUnwrap(MapTextDisclosure.withheldNote(sceneCount: model.sharingState.withheldMapSceneCount))
-        XCTAssertTrue(note.hasPrefix("Scene summaries stay on this phone."), note)
+        XCTAssertTrue(note.hasPrefix("Listening Map titles and summaries for 2 scenes won't be sent"), note)
         XCTAssertTrue(note.contains("2 scenes"), note)
 
         XCTAssertEqual(counting.requests, [], "summaries, Skim and the share review made no request to any publisher")

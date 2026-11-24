@@ -25,7 +25,8 @@ pull_request: the PR's head. merge_group: every PR in the group, i.e. the queue 
 whose head commit is the group's head (GraphQL mergeQueue.entries). A GitHub read is tried ATTEMPTS times; one that
 still fails blocks (fail closed), so a blip removes a PR from the queue rather than waving it through. A read refused
 because the hour's API budget is spent waits for the budget to reset and reads again (#4990), so that hold clears
-itself; the check shows as running meanwhile.
+itself; the check shows as running meanwhile. The search API's own small budget (about 30 a minute, shared by every
+run at once) and a secondary limit are waited out the same way, and one run searches once for all its PRs (#5224).
 
 Prints one line per PR: "may merge" or the reasons it can't. Exit 1 if any PR is blocked or anything couldn't be read.
 
@@ -53,11 +54,13 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
 import time
 import types
+import urllib.parse
 
 SCRIPTS = Path(__file__).resolve().parent
 if str(SCRIPTS) not in sys.path:
@@ -79,6 +82,13 @@ RATE_WAIT_SLACK = 20  # seconds past the reset, so the first call lands inside t
 # The longest wait for a reset, in seconds. The workflow file sets RATE_LIMIT_WAIT with a job time limit that fits it;
 # a PR whose branch has an older copy of the workflow (15-minute limit) gets this default.
 DEFAULT_RATE_WAIT = 600
+# #5224: a secondary ("abuse") limit names no reset; GitHub asks for a wait of at least a minute before trying again.
+# The search API, which every run at once shares, ran out on 2026-11-23 and the inherited-holds lookup, which read
+# GitHub without retrying, failed whole merge groups (run 45291666840).
+SECONDARY_LIMITED = 'secondary rate limit'
+SECONDARY_WAIT = 61
+SEARCH_PAGES = 10  # GitHub search answers at most 1000 results; lane_inherited_holds.SEARCH_PAGES is the same
+SINCE = re.compile(r'\s*updated:>=(\d{4}-\d{2}-\d{2})')
 QUEUE_QUERY = '''query($owner: String!, $name: String!, $branch: String!) {
   repository(owner: $owner, name: $name) {
     mergeQueue(branch: $branch) {
@@ -128,7 +138,7 @@ class GitHub:
             done = self.run(['gh', *args], capture_output=True, text=True, timeout=120)
         except (OSError, subprocess.SubprocessError) as error:
             return False, str(error)[:200]
-        return (True, done.stdout) if done.returncode == 0 else (False, (done.stderr or '').strip()[:200])
+        return (True, done.stdout) if done.returncode == 0 else (False, failure_text(done.stderr, done.stdout))
 
     def _reset_wait(self, args: list[str]) -> float | None:
         """Seconds until the spent budget's window resets, or None when that can't be read. `rate_limit` is the one
@@ -156,6 +166,12 @@ class GitHub:
                           file=self.out, flush=True)
                     self.sleep(reset_in)
                     ok, text = self._try(args)
+            elif not ok and SECONDARY_LIMITED in text.lower() and not waited_for_reset and attempts > 1:
+                waited_for_reset, pause = True, min(SECONDARY_WAIT, self.rate_wait)
+                print(f'GitHub secondary rate limit; waiting {int(pause)} seconds, then reading again.',
+                      file=self.out, flush=True)
+                self.sleep(pause)
+                ok, text = self._try(args)
             if ok:
                 return text
             problem = text
@@ -221,6 +237,69 @@ class GitHub:
         if queue is None:
             raise ReadFailed(f'{self.repo} has no merge queue on {branch}' + (f': {data["errors"]}' if data.get('errors') else ''))
         return queue['entries']['nodes']
+
+
+def failure_text(stderr: str, stdout: str) -> str:
+    """Why a `gh` call failed: its stderr, plus the `message` of the error body `gh api` prints on stdout when stderr
+    lacks it (#5224), so a rate limit is recognised and reported whichever stream carries it."""
+    text = (stderr or '').strip()
+    try:
+        message = json.loads(stdout or '').get('message') or ''
+    except (ValueError, AttributeError):
+        message = ''
+    if message and message not in text:
+        text = f'{text} {message}'.strip()
+    return text[:300]
+
+
+class SharedReads:
+    """The inherited-holds lookup's GitHub reads for one run, shared by every PR the run judges (#5224).
+
+    Reads go through GitHub, so they are retried and wait out a spent budget, and a read that still fails raises
+    ReadFailed, which holds the PR (fail closed). A search is read in full once per query and later answered from
+    memory: a PR whose new commits are newer asks `updated:>=` a later day, which is the same answer filtered by
+    `updated_at`. A PR asking an earlier day than any search so far gets a new search. Other reads are kept by path.
+
+    Before this, each PR ran its own two searches (a group of six, twelve or more), and every merge-policy run at once
+    drew on the same search budget of about 30 a minute; one refusal failed the whole merge group (run 45291666840)."""
+
+    def __init__(self, github: 'GitHub'):
+        self.github, self.searches, self.reads = github, {}, {}
+
+    def __call__(self, path: str, paginate: bool = False):
+        if path.startswith('search/'):
+            return self._search(path)
+        key = (path, paginate)
+        if key not in self.reads:
+            self.reads[key] = self.github.api(path, paginate)
+        return self.reads[key]
+
+    def _search(self, path: str) -> dict:
+        split = urllib.parse.urlsplit(path)
+        params = dict(urllib.parse.parse_qsl(split.query, keep_blank_values=True))
+        found = SINCE.search(params.get('q', ''))
+        if not found:
+            return self.github.api(path)  # not the shape it shares: read as asked
+        since = found.group(1)
+        key = (split.path, SINCE.sub('', params['q']).strip(), params.get('sort'), params.get('order'))
+        held = self.searches.get(key)
+        if held is None or since < held[0]:
+            held = self.searches[key] = (since, self._every_page(split.path, params))
+        items = [item for item in held[1] if (item.get('updated_at') or '9999')[:10] >= since]
+        page = int(params.get('page') or 1)
+        return {'total_count': len(items), 'incomplete_results': False, 'items': items if page == 1 else []}
+
+    def _every_page(self, path: str, params: dict) -> list[dict]:
+        items = []
+        for page in range(1, SEARCH_PAGES + 1):
+            query = urllib.parse.urlencode({**params, 'per_page': '100', 'page': str(page)}, quote_via=urllib.parse.quote)
+            result = self.github.api(f'{path}?{query}')
+            if result.get('incomplete_results'):
+                raise ReadFailed('GitHub search answered incompletely')
+            items += result.get('items') or []
+            if page * 100 >= (result.get('total_count') or 0):
+                return items
+        raise ReadFailed(f'more than {SEARCH_PAGES * 100} results to look through ({params.get("q", "")})')
 
 
 def rate_wait_from_env() -> float:
@@ -326,9 +405,11 @@ def proof_blockers(github: GitHub, tree: Path, base_ref: str, number: int, head:
         return [f'the real-use proof check failed ({str(error)[:200]}), so it holds this PR']
 
 
-def blockers(github: GitHub, tree: Path, base: str, number: int, head: str, classify=None, inherited=None) -> list[str]:
+def blockers(github: GitHub, tree: Path, base: str, number: int, head: str, classify=None, inherited=None,
+             reads: SharedReads | None = None) -> list[str]:
     """Why PR <number> at <head> may not merge into <base>, or [] when it may. classify and inherited are injected in
-    tests; by default they are test-scope.py's classify and lane_merge_rules.py's inherited_check."""
+    tests; by default they are test-scope.py's classify and lane_merge_rules.py's inherited_check, reading GitHub through
+    <reads> (evaluate makes one SharedReads per run, so the PRs of a group share one search)."""
     base_ref = f'origin/{base}'
     pull = github.pull(number)
     fetch_head(tree, number, head)
@@ -336,7 +417,8 @@ def blockers(github: GitHub, tree: Path, base: str, number: int, head: str, clas
     scope = (classify or (lambda p, d: scope_policy().classify(p, d, root=tree)))(paths, diffs)
     comments = github.comments(number)
     if inherited is None:
-        inherited = rules().inherited_check(types.SimpleNamespace(repo=github.repo, pr=number), tree, base, head)
+        inherited = rules().inherited_check(types.SimpleNamespace(repo=github.repo, pr=number), tree, base, head,
+                                            api=reads or SharedReads(github))
     reasons = list(rules().merge_blockers(scope, comments, head, inherited))
     tap = rules().owner_tap_paths(scope)
     labels = {label.get('name') for label in pull.get('labels') or []}
@@ -367,6 +449,7 @@ def is_waiting(reason: str) -> bool:
 def evaluate(github: GitHub, tree: Path, base: str, prs: list[tuple[int, str]], **injected) -> list[tuple[int, str, list[str], bool]]:
     """(number, head, reasons, unread) for each PR; unread is True when a GitHub or git read failed (fail closed)."""
     found = []
+    injected.setdefault('reads', SharedReads(github))
     for number, head in prs:
         try:
             found.append((number, head, blockers(github, tree, base, number, head, **injected), False))

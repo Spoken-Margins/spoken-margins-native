@@ -358,7 +358,8 @@ struct ExperienceTimelineRailScreen: View {
             let position = Double(element.start) / Double(max(1, item.timelineSource.characterCount)) * 100
             result.append(TimelineRailEntry(
                 id: "source.element.\(element.id)", position: Int(position.rounded()), rank: 0, provenance: .source,
-                title: element.label, detail: element.timelineDetail,
+                // The kind and a link's host are the row's first line now (#4778), so the detail stays empty.
+                title: element.label, detail: "",
                 action: .sourceElement(element), precisePosition: position))
         }
 
@@ -372,8 +373,9 @@ struct ExperienceTimelineRailScreen: View {
                     rank: 0,
                     provenance: .source,
                     title: "Beginning",
+                    // The compact Beginning row shows the overview only when there is one (#4778).
                     detail: item.overview.isEmpty
-                        ? "Start of source"
+                        ? ""
                         : TimelineTextPresentation.excerpt(
                             item.overview,
                             characterLimit: TimelineTextPresentation.supportingCharacterLimit
@@ -388,7 +390,8 @@ struct ExperienceTimelineRailScreen: View {
         // exact start (`mediaChapters`). The rail draws the percent copy, so look the exact start up by id (#3862).
         let exactStartByChapterID = Dictionary(item.mediaChapters.map { ($0.id, $0.startMs) }, uniquingKeysWith: { first, _ in first })
         for chapter in item.chapters {
-            let label = TimelinePositionLabel.label(kind: kind, startMs: exactStartByChapterID[chapter.id], percent: chapter.percent)
+            // The place shows once, in the corner ("about 65%" when it is rough), so there is no detail line (#4778).
+            let label = TimelinePositionLabel.chapterLabel(kind: kind, startMs: exactStartByChapterID[chapter.id], percent: chapter.percent)
             result.append(
                 TimelineRailEntry(
                     id: "source.chapter.\(chapter.id)",
@@ -396,7 +399,7 @@ struct ExperienceTimelineRailScreen: View {
                     rank: 0,
                     provenance: .source,
                     title: chapter.title,
-                    detail: label.chapterDetail,
+                    detail: "",
                     action: .chapter(chapter),
                     precisePosition: TimelineRailSortKey.percent(position: chapter.startChar, length: sourceLength),
                     positionLabel: label
@@ -416,9 +419,9 @@ struct ExperienceTimelineRailScreen: View {
                     rank: 0,
                     provenance: .source,
                     title: chapter.title,
-                    detail: "Chapter · \(PlaybackPositionText.visible(ms: chapter.startMs))",
+                    detail: "",
                     action: .mediaChapter(chapter), precisePosition: TimelineRailSortKey.percent(position: chapter.startMs, length: knownDuration),
-                    positionLabel: TimelinePositionLabel.label(kind: kind, startMs: chapter.startMs, percent: position)
+                    positionLabel: TimelinePositionLabel.chapterLabel(kind: kind, startMs: chapter.startMs, percent: position)
                 )
             )
         }
@@ -431,7 +434,8 @@ struct ExperienceTimelineRailScreen: View {
             result.append(TimelineRailEntry(
                 id: "source.listeningMapScene.\(scene.id)", position: position, rank: 0,
                 provenance: .listeningMap, title: scene.title,
-                detail: "Generated scene · \(PlaybackPositionText.visible(ms: scene.startMs))" + (summary.map { " · \($0)" } ?? ""),
+                // The time is in the corner already (#4778); "Generated scene" stays, it says the scene is machine-made.
+                detail: "Generated scene" + (summary.map { " · \($0)" } ?? ""),
                 action: .listeningMapScene(scene), precisePosition: TimelineRailSortKey.percent(position: scene.startMs, length: knownDuration),
                 positionLabel: TimelinePositionLabel.label(kind: kind, startMs: scene.startMs, percent: position)
             ))
@@ -654,7 +658,9 @@ struct ExperienceTimelineRailScreen: View {
                 // The rail shows one session's Margins. A reply whose thread starts with a Margin that has no entry
                 // here (an earlier session's) has nothing to indent under: it stands at its own place, and still
                 // says what it answers.
-                if let rootPosition = place.rootPosition {
+                // A thread that starts with a Margin with no place (#4233) has no place to lend: a reply that has one stands
+                // at its own, so its corner and its "Captured at" line agree.
+                if let rootPosition = place.rootPosition, rootPosition != MarginPlacePresentation.timelineSortPosition {
                     threaded.depth = place.depth
                     threaded.position = rootPosition
                     // The sort key goes by the precise place first, so a reply takes its parent's exactly.
@@ -693,9 +699,14 @@ struct ExperienceTimelineRailScreen: View {
         guard !visited.contains(turn.id) else { return 100 }
         let visited = visited.union([turn.id])
         let sourceIDs = Set(turn.sourceInterjectionIds)
-        return item.interjections
+        let sources = item.interjections.filter { $0.sessionId == turn.sessionId && sourceIDs.contains($0.id) }
+        // A reflection on Margins that all have no place (#4233) sits with them, after every placed entry.
+        if !sources.isEmpty, sources.allSatisfy({ $0.targetType == .item && !$0.hasPlace }) {
+            return Double(MarginPlacePresentation.timelineSortPosition)
+        }
+        return sources
             // A source Margin with no place (#4233) says nothing about where the reflection belongs.
-            .filter { $0.sessionId == turn.sessionId && sourceIDs.contains($0.id) && ($0.targetType != .item || $0.hasPlace) }
+            .filter { $0.targetType != .item || $0.hasPlace }
             .map { margin in
                 if margin.targetType == .item {
                     return preciseSourcePosition(margin, in: item, durationMs: durationMs)
@@ -921,6 +932,18 @@ struct TimelineRailEntry: Identifiable, Equatable {
     var currentLabel: String {
         if case .sourceText = action { return "Current passage" }
         return "Current chapter"
+    }
+
+    /// How the row is drawn (#4778): chapters and the Beginning as compact headers, a page's links, pictures, embeds and
+    /// tables as compact children, and every row that carries content in today's full card. Names every case on purpose,
+    /// so a new kind of row has to choose.
+    var rowRole: TimelineRowRole {
+        switch action {
+        case .chapter, .mediaChapter: .chapter
+        case .beginning: .beginning
+        case .sourceElement(let element): .sourceElement(kind: element.kind, linkHost: element.timelineLinkHost)
+        case .sourceText, .footnote, .listeningMapScene, .margin, .sharedMargin, .turn, .turnChapter: .full
+        }
     }
 
     var accessibilityIdentifier: String {

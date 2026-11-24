@@ -16,6 +16,7 @@ import { MiniPlayer, NowPlaying } from './screens/NowPlaying.tsx';
 import { Settings } from './screens/Settings.tsx';
 import { useNativeOpenedFiles } from './native-files.ts';
 import { useLaunchedFiles, useSharedFiles } from './shared-files.ts';
+import { SearchProvider, useClearSearches } from './search.tsx';
 import { UiProvider } from './ui.tsx';
 
 type Tab = 'library' | 'following' | 'margins' | 'settings';
@@ -35,6 +36,8 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
   const [tab, setTabState] = useState<Tab>(tabFromHash);
   const [nowPlaying, setNowPlaying] = useState(false);
   const [followOpen, setFollowOpen] = useState(false);
+  // The name a Following search found nothing for, which the Follow sheet opens looking for.
+  const [followQuery, setFollowQuery] = useState<string>();
   const [dropping, setDropping] = useState(false);
   // Where the last opened file left the listener, so Now Playing can offer to start there (#3039).
   const [landing, setLanding] = useState<Landing>();
@@ -51,10 +54,13 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
   }, []);
 
   const openPlayer = useCallback(() => setNowPlaying(true), []);
+  const clearSearches = useClearSearches();
   const landed = useCallback((at: Landing) => {
+    // Something new came in: an old search must not hide it once Now Playing closes.
+    clearSearches();
     setLanding(at);
     setNowPlaying(true);
-  }, []);
+  }, [clearSearches]);
   const openMarginFile = useOpenMarginFile(landed);
   // Every way a file arrives goes through the same unpacking, so a backup `.zip` shared to the installed app, or
   // opened with the Android app, opens its packets as a picked one does.
@@ -134,9 +140,25 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
               setTab('following');
               setFollowOpen(true);
             }}
+            onGoFollowing={() => setTab('following')}
           />
         )}
-        {tab === 'following' && <Following onPlay={openPlayer} followOpen={followOpen} setFollowOpen={setFollowOpen} />}
+        {tab === 'following' && (
+          <Following
+            onPlay={openPlayer}
+            followOpen={followOpen}
+            setFollowOpen={(open) => {
+              setFollowOpen(open);
+              // Every way the sheet closes passes here, so a later "Follow a show" opens with an empty field.
+              if (!open) setFollowQuery(undefined);
+            }}
+            followQuery={followQuery}
+            onLookFor={(query) => {
+              setFollowQuery(query);
+              setFollowOpen(true);
+            }}
+          />
+        )}
         {tab === 'margins' && <Margins onPlay={openPlayer} onOpenFile={openMarginFile} onOpenLink={openShareLink} />}
         {tab === 'settings' && <Settings />}
       </main>
@@ -165,9 +187,11 @@ export function App({ launchLink = { kind: 'none' } }: { launchLink?: ParsedLink
     <UiProvider>
       <DataProvider>
         <FeedRefreshProvider>
-          <PlayerProvider>
-            <Shell launchLink={launchLink} />
-          </PlayerProvider>
+          <SearchProvider>
+            <PlayerProvider>
+              <Shell launchLink={launchLink} />
+            </PlayerProvider>
+          </SearchProvider>
         </FeedRefreshProvider>
       </DataProvider>
     </UiProvider>

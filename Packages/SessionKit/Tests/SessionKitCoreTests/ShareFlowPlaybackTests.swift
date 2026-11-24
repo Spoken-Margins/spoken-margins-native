@@ -1,17 +1,14 @@
 import XCTest
 @testable import SessionKit
 
-/// #5050: the source kept playing under the share dialogs and sheets for about 50 seconds.
+/// #5050: opening Share while something plays pauses it. Closing is checked in the app tests.
 final class ShareFlowPlaybackTests: XCTestCase {
-    func testOpeningShareWhilePlayingPauses() {
+    func testOpeningShareWhileSomethingPlaysPausesIt() {
         XCTAssertEqual(ShareFlowPlayback.onOpen(isPlaying: true), .pause)
     }
 
-    func testOpeningShareWhilePausedLeavesItAlone() {
+    func testOpeningShareWithNothingPlayingLeavesPlaybackAlone() {
         XCTAssertEqual(ShareFlowPlayback.onOpen(isPlaying: false), .leaveAlone)
     }
 
-    func testClosingShareNeverResumes() {
-        XCTAssertEqual(ShareFlowPlayback.onClose(), .leaveAlone)
-    }
 }

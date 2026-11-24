@@ -43,4 +43,36 @@ public enum OwnMarginEchoes {
         guard !ownIdentities.isEmpty else { return records }
         return records.filter { !isEcho($0, in: layer, ownIdentities: ownIdentities) }
     }
+
+    /// The layers and records that are really someone else's (#4910).
+    public struct FriendMargins: Equatable {
+        public let layers: [ImportedCommentaryLayer]
+        public let records: [String: [ImportedCommentaryInterjection]]
+    }
+
+    /// `layers` and `records` without the listener's own echoes, for every reader that shows or plays a friend's
+    /// Margins from memory. `ownMargins` are the own Margins of the layers' item. A layer that held Margins and now
+    /// holds none was only copies, so it is dropped with its key; a layer with no Margins to begin with (a Listening
+    /// Map) is kept. With no own identities the input comes back unchanged.
+    public static func friendMargins(
+        layers: [ImportedCommentaryLayer],
+        records: [String: [ImportedCommentaryInterjection]],
+        ownMargins: [Interjection]
+    ) -> FriendMargins {
+        let own = identities(of: ownMargins)
+        guard !own.isEmpty else { return FriendMargins(layers: layers, records: records) }
+        var keptLayers: [ImportedCommentaryLayer] = []
+        var keptRecords: [String: [ImportedCommentaryInterjection]] = [:]
+        for layer in layers {
+            guard let all = records[layer.id] else {
+                keptLayers.append(layer)
+                continue
+            }
+            let kept = withoutEchoes(all, in: layer, ownIdentities: own)
+            if kept.isEmpty && !all.isEmpty { continue }
+            keptLayers.append(layer)
+            keptRecords[layer.id] = kept
+        }
+        return FriendMargins(layers: keptLayers, records: keptRecords)
+    }
 }

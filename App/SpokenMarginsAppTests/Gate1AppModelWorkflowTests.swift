@@ -650,7 +650,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertTrue(model.isSharingInterjectionsPresented)
         XCTAssertEqual(model.sharingState.drafts.count, 2, "both passes are listed")
-        let draft = try XCTUnwrap(model.sharingState.drafts.first { $0.id == "lost-recording" })
+        let draft = try XCTUnwrap(model.sharingState.drafts.first { $0.interjection.id == "lost-recording" })
         XCTAssertEqual(draft.representationChoice, .textOnly)
         XCTAssertEqual(draft.preparationMessage, ShareCleanupWords.Failure.recordingMissing.message)
         let packet = await model.exportSharedInterjections(presentsReadySheet: false)
@@ -1122,6 +1122,61 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.sharingState.drafts.count, 1)
     }
 
+    /// #5050: the source talked under the share flow for about 50 s. Opening Share pauses it; closing leaves it paused.
+    func testOpeningShareWhilePlayingPausesAndClosingDoesNotResume() throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        XCTAssertEqual(model.snapshot.status, .playing)
+        model.selectedItem.interjections = [shareableInterjection(itemId: model.selectedItem.id)]
+
+        model.prepareShareInterjections()
+
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        model.isSharingInterjectionsPresented = false
+        XCTAssertEqual(model.snapshot.status, .paused, "closing the share flow leaves the source paused")
+    }
+
+    func testOpeningShareWhilePausedLeavesPlaybackPaused() throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.dismissFeedback()
+        model.selectedItem.interjections = [shareableInterjection(itemId: model.selectedItem.id)]
+
+        model.prepareShareInterjections()
+
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertNotEqual(model.feedbackEvent?.message, "Paused.", "nothing was sounding, so the share flow paused nothing")
+    }
+
+    /// #5050 audit: the share pause reloaded the playing item into `selectedItem`, so Share on another item's Margin
+    /// while something played would have built the packet for the playing item.
+    func testSharingAnotherItemsMarginWhilePlayingKeepsTheSharedItem() async throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let store = try model.libraryStoreForTesting()
+        try store.saveItem(Item(id: "item-b", title: "Item B", mediaType: "text", text: "Source text.",
+                                externalReference: nil, status: "ready"))
+        model.startItem(id: "item-pill")
+        XCTAssertEqual(model.snapshot.status, .playing)
+
+        model.openMarginShare(shareableInterjection(itemId: "item-b"))
+        await model.settleItemReload()
+
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertEqual(model.selectedItem.id, "item-b", "the sheet's item stays the Margin's item, not the playing one")
+    }
+
     func testShareWordDeletionSupportsUndoAndRedoWithoutAllowingInsertedText() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -1189,7 +1244,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         reopened.prepareShareInterjections()
 
         XCTAssertEqual(reopened.sharingState.draftFilter, .starred)
-        XCTAssertEqual(reopened.sharingState.drafts.filter(\.isIncluded).map(\.id), ["margin-starred"])
+        XCTAssertEqual(reopened.sharingState.drafts.filter(\.isIncluded).map(\.interjection.id), ["margin-starred"])
 
         reopened.setStarredForSharing(curated, starred: false, place: .manage)
         await reopened.settleItemReload() // the item detail reloads off the main thread after the star (#2505)
@@ -1319,7 +1374,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.sharingState.drafts[0].currentEditState.automaticCleanupEnabled)
         XCTAssertTrue(model.sharingState.automaticallyCleanedDraftIDs.isEmpty)
 
-        model.prepareCleanup(forShareDraft: "margin-auto-clean-toggle")
+        model.prepareCleanup(forShareDraft: model.sharingState.drafts[0].id)
         XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
         XCTAssertTrue(model.sharingState.automaticallyCleanedDraftIDs.isEmpty)
 

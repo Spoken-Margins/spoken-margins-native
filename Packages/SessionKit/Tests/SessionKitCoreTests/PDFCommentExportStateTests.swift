@@ -4,11 +4,11 @@ import XCTest
 /// #4338, PR 5: what the "PDF with your Margins" sheet lists and offers, decided with no PDFKit.
 final class PDFCommentExportStateTests: XCTestCase {
     private func entry(
-        _ id: String, _ words: String, page: Int? = 0, status: MarginCommentPlan.Entry.Status = .included
+        _ id: String, _ words: String, page: Int? = 0, status: MarginCommentPlan.Entry.Status = .included, tidy: Bool = false
     ) -> MarginCommentPlan.Entry {
         MarginCommentPlan.Entry(
             marginId: id, sentence: nil, sentenceText: "", precedingText: "", pageIndex: page,
-            commentText: status == .included ? words : "", status: status
+            commentText: status == .included ? words : "", status: status, tidyToReview: tidy
         )
     }
 
@@ -263,5 +263,52 @@ final class PDFCommentExportStateTests: XCTestCase {
         let trailing = PDFCommentExportFileName.make(title: String(repeating: "x", count: 119) + " tail")
         XCTAssertTrue(trailing.hasSuffix(" (with Margins).pdf"))
         XCTAssertFalse(trailing.contains(" " + PDFCommentExportFileName.suffix), "no space left dangling before the suffix")
+    }
+
+    // MARK: Tidy version to review (#4339)
+
+    func testARowSaysTidyVersionToReviewOnlyForAnIncludedMarginWithOneWaiting() {
+        let sheet = state(
+            [entry("a", "um so the result", tidy: true), entry("b", "Fine."), entry("c", "", status: .noTranscript, tidy: true)],
+            spots: ["a": .sentence(page: 0), "b": .sentence(page: 0)]
+        )
+        XCTAssertEqual(sheet.rows.map(\.tidyToReview), [true, false, false])
+        XCTAssertEqual(sheet.rows.map(\.isIncluded), [true, true, false], "a waiting tidy does not change what is sent")
+        XCTAssertEqual(PDFCommentExportState.tidyToReviewWords, "Tidy version to review")
+        XCTAssertEqual(PDFCommentExportState.tidyToReviewSystemImage, "wand.and.stars")
+        XCTAssertFalse(sheet.rows.map(\.status.systemImage).contains(PDFCommentExportState.tidyToReviewSystemImage),
+                       "its icon is not one a status already uses")
+    }
+
+    func testAnsweringATidyUpdatesTheRowAndKeepsWhatTheListenerChose() {
+        let plan = MarginCommentPlan(entries: [
+            entry("a", "um so the result", page: 2, tidy: true), entry("b", "Fine.", page: 1), entry("c", "", status: .transcriptPending),
+        ])
+        var sheet = PDFCommentExportState(plan: plan, spots: ["a": .sentence(page: 2), "b": .pageNote(page: 1)], authorName: "Ann")
+        sheet.toggle("b")
+        XCTAssertTrue(sheet.canReviewTidy)
+
+        var answered = plan
+        answered.entries[0].commentText = "So the result."
+        answered.entries[0].tidyToReview = false
+        sheet.updateWords(from: answered)
+
+        XCTAssertEqual(sheet.rows.map(\.id), ["c", "b", "a"], "the order stays")
+        XCTAssertEqual(sheet.rows.first { $0.id == "a" }?.text, "So the result.")
+        XCTAssertEqual(sheet.rows.first { $0.id == "a" }?.tidyToReview, false)
+        XCTAssertEqual(sheet.rows.first { $0.id == "a" }?.status, .onItsSentence)
+        XCTAssertEqual(sheet.includedIds, ["a"], "the Margin left out stays out")
+        XCTAssertEqual(sheet.phase, .ready)
+        XCTAssertEqual(sheet.authorName, "Ann")
+    }
+
+    func testATidyCannotBeOpenedWhileCommentsArePlacedOrTheCopyIsMade() {
+        var sheet = state([entry("a", "um so", tidy: true)], spots: nil)
+        XCTAssertFalse(sheet.canReviewTidy, "loading")
+        sheet = state([entry("a", "um so", tidy: true)], spots: ["a": .sentence(page: 0)])
+        XCTAssertTrue(sheet.beginExport())
+        XCTAssertFalse(sheet.canReviewTidy, "exporting")
+        XCTAssertTrue(PDFCommentExportState.waitingForOriginal(plan: MarginCommentPlan(entries: [entry("a", "um so", tidy: true)])).canReviewTidy,
+                      "the words can be answered while the sheet asks for the PDF")
     }
 }

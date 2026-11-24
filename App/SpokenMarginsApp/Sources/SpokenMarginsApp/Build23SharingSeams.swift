@@ -444,7 +444,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         let state = model.sharingState
         // The steps read the stored Margin each time, not the copy the draft took when the sheet opened, so a step clears
         // by itself when the sample lands (#3839).
-        let stored = Dictionary(model.selectedItem.interjections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let stored = Dictionary(model.selectedItem.interjections.map { ($0.sessionScopedId, $0) }, uniquingKeysWith: { first, _ in first })
         let isNativeAudio = model.selectedItem.isNativeAudio
         let playing = Self.isPlaying(itemID: model.selectedItem.id, in: model.snapshot)
         var waiting: [ShareReviewSteps.Margin] = []
@@ -650,9 +650,6 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     func send(_ action: Build23SenderAction) {
         switch action {
         case .begin:
-            // The source doesn't keep talking under the share dialogs and sheets (#5050). It pauses once, here, where
-            // every Share door arrives; closing the flow resumes nothing (`ShareFlowPlayback.onClose`).
-            if ShareFlowPlayback.onOpen(isPlaying: model.activePlaybackIsPlaying) == .pause { model.pause() }
             discardPreview(resetTo: .select)
             if model.sharingState.draftsPreparedForExport && model.isSharingInterjectionsPresented {
                 model.sharingState.draftsPreparedForExport = false
@@ -922,7 +919,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     @discardableResult
     private func refreshDraftsFromStoredMargins() -> Bool {
         guard stage == .select || stage == .review else { return false }
-        let stored = Dictionary(model.selectedItem.interjections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let stored = Dictionary(model.selectedItem.interjections.map { ($0.sessionScopedId, $0) }, uniquingKeysWith: { first, _ in first })
         var drafts = model.sharingState.drafts
         var changed = false
         for index in drafts.indices {

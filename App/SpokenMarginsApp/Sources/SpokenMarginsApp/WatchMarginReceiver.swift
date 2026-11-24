@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitPersistence
 
 #if canImport(WatchConnectivity)
 @preconcurrency import WatchConnectivity
@@ -47,6 +48,10 @@ final class WatchMarginReceiver: NSObject {
     private(set) var sentAnswers: [WatchMarginAnswer] = []
     /// Passes run one after another, so each Margin is filed once.
     private var lastPass: Task<Void, Never>?
+    /// The Library's store, for finishing a move of live Margins cut short (#4233); nil until the model has one.
+    var movedMarginStore: () -> SQLiteSessionStore? = { PlayerRunController.store }
+    /// True once this launch has finished any such move, which it does before its first filing pass with a store.
+    private var reconciledMovedMargins = false
     private var resumeObserver: NSObjectProtocol?
     /// Called on the main actor whenever the Watch's pairing state changes: the session finished activating, or a
     /// Watch was paired, unpaired or got the app (#4563). Activation starts in `didFinishLaunching`
@@ -167,6 +172,10 @@ final class WatchMarginReceiver: NSObject {
 
     /// Files what is waiting and answers the Watch, without transcribing.
     private func fileWaiting() async -> [LiveSessionFileWorker.FiledMargin] {
+        if !reconciledMovedMargins, let store = movedMarginStore() {
+            // Before the inbox is filed, so the Library row, the Watch and the screen never see a moved Margin twice.
+            reconciledMovedMargins = await LiveMarginMoving.reconcileAtLaunch(store: store, files: files)
+        }
         var changed = await apply(drainResumes())
         let marks = drainMarks()
         if !marks.isEmpty {

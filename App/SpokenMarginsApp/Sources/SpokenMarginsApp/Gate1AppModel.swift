@@ -526,6 +526,7 @@ final class Gate1AppModel: ObservableObject {
     )
     var startupAudioPreparation = StartupAudioPreparationState() // pending, failed and cooling-down items (#2653)
     var pendingHandoffDrainGate = RunAgainGate(), followedSourceRefreshGate = RunAgainGate() // a request during a pass makes it go round again (#2136)
+    let followedSourcePassEnd = PassEndWaiters() // a pull refused by a running pass waits for its end (#4955)
     /// Browser-text payloads one path is importing now; the link open and the drain both suspend, so each skips what the other holds (#2510).
     var browserTextPayloadsInFlight = Set<String>()
     let pendingHandoffNetworkRetry = PendingHandoffNetworkRetry()

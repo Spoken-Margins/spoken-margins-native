@@ -18,6 +18,8 @@ import SessionKitPersistence
 enum PlayerRunController {
     private static var recorder = PlayerRunRecorder()
     private static weak var model: Gate1AppModel?
+    /// The Library's store, once the model has reported to this controller; nil before that.
+    static var store: SQLiteSessionStore? { model?.store }
     /// What the Watch was last told the player has loaded (#3494).
     private static var publishedNowPlaying: WatchNowPlaying?
 

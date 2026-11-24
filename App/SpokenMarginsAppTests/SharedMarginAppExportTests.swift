@@ -309,6 +309,7 @@ final class SharedMarginAppExportTests: XCTestCase {
         func share(_ name: String, setting lengths: [String: Int]) async throws -> [Int?] {
             model.prepareShareInterjections()
             for (id, ms) in lengths {
+                // The keys are drafts' own ids, which are session-scoped (`session::margin`) since #5144.
                 let index = try XCTUnwrap(model.sharingState.drafts.firstIndex { $0.id == id })
                 model.sharingState.drafts[index].leadInMs = ms
             }
@@ -324,20 +325,20 @@ final class SharedMarginAppExportTests: XCTestCase {
         XCTAssertEqual(untouched, [nil, nil], "no length chosen: the packet an older build writes")
         XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), [:])
 
-        let minute = try await share("minute", setting: ["margin-lead-1": 60_000])
+        let minute = try await share("minute", setting: ["session-app-export::margin-lead-1": 60_000])
         XCTAssertEqual(minute, [60_000, nil])
-        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), ["margin-lead-1": 60_000])
+        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), ["session-app-export::margin-lead-1": 60_000])
 
         model.prepareShareInterjections()
         XCTAssertEqual(model.sharingState.drafts.map(\.leadInMs), [60_000, SenderLeadIn.defaultMs], "the next share starts where the friend was last told")
         let again = try await share("again", setting: [:])
         XCTAssertEqual(again, [60_000, nil], "left alone, a re-share keeps the friend's copy at a minute")
 
-        let back = try await share("back", setting: ["margin-lead-1": SenderLeadIn.defaultMs])
+        let back = try await share("back", setting: ["session-app-export::margin-lead-1": SenderLeadIn.defaultMs])
         XCTAssertEqual(back, [SenderLeadIn.defaultMs, nil], "taking it back is said out loud")
         let done = try await share("done", setting: [:])
         XCTAssertEqual(done, [nil, nil], "after that, nothing more to say")
-        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), ["margin-lead-1": SenderLeadIn.defaultMs])
+        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), ["session-app-export::margin-lead-1": SenderLeadIn.defaultMs])
     }
 
     /// The archive is now written while the main thread stays free (#2510), so a second tap can arrive mid-build.

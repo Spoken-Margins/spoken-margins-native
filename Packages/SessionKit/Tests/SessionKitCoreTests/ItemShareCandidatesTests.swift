@@ -79,12 +79,23 @@ final class ItemShareCandidatesTests: XCTestCase {
         XCTAssertEqual(result.margins.map(\.id), ["same"])
     }
 
-    /// Passes are read newest first, so when two copies of an id differ the newest pass's copy is the one kept.
-    func testTheFirstCopySeenWins() {
+    /// The Test Desk's real run (#4688, 2026-11-23): every pass numbers its Margins from "ij-001", so a replay's first
+    /// Margin has the same id as the first listen's first Margin. Both are the listener's, and both are listed.
+    func testAReplaysMarginWithTheSameIdAsTheFirstListensIsListedToo() {
+        let bySession = [
+            "old": [margin("ij-001", session: "old", ms: 9_000, createdAt: 10), margin("ij-002", session: "old", ms: 30_000, createdAt: 20)],
+            "new": [margin("ij-001", session: "new", ms: 3_000, createdAt: 50)],
+        ]
+        let result = make(["new", "old"], bySession, source: recording)
+        XCTAssertEqual(result.margins.map(\.sessionScopedId), ["new::ij-001", "old::ij-001", "old::ij-002"])
+    }
+
+    /// Two passes holding the same id at the same place still sort the same way every time.
+    func testTheSameIdInTwoPassesAtOnePlaceSortsByWhenItWasMade() {
         let newer = margin("same", session: "new", ms: 1_000, createdAt: 50)
         let older = margin("same", session: "old", ms: 1_000, createdAt: 10)
         let result = make(["new", "old"], ["new": [newer], "old": [older]], source: recording)
-        XCTAssertEqual(result.margins.map(\.sessionId), ["new"])
+        XCTAssertEqual(result.margins.map(\.sessionId), ["old", "new"])
     }
 
     func testMarginsWithNoPlaceKeepWhenTheyWereMadeOrderAmongThemselves() {

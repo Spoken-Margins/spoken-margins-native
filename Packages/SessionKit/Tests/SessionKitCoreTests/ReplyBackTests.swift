@@ -67,6 +67,16 @@ final class ReplyBackTests: XCTestCase {
         XCTAssertEqual(offer.candidates.map(offer.isPreselected), [true, false])
     }
 
+    /// #4688: each pass numbers its Margins from "ij-001", so a reply in a replay can share its id with a Margin of the
+    /// first listen that answers nothing. Only the reply starts picked.
+    func testOnlyTheReplyStartsPickedWhenAnotherPassHasAMarginWithItsId() throws {
+        var reply = own("ij-001", madeAt: 200, replyingTo: "ana"); reply.sessionId = "replay"
+        var other = own("ij-001", madeAt: 210); other.sessionId = "first"
+        let offer = try XCTUnwrap(ReplyBackOffer.make(localMargins: [reply, other], layers: [layer("ana")]))
+        XCTAssertEqual(offer.candidates.map(\.sessionId), ["replay", "first"])
+        XCTAssertEqual(offer.candidates.map(offer.isPreselected), [true, false])
+    }
+
     /// #3906, the Design's table: Share, the one verb for sending to a person, and the title follows what the sheet
     /// holds, so the row never calls new Margins replies.
     func testTheTitleSaysShareAndFollowsWhatTheSheetHolds() throws {
