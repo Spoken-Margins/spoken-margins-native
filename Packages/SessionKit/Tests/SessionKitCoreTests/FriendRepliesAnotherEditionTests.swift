@@ -81,6 +81,17 @@ final class FriendRepliesAnotherEditionTests: XCTestCase {
             for: packet(of: episode("a969", file: Self.opus)), among: [senderCopy, unrelated]), "cc96")
     }
 
+    /// A listener holding both editions keeps getting packets on the row each one names exactly (review of 046731f):
+    /// the edition rule must not make an exact GUID or file match ambiguous.
+    func testTheRowAPacketNamesExactlyStillWinsOverAnotherEdition() {
+        let mp3Row = episode("cc96", file: Self.mp3), opusRow = episode("a969", file: Self.opus)
+        XCTAssertEqual(SharedPacketItemMatcher.matchingItemId(for: packet(of: mp3Row), among: [mp3Row, opusRow]), "cc96")
+        XCTAssertEqual(SharedPacketItemMatcher.matchingItemId(for: packet(of: opusRow), among: [mp3Row, opusRow]), "a969")
+        // An Ogg copy matches both by edition and neither exactly: no guess.
+        let ogg = episode("ogg", file: "https://hub.hackerpublicradio.org/ccdn.php?filename=/eps/hpr4777/hpr4777.ogg")
+        XCTAssertNil(SharedPacketItemMatcher.matchingItemId(for: packet(of: ogg), among: [mp3Row, opusRow]))
+    }
+
     // MARK: Replies go to the row holding their parents (Done when 1)
 
     /// Real SQLite: the listener holds the episode on two rows (their MP3 and an Opus copy an earlier import added).
@@ -123,7 +134,8 @@ final class FriendRepliesAnotherEditionTests: XCTestCase {
 
         let repliesPacket = packet(of: secondRow) // the friend's copy is the Opus edition
         let items = [senderCopy, secondRow]
-        XCTAssertNil(SharedPacketItemMatcher.matchingItemId(for: repliesPacket, among: items), "two rows of one episode: no ordinary answer")
+        XCTAssertEqual(SharedPacketItemMatcher.matchingItemId(for: repliesPacket, among: items), "a969",
+                       "the ordinary match takes the row the packet names exactly, the Opus copy")
         let holding = try store.itemIdsHoldingOwnMargins(sharedAs: parents)
         XCTAssertEqual(holding, ["cc96"])
         XCTAssertEqual(ReplyParentItemMatch.itemId(for: repliesPacket, holdingParents: holding, among: items), "cc96")
