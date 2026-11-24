@@ -63,12 +63,14 @@ enum PlayerRunController {
             if let audioPath = placement.audioPath {
                 saved = try PlayerItemMargin.placeSpoken(
                     audioPath: audioPath, atMediaTimeMs: placement.positionMs, markedAt: placement.markedAt,
-                    itemId: placement.itemId, repository: store, readAloudPlace: readAloudPlace(for: placement)
+                    itemId: placement.itemId, repository: store, readAloudPlace: readAloudPlace(for: placement),
+                    playedOnMediaURL: placement.playingThen?.playingMediaURL // the file it was taken on (#4779)
                 )
             } else {
                 // A Lock Screen Mark: a written Margin with words that say what it is (#3203).
                 saved = try PlayerItemMargin.placeMark(
-                    atMediaTimeMs: placement.positionMs, markedAt: placement.markedAt, itemId: placement.itemId, repository: store
+                    atMediaTimeMs: placement.positionMs, markedAt: placement.markedAt, itemId: placement.itemId, repository: store,
+                    playedOnMediaURL: placement.playingThen?.playingMediaURL
                 )
             }
         } catch {

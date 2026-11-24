@@ -152,6 +152,25 @@ final class SpokenNoteAudioVersionTests: XCTestCase {
         XCTAssertNil(SpokenNoteCleanClock.onPlayingClock(margins, mediaURL: cleanURL)[1].anchor.mediaTimeMs, "a missing time is never made 0:00")
     }
 
+    private func noteItem(attached url: String, mediaType: String = SpokenNoteItem.mediaType) -> Item {
+        Item(
+            id: "note", title: "A note", mediaType: mediaType, text: nil, externalReference: "note://n", status: "ready",
+            externalReferenceType: SpokenNoteItem.referenceType,
+            media: ItemMedia(sourceType: .nativeMediaFile, url: url, durationMs: 4_000, nativeMediaId: "note-audio"))
+    }
+
+    func testAWatchMarginKeepsItsWordsWhenTheNoteMovedToTheOtherVersionWhileItRecorded() throws {
+        try writeNote()
+        // Taken at 3 s on the recording; the version was attached before the Margin was written: 1.5 s on that file.
+        XCTAssertEqual(PlayerItemMargin.timeOnAttachedFile(3_000, playedOn: recordedURL, item: noteItem(attached: cleanURL)), 1_500)
+        // Taken at 1.5 s on the version; As recorded was chosen before it was written: 3 s on the recording.
+        XCTAssertEqual(PlayerItemMargin.timeOnAttachedFile(1_500, playedOn: cleanURL, item: noteItem(attached: recordedURL)), 3_000)
+        XCTAssertEqual(PlayerItemMargin.timeOnAttachedFile(1_500, playedOn: cleanURL, item: noteItem(attached: cleanURL)), 1_500, "same file")
+        XCTAssertEqual(PlayerItemMargin.timeOnAttachedFile(1_500, playedOn: nil, item: noteItem(attached: cleanURL)), 1_500, "no file known")
+        XCTAssertEqual(PlayerItemMargin.timeOnAttachedFile(
+            1_500, playedOn: cleanURL, item: noteItem(attached: recordedURL, mediaType: "podcast")), 1_500, "only a note has two clocks")
+    }
+
     func testOnlyAMarginRunningOnTheSessionHoldsAVersionChange() {
         XCTAssertFalse(SpokenNoteVersionPlan.phaseHoldsVersionChange(.finished), "a note played to its end leaves the choice open")
         XCTAssertFalse(SpokenNoteVersionPlan.phaseHoldsVersionChange(.itemPlayback))
