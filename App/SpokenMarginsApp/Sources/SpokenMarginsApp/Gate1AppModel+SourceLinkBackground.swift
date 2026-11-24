@@ -201,11 +201,17 @@ extension Gate1AppModel {
                                                           requiringItemMembership: !(read?.hasSourceURL ?? false))
             }
         }
-        Task { [weak self] in
+        // Typed apart from the call: inferred inside it, the closure in a conditional left the compiler unable to
+        // type-check the call on Swift 6.4.
+        var status: (@MainActor (String) -> Void)?
+        if articleFeed {
+            status = { [weak self] value in self?.diagnostics["articleFeedAudio"] = "\(itemId): \(value)" }
+        }
+        let feedAudio = articleFeedAudio
+        Task { [weak self, status] in
             await voiceover.remember(
                 sharedURL: sharedURL, article: article, itemId: itemId, fetched: fetched, store: store, transcriber: transcriber,
-                articleFeedAudio: articleFeedAudio,
-                status: articleFeed ? { [weak self] status in self?.diagnostics["articleFeedAudio"] = "\(itemId): \(status)" } : nil
+                articleFeedAudio: feedAudio, status: status
             ) { result in
                 guard let self else { return }
                 self.hangTelemetry.labels.scoped("sharedLinkVoiceover") { self.diagnostics["sharedLinkVoiceover"] = result }
