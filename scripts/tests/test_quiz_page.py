@@ -1,7 +1,7 @@
 """The "Find an episode to talk about" page (Site/quiz/, #4707): its tests, its data copy and its promises.
 
 The questions and the prompt are data in Contracts/quiz/find-something.v1.json; the site serves a byte-for-byte copy.
-Node runs the prompt and page tests (scripts/tests/quiz_*.test.mjs) on the Node .nvmrc names, found the way the web
+Node runs the prompt, page and check tests (scripts/tests/quiz_*.test.mjs) on the Node .nvmrc names, found the way the web
 step finds it, and this file checks what Node can't: the copy, the HTML's fixed text, and that the page stores and
 requests nothing it shouldn't. If no suitable Node is installed the test fails; it never skips.
 """
@@ -39,7 +39,8 @@ class QuizNodeTests(unittest.TestCase):
     def test_the_prompt_and_page_tests_pass_on_the_pinned_node(self):
         node = verification.node_for_nvmrc() / "node"
         result = subprocess.run(
-            [str(node), "--test", "scripts/tests/quiz_prompt.test.mjs", "scripts/tests/quiz_page.test.mjs"],
+            [str(node), "--test", "scripts/tests/quiz_prompt.test.mjs", "scripts/tests/quiz_page.test.mjs",
+             "scripts/tests/quiz_check.test.mjs"],
             cwd=ROOT, capture_output=True, text=True, timeout=120)
         tail = "\n".join((result.stdout + result.stderr).splitlines()[-40:])
         self.assertEqual(result.returncode, 0, tail)
@@ -106,7 +107,10 @@ class QuizHtmlTests(unittest.TestCase):
         page = html()
         for fixed in ('id="quiz-status"', 'id="quiz"', 'id="prompt" hidden', 'id="prompt-heading" tabindex="-1"',
                       'id="prompt-text" readonly', 'id="copy"', 'id="copy-status" aria-live="polite"',
-                      'class="reset" hidden', 'id="start-over"'):
+                      'class="reset" hidden', 'id="start-over"', 'id="answer-text"', 'id="check"',
+                      'id="check-message" aria-live="polite"', 'id="check-results"', 'id="none-worked" hidden',
+                      'id="follow-up" hidden', 'id="follow-up-text" readonly', 'id="copy-follow-up"',
+                      'id="follow-up-status" aria-live="polite"'):
             self.assertIn(fixed, page)
 
     def test_nothing_on_the_page_comes_from_another_origin(self):
@@ -126,16 +130,40 @@ class QuizScriptPromiseTests(unittest.TestCase):
         self.assertNotRegex(script, r"fetch:\s*fetch\b")
         self.assertNotRegex(script, r"setTimeout:\s*setTimeout\b")
 
-    def test_nothing_is_stored_and_nothing_is_requested_but_the_questions(self):
+    def test_nothing_is_stored_and_nothing_is_requested_but_the_questions_and_apple_lookups(self):
+        lookup = "https://itunes.apple.com/lookup?id="
         for name in ("page.js", "quiz.js"):
             script = source(name)
             for banned in ("localStorage", "sessionStorage", "document.cookie", "indexedDB", "XMLHttpRequest",
-                           "sendBeacon", "http://", "https://"):
+                           "sendBeacon", "http://"):
                 self.assertNotIn(banned, script, f"{name} mentions {banned}")
+            # The only address either script may name is Apple's lookup (#5270), in quiz.js, once.
+            addresses = re.findall(r"https://[^\s\"'`]+", script)
+            self.assertEqual(addresses, [lookup] if name == "quiz.js" else [], f"{name} names {addresses}")
         self.assertEqual(len(re.findall(r"find-something\.json", source("page.js"))), 1)
         self.assertIn('dataURL: new URL("./v1/find-something.json", import.meta.url)', source("page.js"))
         self.assertEqual(len(re.findall(r"\bfetch\(", source("quiz.js"))), 0)
 
+    def test_the_lookup_runs_only_from_the_check_and_carries_no_cookies(self):
+        script = source("page.js")
+        self.assertEqual(len(re.findall(r"(?<!\.)\bfetch\(", script)), 2, "the questions file and the lookup")
+        self.assertIn('lookup: (url) => fetch(url, { credentials: "omit", referrerPolicy: "no-referrer" })', script)
+        self.assertEqual(len(re.findall(r"env\.lookup\(", script)), 1)
+        self.assertEqual(len(re.findall(r'page\.check\.addEventListener\("click"', script)), 1)
+
+    def test_the_check_block_words_follow_the_design(self):
+        page = html()
+        self.assertIn("with web search turned on. Then paste its answer below to check the links.</p>", page)
+        self.assertIn('<label for="answer-text" class="field-label">Your assistant\'s answer</label>', page)
+        self.assertIn('<button type="button" id="check">Check links</button>', page)
+        self.assertIn('<button type="button" id="copy-follow-up">Copy follow-up prompt</button>', page)
+        # The words are in the data or the script, never only a colour: blue and orange tones each carry an icon.
+        script = source("page.js")
+        for words in ("This is a whole show, not an episode.", "Couldn't find an episode at this link.",
+                      "Not checked here. Open it to see.", "Couldn't check this one just now.",
+                      "Plays, but there's no title to check. Open it to make sure.",
+                      "You're offline. Copy the prompt now and check links when you're back online."):
+            self.assertIn(words, script)
 
 if __name__ == "__main__":
     unittest.main()

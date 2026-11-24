@@ -1,0 +1,135 @@
+{
+  "description": "Pairs of episode titles and whether they name the same episode. EpisodeLinkPaste.titlesMatch (Swift) and titlesMatch in Site/quiz/quiz.js both run every pair. Copied from EpisodeLinkPasteTests, plus neighbours.",
+  "cases": [
+    {
+      "a": "How Do We Keep the Nursing Shortage From Getting Worse?",
+      "b": "how do we keep the nursing shortage from getting worse",
+      "match": true
+    },
+    {
+      "a": "How Do We Keep the Nursing Shortage From Getting Worse?",
+      "b": "  How  Do We Keep The Nursing Shortage From Getting Worse!  ",
+      "match": true
+    },
+    {
+      "a": "How Do We Keep the Nursing Shortage From Getting Worse?",
+      "b": "Ep. 112: How Do We Keep the Nursing Shortage From Getting Worse?",
+      "match": true
+    },
+    {
+      "a": "How Do We Keep the Nursing Shortage From Getting Worse?",
+      "b": "How Do We Keep the Nursing Shortage from Getting Worse? (Rebroadcast)",
+      "match": true
+    },
+    {
+      "a": "How Do We Keep the Nursing Shortage From Getting Worse?",
+      "b": "How do we keep the nursing shortage from getting worse — Tradeoffs",
+      "match": true
+    },
+    {
+      "a": "Café Society & Jazz",
+      "b": "Cafe Society and Jazz",
+      "match": true,
+      "why": "accents and & don't count"
+    },
+    {
+      "a": "Don’t Panic",
+      "b": "Don't Panic",
+      "match": true,
+      "why": "curly and straight apostrophes"
+    },
+    {
+      "a": "Ｗｉｄｅ Ｔｉｔｌｅ",
+      "b": "Wide Title",
+      "match": true,
+      "why": "full-width letters"
+    },
+    {
+      "a": "Café Culture",
+      "b": "Café Culture",
+      "match": true,
+      "why": "a combining accent and a precomposed one"
+    },
+    {
+      "a": "The Kirkbride Plan",
+      "b": "Kirkbride Plan, The",
+      "match": true,
+      "why": "most of the shorter title's words"
+    },
+    {
+      "a": "How Do We Keep the Nursing Shortage From Getting Worse?",
+      "b": "Why Hospitals Are Closing Maternity Wards",
+      "match": false
+    },
+    {
+      "a": "How Do We Keep the Nursing Shortage From Getting Worse?",
+      "b": "The Nursing Home Problem",
+      "match": false
+    },
+    {
+      "a": "How Do We Keep the Nursing Shortage From Getting Worse?",
+      "b": "Worse",
+      "match": false
+    },
+    {
+      "a": "How Do We Keep the Nursing Shortage From Getting Worse?",
+      "b": "",
+      "match": false
+    },
+    {
+      "a": "How Do We Keep the Nursing Shortage From Getting Worse?",
+      "b": "   ",
+      "match": false
+    },
+    {
+      "a": "How Do We Keep the Nursing Shortage From Getting Worse?",
+      "b": "lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum lorem ipsum ",
+      "match": false
+    },
+    {
+      "a": "Bail",
+      "b": "Bailout Nation",
+      "match": false,
+      "why": "a one-word title matches only exactly"
+    },
+    {
+      "a": "Bail",
+      "b": "bail",
+      "match": true
+    },
+    {
+      "a": "Bridges 1",
+      "b": "Dams 2",
+      "match": false
+    },
+    {
+      "a": "Episode 1",
+      "b": "Episode 2",
+      "match": false,
+      "why": "ignored words leave one short word each"
+    },
+    {
+      "a": "Colors",
+      "b": "Colours",
+      "match": false
+    },
+    {
+      "a": "The",
+      "b": "The",
+      "match": false,
+      "why": "only ignored words is no title"
+    },
+    {
+      "a": "Radiolab",
+      "b": "Radiolab Presents: Colors",
+      "match": true,
+      "why": "a one-word title of six or more letters inside the other counts, even when it is the show's name"
+    },
+    {
+      "a": "Kirkbride",
+      "b": "The Kirkbride Plan",
+      "match": true,
+      "why": "a one-word title of six or more letters inside the other"
+    }
+  ]
+}
