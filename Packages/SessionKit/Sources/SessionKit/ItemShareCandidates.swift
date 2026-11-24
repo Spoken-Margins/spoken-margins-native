@@ -16,18 +16,20 @@ public struct ItemShareCandidates: Equatable, Sendable {
         marginsBySession: [String: [Interjection]],
         mediaSourceType: String?
     ) -> ItemShareCandidates {
+        // Keyed by session and id: every pass numbers its Margins from "ij-001", so `id` alone let a replay's first
+        // Margin hide the first listen's (#4688, Test Desk 2026-11-23).
         var seen = Set<String>()
         var margins: [Interjection] = []
         for sessionId in sessionIdsNewestFirst {
             for margin in marginsBySession[sessionId] ?? [] where ItemShareSessionSelection.isShareable(margin) {
-                if seen.insert(margin.id).inserted { margins.append(margin) }
+                if seen.insert(margin.sessionScopedId).inserted { margins.append(margin) }
             }
         }
         // The item-wide Markdown export's order, so Share and that export never disagree.
         let timed = MarginMarkdownShare.recordedMediaSources.contains(mediaSourceType ?? "")
         margins.sort {
             let (lhs, rhs) = (MarginMarkdownShare.sourceOrder($0, timed: timed), MarginMarkdownShare.sourceOrder($1, timed: timed))
-            return lhs != rhs ? lhs < rhs : ($0.createdAt, $0.id) < ($1.createdAt, $1.id)
+            return lhs != rhs ? lhs < rhs : ($0.createdAt, $0.sessionScopedId) < ($1.createdAt, $1.sessionScopedId)
         }
         let sessionId = ItemShareSessionSelection.sessionId(newestFirst: sessionIdsNewestFirst) { marginsBySession[$0] ?? [] }
         return ItemShareCandidates(margins: margins, sessionId: sessionId)

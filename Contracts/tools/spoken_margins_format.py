@@ -768,15 +768,16 @@ def _check_link(report, value, where):
 
 
 def zip_entry_type(info):
-    """ZIPFoundation's Entry.type (0.9.20): from the Unix mode when the archive was made on Unix or macOS, else
-    from a trailing slash (and the MS-DOS directory bit). The Swift reader reads only `file` entries, so a symlink
+    """ZIPFoundation's Entry.type (0.9.21): from the Unix mode when the archive was made on Unix or macOS, else
+    from a trailing slash (and the MS-DOS directory bit). Since 0.9.21 a trailing slash wins over a regular-file
+    mode. The Swift reader reads only `file` entries, so a symlink
     stored at an allowed path is refused, not read as data."""
     directory = info.filename.endswith('/')
     host = info.create_system
     if host in (3, 19):
         mode = (info.external_attr >> 16) & 0o170000
         if mode == 0o100000:
-            return 'file'
+            return 'directory' if directory else 'file'
         if mode == 0o040000:
             return 'directory'
         if mode == 0o120000:

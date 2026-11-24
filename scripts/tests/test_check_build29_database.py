@@ -22,6 +22,7 @@ case "$1" in
     [ "${FAKE_WRITES_PACKETS:-1}" = 1 ] && echo zip > "$SM_SHIPPED_PACKETS_DIR/a.spokenmargins"
     exit "$FAKE_TEST_EXIT" ;;
   build)
+    cp "$3/Package.swift" "$TMPDIR/Package-$(basename "$3").swift"
     echo "error: cannot find 'x' in scope"
     if [ "$FAKE_BUILD_EXIT" = 0 ]; then
       mkdir -p "$3/.build/debug"
@@ -176,6 +177,31 @@ class EveryShippedBuildTests(unittest.TestCase):
         self.assertNotEqual(failed.returncode, 0)
         self.assertIn("FAIL Build 29's reader did not build", failed.stderr)
         self.assertNotIn('== building Build 32', failed.stdout, 'the first failure stops the run')
+
+    def test_each_reader_links_the_zipfoundation_its_build_pinned(self):
+        # #4969: the writer moved to ZIPFoundation 0.9.21 while Builds 29, 32 and 34 shipped 0.9.20. Each shipped
+        # reader must link its own build's version, not the writer's checkout, and the run must not refuse the bump.
+        root = SCRIPT.parents[1]
+
+        def pinned(text):
+            lines = text.splitlines()
+            start = next(i for i, line in enumerate(lines) if '"identity" : "zipfoundation"' in line)
+            return next(line.split('"version" : "')[1].split('"')[0] for line in lines[start:] if '"version"' in line)
+        current = pinned((root / 'Packages/SessionKit/Package.resolved').read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_script(tmp, BUILD29_TAG=None)
+            manifests = {name: (Path(tmp) / f'Package-{name}.swift').read_text()
+                         for name in ('Build-29', 'Build-32', 'Build-34')}
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for tag, (name, manifest) in zip(TAGS, manifests.items()):
+            shipped = pinned(subprocess.run(['git', '-C', str(root), 'show', f'{tag}:Packages/SessionKit/Package.resolved'],
+                                            capture_output=True, text=True, check=True).stdout)
+            with self.subTest(name):
+                if shipped == current:
+                    self.assertIn('.package(path: "', manifest)
+                else:
+                    self.assertIn(f'exact: "{shipped}")', manifest)
+                    self.assertIn('ZIPFoundation.git', manifest)
 
 
 if __name__ == '__main__':
