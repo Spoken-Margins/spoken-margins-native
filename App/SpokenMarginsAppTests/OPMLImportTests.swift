@@ -224,6 +224,67 @@ final class OPMLImportTests: XCTestCase {
         XCTAssertTrue(try store.loadFeedSubscriptions().isEmpty)
     }
 
+    /// #4683, Design 2h: the AI's suggestions open the same preview under their own title and refusals; Follow reports
+    /// exactly the links it followed, and a closed preview settles those plus the ones it never offered.
+    func testTheAIsSuggestionsOpenTheSamePreviewTitledForTheAI() async throws {
+        _ = try await followMutedShowWithADismissedEntry()
+        OPMLFeedsURLProtocol.reset()
+        let drawer = CatalogDrawerModel(store: nil, subscriptions: { [] }, follow: { _ in "" }, makeOPMLImport: { [unowned self] in self.makeImporter() })
+        var closed: [OPMLImportModel] = []
+        drawer.importClosed = { closed.append($0) }
+        let passed = ["https://feeds.example.com/pod1.xml", "https://feeds.example.com/followed.xml", "https://podcasts.apple.com/us/podcast/id1", "https://feeds.example.com/blog.xml"]
+
+        XCTAssertTrue(drawer.openShortcutImport(feedLinks: passed, origin: .assistant))
+        let importer = try XCTUnwrap(drawer.shortcutImport)
+        XCTAssertEqual(importer.origin, .assistant)
+        XCTAssertEqual(OPMLImportScreen.title(for: importer.origin), "Suggested by your AI")
+        XCTAssertEqual(try preview(importer).toFollow.map(\.title), ["https://feeds.example.com/pod1.xml", "https://feeds.example.com/blog.xml"])
+        XCTAssertTrue(OPMLFeedsURLProtocol.requestedURLs.isEmpty, "nothing fetched before Follow")
+        XCTAssertEqual(importer.settledFeedLinks(), ["https://feeds.example.com/followed.xml", "https://podcasts.apple.com/us/podcast/id1"],
+                       "closing now keeps the two it offers")
+
+        var reported: [[String]] = []
+        importer.onFollowed = { reported.append($0) }
+        // Untick the blog: only Pod One is followed.
+        let blog = try XCTUnwrap(try preview(importer).toFollow.last)
+        importer.setSelected(blog, false)
+        await importer.followSelected()
+        XCTAssertEqual(reported, [["https://feeds.example.com/pod1.xml"]])
+        XCTAssertEqual(importer.settledFeedLinks(), [
+            "https://feeds.example.com/pod1.xml", "https://feeds.example.com/followed.xml", "https://podcasts.apple.com/us/podcast/id1",
+        ], "the unticked blog stays suggested")
+
+        drawer.didDismiss()
+        XCTAssertEqual(closed.map(ObjectIdentifier.init), [ObjectIdentifier(importer)], "closing the drawer tells whoever listens, once")
+    }
+
+    func testTheAIsListRefusalsNameTheAI() {
+        XCTAssertEqual(
+            OPMLImportModel.message(for: OPMLError.tooLarge, origin: .assistant),
+            "Your AI's list is more than 4 MB of text, which is more than a podcast list needs. Nothing was imported.")
+        XCTAssertEqual(OPMLImportModel.message(for: OPMLError.tooManyOutlines, origin: .assistant), "Your AI's list has more than 5,000 lines. Nothing was imported.")
+        XCTAssertTrue(OPMLImportModel.Origin.assistant.isLinkList)
+        XCTAssertTrue(OPMLImportModel.Origin.shortcut.isLinkList)
+        XCTAssertFalse(OPMLImportModel.Origin.file.isLinkList)
+        XCTAssertEqual(OPMLImportScreen.title(for: .shortcut), "Import from Apple Podcasts", "the Shortcut's title is unchanged")
+    }
+
+    func testASecondListWhileTheFirstFollowsIsTurnedAway() async throws {
+        OPMLFeedsURLProtocol.reset()
+        let gate = AsyncStream<Void>.makeStream()
+        let drawer = CatalogDrawerModel(store: nil, subscriptions: { [] }, follow: { _ in "" }, makeOPMLImport: {
+            OPMLImportModel(subscriptions: { [] }, follow: { _ in for await _ in gate.stream { break } })
+        })
+        XCTAssertTrue(drawer.openShortcutImport(feedLinks: ["https://feeds.example.com/pod1.xml"], origin: .assistant))
+        let first = try XCTUnwrap(drawer.shortcutImport)
+        first.startFollowing()
+        try await pollUntil { first.isFollowing }
+        XCTAssertFalse(drawer.openShortcutImport(feedLinks: ["https://feeds.example.com/pod2.xml"], origin: .assistant))
+        XCTAssertTrue(drawer.shortcutImport === first)
+        gate.continuation.yield()
+        gate.continuation.finish()
+    }
+
     /// The running app sets the bridge to its own drawer; each test swaps in its own and puts the app's back.
     private func withShortcutBridge(
         drawer: CatalogDrawerModel,

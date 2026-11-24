@@ -298,7 +298,7 @@ function checkControls(page: Page) {
       if (cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight) {
         const top = document.elementFromPoint(cx, cy);
         // Content scrolls under the fixed tab bar and mini player; that is scrolling, not a covered control.
-        const chrome = top?.closest('.tabbar, .mini-player') && !target.closest('.tabbar, .mini-player');
+        const chrome = top?.closest('.tabbar, .mini-player, .np-dock') && !target.closest('.tabbar, .mini-player, .np-dock');
         if (top && !chrome && !target.contains(top) && !top.contains(target)) problems.push(`covered by ${top.className || top.tagName}: ${what}`);
       }
     }

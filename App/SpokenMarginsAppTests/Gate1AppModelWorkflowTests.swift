@@ -616,13 +616,46 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNotEqual(newSession, originalID)
         model.openExport(sessionId: originalID)
         XCTAssertEqual(model.exportShareCandidates.count, 2)
-        model.prepareExportShareInterjections()
+        model.openMarginItemExport(itemID: "item-pill")
         XCTAssertEqual(model.sharingState.drafts.count, 2)
         XCTAssertTrue(model.sharingState.drafts.allSatisfy { $0.interjection.sessionId == originalID })
         XCTAssertEqual(model.snapshot.sessionId, newSession)
         XCTAssertEqual(try store.loadSession(id: originalID)?.completionPercent, 100)
         model.openExport(sessionId: newSession)
         XCTAssertTrue(model.exportShareCandidates.isEmpty)
+    }
+
+    /// #4688: an older pass whose recording is gone still goes, as words, and the row says why it has no voice.
+    func testAnOldPassWithItsRecordingGoneStillBuildsThePacket() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "share-lost-recording-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let store = try SQLiteSessionStore(path: url.path)
+        let firstPass = try XCTUnwrap(model.snapshot.sessionId)
+        var lost = shareableInterjection(itemId: "item-pill")
+        lost.id = "lost-recording"
+        lost.sessionId = firstPass
+        lost.audioStatus = "recorded"
+        lost.audioPath = root.appending(path: "gone.m4a").path
+        try store.saveInterjection(lost)
+        model.startNewSession(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "A written thought on the replay")
+
+        model.openMarginItemExport(itemID: "item-pill", entry: .reviewDefaults)
+
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.sharingState.drafts.count, 2, "both passes are listed")
+        let draft = try XCTUnwrap(model.sharingState.drafts.first { $0.id == "lost-recording" })
+        XCTAssertEqual(draft.representationChoice, .textOnly)
+        XCTAssertEqual(draft.preparationMessage, ShareCleanupWords.Failure.recordingMissing.message)
+        let packet = await model.exportSharedInterjections(presentsReadySheet: false)
+        XCTAssertNotNil(packet, "the packet builds with the lost recording as words")
+        XCTAssertNil(model.lastError)
     }
 
     /// #1043 APM-12: the Margins tab's "export this item" was tested with one session, so any pick of session

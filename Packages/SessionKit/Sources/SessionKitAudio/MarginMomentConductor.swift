@@ -159,6 +159,21 @@ public final class MarginMomentConductor {
         finishVoice()
     }
 
+    /// "Start a minute earlier" (#4171): plays `plan`'s Margin again after its longer run-up. A sounding voice (or its chime)
+    /// stops without counting as finished, so a review does not move on and keeps its count; the source goes back to the
+    /// run-up's start and, if a voice had paused it, plays again. During a run-up the source is already playing and only
+    /// moves. Does nothing when the plan is for neither the Margin playing nor the target in its run-up.
+    public func restartLonger(_ plan: StartEarlier.Plan) {
+        let voiceHeldTheSource = sequence.isPlayingMargin
+        guard let start = sequence.restartLonger(marginId: plan.marginId, leadInMs: plan.leadInMs) else { return }
+        stopVoice()
+        source.seek(start)
+        // After the seek, as in `start()`: the app tells `sourceMoved()` about every seek, which would clear this baseline.
+        lastObservedMs = start
+        onChange?()
+        if voiceHeldTheSource { source.resume() }
+    }
+
     /// Ends the moment without resuming the source (another item, a recording, leaving playback).
     public func cancel() {
         stopVoice()

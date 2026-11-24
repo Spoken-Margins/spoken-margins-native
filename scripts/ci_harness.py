@@ -27,7 +27,9 @@ code (label bridge, dequeue notifier, merge policy, audit eligibility, dispatch 
    - `needs-person`: a fault that was not the PR's own (a runner hang, an outage that ended) left a clean PR needing a
      person to re-arm it;
    - `slow`: a clean PR with no fault, or a fault that clears, took longer than SLOW_MINUTES to merge;
-   - `loop`: the PR went round the merge queue MAX_GROUPS times.
+   - `loop`: the PR went round the merge queue MAX_GROUPS times;
+   - `retried-test`: a job failed a test for the PR's own reasons and the PR merged anyway, so the pipeline re-ran or
+     re-queued a real test failure (#5057).
    KNOWN lists each violation the current tree is known to have, with its issue; `--check` fails on any violation not
    in it, and on a KNOWN entry that no longer happens (so the list cannot rot).
 
@@ -162,6 +164,10 @@ class Case(M.Scenario):
     owner_tap_at: int | None = None   # when the owner adds `owner-tap` (an owner-tap PR)
     expect: str = 'merge'             # 'merge' | 'told': what a correct pipeline does with this case
     transient: bool = False           # the fault clears by itself, so a person should not be needed
+    # Where a failing Mac or `jobs` attempt fails (#4940): 'setup' (a runner or a Homebrew/LFS step), 'download' (the
+    # plan step, whose log ends in a network error from an outside host) or 'test' (the plan step fails for the PR's
+    # own reasons). The dequeue notifier reads the failing step to tell them apart.
+    fail_in: str = 'setup'
 
 
 class TimedWorld(M.World):
@@ -188,7 +194,7 @@ class TimedWorld(M.World):
         for row in sorted(self.rows, key=lambda r: r['id']):
             view.setdefault(row['sha'], {})[(row['name'], row['file'])] = {
                 'name': row['name'], 'conclusion': row['conclusion'], 'run': row['run'], 'event': row['event'],
-                'status': row['status']}
+                'status': row['status'], 'id': row['id']}
         return view
 
     @checks.setter
@@ -428,9 +434,27 @@ class TimedWorld(M.World):
         self.attempts[key] = n + 1
         plan = self.c.jobs.get(key) or (self.c.mac if self.is_mac(file, job_id) else ())
         outcome = plan[n] if n < len(plan) else (plan[-1] if plan and plan[-1] in ('never',) else 'pass')
+        self.outage_hit = False
         if self.c.outage and key in EXTERNAL_DOWNLOADS and self.c.outage[0] <= self.now < self.c.outage[1]:
-            outcome = 'fail'
+            outcome, self.outage_hit = 'fail', True
         return outcome
+
+    # The steps a failing job names: the real workflow's own step names, so the notifier's table is read against them.
+    PLAN_STEP_NAMES = ('Mac rest of the fast plan', 'Portable fast plan', 'SessionKit build and SessionKitCoreTests',
+                       'Build the app for the simulator (build-for-testing, no tests)')
+
+    def failed_step(self, file, job_id, kind):
+        names = [str(step.get('name') or '') for step in self.raw_job(file, job_id).get('steps') or []]
+        plan = next((name for name in names if name in self.PLAN_STEP_NAMES), None)
+        # A job with no plan step that downloads fails a download in setup. For the web job that is a stand-in for
+        # `Install Playwright browsers`: its Hugging Face download runs inside `Playwright suite`, a test step the
+        # notifier and rerun-cancelled leave red, so `web/*/outage-90m` covers a Playwright CDN outage, not a Hugging
+        # Face one (#5070 audit).
+        if kind == 'setup' or (kind == 'download' and plan is None):
+            # A step that is the runner's, never the PR's (the notifier's SETUP_STEPS).
+            return next((name for name in ('Install BlackHole (virtual audio output)', 'Speech model cache')
+                         if name in names), 'Set up job')
+        return plan or ('Playwright suite' if 'Playwright suite' in names else 'Run the tests')
 
     def begin_job(self, run, job_id):
         if run['status'] == 'cancelled':
@@ -450,7 +474,9 @@ class TimedWorld(M.World):
         minutes = {'hang': self.timeout(file, job_id), 'cancel': base / 2, 'slow': base + SLOW_EXTRA}.get(outcome, base)
         if outcome != 'pass':
             self.note(None, f'{file} {job_id} ({run["event"]}): black box says {outcome}, ends in {minutes:g}m')
-        self.post(self.now + minutes, 'job_end', None, run=run['id'], job=job_id, outcome=outcome)
+        # An outage fails the job where it downloads: in setup. Any other failing attempt fails where the case says.
+        self.post(self.now + minutes, 'job_end', None, run=run['id'], job=job_id, outcome=outcome,
+                  fail_in='setup' if self.outage_hit else self.c.fail_in)
 
     def job_end(self, event):
         run = self.runs[event['run'] - 1]
@@ -462,9 +488,14 @@ class TimedWorld(M.World):
         job = wf['jobs'][job_id]
         outcome = event['outcome']
         if outcome in ('hang', 'cancel'):  # G5
-            self.finish_job(run, job_id, 'cancelled', {})
+            # A job that writes its own check run (merge policy, #4986) is killed before it can mark it: GitHub marks
+            # a job's check cancelled itself, but this one stays in progress in a run that has ended.
+            self.finish_job(run, job_id, 'cancelled', {'check': 'pending'} if job.get('own_check') else {})
             return
         if outcome == 'fail':
+            row = run['rows'].get(job_id)
+            if row:
+                row['failed_step'] = self.failed_step(file, job_id, event.get('fail_in') or self.c.fail_in)
             self.finish_job(run, job_id, 'failure', {})
             return
         result, outputs = 'success', {}
@@ -477,7 +508,9 @@ class TimedWorld(M.World):
 
     def finish_job(self, run, job_id, result, outputs):
         row = run['rows'].get(job_id)
-        if row:
+        if row and outputs.get('check') == 'pending':  # the job succeeded and left its check run in progress (#4986)
+            row['status'], row['conclusion'] = 'in_progress', None
+        elif row:
             row['status'], row['conclusion'] = 'completed', result
         run['jobs'][job_id] = {'result': result, 'outputs': outputs}
         run['state'][job_id] = 'done'
@@ -627,6 +660,8 @@ class TimedWorld(M.World):
             self.job_end(event)
         elif kind == 'backstop':
             self.backstop_tick(event)
+        elif kind == 'later':   # the second read of a script that waited (b_rerun_cancelled)
+            event['call']()
         elif kind == 'action' and event['action'][0] == 'unlabel':
             self.change_label(self.now, event['action'][1], False, event['action'][2], event['id'])
             return
@@ -638,18 +673,30 @@ class TimedWorld(M.World):
         self.github_tick(event)
 
 
+class RerunLater(Exception):
+    """FakeRerunGitHub.wait: the script asked to wait; the harness runs its second read that many minutes later."""
+
+    def __init__(self, minutes):
+        super().__init__(minutes)
+        self.minutes = minutes
+
+
 class FakeRerunGitHub:
-    """rerun_cancelled_check.GitHub against the timed world."""
+    """rerun_cancelled_check.GitHub against the timed world. Job steps and logs come from the dequeue notifier's fake,
+    which reads the failing step the harness gave each failed check run."""
 
     def __init__(self, world, cause):
         self.w, self.cause = world, cause
+        self.jobs = M.FakeDequeueGitHub(world, 'github_token', cause)
 
     def get(self, path):
         w = self.w
         if path.startswith('actions/runs/'):
             r = w.runs[int(path.split('/')[2]) - 1]
+            attempt = max([r.get('attempt', 1)] + [o.get('attempt', 1) for o in w.runs if o.get('rerun_of') == r['id']])
+            newest = max([r] + [o for o in w.runs if o.get('rerun_of') == r['id']], key=lambda o: o['id'])
             return {'id': r['id'], 'name': w.tree.model['workflows'][r['workflow']]['name'], 'event': r['event'],
-                    'conclusion': r.get('conclusion'), 'run_attempt': r.get('attempt', 1), 'head_sha': r['sha'],
+                    'conclusion': newest.get('conclusion'), 'run_attempt': attempt, 'head_sha': r['sha'],
                     'pull_requests': [{'number': 1}] if r['event'] == 'pull_request' else []}
         if path.startswith('pulls/'):
             return {'number': 1, 'state': 'open' if w.merged_at is None else 'closed', 'draft': False,
@@ -657,23 +704,41 @@ class FakeRerunGitHub:
         if path.startswith('commits/'):
             sha = path.split('/')[1]
             return {'check_runs': [{'id': row['id'], 'name': row['name'], 'conclusion': row['conclusion'],
-                                    'details_url': f'https://github.com/{M.REPO}/actions/runs/{row["run"]}/job/1'}
+                                    'details_url': f'https://github.com/{M.REPO}/actions/runs/{row["run"]}/job/'
+                                                   f'{row["id"]}'}
                                    for row in w.rows if row['sha'] == sha]}
+        if path.startswith('actions/jobs/'):
+            return self.jobs.get(path)
         raise KeyError(path)
+
+    def log_tail(self, job_id):
+        return self.jobs.log_tail(job_id)
+
+    def wait(self, minutes):
+        raise RerunLater(minutes)
 
     def rerun(self, run_id):
         self.w.post(self.w.now, 'rerun', self.cause['id'], run=run_id, token='github_token')
 
 
 def b_rerun_cancelled(world, run, job, ctx, cause):
-    """rerun-cancelled.yml: the tree's scripts/rerun_cancelled_check.py against the timed world."""
+    """rerun-cancelled.yml: the tree's scripts/rerun_cancelled_check.py against the timed world. When the script waits
+    before a re-run (#5057), its second read runs that many minutes later, as `--waited`."""
     if not (world.tree.root / 'scripts/rerun_cancelled_check.py').is_file():
         return 'success', {}
     module = world.tree.module('rerun_cancelled_check', 'scripts/rerun_cancelled_check.py')
-    out = io.StringIO()
-    module.main(['--repo', M.REPO, '--run-id', str(ctx['github']['event']['workflow_run']['id'])],
-                github=FakeRerunGitHub(world, cause), out=out)
-    world.note(cause, 'rerun-cancelled: ' + out.getvalue().strip())
+    args = ['--repo', M.REPO, '--run-id', str(ctx['github']['event']['workflow_run']['id'])]
+
+    def call(extra):
+        out = io.StringIO()
+        try:
+            module.main(args + extra, github=FakeRerunGitHub(world, cause), out=out)
+        except RerunLater as later:
+            world.note(cause, 'rerun-cancelled: ' + out.getvalue().strip())
+            world.post(world.now + later.minutes, 'later', cause['id'], call=lambda: call(['--waited']))
+            return
+        world.note(cause, 'rerun-cancelled: ' + out.getvalue().strip())
+    call([])
     return 'success', {}
 
 
@@ -712,6 +777,10 @@ ARMINGS = {
 FAULTS = {
     'none': dict(),
     'mac-fail-once': dict(mac=('fail', 'pass'), transient=True),
+    # The plan step fails because an outside host served a bad certificate (#4795): not the PR's.
+    'mac-download-fail-once': dict(mac=('fail', 'pass'), transient=True, fail_in='download'),
+    # A test fails for the PR's own reasons, once: the PR is told at once, and a person re-arms it (#4940 Must not break).
+    'mac-test-fail-once': dict(mac=('fail', 'pass'), expect='told', fail_in='test'),
     'mac-hang-once': dict(mac=('hang', 'pass'), transient=True),
     'mac-cancel-once': dict(mac=('cancel', 'pass'), transient=True),
     'mac-slow-once': dict(mac=('slow', 'pass'), transient=True),
@@ -776,6 +845,10 @@ def violations(c: Case, result: dict, tree) -> list[str]:
         out.append('merged-broken')
     if result['merge_groups'] >= M.MAX_GROUPS:
         out.append('loop')
+    if result['merged'] and c.expect == 'told' and c.fail_in == 'test':
+        # A job failed a test for the PR's own reasons, and nothing in the model is a person: a merge means the
+        # pipeline re-ran or re-queued a real test failure (#5057 Must not break; the third audit of #5070).
+        out.append('retried-test')
     if result['merged']:
         if c.expect == 'merge' and result['merged_at_minute'] > SLOW_MINUTES + (c.owner_tap_at or 0):
             out.append('slow')
@@ -791,12 +864,6 @@ def violations(c: Case, result: dict, tree) -> list[str]:
 # Violations the current tree has, each with its issue. `--check` fails on one not listed here, and on a listed one
 # that no longer happens. Keys are fnmatch patterns over '<kind>/<arming>/<fault>/<admission>: <violation>'.
 KNOWN = {
-    # A merge group that fails for a reason outside the PR (a Mac job that fails once, a download host down for an
-    # hour) is held as the PR's failure: `needs-fix`, `automerge` off, and a person re-arms each PR. Telling a flake
-    # from a real failure needs the failing step; until then caches remove the outages (EXTERNAL_DOWNLOADS lists the
-    # jobs still exposed).
-    '*/outage-90m/*: needs-person': '#4940',
-    '*/mac-fail-once/*: needs-person': '#4940',
     # A hosted Mac job that never gets a runner leaves its check queued; GitHub cancels it after 24 hours and the
     # merge-stall watch (not modelled) opens its issue after an hour. The pool is GitHub's.
     'web/*/mac-no-runner/*: silent-stuck': 'GitHub-hosted runner pool; merge-stall watch',

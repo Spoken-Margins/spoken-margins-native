@@ -119,9 +119,11 @@ final class SpeechAskController: ObservableObject {
     }
 
     /// The Margin's transcription met the hold: it waits for the answer. `marginIdentity` is `Gate1AppModel.marginIdentity`.
-    func marginIsWaiting(marginIdentity: String) {
+    /// A hold met before the answer but reported after it was settled is settled now, through `model`.
+    func marginIsWaiting(marginIdentity: String, model: Gate1AppModel? = nil) {
         guard waiting.add(marginIdentity) else { return }
         defaults.set(waiting.stored, forKey: SpeechAskWaitingList.storageKey)
+        if SpeechAskSettling.settlesOnReport(access: access()) { return reconcile(model: model) }
         // A relaunch arms the card from this list; this launch is armed by the save, but a Margin that arrives here alone
         // (a retry) arms it too.
         if cardSurface == nil, ask.answer == .unanswered {
@@ -137,6 +139,7 @@ final class SpeechAskController: ObservableObject {
     func holdReported(_ purpose: HeldTranscription) {
         ask.transcriptionHeld(purpose)
         heldRetries.reported(purpose)
+        if settleLateHold() { return }
         if let key = purpose.retry.heldAcrossLaunchKey, access() == .notDetermined {
             defaults.set(true, forKey: key)
         }
@@ -149,7 +152,20 @@ final class SpeechAskController: ObservableObject {
     func transcriptionHeld(_ kind: HeldTranscription, key: String, retry: @escaping @MainActor () -> Void) {
         heldRetries.hold(kind, key: key, retry: retry)
         ask.transcriptionHeld(kind)
+        if settleLateHold() { return }
         if cardSurface == nil, ask.isOwed(access: access()) { cardSurface = .now }
+    }
+
+    /// A hold the listener's answer has already overtaken (it was met while iOS was undecided and reached here after the
+    /// answer was settled, as the gate's report does through its main-actor hop): settled now, retried on Allow and dropped
+    /// on a no, not left for the next time the app comes forward. A waiting Margin's source window still waits for the
+    /// Margin's own retry. True when it settled.
+    private func settleLateHold() -> Bool {
+        let access = access()
+        guard SpeechAskSettling.settlesOnReport(access: access) else { return false }
+        heldRetries.drop(.sourceWindow, keys: Set(waiting.ids))
+        heldRetries.settle(access: access)
+        return true
     }
 
     /// The listener tapped Get Transcript on a Margin that waits. It is a direct request, so it always gets somewhere while
@@ -221,10 +237,17 @@ final class SpeechAskController: ObservableObject {
         case .authorized:
             let identities = waiting.ids
             guard !identities.isEmpty || !heldRetries.isEmpty else { return }
-            clearWaiting()
+            forgetHeldAcrossLaunch()
             // A waiting Margin gets its source window after its own transcription, never before it.
             heldRetries.drop(.sourceWindow, keys: Set(identities))
-            if !identities.isEmpty { model?.retryWaitingTranscriptions(identities: identities) }
+            // The list is cleared only once its retries were scheduled, and only of those: with no store yet, or a read
+            // that failed, the Margins stay listed (and stored) for the next settle instead of being forgotten.
+            if !identities.isEmpty, let retrying = model?.retryWaitingTranscriptions(identities: identities) {
+                Task { [weak self] in
+                    guard await retrying.value, let self else { return }
+                    setWaiting(SpeechAskSettling.waiting(waiting, afterSettling: identities))
+                }
+            }
             heldRetries.settle(access: .authorized)
         case .denied, .restricted:
             heldRetries.settle(access: access())
@@ -238,9 +261,17 @@ final class SpeechAskController: ObservableObject {
 
     /// Either answer settles the waiting list and the sweeps' records: their retries ran or were dropped together.
     private func clearWaiting() {
-        waiting.clear()
-        defaults.removeObject(forKey: SpeechAskWaitingList.storageKey)
+        setWaiting(SpeechAskWaitingList(stored: nil))
         forgetHeldAcrossLaunch()
+    }
+
+    private func setWaiting(_ list: SpeechAskWaitingList) {
+        waiting = list
+        if list.hasWaitingMargin {
+            defaults.set(list.stored, forKey: SpeechAskWaitingList.storageKey)
+        } else {
+            defaults.removeObject(forKey: SpeechAskWaitingList.storageKey)
+        }
     }
 
     private func forgetHeldAcrossLaunch() {

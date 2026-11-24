@@ -38,6 +38,9 @@ final class SpokenMarginsAppDelegate: NSObject, UIApplicationDelegate {
         // serialized with every filing; a screen can't open in the milliseconds before it. Unit tests have no launch to clean up after.
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
             Task.detached(priority: .utility) { await LiveSessionFileWorker.shared.sweepPhotos() }
+            // Saved live-session photos, keyed by saved Margin id, for the item's screens (#4180). The records are
+            // read off the main thread; app tests drive the lookup themselves.
+            Task { @MainActor in SavedMarginPhotoIndex.shared.load(from: Gate1AppModel.liveSessionDirectory) }
         }
         return true
     }
@@ -154,7 +157,7 @@ struct SpokenMarginsApp: App {
                 return try await model.followCatalogFeed(feedURL)
             },
             makeOPMLImport: { [weak model] in
-                OPMLImportModel(
+                let importer = OPMLImportModel(
                     subscriptions: { model?.feedSubscriptions ?? [] },
                     follow: { feedURL in
                         guard let model else { throw CancellationError() }
@@ -162,6 +165,9 @@ struct SpokenMarginsApp: App {
                     },
                     didFollow: { model?.refreshFollowedSources(force: false, trigger: .afterFollow) }
                 )
+                // A show followed from any list leaves the AI's suggestions (#4683).
+                importer.onFollowed = { model?.aiFollowSuggestionsModel.remove(urls: $0) }
+                return importer
             },
             searcher: CatalogDrawerModel.makeSearcher(),
             startFirstListen: { [weak model] sourceIds, allowsWelcome in
@@ -171,6 +177,11 @@ struct SpokenMarginsApp: App {
             openFriendLink: { [weak model] url in model?.openShareLink(url) },
             packetOpenFailures: model.packetOpenFailures
         )
+        // A closed "Suggested by your AI" preview drops what it settled: what it followed, and what it couldn't offer.
+        drawer.importClosed = { [weak model] importer in
+            guard importer.origin == .assistant else { return }
+            model?.aiFollowSuggestionsModel.remove(urls: importer.settledFeedLinks())
+        }
         _catalogDrawer = StateObject(wrappedValue: drawer)
         // Where the presenter is wired to the drawer, before any failure can exist (#4834): the one place the drawer is told.
         model.packetOpenFailures.onCloseNotice = { [weak model, weak drawer] in

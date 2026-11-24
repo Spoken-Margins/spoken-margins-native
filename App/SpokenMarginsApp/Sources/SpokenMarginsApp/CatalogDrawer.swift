@@ -34,8 +34,17 @@ final class CatalogDrawerModel: ObservableObject {
     /// Why the last search failed, in words. The subject list stays usable underneath it.
     @Published private(set) var searchError: String?
     @Published private(set) var isSearchPending = false
-    /// The import a "Follow Podcasts in Spoken Margins" Shortcut opened (#4284), shown over the drawer's list.
-    @Published var shortcutImport: OPMLImportModel?
+    /// The import a "Follow Podcasts in Spoken Margins" Shortcut (#4284) or Following's "Suggested by your AI" row
+    /// (#4683) opened, shown over the drawer's list. However it goes (Cancel, Done, back, the sheet closing, a newer
+    /// list replacing it), `importClosed` hears about it.
+    @Published var shortcutImport: OPMLImportModel? {
+        didSet {
+            guard let oldValue, oldValue !== shortcutImport else { return }
+            importClosed?(oldValue)
+        }
+    }
+    /// Told when an import from a list closes, so the AI's suggestions can drop what it settled (#4683).
+    var importClosed: (@MainActor (OPMLImportModel) -> Void)?
     /// The "Got a link from a friend?" card shows on the first-launch opening while the Library holds no friend's packet (#3782).
     @Published private(set) var showsFriendLinkCard = false
     /// Under the card's Paste button when what was pasted holds no share link; cleared by the next paste.
@@ -291,14 +300,15 @@ final class CatalogDrawerModel: ObservableObject {
         }
     }
 
-    /// A Shortcut passed in podcast feed links (#4284): the drawer opens, if it isn't open already, on their
-    /// import preview. Nothing is followed until the listener taps Follow there. A second list while the first
-    /// is still following is turned away rather than stopping that run. False when there is no import.
+    /// A Shortcut passed in podcast feed links (#4284), or the listener tapped the shows their AI suggested
+    /// (`origin: .assistant`, #4683): the drawer opens, if it isn't open already, on their import preview. Nothing
+    /// is followed until the listener taps Follow there. A second list while the first is still following is
+    /// turned away rather than stopping that run. False when there is no import.
     @discardableResult
-    func openShortcutImport(feedLinks: [String]) -> Bool {
+    func openShortcutImport(feedLinks: [String], origin: OPMLImportModel.Origin = .shortcut) -> Bool {
         guard let makeOPMLImport, shortcutImport?.isFollowing != true else { return false }
         let importer = makeOPMLImport()
-        importer.load(feedLinks: feedLinks)
+        importer.load(feedLinks: feedLinks, origin: origin)
         shortcutImport = importer
         if !isPresented { present() }
         return true

@@ -37,11 +37,15 @@ extension Gate1AppModel {
         var seen = Set<String>()
         let itemIds = itemIds.filter { seen.insert($0).inserted }
         guard let first = itemIds.first else { return }
-        if itemIds.count == 1 {
-            let title = libraryItems.first { $0.id == first }?.title ?? "Shared source"
-            reportAddedToLibrary(title: title, itemId: first)
-        } else {
-            reportConfirmation(AddedToLibraryConfirmation.message(addedCount: itemIds.count, nowPlayingIsEmpty: nowPlayingIsEmpty))
+        // A share that drains while a folder or link list arrives keeps its own item and its own banner: left to the
+        // import's capture, it would be counted as one of the list's links and its banner held (#4683).
+        reportPastImportCapture {
+            if itemIds.count == 1 {
+                let title = libraryItems.first { $0.id == first }?.title ?? "Shared source"
+                reportAddedToLibrary(title: title, itemId: first)
+            } else {
+                reportConfirmation(AddedToLibraryConfirmation.message(addedCount: itemIds.count, nowPlayingIsEmpty: nowPlayingIsEmpty))
+            }
         }
     }
 

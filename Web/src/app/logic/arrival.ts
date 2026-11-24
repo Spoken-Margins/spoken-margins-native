@@ -288,6 +288,8 @@ export function cueFor(margins: readonly Margin[], time: number, sender: string 
 
 /** The card while a friend's Margin is heard or shown: who, and which of how many. */
 export function speakingLine(margin: Margin, margins: readonly Margin[], sender: string | undefined): { title: string; position: string } {
+  // The listener's own Margin, played from a start or under Autoplay All, is theirs and not one of the friend's count.
+  if (!firesByItself(margin)) return { title: margin.voice ? 'Your Margin is playing' : 'You wrote this', position: '' };
   const friends = friendMargins(margins);
   const place = friends.findIndex((m) => m.id === margin.id) + 1;
   const who = leading(senderName(namedAuthor(margin.author, sender)));
@@ -300,4 +302,17 @@ export function speakingLine(margin: Margin, margins: readonly Margin[], sender:
 /** The line the on-device voice says before a written Margin's words, so a synthetic voice never passes for the sender. */
 export function writtenIntro(author: string | undefined): string {
   return `${leading(senderName(author))} wrote:`;
+}
+
+/**
+ * What the on-device voice says before a written Margin's words. The listener's own Margin (no author) plays too, from a
+ * start or under Autoplay All (part of #3216), and is theirs, never "Your friend wrote:".
+ */
+export function readingIntro(margin: Margin): string {
+  return firesByItself(margin) ? writtenIntro(margin.author) : 'You wrote:';
+}
+
+/** The note under a written Margin while the device's voice reads it, so the voice never passes for its author's. */
+export function readingNote(margin: Margin): string {
+  return `Your device’s voice is reading ${firesByItself(margin) ? possessive(senderName(margin.author)) : 'your'} words.`;
 }

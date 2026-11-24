@@ -42,11 +42,11 @@ final class MarginNoteCoverageTests: XCTestCase {
 
     func testFootersSayWhatTheRuleDoes() {
         XCTAssertTrue(MarginNoteCoverage.writesNotesFolderNote(captureKind: .audio, text: nil))
-        let notes = MarginNoteCoverage.notesFolderSentence
+        let notes = MarginNoteCoverage.notesFolderLead
         XCTAssertTrue(notes.contains("spoken or written"), notes)
         XCTAssertTrue(notes.contains("once it\u{2019}s transcribed"), notes)
         XCTAssertFalse(notes.contains("text Margin"), notes)
-        let readwise = MarginNoteCoverage.readwiseSentence
+        let readwise = MarginNoteCoverage.readwiseLead
         XCTAssertTrue(readwise.contains("spoken or written"), readwise)
         XCTAssertTrue(readwise.contains("once it has words"), readwise)
     }

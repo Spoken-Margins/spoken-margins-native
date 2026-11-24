@@ -306,6 +306,27 @@ class WorkflowScopeTests(unittest.TestCase):
         self.assertTrue(job['if'].startswith("!cancelled() && needs.scope.result == 'success' && "), job['if'])
         self.assertIn('docs_only', self.jobs['scope']['outputs'])
 
+    def test_the_docs_only_check_skips_docs_but_not_the_quiz_scripts(self):
+        # #5048: Site/quiz/ holds the quiz's code (page.js, quiz.js), tested by scripts/tests/quiz_* and test_quiz_page.
+        # Counted as docs, a PR that edited only Site/quiz/page.js skipped the portable plan in the PR and the merge
+        # group, so a broken quiz merged and went to the deploy with no test. Run as the step runs it: python3 -c, exit 0
+        # is docs-only.
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        import ci_model
+        rule = ci_model.docs_only_rule((ROOT / '.github/workflows/hosted-portable.yml').read_text())
+        cases = {('Site/quiz/page.js',): 1, ('Site/quiz/quiz.js',): 1, ('Site/quiz/v1/find-something.json',): 1,
+                 ('Site/privacy/index.html', 'Site/quiz/index.html'): 1, ('Site/quiz/page.js', 'docs/a.md'): 1,
+                 ('Site/privacy/index.html',): 0, ('Site/join/index.html',): 0, ('Site/quizzes/index.html',): 0,
+                 ('docs/a.md', 'Design/x.png', 'Contracts/docs/y.txt'): 0, ('README.md',): 0,
+                 ('scripts/x.py',): 1}
+        with tempfile.TemporaryDirectory() as tmp:
+            listing = Path(tmp) / 'changed-files.txt'
+            for paths, code in cases.items():
+                with self.subTest(paths=paths):
+                    listing.write_text(''.join(f'{path}\n' for path in paths))
+                    run = subprocess.run([sys.executable, '-c', rule, str(listing)], capture_output=True, text=True)
+                    self.assertEqual(run.returncode, code, run.stderr)
+
     def test_no_required_workflow_has_a_paths_filter_and_both_listen_to_the_merge_queue(self):
         import yaml
         for name in ('hosted-portable.yml', 'hosted-web.yml'):

@@ -81,4 +81,9 @@ final class FootnoteCueTests: XCTestCase {
         XCTAssertEqual(hertz, 659.25, accuracy: 15)
         XCTAssertEqual(FootnoteCue.frequency, 659.25, accuracy: 0.001)
     }
+
+    func testTheNarrationWaitsLongerThanTheToneAndAboutTheDesignsFortyHundredths() {
+        XCTAssertEqual(FootnoteCue.leadIn, 0.4, accuracy: 0.0001, "the Design's pause of about 0.4 s")
+        XCTAssertGreaterThan(FootnoteCue.leadIn, FootnoteCue.seconds, "the passage after the note never starts on top of the tone")
+    }
 }

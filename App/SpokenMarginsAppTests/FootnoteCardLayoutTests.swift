@@ -19,9 +19,13 @@ final class FootnoteCardLayoutTests: XCTestCase {
         (.accessibility3, "accessibility3", 430),
     ]
 
-    private static func height(of card: FootnoteCard, reading: Bool, size: DynamicTypeSize) -> CGFloat {
-        UIHostingController(rootView: FootnoteCardBody(card: card, reading: reading).environment(\.dynamicTypeSize, size))
-            .sizeThatFits(in: CGSize(width: width, height: 4_000)).height
+    private static func height(
+        of card: FootnoteCard, reading: Bool, size: DynamicTypeSize, button: FootnoteCardButton? = nil
+    ) -> CGFloat {
+        UIHostingController(
+            rootView: FootnoteCardBody(card: card, reading: reading, button: button).environment(\.dynamicTypeSize, size)
+        )
+        .sizeThatFits(in: CGSize(width: width, height: 4_000)).height
     }
 
     func testALongNoteStaysInsideTheBudgetAndAShortOneIsShorter() {
@@ -37,6 +41,25 @@ final class FootnoteCardLayoutTests: XCTestCase {
                 XCTAssertGreaterThan(small, 0, "a short note at \(label) drew nothing")
             }
         }
+    }
+
+    /// "Chime where cited" adds Hear note / Stop note under the words (#3777, Design PR 6). The budget stays what it was, so the
+    /// note gets two lines fewer, and a long note with either button still fits.
+    func testTheChimeButtonKeepsTheCardInsideTheSameBudget() {
+        let long = FootnoteCard(
+            label: "note-1", body: String(repeating: "A long note about where the figure came from and who counted it. ", count: 40))
+        for (size, label, maxHeight) in Self.budgets {
+            for button in [FootnoteCardButton.hearNote, .stopNote] {
+                let tall = Self.height(of: long, reading: button == .stopNote, size: size, button: button)
+                XCTAssertLessThanOrEqual(tall, maxHeight, "a long note with \(button.title) at \(label): \(tall) pt tall, budget \(maxHeight) pt")
+            }
+        }
+    }
+
+    func testTheButtonTakesTwoLinesFromTheNote() {
+        XCTAssertEqual(FootnoteCardBody.bodyLineLimit(for: .large, hasButton: true), 4)
+        XCTAssertEqual(FootnoteCardBody.bodyLineLimit(for: .accessibility3, hasButton: true), 2)
+        XCTAssertEqual(FootnoteCardBody.bodyLineLimit(for: .large, hasButton: false), 6)
     }
 
     func testTheAccessibilitySizesCapTheNoteAtFourLines() {

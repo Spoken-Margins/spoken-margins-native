@@ -418,9 +418,10 @@ final class AppColorUsageGuardTests: XCTestCase {
     /// MarginRecordingScreen: the divider, and the end-phrase hint (#3940), white at 75% under the timer.
     /// FootnoteCardView: the note's words (white at 85%) and the card's fill (white at 10%), as `PinnedMarginCardView` draws
     /// the friend's card above the same passage (#3777).
+    /// Gate2LiveActivityWidget: the Margin circle's ring, white at 86% on its 16% fill (#4764), measured by its pair.
     private static let systemColorBaseline: [String: Int] = [
         "AppTopBanners.swift": 1, "EdgeSwipeBackTransition.swift": 1, "MarginRecordingScreen.swift": 2,
-        "FirstMarginPromptCard.swift": 2, "FootnoteCardView.swift": 2, "Gate1RootView.swift": 1, "Gate2LiveActivityWidget.swift": 13,
+        "FirstMarginPromptCard.swift": 2, "FootnoteCardView.swift": 2, "Gate1RootView.swift": 1, "Gate2LiveActivityWidget.swift": 14,
         "LiveActivityTourPreview.swift": 1, "LiveSessionActivityWidget.swift": 8, "MiniPlayer.swift": 1,
         "PinnedMarginCardView.swift": 4, "PlaybackFeedbackTagView.swift": 3, "PlaybackLivePassageView.swift": 1,
         "PlaybackMarginRowView.swift": 1, "PlaybackMarginTranscriptionStatusView.swift": 1, "PlaybackPositionSlider.swift": 1,

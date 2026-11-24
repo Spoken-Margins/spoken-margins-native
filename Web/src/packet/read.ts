@@ -552,6 +552,8 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
     }
     if (sender) margin.author = sender;
     if (replyToId) margin.replyToId = replyToId;
+    // The source text before it, for the Margins tab's "After …" line (part of #3216). Kept in this browser only.
+    if (anchor.prefix != null && anchor.prefix.trim() !== '') margin.leadIn = anchor.prefix;
     // The sender's "don't read this aloud" holds for a written Margin only; a voice Margin is the sender's own voice.
     if (record.readAloud === false && !margin.voice) margin.readAloud = false;
     // The sender's run-up, clamped as the app and the reference reader do (#4171). Absent means each run-up's own length.

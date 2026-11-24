@@ -97,10 +97,40 @@ class Cache(Keys):
         self.get(NOW)
         self.assertEqual(self.get(NOW + dt.timedelta(minutes=51)), 'ghs_2')  # 9 minutes left: under the margin
 
+    def test_a_longer_min_life_renews_sooner(self):
+        self.get(NOW)
+        later = NOW + dt.timedelta(minutes=15)  # 45 minutes left: fine for the default, too little for 50
+        self.assertEqual(mint.token(self.cache, now=later, pem_source=lambda: self.pem,
+                                    mint=self.fake_mint('2026-11-22T22:00:00Z'),
+                                    margin=dt.timedelta(minutes=50)), 'ghs_2')
+
     def test_a_corrupt_cache_mints_again(self):
         self.cache.parent.mkdir(parents=True)
         self.cache.write_text('{not json')
         self.assertEqual(self.get(NOW), 'ghs_1')
+
+
+class GhConfig(unittest.TestCase):
+
+    def test_hosts_file_is_private_and_names_the_bot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / 'gh-app'
+            mint.write_gh_config(folder, 'ghs_one')
+            hosts = folder / 'hosts.yml'
+            self.assertEqual(hosts.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
+            self.assertIn('oauth_token: ghs_one', hosts.read_text())
+            self.assertIn('user: spoken-margins-agent[bot]', hosts.read_text())
+            mint.write_gh_config(folder, 'ghs_two')
+            self.assertIn('oauth_token: ghs_two', hosts.read_text())
+            self.assertNotIn('ghs_one', hosts.read_text())
+
+    def test_arguments(self):
+        self.assertEqual(mint.parse_args(['--gh-config', '/x', '--min-life', '50']),
+                         {'check': False, 'gh_config': Path('/x'), 'min_life': 50})
+        for bad in (['--min-life', '70'], ['--min-life', '5'], ['--min-life'], ['--nope'], ['--gh-config']):
+            with self.subTest(bad):
+                self.assertIsNone(mint.parse_args(bad))
 
 
 class TokenRequest(unittest.TestCase):
@@ -143,10 +173,20 @@ class TokenRequest(unittest.TestCase):
             mint.request_token('j', lambda request, timeout: Empty())
 
 
+    def test_a_dropped_connection_is_a_token_error_not_a_traceback(self):
+        import http.client
+
+        def opener(request, timeout):
+            raise http.client.RemoteDisconnected('Remote end closed connection without response')
+
+        with self.assertRaises(mint.TokenError):
+            mint.request_token('j', opener)
+
+
 class Wrapper(unittest.TestCase):
     """sm-agent-env, run for real with a stand-in minter next to it."""
 
-    def run_env(self, minter_body, flag):
+    def run_env(self, minter_body, flag, command='printf "%s" "$GH_TOKEN"'):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / 'sm-agent-env').write_bytes((HERE / 'sm-agent-env').read_bytes())
@@ -155,12 +195,23 @@ class Wrapper(unittest.TestCase):
             env = {'PATH': '/usr/bin:/bin', 'HOME': tmp}
             if flag:
                 env['SM_AGENT_AS_APP'] = '1'
-            return subprocess.run([str(root / 'sm-agent-env'), '/bin/sh', '-c', 'printf "%s" "$GH_TOKEN"'],
+            return subprocess.run([str(root / 'sm-agent-env'), '/bin/sh', '-c', command],
                                   capture_output=True, text=True, env=env)
 
-    def test_the_flag_uses_the_app_token(self):
-        done = self.run_env('print("ghs_app")\n', flag=True)
-        self.assertEqual((done.returncode, done.stdout), (0, 'ghs_app'))
+    WRITER = ('import sys, pathlib\nargs = sys.argv[1:]\nassert args[2:] == ["--min-life", "50"], args\n'
+              'd = pathlib.Path(args[args.index("--gh-config") + 1]); d.mkdir(parents=True, exist_ok=True)\n'
+              '(d / "hosts.yml").write_text("oauth_token: ghs_app\\n")\n')
+
+    def test_the_flag_points_gh_at_the_refreshed_file_and_sets_no_fixed_token(self):
+        done = self.run_env(self.WRITER, flag=True, command=(
+            'printf "%s|%s|%s|" "${GH_TOKEN:-none}" "$(cat "$GH_CONFIG_DIR/hosts.yml")" "$GIT_CONFIG_COUNT"; '
+            'printf "%s|%s" "$GIT_CONFIG_VALUE_0" "$GIT_CONFIG_VALUE_1"'))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        fixed, hosts, count, reset, helper = done.stdout.split('|')
+        self.assertEqual(fixed, 'none')
+        self.assertEqual(hosts, 'oauth_token: ghs_app')
+        self.assertEqual((count, reset), ('2', ''))  # an empty helper first clears the owner's own gh login helper
+        self.assertTrue(helper.endswith(' auth git-credential'), helper)
 
     def test_the_flag_fails_closed_when_minting_fails(self):
         done = self.run_env('import sys; sys.exit(1)\n', flag=True)

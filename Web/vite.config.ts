@@ -14,6 +14,16 @@ import { e2eSilence } from './e2e/silence/silence-plugin.ts';
 /** Build files only a listener who turns transcription on needs: the transcription worker and its chunks. */
 const OPT_IN_DIR = 'assets/opt-in/';
 
+/**
+ * The Margins tab's constants and control labels, from the cases file SessionKit also runs (part of #3216), so the web
+ * shows the words SessionKit checks. Only these two parts go into the app, not the cases (logic/margins-control-center.ts).
+ */
+function marginsControlCenterWords(): string {
+  const file = fileURLToPath(new URL('../Contracts/fixtures/margins-control-center/cases.json', import.meta.url));
+  const { constants, labels } = JSON.parse(readFileSync(file, 'utf8')) as { constants: unknown; labels: unknown };
+  return JSON.stringify({ constants, labels });
+}
+
 function serviceWorker(): Plugin {
   const source = fileURLToPath(new URL('./src/app/pwa/service-worker.js', import.meta.url));
   return {
@@ -42,6 +52,7 @@ export default defineConfig({
   base: './',
   // e2eSilence() adds nothing unless VITE_E2E_SILENT=1, which only the Playwright web servers set (#3375).
   plugins: [react(), serviceWorker(), e2eSilence()],
+  define: { __MARGINS_CONTROL_CENTER_WORDS__: marginsControlCenterWords() },
   build: { target: 'es2022', sourcemap: false },
   // The transcription worker (src/transcribe/worker.ts) loads transformers.js, which splits into chunks. They are
   // written under OPT_IN_DIR, so the service worker leaves them out of the shell everyone downloads.

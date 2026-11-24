@@ -22,6 +22,8 @@ import {
   speakingLine,
   stopsPlayback,
   writtenIntro,
+  readingIntro,
+  readingNote,
 } from './arrival.ts';
 
 const voice = (seconds: number) => ({ blob: new Blob(['x']), mimeType: 'audio/mp4', durationSeconds: seconds });
@@ -152,6 +154,20 @@ test('while a Margin is heard the card names who, which, and how many', () => {
   assert.deepEqual(speakingLine({ ...m[1], author: 'Your friend' }, m, undefined), { title: 'Your friend wrote this', position: '2 of 3' });
   const unnamed = cueFor([margin('a', 760, { author: 'Your friend' })], 0, 'Your friend');
   assert.ok(unnamed?.kind === 'countdown' && unnamed.label === 'Your friend’s Margin in' && unnamed.skip.label === 'Skip to just before your friend');
+});
+
+test('the listener’s own Margin, played from a start or by Autoplay, is never read or titled as a friend’s (audit 4 on #4505)', () => {
+  const written = margin('mine', 400, { author: null });
+  const spoken = margin('mine-voice', 500, { author: null, spoken: true });
+  const friends = [margin('a', 100, { spoken: true }), written, spoken];
+  assert.equal(readingIntro(written), 'You wrote:');
+  assert.equal(readingNote(written), 'Your device’s voice is reading your words.');
+  assert.deepEqual(speakingLine(written, friends, 'Cole'), { title: 'You wrote this', position: '' });
+  assert.deepEqual(speakingLine(spoken, friends, 'Cole'), { title: 'Your Margin is playing', position: '' });
+  // A friend's still reads as theirs, a blank sender as "Your friend".
+  assert.equal(readingIntro(margin('b', 400)), 'Cole wrote:');
+  assert.equal(readingIntro(margin('c', 400, { author: 'Your friend' })), 'Your friend wrote:');
+  assert.equal(readingNote(margin('b', 400)), 'Your device’s voice is reading Cole’s words.');
 });
 
 test('each failure says what happened and one thing to do, and none names a takedown or a server code', () => {

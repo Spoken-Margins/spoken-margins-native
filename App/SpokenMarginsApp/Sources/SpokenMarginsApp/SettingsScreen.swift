@@ -35,8 +35,6 @@ struct SettingsScreen: View, Equatable {
     @State private var showsAllRecentlyDeleted = false
     @State private var isResetConfirmationPresented = false
     @State private var isPreparingDiagnostics = false
-    @State private var isExportingListeningSignals = false
-    @State private var hasNoListeningSignals = false
     @AppStorage(CommunityMapUploadService.optInKey) private var helpsMakeListeningMaps = false
     @AppStorage(CommunityMapFetchService.optInKey) private var looksUpCommunityMaps = false
     /// The Supertonic download card's "Open Voices" lands here and opens Voices (#1820).
@@ -79,7 +77,6 @@ struct SettingsScreen: View, Equatable {
         var automaticAudioPreparationPolicy: AutomaticAudioPreparationPolicy
         var automaticEpisodeMapPreparationPolicy: AutomaticEpisodeMapPreparationPolicy
         var recentlyDeletedItems: [LibraryItemRow]
-        var quickFolderFeedsQueue: Bool
         var sourceLinksWaitingForNetwork: Int
         var importInbox: [ImportInboxEntry]
         var localFoundationModelAvailabilityDescription: String
@@ -111,7 +108,6 @@ struct SettingsScreen: View, Equatable {
             automaticAudioPreparationPolicy = model.automaticAudioPreparationPolicy
             automaticEpisodeMapPreparationPolicy = model.automaticEpisodeMapPreparationPolicy
             recentlyDeletedItems = model.recentlyDeletedItems
-            quickFolderFeedsQueue = model.quickAccess.inboxFeedsQueue
             sourceLinksWaitingForNetwork = model.sourceLinksWaitingForNetwork
             importInbox = model.importInbox
             localFoundationModelAvailabilityDescription = model.localFoundationModelAvailabilityDescription
@@ -416,21 +412,22 @@ struct SettingsScreen: View, Equatable {
                 }
                 MarginOutputSettingsSection()
                 HiddenSendersSettingsSection(hidden: model.hiddenSenders, showAgain: { model.showSender($0) }, showMarginAgain: { model.showMargin($0) })
-                Section("Import & Export") {
-                    NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
-                    NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
-                    Toggle(isOn: Binding(
-                        get: { model.quickAccess.inboxFeedsQueue },
-                        set: { model.quickAccess.inboxFeedsQueue = $0 }
-                    )) {
+                Section {
+                    // Which folder files come in from (#3770): first in the section, drawn from the folder's own state.
+                    QuickFolderSettingsRow(model: model)
+                    NavigationLink {
+                        YourAISettingsScreen(model: model).miniPlayerKeepOut()
+                    } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Queue New Quick Folder Files")
-                            Text("Files that appear in your Quick Folder are imported and added to the end of your play queue, in filename order. Choose the folder under Add to Library.")
-                                .font(.caption)
+                            Label("Your AI", systemImage: "text.bubble")
+                            Text("Let Claude, ChatGPT or another AI make your daily brief and suggest shows.")
+                                .font(.footnote)
                                 .foregroundStyle(AppColors.secondaryText)
                         }
                     }
-                    .accessibilityIdentifier("settings.quickFolderQueue.toggle")
+                    .accessibilityIdentifier("settings.yourAI.row")
+                    NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
+                    NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
                     DisclosureGroup("Import Inbox", isExpanded: $showsImportInbox) {
                         PendingLinksWaitingLine(count: inputs.sourceLinksWaitingForNetwork)
                         if inputs.importInbox.isEmpty {
@@ -463,6 +460,10 @@ struct SettingsScreen: View, Equatable {
                             }
                         }
                     }
+                } header: {
+                    Text("Import & Export")
+                } footer: {
+                    Text(QuickFolderStatus.sectionFooter)
                 }
                 Section("Help & Privacy") {
                     if watchTip.pairing.hasWatchApp {
@@ -539,24 +540,10 @@ struct SettingsScreen: View, Equatable {
                     Text("App state and recent playback events, as a file for a bug report. It includes the titles and links of what is in your Library. It stays on this device unless you share it.")
                         .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
-                    Button {
-                        isExportingListeningSignals = true
-                        Task {
-                            defer { isExportingListeningSignals = false }
-                            let url = await model.listeningSignals.exportFileURL()
-                            if let url { ShareFilePresenter.present(fileURL: url) }
-                            hasNoListeningSignals = url == nil
-                        }
-                    } label: {
-                        Label(
-                            hasNoListeningSignals ? "Nothing Recorded Yet" : "Export Listening Signals",
-                            systemImage: "doc.text"
-                        )
-                        .fullRowTapTarget()
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityIdentifier("settings.exportListeningSignals.button")
-                    .disabled(isExportingListeningSignals)
+                    ExportListeningSignalsButton(
+                        exportFileURL: { [model] in await model.listeningSignals.exportFileURL() },
+                        accessibilityIdentifier: "settings.exportListeningSignals.button"
+                    )
                     Text("A private log of listening time, Margins, shares and finishes for followed sources: titles, times and counts, never Margin text or audio. It stays on this device unless you export it.")
                         .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)

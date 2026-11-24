@@ -77,6 +77,7 @@ extension Gate1AppModel {
                     self.reportConfirmation("Choose which feed to follow.")
                     return
                 }
+                await self.loadNotForMe() // a refollow must see the marks (#4285)
                 _ = try await coordinator.follow(candidate: candidate)
                 await self.publishFeedSubscriptionsAfterChange()
                 self.followedSourceCandidates = []
@@ -117,6 +118,7 @@ extension Gate1AppModel {
             do {
                 let store = try self.requireStore()
                 let coordinator = self.requireFollowedSourceCoordinator(store: store)
+                await self.loadNotForMe() // a refollow must see the marks (#4285)
                 _ = try await coordinator.follow(candidate: candidate)
                 await self.publishFeedSubscriptionsAfterChange()
                 self.followedSourceCandidates = []
@@ -246,6 +248,7 @@ extension Gate1AppModel {
                     self.reportConfirmation("Choose the source feed to follow.")
                     return
                 }
+                await self.loadNotForMe() // a refollow must see the marks (#4285)
                 let subscription = if let existing = try await StoreReader(store).feedSubscription(sourceId: candidate.source.id) {
                     existing
                 } else {
@@ -375,6 +378,7 @@ extension Gate1AppModel {
             do {
                 let store = try self.requireStore()
                 let coordinator = self.requireFollowedSourceCoordinator(store: store)
+                await self.loadNotForMe() // a refollow must see the marks (#4285)
                 let subscription = try await coordinator.follow(candidate: candidate)
                 if let itemId, try await self.recordFollowedSource(subscription.source, onItem: itemId, store: store) {
                     self.refreshLibraryRowsInBackground(mustPublish: true)
@@ -462,6 +466,8 @@ extension Gate1AppModel {
         do {
             let store = try requireStore()
             let coordinator = requireFollowedSourceCoordinator(store: store)
+            // The Not for me marks are read before any entry is saved, so a launch refresh can't revive one (#4285).
+            await loadNotForMe()
             for entry in await coordinator.refreshStale(force: force, scope: scope) { importFollowedSourceEntry(entry, startedByListener: false) } // "Add every new item" (#466)
             let subscriptions = try await publishFeedSubscriptions(store: store)
             followedSourceEntries = try await coordinator.entries()

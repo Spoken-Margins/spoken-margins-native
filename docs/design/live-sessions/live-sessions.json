@@ -379,7 +379,22 @@
    "anchor": null,
    "present_line": null,
    "condition": "a session is running",
-   "notes": "A Back Tap is one action (owner's counting rule, docs/decisions.md 2026-10-25). It runs the Record a Margin intent, which does not exist yet; check C13 decides whether it can record in place. Speaking is free. The count assumes a pause ends the recording, which is not built or settled (open on #2710).",
+   "notes": "A Back Tap is one action (owner's counting rule, docs/decisions.md 2026-10-25). It would run a Record a Margin intent that records in place; check C13 decides whether that is possible, and it is not pursued (owner, 2026-10-31, #3086): the built intent opens the app (ls19, job L19). Speaking is free. A pause never ends a Margin (owner, 2026-11-10, #3650), so stopping is a second Back Tap.",
+   "proposed": true
+  },
+  {
+   "id": "ls19",
+   "from": "OTHER_APP",
+   "to": "LiveSessionScreen",
+   "control": "Back Tap runs Record a Margin: Spoken Margins opens and the live session's spoken Margin starts with no tap",
+   "control_kind": "gesture",
+   "presentation": "entry",
+   "file": "RecordMarginShortcutIntent.swift",
+   "line": 35,
+   "anchor": "router.open(.speak)",
+   "present_line": null,
+   "condition": "a live session is running",
+   "notes": "Already built, not a proposal (#4923, merged); it is listed here because the base flow map has no live-session screens. As built (#4923, merged). RecordMarginShortcutIntent has openAppWhenRun = true, so the book leaves the screen while the Margin records; recording in place without opening the app is not pursued (owner, 2026-10-31, #3086). The recording screen (LiveSessionRecordingView) covers the live session's screen, so the arrow lands there. A Back Tap is one action (owner's counting rule, 2026-10-25).",
    "proposed": true
   }
  ],
@@ -803,14 +818,14 @@
   },
   {
    "id": "L17",
-   "name": "Add a spoken Margin to a book with Back Tap, without leaving it",
+   "name": "Add a spoken Margin to a book with Back Tap, without leaving it (not built)",
    "target": "LIVE_ACTIVITY",
    "start": "OTHER_APP",
    "via_edges": [
     "ls18"
    ],
-   "final_cost": 0,
-   "final": "Speak; a pause ends the recording (assumed; not built, length open on #2710). The island then says 'Filed: Margin 4'. Say where you are ('chapter 5') or fill it in afterwards.",
+   "final_cost": 1,
+   "final": "Speak, then Back Tap again to stop. A pause never ends a Margin (owner, 2026-11-10, #3650), so the stop is an action. The island then says 'Filed: Margin 4'.",
    "extra": {
     "leaves_other_app": "no",
     "watch": "",
@@ -823,7 +838,7 @@
    },
    "taps": {
     "as_built": null,
-    "proposed": 1,
+    "proposed": 2,
     "route": [
      "Back Tap (double or triple tap on the back of the phone), set once in Settings > Accessibility > Touch > Back Tap to run Record a Margin"
     ]
@@ -831,14 +846,14 @@
   },
   {
    "id": "L18",
-   "name": "Add a spoken Margin to a book from the Dynamic Island, with auto-stop",
+   "name": "Add a spoken Margin to a book from the Dynamic Island (not built)",
    "target": "LIVE_ACTIVITY",
    "start": "OTHER_APP",
    "via_edges": [
     "ls11"
    ],
-   "final_cost": 1,
-   "final": "Record, speak; a pause ends the recording (assumed; not built, length open on #2710). The island then says 'Filed: Margin 4'.",
+   "final_cost": 2,
+   "final": "Record, speak, Stop. A pause never ends a Margin (owner, 2026-11-10, #3650), so Stop is a tap. The island then says 'Filed: Margin 4'.",
    "extra": {
     "leaves_other_app": "no",
     "watch": "",
@@ -851,9 +866,37 @@
    },
    "taps": {
     "as_built": null,
-    "proposed": 2,
+    "proposed": 3,
     "route": [
      "Long-press the Dynamic Island (or wake the Lock Screen)"
+    ]
+   }
+  },
+  {
+   "id": "L19",
+   "name": "Add a spoken Margin to a book with Back Tap, as built (opens Spoken Margins)",
+   "target": "LiveSessionScreen",
+   "start": "OTHER_APP",
+   "via_edges": [
+    "ls19"
+   ],
+   "final_cost": 2,
+   "final": "Speak, tap Save & resume (1). Back to the book with the status bar's back link or a swipe along the bottom edge (1; which app the back link names after a Back Tap is unverified). Say where you are ('chapter 5') or fill it in afterwards.",
+   "extra": {
+    "leaves_other_app": "yes, while recording",
+    "watch": "",
+    "voice": 0,
+    "checks": "C13"
+   },
+   "today": {
+    "taps": 3,
+    "how": "Built since #4923 (the base flow map has no live-session screens, so compute-taps.py files the count under proposed): Back Tap, Save & resume, back to the book. The live session's recording has no spoken stop phrase; the Lock Screen card's Finish also ends it."
+   },
+   "taps": {
+    "as_built": null,
+    "proposed": 3,
+    "route": [
+     "Back Tap runs Record a Margin: Spoken Margins opens and the live session's spoken Margin starts with no tap"
     ]
    }
   }
@@ -873,10 +916,12 @@
   "once_ever_taps": 6,
   "once_ever_how": "Back Tap only: Settings, Accessibility, Touch, Back Tap, pick the shortcut. About 6 taps (the thread's estimate, to be measured). The first sitting also pays the per-sitting setup.",
   "applies_to": [
+   "L19",
    "L17",
    "L18"
   ],
   "once_ever_applies_to": [
+   "L19",
    "L17"
   ]
  }

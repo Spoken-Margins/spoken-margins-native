@@ -58,6 +58,21 @@ final class MarginsListPlayAppTests: XCTestCase {
         XCTAssertEqual(tapLines(model), ["shared/waiting/reading_not_ready"], "one line for the tap, and it does not say started")
     }
 
+    /// #4664: playing a written Margin with no reading made starts a render on the shared reader. In a test that render
+    /// must be the silent one, not the iPhone's speech service, so the reader is idle again at the end of the test.
+    func testPlayingAWrittenMarginRendersItWithoutTheSystemVoiceAndLeavesTheReaderIdle() async throws {
+        let (model, row) = articleModelWithFriendMargin()
+        let renderer = try XCTUnwrap(WrittenMarginReaderForTests.renderer, "the bundle's principal class installs the test reader")
+        XCTAssertTrue(WrittenMarginReader.shared === WrittenMarginReaderForTests.reader, "the app's reader is the one with the silent renderer")
+
+        model.playSharedMarginFromMarginsList(row)
+
+        try await pollUntil(timeout: .seconds(10)) { !renderer.renderedTexts.isEmpty }
+        XCTAssertTrue(renderer.renderedTexts.contains { $0.contains("Remember this part.") }, "the Margin's words went to the silent renderer: \(renderer.renderedTexts)")
+        let activity = await WrittenMarginReader.shared.settle(upTo: 5)
+        XCTAssertTrue(activity.isIdle, "the render came back, so nothing is left running (\(activity))")
+    }
+
     // A friend's article Margin that is never read aloud (#4934): its row goes to the passage and plays on, with no Margin offered.
     func testAFriendsSilentMarginMatchedInAnArticleGoesToItsPassageWithNothingOffered() {
         let (model, row) = articleModelWithFriendMargin()

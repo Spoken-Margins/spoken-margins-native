@@ -65,10 +65,12 @@ extension Gate1AppModel {
     }
 
     /// The Margin-moment player stopped a voice. Whose Margin it was comes from the store: an own spoken Margin of the
-    /// item, never the card's label.
+    /// item, never the card's label. Its one row is read off the main thread (#2256); only the hearing is noted here.
     func marginMomentVoiceEnded(_ margin: MarginMomentAnchor, itemId: String, reachedEnd: Bool) {
         guard let store else { return }
-        let own = spokenItemMargins(itemId: itemId, store: store).contains { Self.marginIdentity($0) == margin.marginId }
-        noteMarginHeard(MarginHearing(isListenersOwn: own, kind: .spoken, outcome: reachedEnd ? .reachedEnd : .stoppedEarly))
+        Task { [weak self] in
+            let heard = try? await Self.offMain { MarginHearing.spokenVoiceEnded(marginIdentity: margin.marginId, itemId: itemId, reachedEnd: reachedEnd, repository: store) }
+            if let heard { self?.noteMarginHeard(heard) }
+        }
     }
 }
