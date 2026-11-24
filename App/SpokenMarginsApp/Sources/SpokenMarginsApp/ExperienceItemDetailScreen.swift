@@ -908,10 +908,11 @@ struct ExperienceItemDetailScreen: View {
                 .accessibilityIdentifier("item.podcastDownload.status")
                 // A friend's episode that can't be fetched is where a receiver gets stuck: one tap to why (#5268).
                 if downloadFailedUnderFriendsMargins {
-                    Button("Get Help") { helpTopic = .cantHear }
-                        .buttonStyle(.borderless)
-                        .font(.subheadline)
-                        .minimumTapTarget()
+                    Button { helpTopic = .cantHear } label: {
+                        Text("Get Help").minimumTapTarget()
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.subheadline)
                         .accessibilityIdentifier("item.podcastDownload.help")
                 }
             }

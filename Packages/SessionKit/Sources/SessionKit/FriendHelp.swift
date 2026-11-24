@@ -51,8 +51,8 @@ public enum FriendHelpTopic: String, CaseIterable, Identifiable, Sendable {
                 + "check you have the same edition of the episode or document."
         case .where:
             return "Open the Margins tab and tap Shared. The episode or article is in your Library with a dot until you've heard "
-                + "them, even if you finished it before, and your friend has a row on Following. Until you've heard them, the "
-                + "item's screen has a button with your friend's name that plays their Margins."
+                + "them, even if you finished it before, and your friend has a row on Following. Until you've heard them, its "
+                + "screen has a button with your friend's name that plays their Margins."
         case .cantHear:
             return "Your friend sent their Margins, not the episode. Spoken Margins gets the episode from where it's published, "
                 + "and sometimes it can't: it was taken down, it's in a private or paid feed, or the connection failed. Your "
@@ -77,7 +77,7 @@ public enum FriendHelpTopic: String, CaseIterable, Identifiable, Sendable {
             return "On the episode or article, open About this file on your friend's card and turn their Margins off, or tap "
                 + "Hide this Margin on one of them. Where About this file offers it, Hide this sender hides everything from them "
                 + "on this phone. Nothing is deleted, and Settings can show them again. For Margins that came by link, you can "
-                + "report the link from the item's menu."
+                + "report the link from the menu on the episode or article."
         }
     }
 
