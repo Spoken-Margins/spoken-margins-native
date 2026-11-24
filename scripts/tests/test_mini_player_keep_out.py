@@ -31,6 +31,7 @@ NO_PILL = {
     ("ExperienceTimelineRailScreen.swift", "*"): "the Timeline places its own mini player",
     ("HelpScreen.swift", "*"): "a sheet",
     ("FriendHelpScreen.swift", "*"): "a sheet",
+    ("FindInTextSheet.swift", "*"): "a sheet over Now Playing, which hides the mini player (#5035)",
     ("FollowSheet.swift", "*"): "the Follow sheet",
     ("FollowListPickerSheet.swift", "*"): "a sheet from the show and Following screens (#4046)",
     ("FollowListScreen.swift", "FollowListAddShowsSheet"): "a sheet from the list screens (#4046)",

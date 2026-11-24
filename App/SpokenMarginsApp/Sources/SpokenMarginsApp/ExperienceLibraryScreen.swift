@@ -1151,25 +1151,32 @@ struct LibraryRowPlayLabel: View {
 /// above Sort, each as wide as its words and aligned to the leading edge; always stacked at accessibility sizes (#4762).
 /// It is a `Layout`, not `ViewThatFits` or `AdaptiveStack`, so each `Menu` keeps one identity: a pick that changes a
 /// label's width (such as `Needs Repreparation`) then never rebuilds the chip under VoiceOver focus as its menu closes.
+///
+/// No chip is ever measured with `.unspecified`. The Test Desk saw both chips placed about 45 pt wide on iOS 26, the
+/// chip's 44 pt tap-target floor, so a `Menu` appears to answer an unspecified proposal with that floor rather than its
+/// label's width (inferred from the capture, not traced in SwiftUI). The wrap-safe label then broke its words a letter
+/// per line into tall glyph-only columns at the default text size (#4762, Test Desk FAIL on 17b235a). Instead, a chip's
+/// one-line width is read by offering it unlimited width (nothing in it is greedy, so it answers with its words' width,
+/// as `HStack`'s probes did before), and a stacked chip is offered the column's width so its label can wrap.
 /// Internal for its test.
 struct LibraryChipRowLayout: Layout {
     var spacing: CGFloat
     var forcesColumn: Bool
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let ideal = subviews.map { $0.sizeThatFits(.unspecified) }
+        let ideal = oneLineSizes(subviews)
         if isRow(ideal: ideal, width: proposal.width) {
             let width = ideal.reduce(0) { $0 + $1.width } + gaps(subviews.count)
             return CGSize(width: width, height: ideal.map(\.height).max() ?? 0)
         }
-        let sizes = subviews.map { $0.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)) }
+        let sizes = subviews.map { $0.sizeThatFits(columnOffer(proposal.width)) }
         var width = sizes.map(\.width).max() ?? 0
         if let limit = proposal.width { width = min(width, limit) }
         return CGSize(width: width, height: sizes.reduce(0) { $0 + $1.height } + gaps(subviews.count))
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let ideal = subviews.map { $0.sizeThatFits(.unspecified) }
+        let ideal = oneLineSizes(subviews)
         if isRow(ideal: ideal, width: bounds.width) {
             var x = bounds.minX
             for (subview, size) in zip(subviews, ideal) {
@@ -1178,14 +1185,24 @@ struct LibraryChipRowLayout: Layout {
             }
             return
         }
-        // Never `.unspecified` here: a label only wraps when it is offered the column's width.
-        let offer = ProposedViewSize(width: bounds.width, height: nil)
+        // A label only wraps when it is offered the column's width.
+        let offer = columnOffer(bounds.width)
         var y = bounds.minY
         for subview in subviews {
             let size = subview.sizeThatFits(offer)
             subview.place(at: CGPoint(x: bounds.minX, y: y), anchor: .topLeading, proposal: offer)
             y += size.height + spacing
         }
+    }
+
+    /// Each chip's width with its words on one line: unlimited width, never `.unspecified` (see above).
+    private func oneLineSizes(_ subviews: Subviews) -> [CGSize] {
+        subviews.map { $0.sizeThatFits(ProposedViewSize(width: .infinity, height: nil)) }
+    }
+
+    /// The width a stacked chip is offered; never nil, which would be `.unspecified` again.
+    private func columnOffer(_ width: CGFloat?) -> ProposedViewSize {
+        ProposedViewSize(width: width ?? .infinity, height: nil)
     }
 
     private func isRow(ideal: [CGSize], width: CGFloat?) -> Bool {
