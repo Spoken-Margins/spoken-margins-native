@@ -611,6 +611,7 @@ MAC_SCRIPT_FILES = {'sm_paths.py', 'sm_build_cache.py', 'comment_trust.py', 'set
                     'check_posterboard_repair.py', 'ops_checkout.py', 'workflow_yaml.py', 'test_workflow_files.py',
                     'parallel_unittest.py', 'runner_test_seconds.json',
                     'slow_tier.py', 'main_slow.py',  # verify-tests.py --leave-out-slow and --plan slow, main-slow.yml (#5145)
+                    'swift_scan_tests.py',  # verify-tests.py's readers scope and PR quick tier (#5220)
                     'ci_step_budgets.json'}  # verify-tests.py's step ceilings, which bound Mac-only steps too
 # Web/ (#3535): no Mac check reads it. Its tests run in --plan fast-portable and in hosted web's Playwright job, which the
 # runner waits for (web_check_required). A Swift file under Web/ still needs the Mac, by the suffix test below.

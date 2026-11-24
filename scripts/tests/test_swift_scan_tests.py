@@ -54,6 +54,15 @@ class ScanListTests(unittest.TestCase):
 
 
 class QuickTierTests(unittest.TestCase):
+    def test_the_lanes_readers_scope_runs_every_scan(self):
+        self.assertEqual(set(scans.SCANS) - {r.split('.')[0] for r in verification.RUNNER_TEST_READERS}, set())
+
+    def test_no_scan_is_one_the_quick_tier_cannot_run(self):
+        # The quick tier passes no leave-out: a scan that drives an Apple tool or sits in the slow tier would run anyway.
+        apple = {prefix.split('.')[0] for prefix in verification.PORTABLE_RUNNER_TESTS_LEFT_OUT}
+        slow = {module.split('.')[0] for module in verification.slow_tier.SLOW_RUNNER_MODULES}
+        self.assertEqual(set(scans.SCANS) & (apple | slow), set())
+
     def test_the_quick_tier_runs_the_scan_list_as_its_runner_tests(self):
         self.assertIn('runner-tests', verification.PR_QUICK_RUNNER_TESTS)
         self.assertEqual(verification.PR_QUICK_RUNNER_TESTS['runner-tests'][-1], 'scripts/swift_scan_tests.py')
