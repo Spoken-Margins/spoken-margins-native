@@ -70,8 +70,8 @@ class VoiceOverLabelNitTests(unittest.TestCase):
 
     def test_playback_has_one_button_called_library(self):
         text = _read("PlaybackScreen.swift")
-        exit_button = text[text.index("private var libraryExitButton"):]
-        exit_button = exit_button[:exit_button.index('accessibilityIdentifier("playback.exit.button")')]
+        exit_button = text[text.index("private func libraryExitButton("):]
+        exit_button = exit_button[:exit_button.index(".accessibilityIdentifier(accessibilityIdentifier)")]
         self.assertIn('.accessibilityLabel("Back to Library")', exit_button)
         home = text[:text.index('accessibilityIdentifier("playback.home.button")')]
         self.assertIn('.accessibilityLabel("Library")', home[-200:])
