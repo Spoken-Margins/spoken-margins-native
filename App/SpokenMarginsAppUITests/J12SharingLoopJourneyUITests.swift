@@ -243,7 +243,7 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
 
         // #5306: one tap from Export to Share and one tap back, for the same episode.
         XCTContext.runActivity(named: "J12 item, step 5: Share on the Export screen opens the Share Margins sheet in one tap") { _ in
-            let exportShare = element("export.share.button")
+            let exportShare = element("export.friendShare.button")
             XCTAssertTrue(exportShare.waitForExistence(timeout: 5) && exportShare.isHittable, "The Export screen has no Share button on screen")
             beginStep()
             exportShare.tap(); taps += 1

@@ -185,7 +185,7 @@ struct ExportScreen: View {
                         .labelStyle(.titleAndIcon)
                         .disabled(model.selectedItem.id.isEmpty || checksShare)
                         .accessibilityHint(ShareExportSwitch.shareButtonHint)
-                        .accessibilityIdentifier("export.share.button")
+                        .accessibilityIdentifier("export.friendShare.button")
                 }
             }
             .onChange(of: model.isSharingInterjectionsPresented) { _, isPresented in
