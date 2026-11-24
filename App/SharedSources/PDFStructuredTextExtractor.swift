@@ -778,6 +778,16 @@ enum PDFStructuredTextExtractor {
             return bounds.width < lineWidth * 0.8 && offColumn && narrow && tokens.count <= 12
         }
 
+        /// A short label printed in a figure that doesn't pass for a table cell
+        /// ("Base Model EA-3B", "(b) Supervised Finetuning"): at most eight words,
+        /// not a sentence, narrower than the text column (#4588).
+        func looksLikeFigureLabel(_ line: TextLine) -> Bool {
+            if looksLikeTableCell(line) { return true }
+            guard let bounds = line.bounds, lineWidth > 0, bounds.width < lineWidth * 0.8 else { return false }
+            let tokens = line.text.split(separator: " ")
+            return !tokens.isEmpty && tokens.count <= 8 && !PDFStructuredTextExtractor.looksLikeProse(line.text)
+        }
+
         /// A display equation: math set apart from the text column (centred or
         /// narrow), not a sentence with some symbols in it.
         func looksLikeDisplayMath(_ line: TextLine) -> Bool {
@@ -855,19 +865,26 @@ enum PDFStructuredTextExtractor {
                 probe += 1
             }
             let run = (index...end).filter { !captions.contains($0) && !result.contains($0) }
-            // How far each figure caption's top is below the run's lowest line, in points.
-            var gaps: [Int: Double] = [:]
-            if let lowest = (index...end).filter({ !captions.contains($0) }).compactMap({ lines[$0].bounds?.minY }).min() {
-                for caption in figureCaptions where caption > index && caption <= end + PDFCellRunRole.captionReach {
-                    if let top = lines[caption].bounds?.maxY { gaps[caption] = Double(lowest - top) }
-                }
+            // The run's own figure caption, with the label lines before it, if it sits just under the figure.
+            var own = PDFCellRunRole.ownFigureCaption(
+                start: index, end: end, tableCaptions: tableCaptions, figureCaptions: figureCaptions,
+                lineCount: lines.count,
+                isLabel: { layout.looksLikeFigureLabel(lines[$0]) && !captions.contains($0) })
+            if let caption = own {
+                let figureLines = (index...end).filter { !captions.contains($0) } + caption.labels
+                let lowest = figureLines.compactMap { lines[$0].bounds?.minY }.min()
+                let top = lines[caption.line].bounds?.maxY
+                let justBelow = lowest.flatMap { lowest in top.map { Double(lowest - $0) } }
+                    .map { PDFCellRunRole.isJustBelow(gap: $0, bodySize: Double(layout.bodySize)) } ?? false
+                if !justBelow { own = nil }
             }
             switch PDFCellRunRole.role(start: index, end: end, tableCaptions: tableCaptions,
-                                       figureCaptions: figureCaptions, figureCaptionGaps: gaps,
-                                       bodySize: Double(layout.bodySize), nearTableCaption: nearTableCaption,
+                                       hasOwnFigureCaption: own != nil, nearTableCaption: nearTableCaption,
                                        nearFigureCaption: nearFigureCaption) {
             case .table: result.formUnion(run)
-            case .figure: figure.formUnion(run)
+            case .figure:
+                figure.formUnion(run)
+                figure.formUnion((own?.labels ?? []).filter { !result.contains($0) })
             case nil: break
             }
             index = end + 1

@@ -31,6 +31,12 @@ final class Diag4588Tests: XCTestCase {
         for float in doc.floats where float.pageIndex == 3 {
             out.append("FLOAT \(float.id) \(float.kind.rawValue) text=\(float.textSegmentId ?? "-")")
         }
+        if let source = PDFClipSource(document: doc, text: doc.text) {
+            for anchor in PDFClipAnchors.make(text: doc.text, source: source) where anchor.pageNumber == 4 {
+                let at = doc.text.index(doc.text.startIndex, offsetBy: anchor.anchor)
+                out.append("ANCHOR \(anchor.floatId) \(PDFClipLabel.accessibilityLabel(anchor)) caption=\(anchor.hasCaption) at: " + String(doc.text[at...].prefix(40)))
+            }
+        }
         out.append("DIAG4588 END")
         let dump = out.joined(separator: "\n")
         print(dump)
@@ -38,6 +44,7 @@ final class Diag4588Tests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
         let roles = lines.filter { $0.pageIndex == 3 }.map(\.role.rawValue)
-        XCTFail("DIAG4588 roles: " + Dictionary(grouping: roles, by: { $0 }).map { "\($0.key)=\($0.value.count)" }.sorted().joined(separator: ","))
+        let anchors = out.filter { $0.hasPrefix("ANCHOR") || $0.hasPrefix("FLOAT") }.joined(separator: " | ")
+        XCTFail("DIAG4588 roles: " + Dictionary(grouping: roles, by: { $0 }).map { "\($0.key)=\($0.value.count)" }.sorted().joined(separator: ",") + " " + String(anchors.prefix(220)))
     }
 }
