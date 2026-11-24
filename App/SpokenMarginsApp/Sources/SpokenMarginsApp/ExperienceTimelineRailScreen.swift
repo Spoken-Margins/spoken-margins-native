@@ -678,7 +678,7 @@ struct ExperienceTimelineRailScreen: View {
         let sessionDate = item.sessions.first(where: { $0.id == sessionID })?.updatedAt
         return item.interjections
             .filter { $0.status == "active" && (sessionID == nil || $0.sessionId == sessionID) }
-            .map { MarginRow(interjection: $0, itemTitle: item.title, sessionDate: sessionDate) }
+            .map { MarginRow(interjection: $0, itemTitle: item.title, sessionDate: sessionDate, transcriptWaitsForAnswer: MarginRow.waitsForAnswer($0)) }
     }
 
     private static func preciseSourcePosition(_ margin: Interjection, in item: ItemDetailState, durationMs: Int?) -> Double? {

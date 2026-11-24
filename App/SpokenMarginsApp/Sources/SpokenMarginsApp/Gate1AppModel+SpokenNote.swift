@@ -25,20 +25,12 @@ extension Gate1AppModel {
         )
     }
 
-    /// At launch: adds dictation that an ended app left outside its note (a force-quit during a take) to that note and
-    /// the Library, off the main thread. Quick when there is nothing to find: it lists one folder.
+    /// At launch: recovers dictation an ended app left outside its note, and keeps the store for the spoken notes'
+    /// sweep after Allow (`SpokenNoteHeldTranscripts`).
     func recoverSpokenNotes(store: SQLiteSessionStore) {
         guard let support = try? applicationSupportDirectory() else { return }
-        Task.detached(priority: .utility) { [weak self] in
-            let recovered = SpokenNoteRecovery.recover(
-                in: support, now: Date(),
-                measureDurationMs: { SpokenNoteAudioFile.durationMs(of: $0) },
-                itemWriter: store
-            )
-            guard !recovered.isEmpty else { return }
-            await MainActor.run { [weak self] in
-                self?.refreshLibraryRowsInBackground(mustPublish: true) // #2505
-            }
+        SpokenNoteHeldTranscripts.start(applicationSupport: support, store: store) { [weak self] in
+            self?.refreshLibraryRowsInBackground(mustPublish: true) // #2505
         }
     }
 }

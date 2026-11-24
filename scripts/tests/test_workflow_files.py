@@ -235,3 +235,50 @@ class QueueActsAsTheApp(unittest.TestCase):
                 token = steps[queue]['env'][var].replace(' ', '')
                 self.assertTrue(token.startswith('${{steps.app-token.outputs.token||secrets.MERGE_QUEUE_TOKEN'),
                                 token)
+
+
+class ReadersUseTheAppBudget(unittest.TestCase):
+    """#5217: GITHUB_TOKEN's 1,000 requests an hour for the repository ran out on 2026-11-23 and the last three main-t3
+    runs failed on `commits/<sha>/statuses`. The readers that run in main's context mint the App token (its own, larger
+    budget) with read-only permissions and fall back to GITHUB_TOKEN. merge-policy.yml runs on pull_request from PR
+    branches, which can't use the main-only environment, so it stays on GITHUB_TOKEN; claude-audit.yml already has its
+    own environment and stays too."""
+
+    CASES = {
+        'main-t3.yml': ('decide', 'Decide'),
+        'merge-stall.yml': ('watch', 'Look for a stall'),
+    }
+
+    def test_each_reader_mints_a_read_only_token_first_and_falls_back(self):
+        for name, (job_id, step_name) in self.CASES.items():
+            with self.subTest(workflow=name):
+                job = parse(ROOT / '.github/workflows' / name)['jobs'][job_id]
+                self.assertEqual(job['environment'], {'name': 'agent-identity', 'deployment': False})
+                steps = job['steps']
+                self.assertTrue(is_app_token_mint_only(steps[0]), 'mint before anything that calls the API')
+                self.assertEqual(steps[0].get('id'), 'app-token')
+                self.assertIs(steps[0].get('continue-on-error'), True, 'a failed mint must fall back, not fail')
+                granted = {k: v for k, v in steps[0]['with'].items() if k.startswith('permission-')}
+                self.assertTrue(granted)
+                self.assertEqual(set(granted.values()), {'read'}, granted)
+                env = next(s for s in steps if s.get('name') == step_name)['env']
+                self.assertEqual(env['GH_TOKEN'].replace(' ', ''), '${{steps.app-token.outputs.token||github.token}}')
+
+    def test_the_app_token_never_reaches_a_checkout(self):
+        for name, (job_id, _) in self.CASES.items():
+            with self.subTest(workflow=name):
+                for step in parse(ROOT / '.github/workflows' / name)['jobs'][job_id]['steps']:
+                    if str(step.get('uses', '')).startswith('actions/checkout'):
+                        self.assertNotIn('app-token', str(step))
+
+    def test_the_alarm_issue_is_still_written_with_the_workflow_token(self):
+        steps = parse(ROOT / '.github/workflows/merge-stall.yml')['jobs']['watch']['steps']
+        look = next(s for s in steps if s.get('name') == 'Look for a stall')
+        self.assertEqual(look['env']['SM_WRITE_TOKEN'], '${{ github.token }}')
+        budget = next(s for s in steps if s.get('name') == 'Read the API budget')
+        self.assertEqual(budget['env']['GH_TOKEN'], '${{ github.token }}', "it watches that token's budget")
+
+    def test_the_main_t3_job_that_writes_stays_on_the_workflow_token(self):
+        job = parse(ROOT / '.github/workflows/main-t3.yml')['jobs']['t3']
+        self.assertEqual(job['env']['GH_TOKEN'], '${{ github.token }}')
+        self.assertNotIn('environment', job)

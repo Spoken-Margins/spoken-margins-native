@@ -511,7 +511,7 @@ private final class ScriptedEpisodeTranscriber: SourceTranscriptionClient, @unch
         await counter.value
     }
 
-    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription) async throws -> TranscriptTimeline {
         let call = await counter.next()
         if let onCall { await onCall() }
         if hangFirstCall, call == 1 {

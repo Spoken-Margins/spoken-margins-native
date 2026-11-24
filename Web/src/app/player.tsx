@@ -600,7 +600,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
         pendingStartRef.current = options.start && { ...options.start, episodeId: id, seekTo: options.at ?? audio.currentTime };
         if (options.at !== undefined) audio.currentTime = options.at;
-        await audio.play().catch(() => undefined);
+        const starting = audio.play().catch(() => undefined);
+        // After play() has started, never before: an await ahead of it loses the tap's gesture (Safari). #4425
+        void dataRef.current.addToLibrary(id, { quiet: true });
+        await starting;
         return 'played';
       }
       save();
@@ -665,7 +668,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       audio.src = target.audioUrl;
       audio.playbackRate = dataRef.current.settings.playbackRate;
       setLoading(true);
-      await audio.play().catch(onPlayRejected);
+      const starting = audio.play().catch(onPlayRejected);
+      void dataRef.current.addToLibrary(id, { quiet: true });
+      await starting;
       return 'played';
     },
     [relay, save, toast, stopClip, apply, retry, onPlayRejected, placeWhenLengthKnown],

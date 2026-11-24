@@ -67,7 +67,9 @@ struct FollowSheet: View {
                             .accessibilityIdentifier("sources.importApplePodcasts")
                         #endif
                         NavigationLink {
-                            OPMLImportScreen(importer: makeOPMLImport(), opensFilePickerOnAppear: true)
+                            // Done closes this sheet too, back to Following and its new shows (#5052): popping back
+                            // here left a sheet whose only way out was Cancel, which reads as undoing the follow.
+                            OPMLImportScreen(importer: makeOPMLImport(), opensFilePickerOnAppear: true, onDone: { dismiss() })
                         } label: {
                             Label("Import from another app", systemImage: "square.and.arrow.down")
                                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)

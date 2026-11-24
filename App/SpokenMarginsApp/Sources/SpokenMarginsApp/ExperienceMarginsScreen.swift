@@ -33,6 +33,7 @@ struct ExperienceMarginsScreen: View, Equatable {
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var markdownFileURL: URL?
     @State private var isPreparingExportAll = false
+    @State private var choosingPaperTableFormat = false
     @State private var preparingMarkdownItemID: String?
     @State private var collections: [ItemCollection] = []
     /// The first read of the Margin rows has finished, so an empty Shared list is empty and not still loading (#4105).
@@ -55,6 +56,8 @@ struct ExperienceMarginsScreen: View, Equatable {
         var query: MarginCollectionQuery
         var hasMargins: Bool
         var hasActiveSession: Bool
+        /// A paper in scope has a Paper note, so the Export menu's "Paper notes table" is on (#4340).
+        var hasPaperNotes: Bool
         /// Only each item's id and title: a playing item's progress must not count as a change here (#3605).
         var scopeItemChoices: [MarginScopeChoice]
         var privateRowCount: Int
@@ -75,6 +78,7 @@ struct ExperienceMarginsScreen: View, Equatable {
             query = model.marginCollectionQuery
             hasMargins = !model.marginRows.isEmpty
             hasActiveSession = model.hasActiveSession
+            hasPaperNotes = model.hasPaperNotesInScope
             scopeItemChoices = MarginCollectionQuery.scopeChoices(items: model.marginScopeItems)
             let privateRows = model.visiblePrivateMarginRows
             privateRowCount = privateRows.count
@@ -86,6 +90,7 @@ struct ExperienceMarginsScreen: View, Equatable {
                 let repair = MarginRowRepair.of(
                     isWritten: row.isWritten,
                     speechRecognitionOff: speechOff,
+                    speechRecognitionNotYetAsked: row.transcriptWaitsForAnswer,
                     transcriptionStatus: row.interjection.transcriptionStatus,
                     contextStatus: row.interjection.anchorContextStatus,
                     recordingMissing: row.interjection.audioStatus == "missing",
@@ -117,6 +122,8 @@ struct ExperienceMarginsScreen: View, Equatable {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    // A re-ask after Not now, when the listener typed in the search field below (#4715).
+                    SpeechAskCardInList(surface: .margins)
                     AppSearchField("Search your notes or a title", text: model.screenBinding(\.marginCollectionQuery.text), identifier: "margins.search.field")
                         .padding(.bottom, 12)
                     scopeRow(inputs)
@@ -133,6 +140,11 @@ struct ExperienceMarginsScreen: View, Equatable {
             .background(AppColors.bone)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("margins.screen")
+            // Typing in the search is reaching for text: a listener who said Not now is asked once more (#4715).
+            .onChange(of: model.marginCollectionQuery.text) { old, new in
+                if old.isEmpty, !new.isEmpty { SpeechAskController.shared.reachedForText(on: .margins) }
+            }
+            .onDisappear { SpeechAskController.shared.surfaceLeft(.margins) }
             .fileShareSheet($markdownFileURL)
             .navigationTitle("Margins")
             .navigationBarTitleDisplayMode(.inline)
@@ -153,6 +165,9 @@ struct ExperienceMarginsScreen: View, Equatable {
                         .accessibilityIdentifier("margins.exportAll.button")
                         Button("One file per session", systemImage: "doc.on.doc", action: openBatchExport)
                             .accessibilityIdentifier("margins.export.button")
+                        Button(PaperNoteTableExport.menuTitle, systemImage: "tablecells") { choosingPaperTableFormat = true }
+                            .disabled(!inputs.hasPaperNotes || isPreparingExportAll || preparingMarkdownItemID != nil)
+                            .accessibilityIdentifier("margins.paperNotesTable.button")
                     } label: {
                         if isPreparingExportAll {
                             ProgressView().frame(minWidth: 44, minHeight: 44)
@@ -166,6 +181,15 @@ struct ExperienceMarginsScreen: View, Equatable {
                     .accessibilityLabel(isPreparingExportAll ? "Preparing Margins" : "Export Margins")
                     .accessibilityIdentifier("margins.exportMenu.button")
                 }
+            }
+            .confirmationDialog(PaperNoteTableExport.dialogTitle, isPresented: $choosingPaperTableFormat, titleVisibility: .visible) {
+                ForEach(PaperNoteTableExport.Format.allCases, id: \.self) { format in
+                    Button(format.buttonTitle) { exportPaperNotesTable(format) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(PaperNoteTableExport.dialogMessage(scopeName: PaperNoteTableExport.scopeName(
+                    inputs.query, collectionName: scopeTitle(inputs), itemTitle: scopeTitle(inputs))))
             }
             .task {
                 loadCollections() // first, so the menu's collections don't wait for the Margins read (#4022)
@@ -229,6 +253,16 @@ struct ExperienceMarginsScreen: View, Equatable {
         guard let stored = try? model.store?.loadItemCollections() else { return }
         collections = stored
         model.marginCollectionQuery.refreshCollection(from: stored)
+    }
+
+    /// "Paper notes table" › Markdown or CSV: the table for the tab's scope, then the share sheet (#4340).
+    private func exportPaperNotesTable(_ format: PaperNoteTableExport.Format) {
+        guard !isPreparingExportAll else { return }
+        isPreparingExportAll = true
+        Task {
+            markdownFileURL = await model.preparePaperNotesTableFileURL(format: format)
+            isPreparingExportAll = false
+        }
     }
 
     /// Export Sessions starts with only the scoped collection's sessions selected.
