@@ -59,9 +59,11 @@ summarize "$out"
 count=$(find "$packets" -name '*.spokenmargins' | wc -l | tr -d ' ')
 [ "$count" -gt 0 ] || { echo "FAIL the exporter tests kept no packets" >&2; exit 1; }
 echo "kept $count packets"
-# The packet readers reuse the writer's ZIPFoundation checkout, so a shipped build must pin the same version.
+# Each shipped build's packet reader links the ZIPFoundation that build pinned (#4969): the writer's checkout when
+# the versions match, else that exact version fetched from the location the shipped Package.resolved names.
 zip="$repo/Packages/SessionKit/.build/checkouts/ZIPFoundation"
 zip_version() { sed -n '/"identity" : "zipfoundation"/,/"version"/s/.*"version" : "\(.*\)".*/\1/p'; }
+zip_location() { sed -n '/"identity" : "zipfoundation"/,/"location"/s/.*"location" : "\(.*\)".*/\1/p'; }
 current_zip=$(zip_version < "$repo/Packages/SessionKit/Package.resolved")
 [ -n "$current_zip" ] || { echo "FAIL no ZIPFoundation version in Package.resolved" >&2; exit 1; }
 
@@ -71,11 +73,17 @@ check_build() {
     name=$2
     dir=$work/$(printf '%s' "$name" | tr -c 'A-Za-z0-9' '-')
     echo "== building $name's persistence code from $tag ($(git -C "$repo" rev-parse --short "$tag^{commit}"))"
-    shipped_zip=$(git -C "$repo" show "$tag:Packages/SessionKit/Package.resolved" | zip_version)
-    [ "$shipped_zip" = "$current_zip" ] || {
-        echo "FAIL $name pins ZIPFoundation $shipped_zip, this checkout $current_zip: its packet reader would not be $name's" >&2
-        exit 1
-    }
+    shipped_resolved=$(git -C "$repo" show "$tag:Packages/SessionKit/Package.resolved")
+    shipped_zip=$(printf '%s\n' "$shipped_resolved" | zip_version)
+    [ -n "$shipped_zip" ] || { echo "FAIL $name's Package.resolved names no ZIPFoundation version" >&2; exit 1; }
+    if [ "$shipped_zip" = "$current_zip" ]; then
+        zip_dependency=".package(path: \"$zip\")"
+    else
+        shipped_zip_location=$(printf '%s\n' "$shipped_resolved" | zip_location)
+        [ -n "$shipped_zip_location" ] || { echo "FAIL $name's Package.resolved names no ZIPFoundation location" >&2; exit 1; }
+        echo "$name pins ZIPFoundation $shipped_zip (this checkout $current_zip); its reader builds with $shipped_zip"
+        zip_dependency=".package(url: \"$shipped_zip_location\", exact: \"$shipped_zip\")"
+    fi
     mkdir -p "$dir/reader" "$dir/packet-reader"
     git -C "$repo" archive "$tag" Packages/SessionKit/Sources/SessionKit Packages/SessionKit/Sources/SessionKitPersistence \
         Packages/SessionKit/Sources/SessionKitSharing | tar -x -C "$dir"
@@ -93,7 +101,7 @@ import PackageDescription
 let package = Package(
     name: "ShippedBuildReader",
     platforms: [.macOS(.v15)],
-    dependencies: [.package(path: "$zip")],
+    dependencies: [$zip_dependency],
     targets: [
         .target(name: "SessionKit", path: "Packages/SessionKit/Sources/SessionKit"),
         .target(name: "SessionKitPersistence", dependencies: ["SessionKit"],

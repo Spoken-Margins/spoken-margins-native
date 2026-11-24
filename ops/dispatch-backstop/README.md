@@ -13,6 +13,14 @@ run counts: its PR-event runs check one PR, and only the sweep queues a PR armed
 `merge-stall` and `merge-queue-label-bridge`, 60 for `lane-conflicts`, 180 for `main-t3`. A workflow that an event started
 a few minutes ago is skipped.
 
+**Fixed daily slots (#5154).** `phone-build` (12:00 and 21:30 UTC) has no interval: it must run near a time of day. It and
+`main-t3`'s two pre-phone-build ticks (13:30 and 22:30 UTC) are listed in `SLOTS`. Each tick finds the newest slot that is
+more than an hour past and dispatches when no run was created from 30 minutes before that slot onwards. On 2026-11-23 the
+12:00 phone build never ran and the 21:30 one started 1h48m late; replayed against the real run list, the backstop would
+have dispatched it at 13:00. `main-t3` dispatches when either its 3-hour interval or a slot says so, once. Both workflows
+skip a commit they already handled (`main-t3` by its commit status, `phone-build` by an unexpired build), so a dispatch that
+finds nothing new costs one short Linux job.
+
 Each tick logs one line per workflow (`journalctl -u sm-dispatch-backstop`):
 
 ```
@@ -36,11 +44,12 @@ hour (#4937). A run still queued or running is not dispatched over.
 
 ## Cost and catch
 
-- Cost per tick: five GitHub API reads, and one dispatch call for each workflow that is overdue. No Actions minutes until a
+- Cost per tick: seven GitHub API reads (one per workflow), and one dispatch call for each workflow that is overdue. No Actions minutes until a
   dispatched job starts, and each of these jobs is a seconds-long Linux job except `main-t3` (a hosted Mac, at most every
   3 hours, and its own `decide` job skips a SHA that already has a status).
-- How often: every 15 minutes. At most one dispatch per workflow per interval.
-- What it catches: a stall that waits for a dropped cron. Evidence: five "Merging has stalled" issues in three days (#4693,
+- How often: every 15 minutes. At most one dispatch per workflow per interval. For a slot, at most one dispatch per missed slot (the dispatched run covers it).
+- What it catches: a missed or hours-late phone build (#5154: no 12:00 run on 2026-11-23, 21:30 runs 1h48m to 4h late on
+  2026-11-21 to 23). A stall that waits for a dropped cron. Evidence: five "Merging has stalled" issues in three days (#4693,
   #4740, #4758, #4786 and others) and #4666 stuck 37 hours.
 - Waste signal: a month in which dispatches start no run that an event had not already started (every line says
   `skipped`), or the log shows `dispatched` lines for a workflow whose events keep it inside its interval.
