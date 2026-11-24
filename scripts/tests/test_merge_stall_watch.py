@@ -62,6 +62,8 @@ class StallTests(unittest.TestCase):
         self.assertEqual(watch.stall(NOW, ago(300), [armed(running=['lane'])]), [])
         self.assertEqual(watch.stall(NOW, ago(300), [armed(running=['hosted fast: Mac rest'])]), [])
         self.assertEqual(len(watch.stall(NOW, ago(300), [armed(running=['automerge'])])), 1)
+        # `merge policy` stays in progress while it waits for an audit or the owner's tap (#4986): not progress either.
+        self.assertEqual(len(watch.stall(NOW, ago(300), [armed(running=['merge policy'])])), 1)
 
     def test_a_pr_waiting_on_its_author_is_not_the_pipelines_stall(self):
         fail = comment(f'Lane report pr5-r1 — FAIL\ncommit `{HEAD[:7]}`')

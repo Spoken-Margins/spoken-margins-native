@@ -6,6 +6,7 @@ tree and expects the harness to see it again.
 """
 from __future__ import annotations
 
+import dataclasses
 import io
 import sys
 import unittest
@@ -52,6 +53,24 @@ class LiveFaultTests(unittest.TestCase):
             self.assertEqual(H.violations(expired, H.simulate(expired, tree), tree), ['silent-stuck'])
         finally:
             module.FALLBACK_KINDS = saved
+
+    def test_a_pr_only_waiting_for_the_owner_tap_reads_pending_not_red(self):
+        # 2026-11-22: 11 runs of `merge policy` went red while a PR only waited for an audit or the tap, and the PR's
+        # thread sat in "Waiting on you" for a red check it could not fix (#4986). Pending leaves no red check.
+        waiting = dataclasses.replace(H.case('workflow', 'person', 'none'), owner_tap_at=None)
+        tree = fresh_tree()
+        result = H.simulate(waiting, tree)
+        self.assertEqual((result['merged'], result['red_on_head']), (False, []))
+        self.assertTrue(any('policy=success' in line for line in result['log'] if 'merge-policy' in line))
+        # The tree from before the change reports the same PR red.
+        before = fresh_tree()
+        del before.module('merge_policy', 'scripts/merge_policy.py').verdict
+        self.assertEqual(H.simulate(waiting, before)['red_on_head'], ['merge policy'])
+
+    def test_the_same_pr_still_merges_when_the_owner_taps(self):
+        tapped = H.case('workflow', 'person', 'none')
+        tree = fresh_tree()
+        self.assertEqual(H.violations(tapped, H.simulate(tapped, tree), tree), [])
 
     def test_static_rules_see_each_fixed_shape_again(self):
         tree = fresh_tree()
@@ -113,12 +132,34 @@ class TableTests(unittest.TestCase):
             self.assertFalse(any('left the queue on a failure outside the PR' in line for line in result['log']))
             self.assertEqual(H.violations(real, result, tree), [])
 
-    def test_the_known_entries_for_setup_failures_are_the_ones_on_the_pr_itself(self):
-        # The merge-queue half of #4940 is fixed, so no kind that runs its Mac jobs in the queue is known to need a
-        # person; what remains fails on a PR-level check, where only #5057's re-run can help.
-        self.assertNotIn('*/mac-fail-once/*: needs-person', H.KNOWN)
-        for pattern in ('web/*/mac-fail-once/*: needs-person', 'web/*/mac-download-fail-once/*: needs-person'):
-            self.assertIn(pattern, H.KNOWN)
+    def test_a_pr_check_failed_outside_the_pr_is_re_run_only_with_5057(self):
+        # #5057: on the PR itself no merge group exists, so a web job failed by a runner or an outside host, or a
+        # 90-minute outage, stayed red until a person re-ran it. rerun-cancelled.yml now re-runs it once after a wait.
+        self.assertFalse([p for p in H.KNOWN if 'mac-fail-once' in p or 'download-fail' in p or 'outage' in p])
+        tree = fresh_tree()
+        cases = [H.case('web', 'person', 'mac-fail-once'), H.case('web', 'person', 'mac-download-fail-once'),
+                 H.case('sessionkit', 'person', 'outage-90m'), H.case('web', 'person', 'outage-90m')]
+        for c in cases:
+            with self.subTest(c.name):
+                result = H.simulate(c, tree)
+                self.assertEqual(H.violations(c, result, tree), [])
+                self.assertTrue(any('rerun-cancelled: run' in line and 'waiting 90 minutes' in line
+                                    for line in result['log']))
+        rerun = tree.model['workflows']['rerun-cancelled.yml']['jobs']['rerun']
+        rerun['if'] = ("github.event.workflow_run.conclusion == 'cancelled' && "
+                       "github.event.workflow_run.event == 'pull_request'")
+        for c in cases:
+            with self.subTest(f'{c.name} before #5057'):
+                self.assertEqual(H.violations(c, H.simulate(c, tree), tree), ['needs-person'])
+
+    def test_a_pr_check_failed_by_a_test_is_not_re_run(self):
+        # #5057 Must not break: a real test failure on a PR stays red and is not re-run.
+        c = H.case('web', 'person', 'mac-test-fail-once')
+        tree = fresh_tree()
+        result = H.simulate(c, tree)
+        self.assertEqual(H.violations(c, result, tree), [])
+        self.assertFalse(any(line.split('m ', 1)[1].startswith('re-run of') for line in result['log']), result['log'])
+        self.assertTrue(result['red_on_head'])
 
     def test_every_external_download_names_a_real_job(self):
         workflows = fresh_tree().model['workflows']
@@ -130,7 +171,7 @@ class TableTests(unittest.TestCase):
     def test_every_known_entry_gives_its_issue_or_reason(self):
         for pattern, why in H.KNOWN.items():
             with self.subTest(pattern):
-                self.assertRegex(pattern, r': (merged-broken|silent-stuck|needs-person|slow|loop)$')
+                self.assertRegex(pattern, r': (merged-broken|silent-stuck|needs-person|slow|loop|retried-test)$')
                 self.assertTrue(why.strip())
 
     def test_the_portable_job_runs_the_whole_sweep(self):

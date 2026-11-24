@@ -303,7 +303,7 @@ final class Build23SharingSeamsTests: XCTestCase {
     func testWordsArriveWhateverElseTheSenderChangedAndTypedWordsStay() async throws {
         let (coordinator, model, root) = try await coordinatorWithPendingWords()
         defer { try? FileManager.default.removeItem(at: root) }
-        coordinator.send(.setRepresentation(id: "margin-words-wait", choice: .textOnly))
+        coordinator.send(.setRepresentation(id: "session-test::margin-words-wait", choice: .textOnly))
         wordsArrive(in: model)
         try await pollUntil { coordinator.snapshot.margins.first?.reviewedText == "Keep going." }
         XCTAssertEqual(coordinator.snapshot.margins.first?.representation, .textOnly, "their choice stays")
@@ -311,7 +311,7 @@ final class Build23SharingSeamsTests: XCTestCase {
 
         let (typed, typedModel, typedRoot) = try await coordinatorWithPendingWords()
         defer { try? FileManager.default.removeItem(at: typedRoot) }
-        typed.send(.setReviewedWords(id: "margin-words-wait", text: "My own words"))
+        typed.send(.setReviewedWords(id: "session-test::margin-words-wait", text: "My own words"))
         wordsArrive(in: typedModel)
         try await pollUntil { typed.snapshot.margins.first?.waitingBadge == nil }
         try await waitUntilQuiet(typed)
@@ -325,7 +325,7 @@ final class Build23SharingSeamsTests: XCTestCase {
     func testRebuildKeepsALeftOutMarginOutAndAFailedTranscriptionShowsNoStep() async throws {
         let (coordinator, model, root) = try await coordinatorWithPendingWords()
         defer { try? FileManager.default.removeItem(at: root) }
-        coordinator.send(.setIncluded(id: "margin-words-wait", included: false))
+        coordinator.send(.setIncluded(id: "session-test::margin-words-wait", included: false))
         XCTAssertNil(coordinator.snapshot.pinnedStep, "a Margin that isn't going doesn't hold the bar")
         wordsArrive(in: model)
         try await pollUntil { coordinator.snapshot.margins.first?.reviewedText == "Keep going." }
@@ -379,7 +379,7 @@ final class Build23SharingSeamsTests: XCTestCase {
 
         coordinator.send(.begin)
         XCTAssertEqual(coordinator.snapshot.stage, .select)
-        XCTAssertEqual(coordinator.snapshot.margins.map(\.id), ["margin-build-23-seam"])
+        XCTAssertEqual(coordinator.snapshot.margins.map(\.id), ["session-build-23-seam::margin-build-23-seam"])
         coordinator.send(.advanceToReview)
         XCTAssertEqual(coordinator.snapshot.stage, .review)
         coordinator.send(.buildRecipientPreview)
@@ -445,7 +445,7 @@ final class Build23SharingSeamsTests: XCTestCase {
 
         coordinator.send(.begin)
         XCTAssertEqual(coordinator.snapshot.stage, .select)
-        XCTAssertEqual(coordinator.snapshot.margins.map(\.id), ["margin-build-23-seam"])
+        XCTAssertEqual(coordinator.snapshot.margins.map(\.id), ["session-build-23-seam::margin-build-23-seam"])
         coordinator.send(.advanceToReview)
         XCTAssertEqual(coordinator.snapshot.stage, .review)
         coordinator.send(.setIncludesAcousticEvidence(false))
@@ -477,5 +477,54 @@ final class Build23SharingSeamsTests: XCTestCase {
         XCTAssertNil(coordinator.snapshot.verifiedPreview)
         XCTAssertNil(coordinator.verifiedShareFileURL)
         try? FileManager.default.removeItem(at: preview.fileURL)
+    }
+
+    /// "Tell Ben you got it" (#3902, Design E2): a friend's packet that answers the listener's own Margin puts the offer on
+    /// its card and in the intro; a friend's first share on the same item gets neither, and the offer follows the item as
+    /// it changes, the way a relaunch rebuilds it from the stored records.
+    func testAReplyToMyMarginOffersTellReceivedOnItsCardAndInTheIntro() throws {
+        let date = Date(timeIntervalSince1970: 1_777_000_000)
+        let mine = MarginPacketIdentity(packageDigest: String(repeating: "a", count: 64), packageScopedId: "a-1")
+        let identity = SharedItemIdentity(itemType: .text, canonicalURL: "https://example.com/harbour", title: "Harbour Lights")
+        func layer(_ id: String, _ label: String, importedAt: Double) -> ImportedCommentaryLayer {
+            ImportedCommentaryLayer(
+                id: id, packageDigest: String(repeating: id.first.map(String.init) ?? "x", count: 64), packageId: id,
+                itemIdentity: identity, displayLabel: label, importedAt: date.addingTimeInterval(importedAt))
+        }
+        func friendMargin(_ id: String, layer: String, replying: Bool) -> ImportedCommentaryInterjection {
+            ImportedCommentaryInterjection(
+                id: id, layerId: layer, packageScopedId: "\(id)-scoped", createdAt: date,
+                anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "Words",
+                replyLinks: replying ? [MarginReplyLink.replying(to: mine, parentConversationId: nil)] : nil)
+        }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        var item = ItemDetailState()
+        item.id = "item"
+        item.title = "Harbour Lights"
+        item.interjections = [Interjection(
+            id: "mine", itemId: "item", sessionId: "session", targetType: .item, targetId: "item", createdAt: date, roughPercent: 0,
+            anchor: Anchor(anchorType: .text, startChar: 0, endChar: 1, anchorBefore: "", anchorAfter: ""),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: "Words", cleanedTranscript: nil,
+            displayText: "Words", status: "active", captureKind: .written
+        ).recordingShare(as: mine)]
+        item.importedCommentaryLayers = [layer("ben", "Ben", importedAt: 10), layer("cy", "Cy", importedAt: 20)]
+        item.importedCommentaryInterjections = [
+            "ben": [friendMargin("b1", layer: "ben", replying: true)],
+            "cy": [friendMargin("c1", layer: "cy", replying: false)],
+        ]
+        model.selectedItem = item
+        let coordinator = Build23SharingCoordinator(model: model)
+
+        let ben = try XCTUnwrap(coordinator.importedLayers.first { $0.id == "ben" })
+        XCTAssertEqual(ben.receipt?.replyCount, 1)
+        XCTAssertNil(coordinator.importedLayers.first { $0.id == "cy" }?.receipt, "Cy's first share is not an answer")
+        let intro = try XCTUnwrap(coordinator.introReceipt, "Cy's newer first share doesn't hide Ben's reply")
+        XCTAssertEqual(intro.title, "Tell Ben you got it")
+        XCTAssertEqual(intro.message, "Got your reply on \u{201C}Harbour Lights\u{201D} in Spoken Margins.")
+
+        item.importedCommentaryInterjections["ben"] = [friendMargin("b1", layer: "ben", replying: false)]
+        model.selectedItem = item
+        XCTAssertNil(coordinator.introReceipt)
+        XCTAssertTrue(coordinator.importedLayers.allSatisfy { $0.receipt == nil })
     }
 }

@@ -210,8 +210,8 @@ Dee, the article, `kit-4-article.spokenmargins`:
 ## If something goes wrong
 
 1. In Spoken Margins, tap the **Settings** tab at the bottom right.
-2. Scroll to **Help & Privacy**. Tap **Share Diagnostics**.
-3. Send the file in the project thread and say which step it was. The file holds the titles and links of items in your Library, but no audio.
+2. Tap **Share Diagnostics**, the first row under **Help & Diagnostics**.
+3. Send the file in the project thread and say which step it was. Links and file paths in it are replaced with placeholders, and episodes, articles and PDFs in your Library appear as codes, not by their titles. It holds no Margin text, recordings or audio.
 
 ## Not covered
 

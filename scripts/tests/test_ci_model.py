@@ -63,6 +63,19 @@ class ExpressionTests(unittest.TestCase):
         self.assertTrue(self.check("always() && vars.MERGE_QUEUE == 'on'", ['failure']))
 
 
+    def test_the_scope_job_runs_the_workflows_own_docs_only_check(self):
+        # #5048: the model used to rebuild the rule from the workflow's `docs` tuple, so a change to the rule beside the
+        # tuple (Site/quiz/ is code) left the model saying docs-only. It now runs the step's Python.
+        self.assertTrue(TREE.docs_only(['Site/privacy/index.html', 'docs/a.md']))
+        self.assertFalse(TREE.docs_only(['Site/quiz/page.js']))
+        self.assertFalse(TREE.docs_only(['scripts/x.py']))
+        self.assertFalse(TREE.docs_only([]))
+        for text in ('jobs: {scope: {steps: [{id: scope, run: "echo docs_only=true"}]}}', 'jobs: {scope: {steps: []}}',
+                     'jobs: {}', ''):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                ci_model.docs_only_rule(text)
+
+
 class FilterAndCronTests(unittest.TestCase):
     def test_paths_with_negation(self):
         patterns = ['App/**', 'Packages/**', '!Packages/SessionKit/Tests/**']
@@ -84,6 +97,12 @@ class ExtractTests(unittest.TestCase):
         for name, producers in TREE.model['required_checks'].items():
             events = {e for p in producers for e in p['events']}
             self.assertTrue({'pull_request', 'merge_group'} <= events, name)
+
+    def test_a_job_that_posts_its_own_check_run_is_known_by_the_name_it_reports(self):
+        # merge-policy.yml's job is `merge policy run`; the check run the ruleset requires is `merge policy` (#4986).
+        job = TREE.model['workflows']['merge-policy.yml']['jobs']['policy']
+        self.assertEqual(job['check'], 'merge policy')
+        self.assertEqual(TREE.model['required_checks']['merge policy'][0]['workflow'], 'merge-policy.yml')
 
     def test_tokens_and_effects(self):
         workflows = TREE.model['workflows']

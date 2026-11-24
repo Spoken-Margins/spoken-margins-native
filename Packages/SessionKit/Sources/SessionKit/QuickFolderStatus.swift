@@ -5,47 +5,12 @@ import Foundation
 /// folder and a clock, and reads nothing else.
 ///
 /// A folder is in one of three states. **None chosen** (no name). **Can't open**: the bookmark didn't resolve or the folder
-/// couldn't be listed; the icon and the words carry it, never colour. Or **working**, with a last-checked time and a mode.
+/// couldn't be listed; the icon and the words carry it, never colour. Or **working**, with a last-checked time. A folder's new
+/// files only ever wait on Following for the listener to add; nothing queues them by itself (owner decision, #4274).
 public struct QuickFolderStatus: Sendable {
-    public enum Mode: String, Codable, Equatable, Sendable, CaseIterable {
-        /// New files are listed on Following for the listener to add. The old switch off.
-        case waitInFollowing
-        /// New files are imported and added to the end of the play queue. The old switch on.
-        case addToPlayQueue
-
-        /// The picker's choices.
-        public var choiceTitle: String {
-            switch self {
-            case .waitInFollowing: return "Wait in Following"
-            case .addToPlayQueue: return "Add to Play Queue"
-            }
-        }
-
-        /// The mode part of Settings' third line.
-        public var phrase: String {
-            switch self {
-            case .waitInFollowing: return "New files wait in Following"
-            case .addToPlayQueue: return "New files go to your play queue"
-            }
-        }
-    }
-
     public enum Problem: String, Codable, Equatable, Sendable {
         /// "Can't open this folder": moved, deleted, signed out and offline can't be told apart.
         case cantOpen
-    }
-
-    /// The last queue-mode import that failed, kept until a later success for that file or "Clear".
-    public struct ImportProblem: Codable, Equatable, Sendable {
-        public var fileName: String
-        public var reason: String
-        public var date: Date
-
-        public init(fileName: String, reason: String, date: Date) {
-            self.fileName = fileName
-            self.reason = reason
-            self.date = date
-        }
     }
 
     /// The words for an elapsed time under a week: `spoken` false is the abbreviated style ("2 min. ago"), true the full one
@@ -93,8 +58,6 @@ public struct QuickFolderStatus: Sendable {
     /// When a scan last finished successfully; nil before the first.
     public var lastCheckedAt: Date?
     public var problem: Problem?
-    public var lastImportProblem: ImportProblem?
-    public var mode: Mode
     /// New files, the count Following shows.
     public var newCount: Int
 
@@ -105,15 +68,13 @@ public struct QuickFolderStatus: Sendable {
 
     public init(
         name: String?, path: String? = nil, lastCheckedAt: Date? = nil, problem: Problem? = nil,
-        lastImportProblem: ImportProblem? = nil, mode: Mode = .waitInFollowing, newCount: Int = 0,
+        newCount: Int = 0,
         now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current, relative: RelativeText = .platform
     ) {
         self.name = name
         self.path = path
         self.lastCheckedAt = lastCheckedAt
         self.problem = problem
-        self.lastImportProblem = lastImportProblem
-        self.mode = mode
         self.newCount = max(0, newCount)
         self.now = now
         self.calendar = calendar
@@ -124,6 +85,8 @@ public struct QuickFolderStatus: Sendable {
     // MARK: State
 
     public static let noneChosen = "None chosen"
+    /// The one thing a folder does with new files (#4274): they wait on Following until the listener adds them.
+    public static let newFilesPhrase = "New files wait in Following"
     public static let cantOpenTitle = "Can't open this folder"
     public static let cantOpenMessage = "It may have been moved, deleted or signed out, or it may be offline. Check again, or choose it again."
     public static let cantOpenSymbol = "exclamationmark.triangle"
@@ -142,14 +105,11 @@ public struct QuickFolderStatus: Sendable {
     public var settingsLocationLine: String? { hasFolder ? locationLine : nil }
 
     /// Line 3 of the row. With no folder, "None chosen". When the folder can't be opened, that replaces the line entirely, with
-    /// no suffix. Otherwise the check part, then the mode part, and " · 1 file couldn't be added" when a last problem is stored:
-    /// "Checked 2 min. ago · New files wait in Following".
+    /// no suffix. Otherwise the check part, then the phrase: "Checked 2 min. ago · New files wait in Following".
     public var settingsStatusLine: String {
         guard hasFolder else { return Self.noneChosen }
         if cantOpen { return Self.cantOpenTitle }
-        var line = "\(checkedText) · \(mode.phrase)"
-        if lastImportProblem != nil { line += " · 1 file couldn't be added" }
-        return line
+        return "\(checkedText) · \(Self.newFilesPhrase)"
     }
 
     /// The symbol drawn beside line 3: the warning triangle when the folder can't be opened, else none.
@@ -162,8 +122,7 @@ public struct QuickFolderStatus: Sendable {
         if cantOpen { return (parts + ["can't open this folder"]).joined(separator: ", ") }
         if let spoken = path.flatMap(FolderLocationLabel.spokenLabel(forPath:)) { parts.append("in \(spoken)") }
         parts.append(spokenCheckedText)
-        parts.append(mode.phrase.lowercasedFirst)
-        if lastImportProblem != nil { parts.append("1 file couldn't be added") }
+        parts.append(Self.newFilesPhrase.lowercasedFirst)
         return parts.joined(separator: ", ")
     }
 
@@ -192,9 +151,8 @@ public struct QuickFolderStatus: Sendable {
 
     // MARK: The Quick Folder screen
 
-    public static let sectionFooter = "Files you save to a Quick Folder show up in Following, or go straight to your play queue."
-    public static let newFilesFooter = "Wait in Following: new files are listed on Following for you to add. Add to Play Queue: new files are imported and added to the end of your play queue, in filename order. Files saved on another device appear once they have synced to this iPhone."
-    public static let lastProblemFooter = "It's still listed on Following, where you can try adding it again."
+    public static let sectionFooter = "Files you save to a Quick Folder show up in Following, where you choose what to add."
+    public static let newFilesFooter = "New files are listed on Following for you to add. Files saved on another device appear once they have synced to this iPhone."
     public static let addSheetFootnote = "You can also see and change it in Settings › Import & Export."
 
     /// The "Last checked" value: the time, "Checking…" while a scan runs, or "Not checked yet".
@@ -206,18 +164,6 @@ public struct QuickFolderStatus: Sendable {
 
     /// The "New files" value: "3 new" or "None new". The count Following shows.
     public var newFilesValue: String { newCount > 0 ? "\(newCount) new" : "None new" }
-
-    /// The last-problem row: "“notes.pdf” couldn't be added: <reason>". Nil when none is stored.
-    public var lastProblemLine: String? {
-        lastImportProblem.map { "“\($0.fileName)” couldn't be added: \($0.reason)" }
-    }
-
-    /// The date under the last problem.
-    public var lastProblemDateLine: String? {
-        lastImportProblem.map {
-            $0.date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: locale, calendar: calendar, timeZone: calendar.timeZone))
-        }
-    }
 
     /// The confirmation before removing: nothing in the Library or the queue goes.
     public var removeConfirmationTitle: String { "Stop importing from “\(displayName)”?" }

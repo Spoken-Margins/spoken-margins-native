@@ -210,11 +210,28 @@ public struct LinkListArrivalRecord: Codable, Equatable, Sendable {
     }
 
     public static func load(from defaults: UserDefaults = .standard) -> LinkListArrivalRecord? {
-        guard let data = defaults.data(forKey: defaultsKey) else { return nil }
+        defaults.data(forKey: defaultsKey).flatMap(decode)
+    }
+
+    /// The record stored as `data`, or nil. Data this build can't read counts as no record, and the next arrival
+    /// overwrites it. The Your AI screen reads the stored bytes itself (through `@AppStorage`, so it updates while open).
+    public static func decode(_ data: Data) -> LinkListArrivalRecord? {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        // Data this build can't read counts as no record, and the next arrival overwrites it.
         return try? decoder.decode(LinkListArrivalRecord.self, from: data)
+    }
+
+    /// What the Your AI screen's "Last list" row shows when nothing has arrived.
+    public static let noneYet = "None yet"
+
+    /// The "Last list" value (#4683, Design 2b): "None yet", "“Morning brief, November 23” · Today, 6:02 AM", or
+    /// "Untitled list · Today, 6:02 AM". `when` writes the time in the phone's own style. A title that is only spaces
+    /// counts as untitled.
+    public static func lastListValue(_ record: LinkListArrivalRecord?, when: (Date) -> String) -> String {
+        guard let record else { return noneYet }
+        let title = record.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let name = title.isEmpty ? "Untitled list" : "\u{201C}\(title)\u{201D}"
+        return "\(name) · \(when(record.date))"
     }
 
     public func save(to defaults: UserDefaults = .standard) {

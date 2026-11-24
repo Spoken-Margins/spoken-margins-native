@@ -35,12 +35,10 @@ extension Gate1AppModel {
         quickAccess.isRefreshing || isRefreshingFollowedSources
     }
 
-    /// Connects the folder state to the model at launch: change forwarding, diagnostics, and the inbox that feeds the
-    /// play queue after each refresh (#1990).
+    /// Connects the folder state to the model at launch: change forwarding and diagnostics.
     func wireQuickAccessFolder() {
         quickAccess.forwardWillChange(to: objectWillChange)
         quickAccess.recordDiagnostic = { [weak self] key, value in self?.diagnostics[key] = value }
-        quickAccess.onFilesRefreshed = { [weak self] in self?.quickFolderInboxRefreshed() }
     }
 
     func dismissQuickAccessFile(_ file: QuickAccessFile) { quickAccess.dismiss(file) }
@@ -57,6 +55,21 @@ extension Gate1AppModel {
             reportFailure(error, context: "Quick folder setup failed")
         }
     }
+
+    /// Settings' "Choose Folder Again" (#3770): the same folder keeps what the last scan learned and its dismissed files;
+    /// any other folder is a fresh baseline, as `configureQuickAccessFolder`. The confirmation is the same.
+    func reconnectQuickAccessFolder(url: URL) {
+        do {
+            try quickAccess.reconnect(url: url) {
+                reportSuccess("Quick folder set to \(url.lastPathComponent).")
+            }
+        } catch {
+            reportFailure(error, context: "Quick folder setup failed")
+        }
+    }
+
+    /// Settings' "Remove Folder" (#3770). Nothing in the Library or the play queue is touched.
+    func removeQuickAccessFolder() { quickAccess.remove() }
 
     func refreshQuickAccessFolder() { quickAccess.refresh() }
 

@@ -9,6 +9,8 @@ description: How to file, complete or promote a Spoken Margins GitHub issue so i
 
 Search open issues first. On a duplicate, comment there instead of filing. One problem per issue.
 
+An issue is built whole, in one PR, by one thread (Cole, 2026-11-23). Don't write a plan of steps or slices into it that expects several PRs. The only split is two PRs, when a database or packet change must ship before the feature; say so in **Done when** if it applies.
+
 ## Body headings
 
 - **Outcome:** one or two sentences on what's different for the listener or the pipeline when it's done.

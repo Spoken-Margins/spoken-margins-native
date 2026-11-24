@@ -55,4 +55,26 @@ final class MarginTidyCardStateTests: XCTestCase {
         XCTAssertEqual(MarginTidyCardState.decisionSource(for: .fillers), .fillers)
         XCTAssertEqual(MarginTidyCardState.decisionSource(for: .onDeviceAI), .onDeviceAI)
     }
+
+    // MARK: "Tidy version to review" on the export sheet (#4338's Design, #4339)
+
+    func testATidyIsWaitingOnlyWhenUnansweredAndTheFillerOnlyTidyChangesTheWords() {
+        let used = MarginTidyDecision(choice: .usedTidy, source: .fillers, decidedAt: Date(timeIntervalSince1970: 1))
+        let kept = MarginTidyDecision(choice: .keptOriginal, decidedAt: Date(timeIntervalSince1970: 1))
+        let rows: [(String, Interjection, Bool)] = [
+            ("fillers to take out", margin(transcript: "um so the the result was not 12 percent"), true),
+            ("nothing to take out", margin(transcript: "The result was not 12 percent."), false),
+            ("only the capital letter would change", margin(transcript: "the result was not 12 percent"), false),
+            ("nothing would be left", margin(transcript: "um"), false),
+            ("a written Margin", margin(transcript: "um so the result", kind: .written), false),
+            ("transcript not ready", margin(transcription: "pending"), false),
+            ("Keep mine", margin(decision: kept), false),
+            ("tidy already used", margin(cleaned: "The result.", decision: used), false),
+            ("someone else's cleanup", margin(cleaned: "Someone else's cleanup."), false),
+            ("deleted", margin(status: "deleted"), false),
+        ]
+        for (name, margin, expected) in rows {
+            XCTAssertEqual(MarginTidyCardState.hasTidyToReview(margin), expected, name)
+        }
+    }
 }

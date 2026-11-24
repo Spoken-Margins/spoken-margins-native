@@ -14,6 +14,9 @@ struct ExperienceItemDetailScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @EnvironmentObject private var sharingCoordinator: Build23SharingCoordinator
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// Saved live-session photos for Recent Margins (#4180), observed directly so they appear once the launch load finishes.
+    @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
 
     @State private var confirmsTrash = false
     /// Why Share has nothing to send, when it has none (#4229).
@@ -33,8 +36,10 @@ struct ExperienceItemDetailScreen: View {
     @State private var collectionItem: LibraryItemRow?
     /// A Margin with no place, opened from Recent Margins (#4233): it has no moment to show in the Timeline.
     @State private var unplacedMargin: MarginRow?
-    /// The kept copy of this item's PDF, when it is a PDF and this iPhone holds its file: the only case the menu offers
-    /// "Export PDF with Margins" (#4338). Looked up off the main thread when the item opens.
+    /// Whether the open item is a PDF, so the menu offers "Export PDF with Margins" (#4338). Looked up off the main thread
+    /// when the item opens, with the kept copy of its file when this iPhone holds one (`keptPDFOriginal`). With no copy
+    /// the sheet asks the listener to choose the file (PR 6).
+    @State private var isPDFItem = false
     @State private var keptPDFOriginal: URL?
     /// The kept copy of this item's Word document, when it was added as one and this iPhone holds its file: the only
     /// case the menu offers "Export Word document with Margins" (#4595).
@@ -44,12 +49,13 @@ struct ExperienceItemDetailScreen: View {
     @StateObject private var arrival = FriendArrivalPresenter()
     private let episodeLinker = ImportedFileEpisodeLinker()
 
-    /// Finds whether the open item is a PDF, or a Word document, with a kept original (#4338, #4595). Both must hold, so a
-    /// listener never meets an entry that cannot finish. A PDF needs the Library row and a kept .pdf; Word needs only a
-    /// kept .docx, so no row offers the wrong export.
+    /// Finds whether the open item is a PDF, or a Word document with a kept original (#4338, #4595). A PDF needs only the
+    /// Library row: with no kept .pdf the sheet asks for the file. Word needs a kept .docx, and a kept .docx wins over a
+    /// row that reads as a PDF, so no row offers the wrong export.
     private func refreshKeptOriginal() async {
         let id = model.selectedItem.id
         guard !id.isEmpty, let row = model.libraryItems.first(where: { $0.id == id }) else {
+            isPDFItem = false
             keptPDFOriginal = nil
             keptWordOriginal = nil
             return
@@ -57,14 +63,15 @@ struct ExperienceItemDetailScreen: View {
         let isPDF = LibraryQueryEngine.isPDF(row)
         let kept = await model.keptOriginal(itemId: id)
         guard id == model.selectedItem.id else { return }
+        isPDFItem = isPDF && kept?.kind != .docx
         keptPDFOriginal = isPDF && kept?.kind == .pdf ? kept?.url : nil
         // The kept file's own kind is authoritative for Word: a file named "x.pdf.docx" reads as a PDF row by its name.
         keptWordOriginal = kept?.kind == .docx ? kept?.url : nil
     }
 
     private func openPDFExport() {
-        guard let original = keptPDFOriginal else { return }
-        openCommentExport(original: original, document: .pdf)
+        guard isPDFItem else { return }
+        openCommentExport(original: keptPDFOriginal, document: .pdf)
     }
 
     private func openWordExport() {
@@ -72,11 +79,12 @@ struct ExperienceItemDetailScreen: View {
         openCommentExport(original: original, document: .word)
     }
 
-    private func openCommentExport(original: URL, document: PDFCommentExportState.Document) {
+    private func openCommentExport(original: URL?, document: PDFCommentExportState.Document) {
         let id = model.selectedItem.id
         pdfExport = PDFCommentExportModel(
             itemId: id, itemTitle: model.selectedItem.title, original: original,
-            margins: model.ownMargins(itemId: id), store: model.store, document: document)
+            margins: model.ownMargins(itemId: id), store: model.store, originals: try? model.pdfOriginalStore(),
+            document: document)
     }
 
     var body: some View {
@@ -90,7 +98,7 @@ struct ExperienceItemDetailScreen: View {
                     let friendIntro = FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin))
                     if let friendIntro { FriendMarginsSenderLine(intro: friendIntro) }
                     hero
-                    if let friendIntro { FriendMarginsSummary(intro: friendIntro) }
+                    if let friendIntro { FriendMarginsSummary(intro: friendIntro, receipt: sharingCoordinator.introReceipt) }
                     if let description = model.selectedItem.descriptionText {
                         ItemDescriptionPreview(text: description).id(model.selectedItem.id)
                     }
@@ -107,6 +115,8 @@ struct ExperienceItemDetailScreen: View {
                     SourceFollowSuggestionCard()
                     ManualSourceFollowButton()
                     if !model.selectedItem.overview.isEmpty { overview }
+                    // A PDF's Paper note: purpose, findings and evidence from the listener's own Margins (#4340).
+                    if model.offersPaperNote(itemId: model.selectedItem.id) { PaperNoteSection() }
                     sessions
                     structure
                     if let edition = model.selectedListeningEdition { ListeningEditionScenes(edition: edition) }
@@ -169,9 +179,9 @@ struct ExperienceItemDetailScreen: View {
                             model.openExport(sessionId: model.selectedItem.sessions.first?.id)
                         }
                         .disabled(model.selectedItem.sessions.isEmpty)
-                        // A copy of the kept PDF with the listener's own Margins as comments (#4338). Only for a PDF this
-                        // iPhone holds the file of; off while the item has no Margin of the listener's own.
-                        if keptPDFOriginal != nil {
+                        // A copy of the PDF with the listener's own Margins as comments (#4338). For every PDF item: with no
+                        // copy on this iPhone the sheet asks for the file. Off while the item has no Margin of the listener's own.
+                        if isPDFItem {
                             Button(PDFCommentExportState.Document.pdf.menuTitle, systemImage: "doc.richtext", action: openPDFExport)
                                 .disabled(model.ownMargins(itemId: model.selectedItem.id).isEmpty)
                                 .accessibilityIdentifier("item.menu.exportPDF.button")
@@ -237,6 +247,7 @@ struct ExperienceItemDetailScreen: View {
                 PDFCommentExportSheet(export: export) { count in
                     model.presentFeedback(UserFeedbackEvent(kind: .success, message: PDFCommentExportState.doneMessage(count: count)))
                 }
+                .environmentObject(model) // the Tidy version card it opens acts through the model (#4339)
             }
             .trackedSheet(item: $collectionItem) { item in
                 ItemCollectionSheet(item: item).environmentObject(model)
@@ -799,6 +810,9 @@ struct ExperienceItemDetailScreen: View {
                     VStack(spacing: 0) {
                         ForEach(Array(itemMargins.prefix(3).enumerated()), id: \.element.id) { index, row in
                             if index > 0 { Divider() }
+                            // A live-session photo sits on the right at standard sizes and under the words at
+                            // accessibility sizes, so the words keep the row's width (#4180). No photo, no slot.
+                            let photo = photoIndex.photo(forMarginId: row.interjection.id)
                             Button { openRecentMargin(row) } label: {
                                 HStack(alignment: .top, spacing: 12) {
                                     Image(systemName: "quote.bubble.fill")
@@ -813,8 +827,14 @@ struct ExperienceItemDetailScreen: View {
                                         Text(MarginPlacePresentation.itemScreenLine(for: row.interjection))
                                             .font(.caption.monospacedDigit())
                                             .foregroundStyle(AppColors.secondaryText)
+                                        if let photo, dynamicTypeSize.isAccessibilitySize {
+                                            LiveSessionPhotoThumbnail(source: .kept(photo.photo), surface: .page)
+                                        }
                                     }
                                     Spacer()
+                                    if let photo, !dynamicTypeSize.isAccessibilitySize {
+                                        LiveSessionPhotoThumbnail(source: .kept(photo.photo), surface: .page)
+                                    }
                                     Image(systemName: "chevron.right")
                                         .foregroundStyle(AppColors.secondaryText)
                                         .accessibilityHidden(true)
@@ -822,6 +842,9 @@ struct ExperienceItemDetailScreen: View {
                                 .padding(.vertical, 12)
                             }
                             .buttonStyle(.plain)
+                            .modifier(OptionalAccessibilityValue(
+                                value: photo == nil ? nil : LiveSessionPhotoMargin.rowAccessibilityValue
+                            ))
                         }
                     }
                 }

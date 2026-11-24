@@ -29,6 +29,17 @@ itself; the check shows as running meanwhile.
 
 Prints one line per PR: "may merge" or the reasons it can't. Exit 1 if any PR is blocked or anything couldn't be read.
 
+With --report-sha (the workflow, #4986) it also posts the verdict as a commit status with the context `merge policy` on
+that commit (the Statuses API, #5162: a check run made through the Checks API landed in whichever check suite came first
+on the commit, and the merge queue did not count it when that was the label bridge's). The Actions job that runs it is
+named differently, so the required check is the one this script writes. A PR on the `pull_request` event held only for
+an audit that isn't there yet, or for the owner's tap, gets that status left `pending` ("waiting") instead of failed: no
+runner waits, because the job ends, and the audit's re-run or the owner's label event posts the next verdict. Any other
+hold is `failure`, a merge group never waits (a held entry has to leave the queue), a read that failed is `failure`,
+and a cancel is `error`. The status is posted `pending` first and the verdict last, so a run that is cancelled or
+killed between them leaves it pending (blocked), never a stale pass. In this mode the exit code is 0 for a pass or a
+wait and 1 for a failure, so the job is red only when the status is.
+
 With --start (pull_request runs, #4867) it also starts any dispatchable required check (scripts/required_checks.py) that
 has no run on the head, and says "not started" for each. A required check that never ran waits for nobody, so the policy
 starts it; that is a note, not a block, and it never changes the exit code. A run that is going, or that finished with
@@ -38,9 +49,11 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import time
@@ -51,6 +64,8 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 OWNER_TAP_LABEL = 'owner-tap'
+CHECK_NAME = 'merge policy'  # the required check; the workflow's job is named differently so only this script writes it
+OWNER_TAP_MARK = 'which only the owner merges'  # in the owner-tap reason (blockers); is_waiting() reads it
 SESSIONKIT_RESOLVED = 'Packages/SessionKit/Package.resolved'
 SESSIONKIT_MANIFEST = 'Packages/SessionKit/Package.swift'
 ATTEMPTS = 3
@@ -327,7 +342,7 @@ def blockers(github: GitHub, tree: Path, base: str, number: int, head: str, clas
     labels = {label.get('name') for label in pull.get('labels') or []}
     if tap and OWNER_TAP_LABEL not in labels:
         shown = ', '.join(f'`{p}`' for p in tap)
-        reasons.append(f'it touches {shown}, which only the owner merges (owner rule 2026-10-09, #1203); '
+        reasons.append(f'it touches {shown}, {OWNER_TAP_MARK} (owner rule 2026-10-09, #1203); '
                        f'it needs the `{OWNER_TAP_LABEL}` label, which only the owner adds')
     rewrite = resolved_rewrite(paths)
     if rewrite:
@@ -341,20 +356,134 @@ def blockers(github: GitHub, tree: Path, base: str, number: int, head: str, clas
     return reasons
 
 
-def judge(github: GitHub, tree: Path, base: str, prs: list[tuple[int, str]], out=sys.stdout, **injected) -> int:
-    """Print one line per PR and return the exit code: 0 when every PR may merge."""
-    blocked = 0
+def is_waiting(reason: str) -> bool:
+    """Whether a hold is only a wait for something that arrives by itself: an audit of the head that isn't posted yet
+    (lane_merge_rules.AUDIT_MISSING; an audit with blocking findings is not one), or the owner's `owner-tap` label.
+    Anything else (an inherited finding, an unsigned commit, a Package.resolved rewrite, a missing real-use proof,
+    a read that failed) is a defect for the author to fix or a fault, and stays a failure."""
+    return rules().AUDIT_MISSING in reason or OWNER_TAP_MARK in reason
+
+
+def evaluate(github: GitHub, tree: Path, base: str, prs: list[tuple[int, str]], **injected) -> list[tuple[int, str, list[str], bool]]:
+    """(number, head, reasons, unread) for each PR; unread is True when a GitHub or git read failed (fail closed)."""
+    found = []
     for number, head in prs:
         try:
-            reasons = blockers(github, tree, base, number, head, **injected)
+            found.append((number, head, blockers(github, tree, base, number, head, **injected), False))
         except ReadFailed as error:
-            reasons = [f'the check could not read what it needs ({error}), so it holds the merge']
+            found.append((number, head, [f'the check could not read what it needs ({error}), so it holds the merge'], True))
+    return found
+
+
+def say(found: list[tuple[int, str, list[str], bool]], out=sys.stdout) -> None:
+    for number, head, reasons, _ in found:
         if reasons:
-            blocked += 1
             print(f'#{number} at {head[:7]} may not merge: ' + '; '.join(reasons) + '.', file=out)
         else:
             print(f'#{number} at {head[:7]} may merge.', file=out)
-    return 1 if blocked else 0
+
+
+def verdict(found: list[tuple[int, str, list[str], bool]], queue: bool) -> str:
+    """'success', 'waiting' or 'failure' for the status. Only a pull_request run waits (see the module doc)."""
+    held = [(reasons, unread) for _, _, reasons, unread in found if reasons]
+    if not held:
+        return 'success'
+    if not queue and all(not unread and all(is_waiting(r) for r in reasons) for reasons, unread in held):
+        return 'waiting'
+    return 'failure'
+
+
+def waiting_title(found: list[tuple[int, str, list[str], bool]]) -> str:
+    reasons = [r for _, _, rs, _ in found for r in rs]
+    wants = []
+    if any(rules().AUDIT_MISSING in r for r in reasons):
+        wants.append('a clean audit')
+    if any(OWNER_TAP_MARK in r for r in reasons):
+        wants.append("the owner's tap")
+    return 'Waiting for ' + ' and '.join(wants or ['an audit or the owner'])
+
+
+def judge(github: GitHub, tree: Path, base: str, prs: list[tuple[int, str]], out=sys.stdout, **injected) -> int:
+    """Print one line per PR and return the exit code: 0 when every PR may merge."""
+    found = evaluate(github, tree, base, prs, **injected)
+    say(found, out)
+    return 1 if any(reasons for _, _, reasons, _ in found) else 0
+
+
+class CommitStatus:
+    """The `merge policy` commit status this script writes (#4986, #5162): posted `pending` before the rules are read,
+    then posted once more with the verdict (GitHub reads the newest status of a context). Whatever stops the script in
+    between leaves it pending, which blocks the merge.
+
+    A status, not a check run (#5162): a check run made through the Checks API is filed into whichever GitHub Actions
+    check suite exists first on the commit, and when that was the label bridge's suite the merge queue never counted it
+    ("Required status check 'merge policy' is expected" with the check green: #5147, #5155, #5176, #5178). A commit
+    status belongs to no check suite, so there is nothing to race."""
+
+    # The script's verdicts -> a status's states. `waiting` is the pending a PR shows while it waits for its audit or
+    # the owner's tap; a cancel is `error`, which blocks like `failure` but says no verdict was reached.
+    STATES = {'waiting': 'pending', 'success': 'success', 'failure': 'failure', 'cancelled': 'error'}
+    DESCRIPTION_LIMIT = 140  # GitHub refuses a longer status description
+
+    def __init__(self, github: GitHub, sha: str, details_url: str = '', name: str = CHECK_NAME):
+        self.github, self.sha, self.details_url, self.name = github, sha, details_url, name
+        self.started = False
+
+    def _post(self, state: str, description: str) -> None:
+        if len(description) > self.DESCRIPTION_LIMIT:
+            description = description[:self.DESCRIPTION_LIMIT - 1] + '…'
+        args = ['api', '-X', 'POST', f'repos/{self.github.repo}/statuses/{self.sha}', '-f', f'state={state}',
+                '-f', f'context={self.name}', '-f', f'description={description}']
+        if self.details_url:
+            args += ['-f', f'target_url={self.details_url}']
+        self.github._gh(args)
+
+    def start(self) -> None:
+        self._post('pending', 'Checking the merge rules')
+        self.started = True
+
+    def finish(self, state: str, title: str, summary: str) -> None:
+        """state: success, failure or cancelled end it; waiting posts `pending` with the reason in the description. The
+        full summary is in the run's log and step summary; a failure's description adds its first line."""
+        if not self.started:
+            raise ReadFailed('the pending status was never posted')
+        first = next((line.strip() for line in summary.splitlines() if line.strip()), '')
+        self._post(self.STATES[state], f'{title}: {first}' if state == 'failure' and first else title)
+
+
+def report(github: GitHub, tree: Path, base: str, prs_of, sha: str, queue: bool, details_url: str = '', out=sys.stdout,
+           check_run: CommitStatus | None = None, **injected) -> int:
+    """Run the rules and write the verdict as the `merge policy` commit status on <sha>. prs_of() returns the (number,
+    head) pairs, and may raise ReadFailed. Returns 0 for a pass or a wait, 1 for a failure or when the status couldn't be
+    written; see the module doc for why an interrupted run leaves the status pending."""
+    check_run = check_run or CommitStatus(github, sha, details_url)
+    check_run.start()
+    try:
+        try:
+            found = evaluate(github, tree, base, prs_of(), **injected)
+        except ReadFailed as error:
+            line = f'merge policy could not find the PRs to check ({error}), so it holds the merge.'
+            print(line, file=out)
+            check_run.finish('failure', 'May not merge', line)
+            return 1
+        buffer = io.StringIO()
+        say(found, buffer)
+        print(buffer.getvalue(), end='', file=out)
+        state = verdict(found, queue)
+        title = {'success': 'May merge', 'failure': 'May not merge', 'waiting': waiting_title(found)}[state]
+        check_run.finish(state, title, buffer.getvalue())
+        return 1 if state == 'failure' else 0
+    except KeyboardInterrupt:  # the runner's cancel (SIGINT, then SIGTERM, which main turns into this)
+        try:
+            check_run.finish('cancelled', 'Cancelled', 'The merge policy run was cancelled before it had a verdict.')
+        finally:
+            raise
+    except Exception as error:  # noqa: BLE001 - an unexpected crash must not leave a stale or silent status
+        try:
+            check_run.finish('failure', 'The merge policy crashed', f'{type(error).__name__}: {str(error)[:300]}')
+        except Exception:  # noqa: BLE001
+            pass
+        raise
 
 
 def start_missing(github: GitHub, number: int, head: str, base: str = 'main', out=sys.stdout, sleep=time.sleep,
@@ -403,12 +532,18 @@ def main(argv: list[str] | None = None, github: GitHub | None = None) -> int:
     parser.add_argument('--pr', type=int, help='one PR (pull_request, workflow_dispatch)')
     parser.add_argument('--head', default='', help="the PR's head commit; empty: the PR's current head")
     parser.add_argument('--group-head', default='', help="a merge group's head commit (merge_group)")
+    parser.add_argument('--report-sha', default='',
+                        help='write the verdict as a `merge policy` commit status on this commit (the PR head, or the '
+                             "merge group's head); see the module doc (#4986, #5162)")
+    parser.add_argument('--details-url', default='', help="the workflow run's URL, for the status's link")
     parser.add_argument('--start', action='store_true',
                         help="with --pr: start a dispatchable required check that has no run on the PR's head (#4867)")
     args = parser.parse_args(argv)
     if not args.repo or not (args.pr or args.group_head):
         parser.error('--repo and one of --pr or --group-head are required')
     github = github or GitHub(args.repo)
+    if args.report_sha:
+        return main_report(args, github)
     try:
         if args.group_head:
             prs = group_prs(github.queue_entries(args.base), args.group_head)
@@ -424,6 +559,23 @@ def main(argv: list[str] | None = None, github: GitHub | None = None) -> int:
         except Exception as error:  # noqa: BLE001 - starting a check is a courtesy; it never changes the verdict
             print(f'#{prs[0][0]}: looking for required checks that never ran failed ({str(error)[:200]}); the verdict above stands.')
     return code
+
+
+def main_report(args, github: GitHub) -> int:
+    """--report-sha: write the commit status (see report). --start is not offered here: the workflow runs it without."""
+    def prs_of():
+        if args.group_head:
+            return group_prs(github.queue_entries(args.base), args.group_head)
+        return [(args.pr, args.head or github.pull(args.pr)['head']['sha'])]
+    previous = signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+    try:
+        return report(github, args.tree, args.base, prs_of, args.report_sha, queue=bool(args.group_head),
+                      details_url=args.details_url)
+    except ReadFailed as error:
+        print(f'merge policy could not write its status ({error}).')
+        return 1
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 if __name__ == '__main__':

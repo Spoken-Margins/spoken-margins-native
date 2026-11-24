@@ -57,9 +57,6 @@ public struct LibraryItemRow: Identifiable, Hashable, Sendable {
     /// The collections this item is in (#3769), set only where the Collections view lists it on its own while it is in
     /// some collection (a search or a filter), so its detail line can end "· in Daily Brief". Empty otherwise.
     public var collectionNames: [String] = []
-    /// The Library folder this item belongs to (#3769), set only where the list shows the item on its own (a search or a
-    /// filter), so its detail line can end "· in Daily Brief". Nil for an item in no folder.
-    public var folderName: String?
 
     public init(
         id: String,

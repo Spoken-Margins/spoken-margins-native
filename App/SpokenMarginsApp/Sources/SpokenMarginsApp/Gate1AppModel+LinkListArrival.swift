@@ -146,7 +146,7 @@ extension Gate1AppModel {
         }
         let banner = LinkListArrivalPlan.banner(
             base: base, suggested: suggested, madeItems: madeItems, isTitled: plan.isTitled, collectionIsNew: collectionIsNew,
-            mentionsFollowing: false) // Following's suggestions row comes in PR 3c; until then a sentence about it would point at nothing
+            mentionsFollowing: true) // Following's "Suggested by your AI" row shows them
         let result = LinkListArrivalResult(
             attempted: true, notTried: nil, allLanded: failed == 0, changedAnything: madeItems || suggested > 0,
             message: banner.message, kind: banner.kind)
@@ -185,9 +185,8 @@ extension Gate1AppModel {
         guard !undo.isUsed else { return }
         guard !rejectNavigationOrSessionMutationWhileRecording("undo_link_list") else { return }
         undo.isUsed = true
-        // A list the listener took back is not tried again on its own: the file counts as seen and waits for a tap.
+        // A list the listener took back waits on Following for a tap; nothing tries it again on its own (#4274).
         if let fileID = undo.quickFolderFileID {
-            quickAccess.inboxSeenFileIds = (quickAccess.inboxSeenFileIds ?? []).union([fileID])
             linkListArrival.hold(fileID)
         }
         // The same for a saved Shortcuts list: its file and its count go now, so the next foreground doesn't add it back.

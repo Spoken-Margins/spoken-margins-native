@@ -412,6 +412,32 @@ final class LinkListArrivalPlanTests: XCTestCase {
         XCTAssertEqual(LinkListArrivalRecord.defaultsKey, "lastLinkListArrivalV1")
     }
 
+    func testLastListValueForTheYourAIScreen() {
+        let date = Date(timeIntervalSince1970: 1_800_000_000)
+        let when: (Date) -> String = { XCTAssertEqual($0, date); return "Today, 6:02 AM" }
+        XCTAssertEqual(LinkListArrivalRecord.lastListValue(nil, when: when), "None yet")
+        XCTAssertEqual(
+            LinkListArrivalRecord.lastListValue(.init(title: "Morning brief, November 23", date: date), when: when),
+            "\u{201C}Morning brief, November 23\u{201D} · Today, 6:02 AM")
+        XCTAssertEqual(LinkListArrivalRecord.lastListValue(.init(title: nil, date: date), when: when), "Untitled list · Today, 6:02 AM")
+        XCTAssertEqual(LinkListArrivalRecord.lastListValue(.init(title: "", date: date), when: when), "Untitled list · Today, 6:02 AM")
+        XCTAssertEqual(LinkListArrivalRecord.lastListValue(.init(title: "  \n", date: date), when: when), "Untitled list · Today, 6:02 AM")
+        XCTAssertEqual(
+            LinkListArrivalRecord.lastListValue(.init(title: " Brief ", date: date), when: when),
+            "\u{201C}Brief\u{201D} · Today, 6:02 AM")
+    }
+
+    func testDecodeReadsWhatSaveWrote() throws {
+        let suite = "arrival-decode-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let record = LinkListArrivalRecord(title: "Brief", date: Date(timeIntervalSince1970: 1_800_000_000))
+        record.save(to: defaults)
+        let data = try XCTUnwrap(defaults.data(forKey: LinkListArrivalRecord.defaultsKey))
+        XCTAssertEqual(LinkListArrivalRecord.decode(data), record)
+        XCTAssertNil(LinkListArrivalRecord.decode(Data("{}".utf8)))
+    }
+
     // MARK: Burst: the same list by two routes is one collection
 
     func testTheSameListFromPasteAndFromAFileSharesOneKey() throws {

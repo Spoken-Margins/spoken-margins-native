@@ -97,10 +97,27 @@ EXTERNAL_HOSTS = ('download.onnxruntime.ai', 'pypi.org', 'files.pythonhosted.org
                   'githubusercontent.com', 'huggingface.co', 'hf.co', 'cdn.playwright.dev', 'playwright.azureedge.net',
                   'registry-1.docker.io', 'docker.io', 'ghcr.io', 'formulae.brew.sh', 'brew.sh')
 NETWORK_ERROR = re.compile(
-    r'certificate|SSL|TLS|Could not resolve host|Temporary failure in name resolution|Name or service not known|'
+    r'certificate|\bSSL\b|\bTLS\b|Could not resolve host|Temporary failure in name resolution|Name or service not known|'
     r'nodename nor servname|Connection (?:timed out|reset|refused)|Operation timed out|Network is unreachable|'
     r'curl: \(\d+\)|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|'
     r'\b5\d\d (?:Server Error|Bad Gateway|Service Unavailable|Gateway Time-?out)|HTTP(?: error)? 5\d\d', re.I)
+# A failed test in the step's log tail makes the failure the PR's, whatever network words other lines carry: a test
+# whose assertion message quotes a certificate error next to a github.com URL is still a failed test (#5070 audit).
+# Only the forms a test runner prints for one failed test count, never a wrapper's word for a failed step: verify-tests
+# ends every failed step with `<step>: 41s — FAILED`, a network failure included (second audit of #5070).
+# verify-tests keeps each runner's raw output in the step's log file, so the job log shows only its own lines, and it
+# prints the prefix `Failed: ` for a failed test and nothing else (verify-tests.py: `Failed: <unittest header> at
+# <file:line>` from report_unittest_failures, `Failed: Module/Class/testX` from reconcile, `Failed: and N more`), at
+# a line's start or inside its `Process exit 1; ...` error (third audit of #5070). The other forms are the runners'
+# own, for a plan step that runs one directly: unittest's `FAIL:`/`ERROR: test (module.Class)`, pytest's
+# `FAILED path::test`, Go's `--- FAIL: Test`, XCTest's `Test Case '-[...]' failed` and `error: -[...] : XCTAssert`,
+# Swift Testing's `✘ Test ... failed` and a raised `AssertionError`. They are read after the Actions timestamp that
+# starts every job-log line. test_merge_queue_dequeued builds verify-tests' lines with its own functions.
+TEST_FAILURE = re.compile(
+    r'(?:^|; )Failed: |^(?:FAIL|ERROR): \w+ \([\w.]+\)|^FAILED \S+::|'
+    r"^\s*--- FAIL: \w|Test Case '-\[.+\]' failed|error: -\[.+\] : XCTAssert|✘ Test .+ (?:failed|recorded an issue)|"
+    r'^\s*AssertionError\b')
+LOG_TIMESTAMP = re.compile(r'^\ufeff?\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ?')
 LOG_TAIL_LINES = 80
 JOB_IN_URL = re.compile(r'/job/(\d+)(?:/|$)')
 
@@ -240,8 +257,12 @@ def step_kind(name):
 
 def outside_network_error(log):
     """Whether one line of a log names a host outside GitHub's runners and a network error together. Both on a line,
-    so a test that prints "connection refused" while it checks its own error handling is not read as an outage."""
-    for line in (log or '').splitlines():
+    so a test that prints "connection refused" while it checks its own error handling is not read as an outage, and
+    never when the log shows a failed test (TEST_FAILURE)."""
+    lines = [LOG_TIMESTAMP.sub('', line) for line in (log or '').splitlines()]
+    if any(TEST_FAILURE.search(line) for line in lines):
+        return False
+    for line in lines:
         if NETWORK_ERROR.search(line) and any(host in line for host in EXTERNAL_HOSTS):
             return True
     return False

@@ -145,8 +145,8 @@ extension Gate1AppModel {
 
     @discardableResult
     func scheduleSourceWindowContextIfNeeded(for interjection: Interjection, reportsResult: Bool = false) -> Bool {
-        guard interjection.captureKind != .written,
-              interjection.targetType == .item,
+        // A written Margin, a reply, or a moved Margin with no place (#4233) gets no source context.
+        guard interjection.canHaveSourceContext,
               let anchorMediaTimeMs = interjection.anchor.mediaTimeMs,
               let store,
               let item = try? store.loadItemSummary(id: interjection.itemId), // media and id only: not the item's text (#2506)
@@ -337,8 +337,7 @@ extension Gate1AppModel {
         // The item's Margins in one read: every Margin filed under it, as `deleteItem` counts them. The loop this replaced
         // opened each session of the item and then each session's Margins (#2506).
         let interjections = (try? store.loadInterjections(itemId: itemId)) ?? []
-        for interjection in interjections where interjection.targetType == .item
-            && interjection.anchor.mediaTimeMs != nil
+        for interjection in interjections where interjection.canHaveSourceContext
             && interjection.status != "deleted"
             && interjection.anchorContextStatus != .ready
             && !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) {

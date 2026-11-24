@@ -26,6 +26,7 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
+  statuses: read  # the queue's `merge policy` commit status on the merged commit (#5162)
 
 jobs:
   audit:
