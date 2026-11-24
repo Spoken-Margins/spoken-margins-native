@@ -43,18 +43,20 @@ SCANS = (
     'test_following_row_more_menu', 'test_friend_path_words', 'test_hosted_app_paths', 'test_import_navigation_gate',
     'test_increase_contrast_wiring', 'test_interjection_writes', 'test_item_screen_nested_lazy_stacks', 'test_listener_error_text_guard',
     'test_listener_tap_opens_off_main', 'test_listener_words', 'test_live_activity_colors', 'test_main_thread_labels',
-    'test_map_text_gate', 'test_microphone_wording', 'test_mini_player_keep_out', 'test_ordered_store_requests',
-    'test_outer_tap_frame', 'test_overview_docs', 'test_package_resolved', 'test_package_watch',
-    'test_phone_build_gate', 'test_playback_clock_followers', 'test_podcast_anchor_benchmark', 'test_public_source_check_callers',
-    'test_recorder_failed_start', 'test_reduce_motion', 'test_release_gate', 'test_repeat_trigger_scan',
-    'test_resume_owners', 'test_retired_names', 'test_row_accessibility_actions', 'test_screen_change_cue',
-    'test_screen_title_heading', 'test_search_field_keyboard', 'test_segmented_picker_guard', 'test_selected_checkmarks_hidden',
-    'test_selected_trait', 'test_server_contact_consent', 'test_sessionkit_test_inputs', 'test_share_cleanup_words',
-    'test_share_export_glyphs', 'test_share_link_policy_pages', 'test_share_review_card_words', 'test_sharing_kit',
-    'test_shipped_compat_filter', 'test_siri_phrases', 'test_smallest_type_guard', 'test_system_callback_isolation',
-    'test_tap_target_styles', 'test_task_cost_map', 'test_test_clock_ceilings', 'test_third_party_notices',
-    'test_tracked_presentations', 'test_type3_lookup_gate', 'test_ui_test_guided_tour_fetch', 'test_ui_test_hooks_debug_only',
-    'test_ui_test_scroll_view_lookups', 'test_voiceover_label_nits',
+    'test_map_text_gate', 'test_microphone_wording', 'test_mini_player_keep_out', 'test_opml_import_done_closes_host',
+    'test_ordered_store_requests', 'test_outer_tap_frame', 'test_overview_docs', 'test_package_resolved',
+    'test_package_watch', 'test_phone_build_gate', 'test_playback_clock_followers', 'test_podcast_anchor_benchmark',
+    'test_public_source_check_callers', 'test_recorder_failed_start', 'test_reduce_motion', 'test_release_gate',
+    'test_repeat_trigger_scan', 'test_resume_owners', 'test_retired_names', 'test_row_accessibility_actions',
+    'test_screen_change_cue', 'test_screen_title_heading', 'test_search_field_keyboard', 'test_segmented_picker_guard',
+    'test_selected_checkmarks_hidden', 'test_selected_trait', 'test_server_contact_consent', 'test_sessionkit_test_inputs',
+    'test_share_cleanup_words', 'test_share_export_glyphs', 'test_share_link_policy_pages', 'test_share_review_card_words',
+    'test_sharing_kit', 'test_shipped_compat_filter', 'test_siri_phrases', 'test_smallest_type_guard',
+    'test_system_callback_isolation', 'test_tap_target_styles', 'test_task_cost_map', 'test_test_clock_ceilings',
+    'test_third_party_notices', 'test_tracked_presentations', 'test_type3_lookup_gate', 'test_ui_test_guided_tour_fetch',
+    'test_ui_test_hooks_debug_only', 'test_ui_test_scroll_view_lookups', 'test_voiceover_label_nits',
+    # This list's own guard, so a PR that adds a test reading App/ learns on its own check that it must list it.
+    'test_swift_scan_tests',
 )
 
 PIPELINE = ('tests the lane, CI, release or repository tools; App/ and Packages/ appear in it only as path inputs '
@@ -62,6 +64,8 @@ PIPELINE = ('tests the lane, CI, release or repository tools; App/ and Packages/
 CONTRACTS = ('checks contracts, fixtures or catalog data, not a rule on the Swift code; the quick tier\'s contracts '
              'step validates the tree')
 NOT_SCANS = {
+    'test_check_build29_database': ('checks that Build 29 opens the database, on its own fixtures; it reads only '
+                                    'SessionKit\'s Package.resolved, which sends a PR to the Mac checks'),
     'test_sm_build_cache': PIPELINE,
     'test_xcresult_attachments': PIPELINE,
     'test_catalog_packs_contract': CONTRACTS,
