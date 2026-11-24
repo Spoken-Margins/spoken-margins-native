@@ -1,0 +1,13 @@
+{
+  "assertionHeader" : "X-SM-Assertion",
+  "bodyBase64" : "",
+  "clientDataSHA256" : "b20d5001c4eed530d415ddda3fa1a74a98fa275f25973c208453875af1a5146f",
+  "headers" : {
+    "Content-Type" : "application/json",
+    "X-SM-Key-Id" : "ERERERERERERERERERERERERERERERERERERERERERE=",
+    "X-SM-Time" : "1700000000"
+  },
+  "method" : "POST",
+  "path" : "/api/v1/links/sender",
+  "time" : 1700000000
+}

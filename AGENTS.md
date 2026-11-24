@@ -100,5 +100,6 @@ Releases are a maintainer's act: nobody else archives, uploads, distributes or t
 
 - Apple build numbers identify uploads, not product milestones. Each replacement upload needs a new, unused build number (`CURRENT_PROJECT_VERSION` in `project.yml`, every target; run `xcodegen generate` and commit).
 - Land the bump on `main` through a PR, so `main` always reads one above the last upload.
+- Upload only a commit `main-t3` passed (#4575): before any App Store Connect upload, run `scripts/main_t3_gate.py check --sha <archived commit> --request`. It exits 0 when that exact commit has a green `main-t3` status; otherwise it exits 1 with a line naming the SHA, starts a `main-t3` run on it when it has no result or a runner fault (a real failure needs a fix, not a rerun), and the upload waits for a green run. `scripts/phone-build` applies the same gate to phone builds.
 - Upload from GitHub, no Mac needed: `.github/workflows/testflight-upload.yml` archives `main`, checks the build number, waits for a maintainer to approve the run, then uploads to TestFlight and tags the commit. It never assigns tester groups. On this repository the owner starts it by adding the label `upload` to an issue or PR. A Mac upload remains the fallback.
 - Tag the archived commit `testflight/0.1-build-N` (the GitHub upload does this itself).

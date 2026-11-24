@@ -237,6 +237,71 @@ class QueueActsAsTheApp(unittest.TestCase):
                                 token)
 
 
+class GuardsRunBeforeTheMacs(unittest.TestCase):
+    """2026-11-20 to 11-24: 157 merge groups failed first in `hosted fast: portable` while their Mac jobs ran beside it,
+    1,569 hosted-Mac minutes, mostly on repository rule tests. hosted-portable.yml's `guards` job runs those tests first
+    in each merge group, every Mac job waits for it, and stop-on-guard-red cancels the run when a guard test fails. No
+    result of `guards` skips a Mac job (audit on 089d17c): a skipped required check counts as passed, so a guards red
+    whose cancel failed, or a setup flake in `guards`, would have let a group merge with no Mac check."""
+
+    REQUIRED = ('hosted fast: scope', 'hosted fast: portable', 'hosted fast: Mac rest', 'hosted app: build (no tests)')
+
+    @classmethod
+    def setUpClass(cls):
+        cls.jobs = parse(ROOT / '.github/workflows/hosted-portable.yml')['jobs']
+
+    @staticmethod
+    def needs(job):
+        needs = job.get('needs', [])
+        return [needs] if isinstance(needs, str) else list(needs)
+
+    def test_guards_is_a_linux_job_of_the_merge_group_that_runs_the_guard_list(self):
+        guards = self.jobs['guards']
+        self.assertEqual(guards['runs-on'], 'ubuntu-latest')
+        self.assertEqual(guards['if'].strip(), "github.event_name == 'merge_group'")
+        self.assertEqual(self.needs(guards), [], 'it starts at once, beside scope')
+        self.assertNotIn('permissions', guards, 'it runs the merge group\'s code with the read-only token')
+        self.assertLessEqual(guards['timeout-minutes'], 10)
+        runs = [step.get('run', '') for step in guards['steps']]
+        self.assertIn('.venv/bin/python scripts/queue_guards.py', runs)
+
+    def test_every_mac_job_waits_for_guards_and_no_guards_result_skips_it(self):
+        macs = [name for name, job in self.jobs.items() if not str(job.get('runs-on', '')).startswith('ubuntu')]
+        self.assertEqual(sorted(macs), ['app-compile', 'mac-rest', 'sessionkit'])
+        for name in macs:
+            with self.subTest(job=name):
+                job = self.jobs[name]
+                self.assertIn('guards', self.needs(job))
+                condition = ' '.join(job['if'].split())
+                # !cancelled() lets the job run whatever `guards` ended with (skipped on every PR push, failed in a
+                # setup step or a test); only the run's cancel stops it, and a failed cancel leaves the Macs running.
+                self.assertTrue(condition.startswith('!cancelled() && '), condition)
+                self.assertNotIn('needs.guards', condition)
+
+    def test_only_a_failed_guard_test_step_cancels_the_run(self):
+        guards = self.jobs['guards']
+        tests = [step for step in guards['steps'] if step.get('run') == '.venv/bin/python scripts/queue_guards.py']
+        self.assertEqual(len(tests), 1)
+        # A step that never ran (checkout, setup-python or Python tools failed) has an empty outcome: not red.
+        self.assertEqual(' '.join(str(guards['outputs']['red']).split()),
+                         "${{ steps.%s.outcome == 'failure' }}" % tests[0]['id'])
+        stop = self.jobs['stop-on-guard-red']
+        self.assertEqual(self.needs(stop), ['guards'])
+        self.assertEqual(stop['runs-on'], 'ubuntu-latest')
+        self.assertEqual(stop['permissions'], {'actions': 'write'})
+        self.assertEqual(' '.join(stop['if'].split()), "always() && needs.guards.outputs.red == 'true'")
+        self.assertIn('gh run cancel', stop['steps'][0]['run'])
+
+    def test_rearm_still_waits_for_every_other_job(self):
+        self.assertEqual(sorted(self.needs(self.jobs['rearm'])), sorted(name for name in self.jobs if name != 'rearm'))
+
+    def test_the_required_check_names_are_all_still_here_and_guards_is_not_one(self):
+        names = {job.get('name') for job in self.jobs.values()}
+        for required in self.REQUIRED:
+            self.assertIn(required, names)
+        self.assertEqual(self.jobs['guards']['name'], 'hosted fast: guards')
+
+
 class DeployWaitAlertStep(unittest.TestCase):
     """#5255: a deploy waiting for the owner's approval gave him no alert (deploy-web sat `waiting` all of 2026-11-23).
     owner-tap-alert.yml's scheduled run also runs scripts/deploy_wait_alert.py, as github-actions[bot]."""

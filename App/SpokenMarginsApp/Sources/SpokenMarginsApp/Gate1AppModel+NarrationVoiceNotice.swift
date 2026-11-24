@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import SessionKit
+import SessionKitSupertonic
 
 /// The player's notice when the narration guard swaps in the iOS voice for a passage (#306).
 extension Gate1AppModel {

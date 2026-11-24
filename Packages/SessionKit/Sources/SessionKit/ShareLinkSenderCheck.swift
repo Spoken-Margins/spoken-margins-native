@@ -31,12 +31,41 @@ public enum ShareLinkSenderCheckOutcome: Equatable, Sendable {
     case standing(ShareLinkSenderStanding)
     /// The standing could not be established on this phone, so there is nothing to check: it can't attest (the
     /// Simulator, a few older devices), Apple's call failed (the app has no App Attest entitlement until the owner
-    /// enables the capability), or the server did not accept the registration. The link is made without a permit,
-    /// as before. The server does not require a permit until a real phone has proven the path (#1593), so a fault
-    /// in attesting must not take links away from every sender; only an explicit pause, end or refusal does.
-    case notChecked
+    /// enables the capability), or the server did not accept the registration or the request. What happens next is the
+    /// fault policy's call (`ShareLinkFaultPolicy`, #4134): with refuse mode off, as today, the link is made without a
+    /// permit, because the server does not require one until a real phone has proven the path (#1593); with it on, the
+    /// reason picks the line the sender sees.
+    case notChecked(ShareLinkUncheckedReason)
     /// The check could not be made and no link should be: the reason, as the sender screen already says it.
     case failed(ShareLinkFallback)
+}
+
+/// Why the sender check has no standing (#4134). One case per fault in the Design's table, so each can be mapped on its
+/// own in refuse mode and tested.
+public enum ShareLinkUncheckedReason: Equatable, Sendable, CaseIterable {
+    /// The phone can't attest (`AppAttestFailure.unsupported`).
+    case cannotAttest
+    /// Apple's attest call, the registration or the gate timed out or failed: may pass on a later try.
+    case attestFailed
+    /// A registration failed recently and the client is waiting before it tries again (up to 6 hours, in memory).
+    case registrationWaiting
+    /// 401 `clock_skew`: the phone's clock is more than five minutes from the server's.
+    case clockSkew
+    /// 401 `unknown_key` after the client's one key replacement.
+    case unknownKey
+    /// 401 `invalid_assertion` once, with the key's one replacement still to come on the next refusal: may pass on a retry.
+    case invalidAssertionOnce
+    /// 401 `invalid_assertion` past the bounded re-attest.
+    case invalidAssertion
+    /// 401 `missing_assertion`, or a 401 the app can't read.
+    case missingAssertion
+    /// 400, 404 or any other answer the sender endpoint shouldn't give.
+    case rejected
+    /// 503 `disabled`: the server operator turned the attest service or the sender ledger off, which means "make the
+    /// link unattributed" (smserver: "without it links still work, unattributed").
+    case operatorDisabled
+    /// Any other 5xx.
+    case serverError
 }
 
 public enum ShareLinkSenderCheck {
@@ -48,7 +77,7 @@ public enum ShareLinkSenderCheck {
         do {
             answer = try await client.send(path: path, body: Data())
         } catch AppAttestFailure.unsupported {
-            return .notChecked
+            return .notChecked(.cannotAttest)
         } catch AppAttestFailure.offline {
             return .failed(.offline)
         } catch AppAttestFailure.needsConsent {
@@ -56,19 +85,42 @@ public enum ShareLinkSenderCheck {
         } catch AppAttestFailure.refused {
             // This install is blocked. The server says nothing more, and neither does the app.
             return .failed(.unavailable)
+        } catch AppAttestFailure.registrationWaiting {
+            return .notChecked(.registrationWaiting)
         } catch {
             // Apple's call or the registration failed: no standing could be established, and none is assumed.
-            return .notChecked
+            return .notChecked(.attestFailed)
         }
         switch answer.status {
         case 200:
             guard let standing = decode(answer.body) else { return .failed(.failed) }
             return .standing(standing)
         case 429: return .failed(.busy)
-        // 503 here is the attest service or the sender ledger being off, which the server means as "make the link
-        // unattributed" (smserver: "without it links still work, unattributed"). If links themselves are off, the
-        // upload's own 503 says so.
-        default: return .notChecked
+        default:
+            let reason = uncheckedReason(status: answer.status, body: answer.body)
+            // One refusal of the key is not yet past the bounded re-attest: the next tap replaces it (#4134).
+            if reason == .invalidAssertion, client.nextInvalidAssertionReplacesKey { return .notChecked(.invalidAssertionOnce) }
+            return .notChecked(reason)
+        }
+    }
+
+    /// The reason for an answer that is neither a standing nor a failure the screen already says (#4134). The error
+    /// codes are the attested middleware's (`research/B4/server/internal/api/api.go`, `attested`).
+    static func uncheckedReason(status: Int, body: Data) -> ShareLinkUncheckedReason {
+        let code = AttestedServerClient.errorCode(body)
+        switch status {
+        case 401:
+            switch code {
+            case "clock_skew": return .clockSkew
+            case "unknown_key": return .unknownKey
+            case "invalid_assertion": return .invalidAssertion
+            default: return .missingAssertion
+            }
+        // 503 `disabled` is the attest service or the sender ledger being off, which the server means as "make the link
+        // unattributed". If links themselves are off, the upload's own 503 says so.
+        case 503 where code == "disabled": return .operatorDisabled
+        case 500...599: return .serverError
+        default: return .rejected
         }
     }
 

@@ -61,8 +61,12 @@ PATH_SCHEMA_RULES = [
     ("fixtures/feeds/zotero-*.json", "zotero-library-item.schema.json", "array"),
     ("fixtures/copy-length-note/cases.json", "copy-length-note-cases.schema.json", "array"),
     ("quiz/find-something.v1.json", "find-something-quiz.schema.json"),
-    ("fixtures/find-something/*.json", "find-something-prompt-fixture.schema.json"),
+    ("fixtures/find-something/prompt-*.json", "find-something-prompt-fixture.schema.json"),
+    ("fixtures/find-something/paste-*.json", "find-something-paste-fixture.schema.json"),
+    ("fixtures/find-something/title-match.json", "find-something-title-match.schema.json"),
     ("traces/*.json", "session-trace.schema.json"),
+    ("fixtures/share-link-attest/requests/*.json", "share-link-attest-request.schema.json"),
+    ("fixtures/share-link-attest/responses/*.json", "share-link-attest-response.schema.json"),
 ]
 
 NEGATIVE_PATH_SCHEMA_RULES = [

@@ -513,6 +513,61 @@ final class SharedLinkVoiceoverTests: XCTestCase {
     private static func page() throws -> String {
         String(decoding: try TestInputs.data(.contracts, "fixtures/feeds/substack-voiceover-page.html"), as: UTF8.self)
     }
+
+    // MARK: The article feed route (#4640)
+
+    private actor FeedAsks {
+        var pages: [URL] = []
+        func add(_ url: URL) { pages.append(url) }
+    }
+
+    func testAnOrdinaryArticleAsksItsFeedOnlyWhenTheRouteIsGiven() async {
+        let article = URL(string: "https://openai.com/index/some-research")!
+        let asks = FeedAsks()
+        let withRoute = await SharedPostVoiceoverLookup.find(
+            sharedURL: article, articleURL: article.absoluteString, itemId: "item", fetched: nil,
+            fetchPage: { _ in XCTFail("no page fetch for an ordinary article"); throw URLError(.badURL) },
+            articleFeedAudio: { page in await asks.add(page); return .none(reason: "not_listed") }
+        )
+        XCTAssertEqual(withRoute, .noVoiceover(reason: "article_feed_not_listed"))
+        let asked = await asks.pages
+        XCTAssertEqual(asked, [article])
+
+        let found = await SharedPostVoiceoverLookup.find(
+            sharedURL: article, articleURL: article.absoluteString, itemId: "item", fetched: nil,
+            fetchPage: { _ in throw URLError(.badURL) },
+            articleFeedAudio: { _ in .found(audioURL: "https://cdn.example.com/a.mp3", durationMs: 360_000, lengthBytes: nil) }
+        )
+        XCTAssertEqual(found, .found(PublisherAudio(itemId: "item", audioURL: "https://cdn.example.com/a.mp3", durationMs: 360_000,
+                                                     detectedFrom: "article_feed_enclosure")))
+
+        let offline = await SharedPostVoiceoverLookup.find(
+            sharedURL: article, articleURL: article.absoluteString, itemId: "item", fetched: nil,
+            fetchPage: { _ in throw URLError(.badURL) },
+            articleFeedAudio: { _ in .failed("url_error_-1009") }
+        )
+        XCTAssertEqual(offline, .failed("article_feed_url_error_-1009"), "a failure is tried again on the next open")
+    }
+
+    func testAPostPathPageWithNoSubstackDataReachesTheFeed() async {
+        let page = URL(string: "https://someblog.example/p/about")!
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: page, articleURL: page.absoluteString, itemId: "item", fetched: nil,
+            fetchPage: { url in ("<html><p>About me.</p></html>", url) },
+            articleFeedAudio: { _ in .none(reason: "no_feed") }
+        )
+        XCTAssertEqual(outcome, .noVoiceover(reason: "article_feed_no_feed"))
+    }
+
+    func testProviderAddressesNeverAskTheFeed() async {
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: substackShare, articleURL: "", itemId: "item", fetched: nil,
+            fetchPage: { _ in throw URLError(.notConnectedToInternet) },
+            articleFeedAudio: { _ in XCTFail("a Substack address keeps its adapter"); return .none(reason: "x") }
+        )
+        guard case .failed = outcome else { return XCTFail("\(outcome)") }
+    }
+
 }
 
 private final class RequestLog: @unchecked Sendable {

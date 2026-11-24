@@ -10,7 +10,7 @@ import {
 
 const quiz = JSON.parse(readFileSync(new URL("../../Contracts/quiz/find-something.v1.json", import.meta.url), "utf8"));
 const fixtureFolder = new URL("../../Contracts/fixtures/find-something/", import.meta.url);
-const fixtures = readdirSync(fileURLToPath(fixtureFolder)).filter((name) => name.endsWith(".json")).sort();
+const fixtures = readdirSync(fileURLToPath(fixtureFolder)).filter((name) => /^prompt-.*\.json$/.test(name)).sort();
 
 test("there is a fixture for every case the rule names", () => {
   assert.ok(fixtures.length >= 8, `only ${fixtures.length} fixtures`);

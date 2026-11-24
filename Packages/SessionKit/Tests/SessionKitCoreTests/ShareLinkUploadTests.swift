@@ -109,7 +109,9 @@ final class ShareLinkUploadTests: XCTestCase {
         for reason in reasons {
             let recorder = Recorder()
             let result = await client(recorder: recorder).makeLink(packet: Data([1, 2, 3]), preview: try preview(), linksState: .off(reason))
-            XCTAssertEqual(result, .useFile(.unavailable), "\(reason)")
+            // Below the minimum build, the line says to update (#4134); every other off reason is "not available".
+            let expected: ShareLinkFallback = if case .buildTooOld = reason { .updateNeeded } else { .unavailable }
+            XCTAssertEqual(result, .useFile(expected), "\(reason)")
             XCTAssertTrue(recorder.requests.isEmpty, "\(reason)")
         }
     }

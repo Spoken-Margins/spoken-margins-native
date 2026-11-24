@@ -1,0 +1,86 @@
+{
+  "description": "Lines in the requested form as assistants write them: bullets, numbering, Markdown links, angle brackets, backticks, curly quotes, trailing punctuation, tracking parameters, show links with and without the marker, Spotify, YouTube, Substack and an invented address. Every link is checked by its kind alone. A Markdown link around the name with the fields after it (\"[Show — Title](link) | 50 min\") is not the requested form, so with formed lines around it, it is not read.",
+  "text": "- Show – Title | 30 min | https://example.com/a.\n* Show - Title | [link](https://example.com/b)\n• Show: Title | 20m | (Show Link) https://podcasts.apple.com/us/podcast/s/id1\n4) [Hidden Brain — You 2.0](https://podcasts.apple.com/us/podcast/hidden-brain/id1028908750?i=1000600000001) | 50 min\nThe Daily — “The Election” | <https://open.spotify.com/episode/4rOoJ6Egrf8K2IrywzwOMk?si=abc>\nLex Fridman — Episode 400 | `https://www.youtube.com/watch?v=abc123`\nLetters — On Walking | https://writer.substack.com/p/on-walking!\nMade Up — Not Real | https://podcasts.apple.com/us/podcast/made-up/id9999999999?i=\nWiki — A (B) | https://en.wikipedia.org/wiki/A_(B)\nJust a title | https://itunes.apple.com/us/podcast/id1?i=55)\n| | https://example.org/x",
+  "expected": [
+    {
+      "url": "https://example.com/a",
+      "kind": "other",
+      "claimedShow": "Show",
+      "claimedTitle": "Title",
+      "markedShowLink": false,
+      "line": "- Show – Title | 30 min | https://example.com/a."
+    },
+    {
+      "url": "https://example.com/b",
+      "kind": "other",
+      "claimedShow": "Show",
+      "claimedTitle": "Title",
+      "markedShowLink": false,
+      "line": "* Show - Title | [link](https://example.com/b)"
+    },
+    {
+      "url": "https://podcasts.apple.com/us/podcast/s/id1",
+      "kind": "apple_show",
+      "claimedShow": "Show",
+      "claimedTitle": "Title",
+      "markedShowLink": true,
+      "line": "• Show: Title | 20m | (Show Link) https://podcasts.apple.com/us/podcast/s/id1"
+    },
+    {
+      "url": "https://open.spotify.com/episode/4rOoJ6Egrf8K2IrywzwOMk?si=abc",
+      "kind": "spotify",
+      "claimedShow": "The Daily",
+      "claimedTitle": "The Election",
+      "markedShowLink": false,
+      "line": "The Daily — “The Election” | <https://open.spotify.com/episode/4rOoJ6Egrf8K2IrywzwOMk?si=abc>"
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=abc123",
+      "kind": "youtube",
+      "claimedShow": "Lex Fridman",
+      "claimedTitle": "Episode 400",
+      "markedShowLink": false,
+      "line": "Lex Fridman — Episode 400 | `https://www.youtube.com/watch?v=abc123`"
+    },
+    {
+      "url": "https://writer.substack.com/p/on-walking",
+      "kind": "substack",
+      "claimedShow": "Letters",
+      "claimedTitle": "On Walking",
+      "markedShowLink": false,
+      "line": "Letters — On Walking | https://writer.substack.com/p/on-walking!"
+    },
+    {
+      "url": "https://podcasts.apple.com/us/podcast/made-up/id9999999999?i=",
+      "kind": "apple_show",
+      "claimedShow": "Made Up",
+      "claimedTitle": "Not Real",
+      "markedShowLink": false,
+      "line": "Made Up — Not Real | https://podcasts.apple.com/us/podcast/made-up/id9999999999?i="
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/A_(B)",
+      "kind": "other",
+      "claimedShow": "Wiki",
+      "claimedTitle": "A (B)",
+      "markedShowLink": false,
+      "line": "Wiki — A (B) | https://en.wikipedia.org/wiki/A_(B)"
+    },
+    {
+      "url": "https://itunes.apple.com/us/podcast/id1?i=55",
+      "kind": "apple_episode",
+      "claimedShow": null,
+      "claimedTitle": "Just a title",
+      "markedShowLink": false,
+      "line": "Just a title | https://itunes.apple.com/us/podcast/id1?i=55)"
+    },
+    {
+      "url": "https://example.org/x",
+      "kind": "other",
+      "claimedShow": null,
+      "claimedTitle": null,
+      "markedShowLink": false,
+      "line": "| | https://example.org/x"
+    }
+  ]
+}

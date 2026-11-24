@@ -845,7 +845,7 @@ def on_hosted_runner(environ=None):
     return environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
 
 
-PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'system-callback-isolation', 'listener-words', 'recorder-failed-start', 'browser', 'share-link', 'web', 'research')
+PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'system-callback-isolation', 'listener-words', 'flow-map', 'recorder-failed-start', 'browser', 'share-link', 'web', 'research')
 PORTABLE_LEFT_OUT = {
     'package-build': 'needs the Swift toolchain on macOS; hosted-portable.yml builds the Foundation-only modules on Linux, outside this plan',
     'package-core': 'needs the Swift toolchain on macOS (hosted-portable.yml also runs SessionKitCoreTests on Linux, #3529, outside this plan)',
@@ -880,7 +880,9 @@ PORTABLE_RUNNER_TESTS_LEFT_OUT = {
 # --plan fast-portable --pr-quick (2026-11-20): a PR's first signal. In the merge queue (MERGE_QUEUE_MAC=queue-only)
 # the long suites run once per merge group, where batching shares their cost; on a PR push the portable job ran
 # them too, and its runner-tests took 1,180 s of the job's 28 minutes. With --pr-quick the plan leaves runner-tests to
-# the merge group and runs every other portable step (about 90 s together). hosted-portable.yml passes it on PRs only.
+# the merge group and runs every other portable step (about 90 s together). Since 2026-11-24 (#5281) no workflow passes
+# it: PRs run the whole plan again, because the queue was the first place runner-tests ran and dropped PRs for it. It
+# stays for a quick hand run.
 PR_QUICK_LEFT_OUT = {
     'runner-tests': 'the PR quick tier leaves it to the merge group, which runs the whole fast-portable plan '
                     '(hosted-portable.yml; for an early run, dispatch it on the branch)',
@@ -2110,6 +2112,9 @@ class Run:
         self.command('system-callback-isolation', [sys.executable, 'scripts/system_callback_isolation.py'])
         # A listener-facing string that says "item" fails here, in seconds, instead of on the phone (#3599).
         self.command('listener-words', [sys.executable, 'scripts/listener_words.py'])
+        # A sharing control removed, renamed or re-routed without the flow map changing fails here, and the run names
+        # the sharing screens the diff touches with their neighbours and the owner's rulings on them (#5280).
+        self.command('flow-map', [sys.executable, 'scripts/flow-map-check.py', '--pr'])
         # A recorder freed while its audio queue runs, after a failed start, crashes the app (#3633).
         self.command('recorder-failed-start', [sys.executable, 'scripts/recorder_failed_start.py'])
         if not node_modules_installed():

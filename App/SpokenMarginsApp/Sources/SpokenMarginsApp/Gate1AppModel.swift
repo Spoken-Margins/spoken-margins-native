@@ -1545,8 +1545,8 @@ final class Gate1AppModel: ObservableObject {
         LibraryQueryEngine.librarySortDescription(query: libraryQuery)
     }
 
-    func startItem(id: String) {
-        guard prepareToStartItem(id: id) else { return }
+    func startItem(id: String, trigger: VoiceoverLookupDecision.Trigger = .play) {
+        guard prepareToStartItem(id: id, trigger: trigger) else { return }
         guard !startSpokenNoteThroughChosenVersion(itemId: id) else { return } // #4779
         silentMarginLanding = nil
         do {
