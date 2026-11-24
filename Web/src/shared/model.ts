@@ -91,6 +91,12 @@ export interface Margin {
    */
   starred?: true;
   /**
+   * This friend's Margin came in through an introduction link (#4784): the link's sealed preview said answers stay with
+   * each listener, so the Share section never names the sender as a destination. Kept in this browser only, like
+   * `heard`: never written to a packet. Only ever `true`; absent means an ordinary friend's Margin.
+   */
+  fromIntro?: true;
+  /**
    * The listener has listened to some of this friend's Margin (part of #3216): its clip or its read-aloud words started.
    * Reading or looking at it never sets this. Kept in this browser only, like `starred`: never written to a packet or a
    * backup. Only ever `true`; absent means not heard yet.

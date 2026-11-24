@@ -20,7 +20,7 @@ extension Gate1AppModel {
                 title: "See why",
                 accessibilityLabel: "See why the shared \(count == 1 ? "article" : "articles") couldn't be added",
                 identifier: "feedback.sharedArticleFailed.seeWhy",
-                perform: { [weak self] in self?.openSettings() }
+                perform: { [weak self] in self?.openImportInbox() }
             )
         ))
         diagnostics["recentFailure"] = message

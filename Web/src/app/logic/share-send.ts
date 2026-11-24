@@ -50,6 +50,7 @@ export function senderForPacket(raw: string): string | undefined {
  * The line under "Your name (optional)": who it is for and where it is kept. It names the friends the way the rest of
  * the Share panel does ("Cole", "Cole and Sam"), and "your friend" when there is no one to name yet.
  */
-export function senderNameHint(friendLabels: readonly string[]): string {
+export function senderNameHint(friendLabels: readonly string[], intro = false): string {
+  if (intro) return 'So whoever you share with knows who these are from. Kept in this browser.'; // names no one (#4784)
   return `So ${friendNames(friendLabels)} ${friendLabels.length > 1 ? 'know' : 'knows'} who these are from. Kept in this browser.`;
 }
