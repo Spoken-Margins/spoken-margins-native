@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+import lane_slots
 import test_inventory as inventory
 
 spec = importlib.util.spec_from_file_location('verification', SCRIPTS / 'verify-tests.py')
@@ -208,7 +209,10 @@ class VerificationTests(unittest.TestCase):
         for patcher in (patch.object(verification, 'state_dir', return_value=Path(state.name)),
                         patch.object(verification.sessionkit_pass, 'toolchain', return_value=None),
                         patch.object(verification, 'node_modules_installed', return_value=True),
-                        patch.dict(os.environ, {'SM_LANE_IOS_MAJOR': '26'}),
+                        # A run without --device takes a simulator slot and the Test Runner lock (#4736): in this
+                        # folder too, never on the Mac's real lane.
+                        patch.dict(os.environ, {'SM_LANE_IOS_MAJOR': '26', 'SM_LANE_STATE_DIR': state.name,
+                                                'SM_LANE_MEMORY_PRESSURE': '1'}),
                         patch.object(verification.lane_sim, 'IOS_MAJOR', 26),
                         # #705's settle sleeps for real (up to 20 s) whenever a test runs run.xcode twice on one
                         # device: the first call marks it quiet in this shared state folder. Tests of the settle
@@ -2707,6 +2711,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification.lane_sim, 'LATE_REPORT_WAIT', 0), \
                     patch.object(verification.lane_sim, 'late_report', return_value=None), \
                     patch.object(verification, 'acquire_simulator_slot', return_value=None), \
+                    patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(Path(temporary) / 'lane')}), \
                     patch.object(verification.subprocess, 'run'), \
                     patch.object(run, 'command', side_effect=lambda name, args, **_: commands.append((name, args)) or ''), \
                     contextlib.redirect_stdout(io.StringIO()):
@@ -2734,6 +2739,86 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(boots, ['old'])
         self.assertFalse(any(name == 'simulator-retire' for name, _ in commands))
         posted.assert_not_called()
+
+    def test_a_second_run_on_the_test_runner_waits_with_a_note_until_the_first_lets_it_go(self):
+        # #4736: the integration job used to hold the simulator decision lock for its whole run, only to keep other
+        # checkouts' runs off this device, and every Test Desk boot waited out the run. The device has its own lock now.
+        import threading
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            self.app_test_root(root)
+            (root / '.build/verification/SpokenMarginsAppBehavior').mkdir(parents=True)
+            app = root / '.build/verification/SpokenMarginsAppBehavior/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'
+            app.mkdir(parents=True)
+            (app / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'test.app'}))
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            run.manifest['input_sha256'] = 'inputs'
+            runner = {'udid': 'runner', 'state': 'Shutdown', 'runtime': 'iOS-26', 'name': verification.TEST_RUNNER_NAME}
+            state = Path(temporary) / 'lane'
+            order, out, errors = [], io.StringIO(), []
+
+            def slot(label, **kw):
+                order.append('slot')
+                return None
+
+            def boot(udid, label, **kw):
+                order.append('boot')
+                return 30.0
+
+            def runner_lock(*args, **kwargs):
+                order.append('runner-lock')
+                return lane_slots.acquire_test_runner(*args, **kwargs)
+
+            with patch.object(verification, 'ROOT', root), \
+                    patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}), \
+                    patch.object(verification, 'acquire_test_runner', side_effect=runner_lock), \
+                    patch.object(lane_slots, 'POLL_SECONDS', 0.05), \
+                    patch.object(verification, 'input_identity', return_value='inputs'), \
+                    patch.object(verification, 'capture', return_value='stub'), \
+                    patch.object(run, 'simulator', side_effect=lambda *a: order.append('choose') or (runner, False)), \
+                    patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                    patch.object(verification.lane_sim, 'boot', side_effect=boot), \
+                    patch.object(verification, 'acquire_simulator_slot', side_effect=slot), \
+                    patch.object(verification, 'shut_down_without_hiding_the_error',
+                                 side_effect=lambda udid: order.append('shutdown')), \
+                    patch.object(verification.subprocess, 'run'), \
+                    patch.object(run, 'command', side_effect=lambda name, args, **_: order.append(name) or ''), \
+                    contextlib.redirect_stdout(out):
+                first = lane_slots.acquire_test_runner('first run', out=io.StringIO(), max_wait=0)
+
+                def second():
+                    try:
+                        run.xcode('adapters', None, rebuild=True, only=['SpeechTests'])
+                    except Exception as error:  # surfaced below, in the test's own thread
+                        errors.append(error)
+
+                thread = threading.Thread(target=second)
+                thread.start()
+                deadline = time.monotonic() + 30  # a ceiling only: the loop ends on the note
+                while 'waiting for a Test Runner lock' not in out.getvalue() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertIn('waiting for a Test Runner lock', out.getvalue())
+                self.assertIn('first run', out.getvalue(), 'the note names the run holding the device')
+                self.assertEqual([step for step in order if step in ('choose', 'boot')], [],
+                                 'nothing chooses, replaces or boots the device while another run holds it')
+                verification.release_handle(first)
+                thread.join(30)
+                self.assertFalse(thread.is_alive())
+            self.assertEqual(errors, [])
+            self.assertLess(order.index('slot'), order.index('runner-lock'),
+                            'the simulator slot comes before the Test Runner lock, so the two cannot deadlock')
+            self.assertLess(order.index('boot'), order.index('shutdown'))
+            # The run let the device go when it finished: a third run takes it at once.
+            with patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}):
+                verification.release_handle(
+                    lane_slots.acquire_test_runner('third run', out=io.StringIO(), max_wait=0))
+
+    def test_a_run_given_a_device_never_takes_the_test_runner_lock(self):
+        # A device named with --device is the caller's own (a T3, a desk device): it never waits on the Test Runner.
+        with patch.object(verification, 'acquire_test_runner', side_effect=AssertionError('took the Test Runner lock')):
+            boots, commands, manifest, posted = self.stalled_test_runner(device='old')
+        self.assertEqual(boots, ['old'])
 
     def run_xcode_plan(self, plan, order, fail_tests=False):
         """run.xcode(plan) with every boundary stubbed; `order` collects settle, tests and marker calls in sequence."""

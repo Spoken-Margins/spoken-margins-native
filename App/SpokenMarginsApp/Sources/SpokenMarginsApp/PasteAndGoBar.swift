@@ -42,6 +42,9 @@ struct PasteAndGoBar: View {
                 if model.isResolvingSourceLink || isReadingLinkList {
                     ProgressView()
                         .frame(minWidth: 44, minHeight: 44)
+                        // The row's words are hidden from VoiceOver, so the spinner names itself (#5036); the same words
+                        // as the clipboard offer's busy line.
+                        .accessibilityLabel("Adding the link")
                 } else {
                     PasteButton(supportedContentTypes: PastedClipboardContent.supportedTypes) { providers in
                         Task { @MainActor in

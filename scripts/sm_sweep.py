@@ -575,18 +575,26 @@ def drift(api, now, pulls, skip=(), recent=None):
     return out
 
 
-def schedule_gaps(api, now, workflows=None):
+def schedule_gaps(api, now, workflows=None, slots=None):
     """Rule 15 (#4937): the backstopped workflows whose newest counted run (the backstop's own `pick`) is older than
     SCHEDULE_GAP intervals, as rows {workflow, interval, minutes, event}; minutes is None when there is no run at all.
-    Raises GitHubError when a read fails, so a failure is unreadable, never clean."""
+    Raises GitHubError when a read fails, so a failure is unreadable, never clean.
+    A fixed-slot workflow (backstop.SLOTS, #5154) is a gap when its newest slot is SCHEDULE_GAP hours past with no run
+    since; its row has `slot` ("HH:MM") and interval None. With `workflows` given, slots are off unless `slots` is."""
+    if workflows is None and slots is None:
+        workflows, slots = backstop.WORKFLOWS, backstop.SLOTS
+    workflows, slots = workflows or {}, slots or {}
     gaps = []
-    for workflow, interval in (workflows or backstop.WORKFLOWS).items():
+    for workflow in dict.fromkeys([*workflows, *slots]):
         runs = (api.get(f'actions/workflows/{workflow}/runs?per_page=30') or {}).get('workflow_runs') or []
         run = backstop.pick(workflow, runs)
         minutes = None if run is None else int((now - when(run['created_at'])).total_seconds() // 60)
-        if minutes is None or minutes >= SCHEDULE_GAP * interval:
+        interval = workflows.get(workflow)
+        missed = slots.get(workflow) and backstop.missed_slot(now, slots[workflow], run,
+                                                              grace=SCHEDULE_GAP * backstop.SLOT_GRACE)
+        if (interval and (minutes is None or minutes >= SCHEDULE_GAP * interval)) or missed:
             gaps.append({'workflow': workflow, 'interval': interval, 'minutes': minutes,
-                         'event': run and run.get('event')})
+                         'event': run and run.get('event'), 'slot': missed and f'{missed:%H:%M}'})
     return gaps
 
 
@@ -883,7 +891,9 @@ def decide(facts, window=STALE_AFTER):
     gaps = facts.get('schedule_gaps')
     if gaps:
         each = '; '.join(f'{g["workflow"]} ' + (f'last ran {g["minutes"]}m ago ({g["event"]})' if g['minutes'] is not None
-                                                else 'has no run in its last 30') + f', due every {g["interval"]}m'
+                                                else 'has no run in its last 30')
+                         + (f', due every {g["interval"]}m' if g.get('interval') else '')
+                         + (f', missed its {g["slot"]} UTC slot' if g.get('slot') else '')
                          for g in gaps)
         act('schedule-gap', LOOK, f'{each}. GitHub\'s schedule dropped these and the VPS dispatch backstop did not start '
             'them: ask the Mac finisher\'s thread to read `journalctl -u sm-dispatch-backstop -n 20` on the VPS (a '
