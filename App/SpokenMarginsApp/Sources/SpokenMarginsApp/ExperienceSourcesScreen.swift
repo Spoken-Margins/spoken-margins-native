@@ -217,18 +217,22 @@ struct ExperienceSourcesScreen: View, Equatable {
             .navigationTitle("Following")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // Plain icon buttons, at most two: Following's title centres like the other tabs' only then (#4955). Refresh is the pull-down.
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    // Hidden while the listener follows nothing, so the empty Following tab is unchanged.
-                    if !inputs.showsEmptyState {
+                // One `ToolbarItem` per button, as Library and Margins do, never a `ToolbarItemGroup`: with the group, "Following"
+                // sat at the leading edge while the other tabs centre their titles, even with only Lists and plus (#4955).
+                // Refresh is the pull-down.
+                // Hidden while the listener follows nothing, so the empty Following tab is unchanged.
+                if !inputs.showsEmptyState {
+                    ToolbarItem(placement: .topBarTrailing) {
                         Button(action: { isShowingLists = true }) {
-                            Image(systemName: "list.bullet").minimumTapTarget()
+                            Label(FollowListWords.listsTitle, systemImage: "list.bullet").labelStyle(.iconOnly)
                         }
                         .accessibilityLabel(FollowListWords.listsTitle)
                         .accessibilityIdentifier("sources.lists.button")
                     }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button(action: { isShowingFollowSheet = true }) {
-                        Image(systemName: "plus").minimumTapTarget()
+                        Label("Follow a show", systemImage: "plus").labelStyle(.iconOnly)
                     }
                     .accessibilityLabel("Follow a show")
                     .accessibilityHint("Follow a feed, browse podcasts and writers, or import from another app.")
