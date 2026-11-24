@@ -636,7 +636,7 @@ class Workflow(unittest.TestCase):
 
     def test_check_workflows_end_with_an_alert_job_from_the_base(self):
         # hosted-portable.yml took over from linux-t1.yml, whose VPS queue held the alert for an hour or more (#2442).
-        for name, needs in (('hosted-portable.yml', '[portable, scope, sessionkit, mac-rest, linux-retry-tally]'),
+        for name, needs in (('hosted-portable.yml', '[portable, scope, sessionkit, mac-rest, linux-retry-tally, linux-core-pr]'),
                             ('shipped-build-compat.yml', 'compat')):
             with self.subTest(name):
                 text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()

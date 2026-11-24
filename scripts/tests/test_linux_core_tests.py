@@ -430,6 +430,9 @@ class TheWorkflow(unittest.TestCase):
         checkout = job['steps'][0]
         self.assertIs(checkout['with']['persist-credentials'], False)
         self.assertNotIn('permissions', job, 'the workflow default, contents: read')
+        # Both read every head check of this run, so neither may start while this one is still running (audit on cf9c56b).
+        self.assertIn('linux-core-pr', self.jobs['owner-tap-alert']['needs'])
+        self.assertIn('linux-core-pr', self.jobs['rearm']['needs'])
 
     def test_a_red_portable_job_stops_the_macs(self):
         self.assertEqual(self.jobs['stop-macs-on-red']['needs'], 'portable')

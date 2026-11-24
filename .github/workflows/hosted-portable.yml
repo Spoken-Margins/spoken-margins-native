@@ -777,7 +777,7 @@ jobs:
     # base that doesn't have the script yet skips quietly. Pull requests from this repository only. It waits for
     # linux-retry-tally too, so that job is never an unfinished head check while the alert reads them.
     name: owner-tap-alert
-    needs: [portable, scope, sessionkit, mac-rest, linux-retry-tally]
+    needs: [portable, scope, sessionkit, mac-rest, linux-retry-tally, linux-core-pr]
     if: always() && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -820,7 +820,7 @@ jobs:
     # (the trunk, or the lane-check/** base under test), never the PR's head, and the head reaches the shell only through env. Same-repo runs only. Its outcome is read from the
     # check jobs only: owner-tap-alert and linux-retry-tally run `always()` and end `success` even when every check skipped.
     name: rearm
-    needs: [portable, scope, sessionkit, mac-rest, app-compile, stop-macs-on-red, linux-retry-tally, owner-tap-alert]
+    needs: [portable, scope, sessionkit, mac-rest, app-compile, stop-macs-on-red, linux-retry-tally, owner-tap-alert, linux-core-pr]
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 3
