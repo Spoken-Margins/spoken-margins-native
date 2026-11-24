@@ -57,6 +57,7 @@ struct FollowSheet: View {
                             .accessibilityIdentifier("sources.follow.problem")
                     } else {
                         Text(ListLinkWords.fieldFooter)
+                            .accessibilityIdentifier("sources.follow.footer")
                     }
                 }
                 Section {

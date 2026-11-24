@@ -373,7 +373,7 @@ final class QuickAccessFolderState: ObservableObject {
         }
         // Following's pool carries no relative-time wording: a big folder costs no formatting on the main actor, and the
         // candidates word only the few they list.
-        followingPool = QuickFolderListing.pool(newest: scan.files, all: scan.inboxFiles, since: folderChosenAt).map { file($0, described: false) }
+        followingPool = QuickFolderListing.pool(newest: scan.files, all: scan.allFiles, since: folderChosenAt).map { file($0, described: false) }
         recentFiles = scan.files.map { file($0) }
         folderName = folderURL.lastPathComponent
         // A scan that finished is the only thing that learns where the folder is and when it was checked, and it ends "can't open".

@@ -28,6 +28,15 @@ public enum MarginTidyCardState: Equatable, Sendable {
         return .candidate(transcript: transcript)
     }
 
+    /// Whether a list may say "Tidy version to review" for this Margin without asking the on-device model (#4338's export
+    /// sheet, #4339): nothing answered yet, and the filler-only tidy, which every iPhone makes at once, differs from the
+    /// words. Opening the card may then offer the model's rewrite instead; this only decides whether there is one to see.
+    public static func hasTidyToReview(_ margin: Interjection) -> Bool {
+        guard case .candidate(let transcript) = state(for: margin) else { return false }
+        let tidy = MarginTidy.fillerOnly(transcript).trimmingCharacters(in: .whitespacesAndNewlines)
+        return !tidy.isEmpty && !MarginTidyProposer.sameWords(tidy, transcript)
+    }
+
     /// The line under a proposal that says where it came from (the Design's caption).
     public static func caption(for source: MarginTidyProposal.Source) -> String {
         switch source {

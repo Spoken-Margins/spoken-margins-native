@@ -10,7 +10,9 @@ public enum ListLinkWords {
 
     public static let pasteLabel = "Paste a link to a show or a list"
     public static let pasteHint = "Follows the show, or opens the list, from the link you copied."
-    public static let fieldFooter = "Or type a link to a show’s feed or to a list of shows."
+    /// The Follow sheet's footer: `FollowPasteDecision.sheetFooter` (a paid show's private RSS link) with lists added.
+    public static let fieldFooter =
+        "Or type a link to a show’s feed or to a list of shows. For a paid show, such as one on Patreon, copy your private RSS link from the creator’s page."
     public static let unreachable = "Couldn’t reach that address. Check the link, or try again when you’re online."
     public static let notAListOrFeed = "That link isn’t a show’s feed or a list of shows."
     public static let tooBigToAdd = "That list is too big to add (more than 500 shows)."

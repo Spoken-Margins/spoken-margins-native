@@ -61,22 +61,8 @@ extension StructuredDocument.Role {
 }
 
 extension SourceElement.Kind {
-    var timelineName: String {
-        switch self {
-        case .picture: "Picture"
-        case .embed: "Embed"
-        case .link: "Link"
-        case .table: "Table"
-        }
-    }
-}
-
-extension SourceElement {
-    /// The second line of a Timeline row: what kind of element it is, and for a link, where it goes.
-    var timelineDetail: String {
-        guard kind == .link, let host = URL(string: url)?.host else { return kind.timelineName }
-        return "Link · " + (host.hasPrefix("www.") ? String(host.dropFirst(4)) : host)
-    }
+    /// One name per kind, shared with the Timeline row's kind line (#4778).
+    var timelineName: String { TimelineRowLines.kindName(self) }
 }
 
 /// A picture, embed, link or table from the imported page, at full size: the picture (a GIF plays) or the whole

@@ -162,15 +162,14 @@ public struct QuickAccessFileCandidate: Sendable {
 public struct QuickAccessFolderScan: Sendable {
     /// The Quick Add list: the newest few importable files (`QuickAccessFolderScanner.quickAddLimit`).
     public let files: [QuickAccessFileCandidate]
-    /// Every importable file in the folder, newest first, for the inbox that feeds the play queue (#3767). `files` is its
-    /// first few. Without it the inbox could only ever see the newest eight, so a ninth file dropped in at the same
-    /// time was never queued.
-    public let inboxFiles: [QuickAccessFileCandidate]
+    /// Every importable file in the folder, newest first. Following lists the newest few not yet added or dismissed (#4274).
+    /// `files` is its first few.
+    public let allFiles: [QuickAccessFileCandidate]
     public let errorDescription: String?
 
-    public init(files: [QuickAccessFileCandidate], errorDescription: String?, inboxFiles: [QuickAccessFileCandidate]? = nil) {
+    public init(files: [QuickAccessFileCandidate], errorDescription: String?, allFiles: [QuickAccessFileCandidate]? = nil) {
         self.files = files
-        self.inboxFiles = inboxFiles ?? files
+        self.allFiles = allFiles ?? files
         self.errorDescription = errorDescription
     }
 }
@@ -183,7 +182,7 @@ public enum QuickAccessFolderScanner {
     /// How many files the Quick Add list on Following shows.
     public static let quickAddLimit = 8
 
-    /// The eight newest importable files directly in the folder (`files`; `inboxFiles` holds all of them): md, markdown, txt and pdf by extension, and `.json`
+    /// The eight newest importable files directly in the folder (`files`; `allFiles` holds every importable file, and Following lists the newest few not yet added or dismissed, #4274): md, markdown, txt and pdf by extension, and `.json`
     /// only when the file itself says it is a structured link list (#3767, `LinkListFile.recognize`; never by name, so a
     /// Listening Edition or any other JSON never shows). Hidden files, subfolders and other extensions are skipped. An
     /// unreadable folder returns the error and no files. Reading happens here, so call it off the main actor.
@@ -222,7 +221,7 @@ public enum QuickAccessFolderScanner {
                 }
                 accepted.append(entry.candidate)
             }
-            return QuickAccessFolderScan(files: Array(accepted.prefix(quickAddLimit)), errorDescription: nil, inboxFiles: accepted)
+            return QuickAccessFolderScan(files: Array(accepted.prefix(quickAddLimit)), errorDescription: nil, allFiles: accepted)
         } catch {
             return QuickAccessFolderScan(files: [], errorDescription: SafeErrorText.describe(error))
         }
