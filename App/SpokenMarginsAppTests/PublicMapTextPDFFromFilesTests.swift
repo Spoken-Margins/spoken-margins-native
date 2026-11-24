@@ -1,4 +1,4 @@
-import SessionKit
+@testable import SessionKit
 import SessionKitPersistence
 import XCTest
 @testable import SpokenMarginsApp
