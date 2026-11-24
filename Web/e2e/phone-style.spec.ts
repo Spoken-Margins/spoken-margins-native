@@ -2,7 +2,7 @@
 // Each tab and Now Playing at iPhone size, light and dark, in Chrome and WebKit: the page wears the app's bone and
 // evergreen, titles are the serif, lists are panels. Screenshots go to artifacts/web-2982/ for a look.
 import { expect, test, type Page } from '@playwright/test';
-import { FEED_ORIGIN, serveFixtures, shot } from './fixtures.ts';
+import { FEED_ORIGIN, followAndAdd, serveFixtures, shot } from './fixtures.ts';
 
 const FEED = `${FEED_ORIGIN}/enclosure-only-episodes.rss`;
 const EPISODE = 'Episode 3: No link, GUID and audio';
@@ -31,6 +31,7 @@ for (const scheme of ['light', 'dark'] as const) {
       await sheet.getByLabel('Show name, or a feed or Substack address').fill(FEED);
       await sheet.getByRole('button', { name: 'Follow' }).click();
       await expect(page.getByText(/Following Spoken Margins Test Show/)).toBeVisible();
+      await followAndAdd(page, 'Spoken Margins Test Show', [EPISODE]);
 
       await tab(page, 'Library');
       await expect(page.getByRole('list', { name: 'Episodes, newest first' })).toBeVisible();
@@ -51,7 +52,7 @@ for (const scheme of ['light', 'dark'] as const) {
       await shot(page, info, `3040-${scheme}-settings`);
 
       await tab(page, 'Library');
-      await page.getByRole('button', { name: new RegExp(EPISODE) }).click();
+      await page.getByRole('button', { name: new RegExp(`^(?!More for ).*${EPISODE}`) }).click();
       const nowPlaying = page.getByRole('dialog', { name: EPISODE });
       await expect(nowPlaying).toBeVisible();
       expect(await style(page, '.np-title', 'font-family')).toMatch(/^ui-serif/);

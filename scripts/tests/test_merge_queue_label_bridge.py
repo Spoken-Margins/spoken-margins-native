@@ -613,7 +613,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(checkout['with']['persist-credentials'])
         self.assertNotIn('github.head_ref', self.text)
         self.assertNotIn('pull_request.head.ref', self.text)
-        self.assertFalse(re.search(r'\$\{\{[^}]*\}\}', self.workflow['jobs']['bridge']['steps'][1]['run']))
+        runs = [step['run'] for step in self.workflow['jobs']['bridge']['steps'] if 'run' in step]
+        self.assertEqual(len(runs), 1)
+        self.assertFalse(re.search(r'\$\{\{[^}]*\}\}', runs[0]))
 
     def test_it_names_the_lane_jobs_that_must_stop_at_switch_over(self):
         for job in ('route', 'automerge', 'automerge-mac', 'release'):

@@ -171,9 +171,11 @@ final class ReadAloudChoiceTests: XCTestCase {
 
     // MARK: The sender's app remembers what it last sent (#3472)
 
-    private func revision(_ id: String, margin: String = "m", at seconds: Double, sent: Bool?) -> InterjectionShareRevision {
+    private func revision(
+        _ id: String, margin: String = "m", session: String = "session", at seconds: Double, sent: Bool?
+    ) -> InterjectionShareRevision {
         InterjectionShareRevision(
-            id: id, interjectionId: margin, itemId: "item", sessionId: "session",
+            id: id, interjectionId: margin, itemId: "item", sessionId: session,
             createdAt: Date(timeIntervalSince1970: 1_777_000_000 + seconds), approvedTranscript: "Words.",
             anchorBefore: "Before", anchorAfter: "After", status: .senderApproved, sentReadAloud: sent
         )
@@ -200,7 +202,7 @@ final class ReadAloudChoiceTests: XCTestCase {
         // And the reverse for another Margin: off first under "z", then on under "a".
         try store.saveInterjectionShareRevision(revision("zz", margin: "two", at: 1, sent: false))
         try store.saveInterjectionShareRevision(revision("aa", margin: "two", at: 2, sent: true))
-        XCTAssertEqual(try store.loadLastSentReadAloud(itemId: "item"), ["one": false, "two": true])
+        XCTAssertEqual(try store.loadLastSentReadAloud(itemId: "item"), ["session::one": false, "session::two": true])
     }
 
     func testTheLibraryRemembersEachMarginsLastChoicePerItem() throws {
@@ -214,7 +216,19 @@ final class ReadAloudChoiceTests: XCTestCase {
         try store.saveInterjectionShareRevision(revision("d", margin: "three", at: 1, sent: nil))
         // A later share as a recording carries no choice and leaves the earlier one where it was.
         try store.saveInterjectionShareRevision(revision("e", margin: "two", at: 2, sent: nil))
-        XCTAssertEqual(try store.loadLastSentReadAloud(itemId: "item"), ["one": true, "two": false])
+        XCTAssertEqual(try store.loadLastSentReadAloud(itemId: "item"), ["session::one": true, "session::two": false])
         XCTAssertEqual(try store.loadLastSentReadAloud(itemId: "another item"), [:])
+    }
+
+    /// #4688: each pass numbers its Margins from "ij-001", so the choice is remembered per pass; a replay's first Margin
+    /// doesn't start from the first listen's.
+    func testTheSameMarginIdInTwoPassesKeepsTwoChoices() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ReadAloudChoice-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try SQLiteSessionStore(path: folder.appendingPathComponent("library.sqlite").path)
+        try store.saveInterjectionShareRevision(revision("a", margin: "ij-001", session: "first", at: 1, sent: false))
+        try store.saveInterjectionShareRevision(revision("b", margin: "ij-001", session: "replay", at: 2, sent: true))
+        XCTAssertEqual(try store.loadLastSentReadAloud(itemId: "item"), ["first::ij-001": false, "replay::ij-001": true])
     }
 }

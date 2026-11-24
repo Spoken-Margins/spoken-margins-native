@@ -2,7 +2,8 @@ import SessionKit
 import SwiftUI
 
 /// Following's plus (#3205): one sheet that does one job, following a show. Paste follows a copied link at once and
-/// the banner offers Undo; Browse opens the catalog; Import from another app opens the file picker. Read Later and
+/// the banner offers Undo; Browse opens the catalog; Import from Apple Podcasts opens its Shortcut's guide (#4290);
+/// Import from another app opens the file picker. Read Later and
 /// Listening Edition imports live in Settings, Import & Export.
 struct FollowSheet: View {
     @EnvironmentObject private var model: Gate1AppModel
@@ -48,7 +49,8 @@ struct FollowSheet: View {
                             .foregroundStyle(AppColors.text)
                             .accessibilityIdentifier("sources.follow.problem")
                     } else {
-                        Text("Or type a link to a show’s feed.")
+                        Text(FollowPasteDecision.sheetFooter)
+                            .accessibilityIdentifier("sources.follow.footer")
                     }
                 }
                 Section {
@@ -58,8 +60,16 @@ struct FollowSheet: View {
                     }
                     .accessibilityIdentifier("sources.browseCatalog")
                     if let makeOPMLImport = catalogDrawer.makeOPMLImport {
+                        #if !SPOKEN_MARGINS_LEGACY
+                        // This sheet closes once the Shortcut's link is taken: the drawer the preview opens in can't
+                        // present over it when the Shortcut brings the listener back (#4290).
+                        ApplePodcastsImportRow(closeHostWhenOpened: { dismiss() })
+                            .accessibilityIdentifier("sources.importApplePodcasts")
+                        #endif
                         NavigationLink {
-                            OPMLImportScreen(importer: makeOPMLImport(), opensFilePickerOnAppear: true)
+                            // Done closes this sheet too, back to Following and its new shows (#5052): popping back
+                            // here left a sheet whose only way out was Cancel, which reads as undoing the follow.
+                            OPMLImportScreen(importer: makeOPMLImport(), opensFilePickerOnAppear: true, onDone: { dismiss() })
                         } label: {
                             Label("Import from another app", systemImage: "square.and.arrow.down")
                                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)

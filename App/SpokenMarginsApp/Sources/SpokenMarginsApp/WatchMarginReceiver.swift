@@ -28,7 +28,7 @@ final class WatchMarginReceiver: NSObject {
 
     let files: LiveSessionFileWorker
     /// The on-device transcription, replaceable in tests (which must not ask for speech recognition).
-    var transcribe: @Sendable (String) async -> String? = { await LiveSessionSpokenMargins.transcribe(audioPath: $0) }
+    var transcribe: @Sendable (String) async -> String? = { await LiveSessionSpokenMargins.transcribe(audioPath: $0, for: .watchMargin) }
     /// Waiting Lock Screen Marks, removed as they are read.
     var drainMarks: () -> [Date] = { LiveSessionMarkQueue.drain() }
     /// Waiting Resumes tapped on the Lock Screen card (#2883), removed as they are read.

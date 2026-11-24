@@ -54,6 +54,7 @@ final class SpokenNoteRecordingCoordinatorTests: XCTestCase {
         private let gate = ReleaseLatch()
         var holds = false
         var fails = false
+        var holdError: Error?
         var words: [AlignedTranscriptSegment] = [
             AlignedTranscriptSegment(id: "w0", text: "Call", startMs: 0, endMs: 300),
             AlignedTranscriptSegment(id: "w1", text: "the", startMs: 400, endMs: 600),
@@ -66,6 +67,7 @@ final class SpokenNoteRecordingCoordinatorTests: XCTestCase {
             lock.withLock { requested.append(url.lastPathComponent) }
             if holds { await gate.wait() }
             if fails { throw NSError(domain: "speech", code: 1) }
+            if let holdError { throw holdError }
             return words
         }
 
@@ -244,6 +246,28 @@ final class SpokenNoteRecordingCoordinatorTests: XCTestCase {
         XCTAssertTrue(snapshot.failedTranscriptTakeIds.isEmpty)
         XCTAssertEqual(snapshot.note.takes[0].sentences.map(\.text), ["Call the plumber."])
         XCTAssertEqual(saved.all.last?.text, "Call the plumber.")
+    }
+
+    /// #4715: a take whose transcript met the Speech Recognition hold is waiting, not failed, so it offers no Try again.
+    func testATakeHeldForTheSpeechAnswerIsWaitingNotFailed() async throws {
+        let transcriber = FakeTranscriber()
+        transcriber.holdError = SessionKitError.persistenceFailed(TranscriptionFailureWording.speechRecognitionNotYetAskedError)
+        let (coordinator, _, _, _) = makeCoordinator(transcriber: transcriber)
+        try await coordinator.startTake()
+        try await coordinator.stopTake()
+        await coordinator.waitForTranscripts()
+
+        var snapshot = await coordinator.snapshot()
+        XCTAssertEqual(snapshot.heldTranscriptTakeIds, ["t1"])
+        XCTAssertTrue(snapshot.failedTranscriptTakeIds.isEmpty, "a hold is not a failure")
+        XCTAssertEqual(snapshot.note.takes.map(\.id), ["t1"], "the take stays")
+
+        transcriber.holdError = nil
+        await coordinator.resumeTranscripts()
+        await coordinator.waitForTranscripts()
+        snapshot = await coordinator.snapshot()
+        XCTAssertTrue(snapshot.heldTranscriptTakeIds.isEmpty)
+        XCTAssertEqual(snapshot.note.takes[0].sentences.map(\.text), ["Call the plumber."])
     }
 
     func testAnEmptyTranscriptChangesNothingAndIsNotAFailure() async throws {

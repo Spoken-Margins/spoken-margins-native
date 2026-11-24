@@ -105,4 +105,16 @@ final class FriendAnswerSavedCardTests: XCTestCase {
         XCTAssertEqual(card.headline, "Your Margin is saved at 2:05")
         XCTAssertEqual(card.detail, "To send it to Ana and Ben, tap Share below. You pick which of your Margins go.")
     }
+
+    /// Hear it land (#4713): after the playback the 45 seconds count from its end, not from the save.
+    func testTheWindowCountsFromTheEndOfTheHearItLandPlayback() {
+        let margins = [own("mine", madeAt: 200)], layers = [layer("cole", label: "Cole")]
+        XCTAssertNil(PinnedMarginCard.answerSaved(now: date(250), localMargins: margins, layers: layers), "plain window is over")
+        XCTAssertNotNil(PinnedMarginCard.answerSaved(now: date(250), localMargins: margins, layers: layers, windowStart: date(240)))
+        XCTAssertNil(PinnedMarginCard.answerSaved(now: date(240 + PinnedMarginCard.answerSavedWindow), localMargins: margins, layers: layers, windowStart: date(240)))
+    }
+
+    func testAWindowStartBeforeTheSaveNeverShortensTheWindow() {
+        XCTAssertNotNil(PinnedMarginCard.answerSaved(now: date(210), localMargins: [own("mine", madeAt: 200)], layers: [layer("cole", label: "Cole")], windowStart: date(100)))
+    }
 }
