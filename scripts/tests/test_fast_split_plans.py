@@ -35,7 +35,8 @@ class SplitPlanTests(unittest.TestCase):
         import test_fast_portable
         covered = (set(verification.PORTABLE_STEPS) | set(verification.HOSTED_SESSIONKIT_STEPS)
                    | set(verification.MAC_REST_STEPS))
-        self.assertEqual(test_fast_portable.literal_steps() - covered, set())
+        # The PR quick tier's own step stands in for runner-tests on a PR; the merge group runs runner-tests.
+        self.assertEqual(test_fast_portable.literal_steps() - covered - set(verification.PR_QUICK_STEPS), set())
         # What the portable plan leaves out, the other two run.
         self.assertEqual(set(verification.PORTABLE_LEFT_OUT) - covered, set())
         self.assertIn('package', verification.MAC_REST_STEPS)  # the sound-output step never leaves the Mac

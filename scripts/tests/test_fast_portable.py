@@ -59,7 +59,7 @@ def iter_tests(suite):
 
 class PortableStepTable(unittest.TestCase):
     def test_every_step_the_fast_plan_names_is_run_or_left_out_with_a_reason(self):
-        listed = set(verification.PORTABLE_STEPS) | set(verification.PORTABLE_LEFT_OUT)
+        listed = set(verification.PORTABLE_STEPS) | set(verification.PORTABLE_LEFT_OUT) | set(verification.PR_QUICK_STEPS)
         found = literal_steps()
         self.assertEqual(found - listed, set(), 'a fast-plan step the portable plan neither runs nor lists as left out')
         self.assertEqual(listed - found, set(), 'a listed step the fast plan no longer has')
@@ -107,16 +107,27 @@ class PortableStepTable(unittest.TestCase):
             self.assertIn(name, printed)
         self.assertEqual(slots, [], 'the Mac-wide host-test slot is not for a hosted job')
 
-    def test_the_pr_quick_tier_runs_only_the_swift_scans_as_its_runner_tests(self):
+    def test_the_pr_quick_tier_swaps_runner_tests_for_the_swift_scans(self):
         # #5220: with no runner tests at all, #5157 passed its PR checks and failed three Swift scans in the queue.
-        full = self.run_portable()[0]
-        calls, skipped, slots, printed = self.run_portable(pr_quick=True)
-        self.assertEqual([name for name, _ in calls], [name for name, _ in full])
-        self.assertEqual(dict(calls)['runner-tests'], [sys.executable, 'scripts/swift_scan_tests.py'])
-        self.assertEqual(skipped, verification.PORTABLE_LEFT_OUT)
-        self.assertIn('runner-tests: the PR quick tier runs only the Swift source scans', printed)
+        full = [name for name, _ in self.run_portable()[0]]
+        with patch.object(verification, 'merge_commit_changes', return_value=['App/SpokenMarginsApp/Sources/X.swift']):
+            calls, skipped, slots, printed = self.run_portable(pr_quick=True)
+        self.assertEqual([name for name, _ in calls], ['swift-scans', *(name for name in full if name != 'runner-tests')])
+        self.assertEqual(dict(calls)['swift-scans'], [sys.executable, 'scripts/swift_scan_tests.py'])
+        self.assertEqual(skipped, {**verification.PORTABLE_LEFT_OUT, **verification.PR_QUICK_LEFT_OUT})
+        self.assertIn('runner-tests: skipped (the PR quick tier leaves it to the merge group', printed)
         self.assertNotIn('fast-portable runner-tests left out', printed)
         self.assertEqual(slots, [])
+
+    def test_the_swift_scans_run_unless_the_pr_changes_only_files_no_runner_test_reads(self):
+        for changed, runs in ((None, True), ([], True), (['App/SpokenMarginsApp/Info.plist'], True),
+                              (['scripts/main_thread_reads.py'], True), (['docs/overview/storage.md'], True),
+                              (['docs/journeys.md', 'ops/away/README.md'], False)):
+            with self.subTest(changed=changed), \
+                    patch.object(verification, 'merge_commit_changes', return_value=changed):
+                calls, skipped, _, _ = self.run_portable(pr_quick=True)
+                self.assertEqual('swift-scans' in dict(calls), runs)
+                self.assertEqual('swift-scans' in skipped, not runs)
 
     def test_the_workflow_runs_the_quick_tier_on_prs_only(self):
         workflow = (ROOT / '.github/workflows/hosted-portable.yml').read_text()

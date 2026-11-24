@@ -5,7 +5,8 @@ The PR quick tier (`verify-tests.py --plan fast-portable --pr-quick`, 2026-11-20
 group, and these scans live among them. So a PR that added a button the mini-player keep-out forbids, a tap frame
 under 44 pt or a share glyph passed its own checks and failed only in the merge queue: #5157 on 2026-11-23
 (`test_mini_player_keep_out`, `test_outer_tap_frame`, `test_share_export_glyphs`), which cost the queue a cycle. The
-quick tier now runs this list as its runner-tests step, and the merge group still runs every runner test.
+quick tier now runs this list as its `swift-scans` step whenever the PR changes a file a runner test reads
+(verify-tests.py, PR_QUICK_STEPS), and the merge group still runs every runner test.
 
   python3 scripts/swift_scan_tests.py          run the scans (do this for any change under App/ or Packages/)
   python3 scripts/swift_scan_tests.py --list   print the modules
