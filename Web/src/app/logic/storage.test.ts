@@ -37,6 +37,12 @@ test('a Margin failure is shown every time; a background one once until it works
   assert.equal(gate.failed('position'), true, 'after a save works, the next failure is news again');
 });
 
+test('a failed Library write is shown every time, since the listener tapped Add or played (#4425)', () => {
+  const gate = new FailureGate();
+  assert.equal(gate.failed('library'), true);
+  assert.equal(gate.failed('library'), true, 'a quiet play-add that fails again is still said, not hidden like a place');
+});
+
 test('persistent storage is asked for after the first saved Margin, once, and never on load', () => {
   assert.equal(shouldAskToPersist('unknown', false, 0), false, 'nothing saved yet: on load');
   assert.equal(shouldAskToPersist('not-kept', false, 0), false);

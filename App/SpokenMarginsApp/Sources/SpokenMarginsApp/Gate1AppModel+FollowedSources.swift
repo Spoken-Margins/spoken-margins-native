@@ -160,7 +160,7 @@ extension Gate1AppModel {
 
     /// Built from the same de-duplicated, unfollowed feeds the suggestion card lists, so the
     /// button and the card name the feed the same way.
-    private var selectedFollowOffer: FollowOffer? {
+    var selectedFollowOffer: FollowOffer? {
         guard let found = followOffers[selectedItem.id] else { return nil }
         return ManualFollowPolicy.offer(
             itemId: found.itemId, mediaType: found.mediaType,

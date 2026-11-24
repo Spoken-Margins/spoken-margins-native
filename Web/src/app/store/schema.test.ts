@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
-import { DB_VERSION, DEFAULT_SETTINGS, readSettings, SCHEMA_KEY, SCHEMA_VERSION, storedVersion, upgrade, type StoredRows } from './schema.ts';
+import { DB_VERSION, DEFAULT_SETTINGS, readMembership, readSettings, SCHEMA_KEY, SCHEMA_VERSION, storedVersion, upgrade, type StoredRows } from './schema.ts';
 
 // The rows the web store held before #3012 (shape 1), as db.ts wrote them: no version row, three settings.
 function shapeOne(): StoredRows {
@@ -97,4 +97,73 @@ test('the name typed in the Share panel reads back, and anything but text means 
   assert.equal(readSettings([{ key: 'senderName', value: 'Sam' }]).senderName, 'Sam');
   assert.equal(readSettings([{ key: 'senderName', value: 7 }]).senderName, '');
   assert.equal(readSettings([{ key: 'senderName', value: true }]).senderName, '');
+});
+
+// #4425: Library membership rows and the two settings that go with them. Shape-2 settings rows: no new store, no
+// version change, and an older reader ignores all of them.
+test('library: rows read into snapshot.library, and an older reader ignores them', () => {
+  const rows = shapeOne();
+  rows.settings.push(
+    { key: SCHEMA_KEY, value: SCHEMA_VERSION },
+    { key: 'library:feed:a#g1', value: { in: true, at: '2026-11-23T15:00:00Z' } },
+    { key: 'library:feed:a#g2', value: { in: false, at: '2026-11-23T16:00:00Z' } },
+    { key: 'libraryModel', value: 'added' },
+    { key: 'libraryMovedOut', value: ['feed:a#g3'] },
+  );
+  const { snapshot, writes } = upgrade(rows);
+  assert.deepEqual(writes, [], 'no version change and nothing to write');
+  assert.equal(SCHEMA_VERSION, 2);
+  assert.deepEqual({ ...snapshot.library }, {
+    'feed:a#g1': { in: true, at: '2026-11-23T15:00:00Z' },
+    'feed:a#g2': { in: false, at: '2026-11-23T16:00:00Z' },
+  });
+  assert.equal(snapshot.settings.libraryModel, 'added');
+  assert.deepEqual(snapshot.settings.libraryMovedOut, ['feed:a#g3']);
+  // readSettings skips keys it doesn't know, which is how a copy from before #4425 reads the same rows.
+  const read = readSettings(rows.settings) as unknown as Record<string, unknown>;
+  assert.equal(Object.keys(read).some((k) => k.startsWith('library:')), false);
+  assert.equal(read.playbackRate, 1.5);
+});
+
+test('a store with no membership rows reads an empty Library and the defaults', () => {
+  const { snapshot } = upgrade(shapeOne());
+  assert.deepEqual({ ...snapshot.library }, {});
+  assert.equal(snapshot.settings.libraryModel, '');
+  assert.deepEqual(snapshot.settings.libraryMovedOut, []);
+});
+
+test('malformed library: rows are skipped; a missing or non-string at reads as empty', () => {
+  const library = readMembership([
+    { key: 'library:ok', value: { in: true, at: '2026-11-23T15:00:00Z' } },
+    { key: 'library:no-at', value: { in: false } },
+    { key: 'library:number-at', value: { in: true, at: 5 } },
+    { key: 'library:string', value: 'in' },
+    { key: 'library:null', value: null },
+    { key: 'library:array', value: [true] },
+    { key: 'library:string-in', value: { in: 'true', at: '2026-11-23T15:00:00Z' } },
+    { key: 'library:missing-in', value: { at: '2026-11-23T15:00:00Z' } },
+    { key: 'library:', value: { in: true, at: '2026-11-23T15:00:00Z' } },
+    { key: 'libraryModel', value: 'added' },
+    { key: 'relayAllowed', value: true },
+  ]);
+  assert.deepEqual({ ...library }, {
+    ok: { in: true, at: '2026-11-23T15:00:00Z' },
+    'no-at': { in: false, at: '' },
+    'number-at': { in: true, at: '' },
+  });
+  assert.equal(Object.getPrototypeOf(library), null, 'no inherited keys');
+});
+
+test('libraryModel reads only "" or "added"; libraryMovedOut only an array of strings', () => {
+  for (const value of ['Added', 'on', 1, true, null]) {
+    assert.equal(readSettings([{ key: 'libraryModel', value }]).libraryModel, '', `libraryModel ${String(value)}`);
+  }
+  for (const value of ['feed:a#g1', { 0: 'x' }, null, ['ok', 3], 7]) {
+    assert.deepEqual(readSettings([{ key: 'libraryMovedOut', value }]).libraryMovedOut, [], `libraryMovedOut ${JSON.stringify(value)}`);
+  }
+  const stored = ['a', 'b'];
+  const read = readSettings([{ key: 'libraryMovedOut', value: stored }]).libraryMovedOut;
+  assert.deepEqual(read, ['a', 'b']);
+  assert.notEqual(read, stored, 'a copy, so nothing edits the stored row in place');
+  assert.ok(Object.isFrozen(DEFAULT_SETTINGS.libraryMovedOut), 'the shared default can\'t be pushed to');
 });

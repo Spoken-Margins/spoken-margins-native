@@ -12,4 +12,14 @@ public enum MarginNoteCoverage {
     /// The first words of the Readwise footer. A Margin is sent once it has words, so a spoken Margin goes when its
     /// transcript arrives and never as an empty note.
     public static let readwiseLead = "Each Margin, spoken or written, becomes a Readwise highlight once it has words"
+
+    /// A spoken Margin always gets a note, even before or without a transcript (#171); a written one needs words.
+    public static func writesNotesFolderNote(captureKind: InterjectionCaptureKind?, text: String?) -> Bool {
+        SessionExportMarkdownRenderer.writesMarginNote(captureKind: captureKind, text: text)
+    }
+
+    /// Readwise gets a Margin once it has words, spoken or written.
+    public static func sendsReadwiseHighlight(text: String?) -> Bool {
+        ReadwiseHighlight.hasWords(text)
+    }
 }

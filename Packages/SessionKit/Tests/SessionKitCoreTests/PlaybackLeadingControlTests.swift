@@ -34,6 +34,26 @@ final class PlaybackLeadingControlTests: XCTestCase {
         XCTAssertEqual(PlaybackLeadingControl.control(pane: .timeline, timelineEditorHasFocus: true, nowHeaderIsVisible: false), .returnToNow)
     }
 
+    /// #4739: the bar's leading item exists, with the same kind, whether or not the Now header is on screen. Only its
+    /// visibility may follow the header; anything else makes the bar's size depend on scroll state.
+    func testToolbarItemDoesNotDependOnHeaderVisibility() {
+        for pane in [PlaybackLeadingControl.Pane.now, .timeline, .margins] {
+            for editorFocus in [false, true] {
+                let shown = PlaybackLeadingControl.slot(pane: pane, timelineEditorHasFocus: editorFocus, nowHeaderIsVisible: true)
+                let hidden = PlaybackLeadingControl.slot(pane: pane, timelineEditorHasFocus: editorFocus, nowHeaderIsVisible: false)
+                let label = "pane \(pane), editor focus \(editorFocus)"
+                XCTAssertEqual(shown.kind, hidden.kind, "same kind either way: \(label)")
+            }
+        }
+    }
+
+    func testOnNowTheArrowIsDrawnOnlyWhileTheHeaderIsOutOfView() {
+        XCTAssertEqual(PlaybackLeadingControl.slot(pane: .now, timelineEditorHasFocus: false, nowHeaderIsVisible: true).isShown, false)
+        XCTAssertEqual(PlaybackLeadingControl.slot(pane: .now, timelineEditorHasFocus: false, nowHeaderIsVisible: false).isShown, true)
+        XCTAssertEqual(PlaybackLeadingControl.slot(pane: .timeline, timelineEditorHasFocus: true, nowHeaderIsVisible: true).kind, .returnToNow)
+        XCTAssertEqual(PlaybackLeadingControl.slot(pane: .margins, timelineEditorHasFocus: false, nowHeaderIsVisible: true).isShown, true)
+    }
+
     /// #4739: at the largest text size in dark mode the app hung on first launch. Showing the toolbar arrow laid the bar
     /// out again and moved a header that sat at the edge back into view, which took the arrow away, which moved the
     /// header out again, on every pass. Here the header shows 0.5% of itself without the arrow and 30% with it.

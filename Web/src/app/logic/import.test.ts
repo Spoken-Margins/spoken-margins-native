@@ -2,10 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Episode, Margin, PercentMargin, Show } from '../../shared/model.ts';
 import type { PacketRead } from '../ports.ts';
-import { episode as fixtureEpisode, voiceMargins } from '../../packet/fixtures.ts';
+import { appParent, episode as fixtureEpisode, voiceMargins } from '../../packet/fixtures.ts';
 import { readPacket } from '../../packet/read.ts';
 import { writePacket } from '../../packet/write.ts';
-import { UNNAMED_SENDER, findEpisode, importSummary, landingOffer, placeByPercent, placeImport, previewMargins, sharedShowFor, unnamedAuthorFor } from './import.ts';
+import { UNNAMED_SENDER, findEpisode, importSummary, isSharedHolderTitle, landingOffer, packetShowFor, placeByPercent, placeImport, previewMargins, sharedShowFor, unnamedAuthorFor } from './import.ts';
 
 const show: Show = { id: 'feed:https://feeds.test/show.rss', kind: 'podcast', title: 'Show', feedUrl: 'https://feeds.test/show.rss', followedAt: 'T0' };
 const mine: Episode = {
@@ -54,6 +54,7 @@ test('an episode not in the Library is added under the sender, ready to play', (
   assert.deepEqual(placed.show, { id: 'shared:Ada', kind: 'podcast', title: 'Shared by Ada', feedUrl: '', followedAt: 'NOW' });
   assert.deepEqual(placed.episode, {
     id: 'shared:Ada#g-9', showId: 'shared:Ada', title: 'Their episode', guid: 'g-9', audioUrl: 'https://media.example.com/9.mp3', durationSeconds: 180,
+    showTitle: 'Their show',
   });
   assert.ok(placed.margins.every((m) => m.episodeId === 'shared:Ada#g-9'));
 
@@ -330,4 +331,46 @@ test('a kept copy is filled only when it is the packet’s episode by identity, 
   const apple = placeImport(read({ title: 'Episode', pageUrl: 'https://podcasts.apple.com/gb/podcast/x/id1445582279?i=01000427709574', audioUrl: audio }), [], [pageOnlyCopy]);
   assert.equal(apple.episode.audioUrl, audio);
   assert.equal(apple.newEpisode, true);
+});
+
+// #4689: a reply written from an episode the web filed under "Shared by <sender>" named that holder as the show, and the
+// iPhone, seeing another show beside the same guid, imported a second copy of the episode.
+test('a reply to a friend’s packet names the show the friend’s packet named, never the "Shared by" holder', async () => {
+  const parent = await appParent();
+  assert.equal(parent.episode.showTitle, 'Example Show');
+  const placed = placeImport(parent, [], [], 'T0', [], { unnamedAuthor: unnamedAuthorFor('link') });
+  assert.ok(placed.show?.id.startsWith('shared:'));
+  assert.equal(placed.show?.title, 'Shared by Ana');
+  assert.equal(placed.episode.showTitle, 'Example Show');
+  const reply: Margin = { id: 'r1', episodeId: placed.episode.id, atSeconds: 755, createdAt: '2026-10-30T12:00:00Z', text: 'A reply.', replyToId: placed.margins[0]?.id };
+  const written = await writePacket(placed.episode, [reply], { show: packetShowFor(placed.show, placed.episode), sender: 'Ben' });
+  const back = await readPacket(written.bytes);
+  assert.equal(back.episode.showTitle, 'Example Show');
+  assert.equal(back.episode.guid, parent.episode.guid);
+});
+
+test('an episode kept before its show title was, or from a packet that named only a holder, sends no show', async () => {
+  const holder = sharedShowFor('Ana', 'T0');
+  const kept: Episode = { id: 'shared:Ana#g', showId: holder.id, title: 'E', guid: 'g' };
+  assert.equal(packetShowFor(holder, kept), undefined);
+  assert.equal(packetShowFor(holder, { ...kept, showTitle: '   ' }), undefined);
+  const written = await writePacket(kept, [{ id: 'm', episodeId: kept.id, atSeconds: 5, createdAt: '2026-10-30T12:00:00Z', text: 'Hi' }], { show: packetShowFor(holder, kept) });
+  assert.equal((await readPacket(written.bytes)).episode.showTitle, undefined);
+  // An older web build's reply named its holder; that title is not kept as the show.
+  const fromOldReply = placeImport(read({ itemType: 'podcast', title: 'E', guid: 'g2', showTitle: 'Shared by Ana' } as PacketRead['episode']), [], [], 'T0');
+  assert.equal(fromOldReply.episode.showTitle, undefined);
+});
+
+test('a followed show is the packet’s show as it is', () => {
+  assert.equal(packetShowFor(show, mine), show);
+  assert.equal(packetShowFor(undefined, mine), undefined);
+});
+
+test('holder titles are told from show titles', () => {
+  for (const title of ['Shared by Ana', 'shared by ana', '  Shared  by   Ana ', 'Shared with you', 'SHARED WITH YOU', 'Shared by Zoë Ångström']) {
+    assert.equal(isSharedHolderTitle(title), true, title);
+  }
+  for (const title of ['Shared by', 'Shared by ', 'Example Show', 'The Shared by Show', 'Shared Brains', '', 'Shared withyou']) {
+    assert.equal(isSharedHolderTitle(title), false, title);
+  }
 });
