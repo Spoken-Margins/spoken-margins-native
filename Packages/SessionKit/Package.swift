@@ -38,7 +38,7 @@ let package = Package(
         ),
         .package(
             url: "https://github.com/weichsel/ZIPFoundation.git",
-            exact: "0.9.20"
+            exact: "0.9.21"
         )
     ],
     targets: [
@@ -217,7 +217,7 @@ let linuxTargets: Set<String> = [
 package.targets.removeAll { !linuxTargets.contains($0.name) }
 package.products.removeAll { !linuxTargets.contains($0.name) }
 package.dependencies = [
-    .package(url: "https://github.com/weichsel/ZIPFoundation.git", exact: "0.9.20"),
+    .package(url: "https://github.com/weichsel/ZIPFoundation.git", exact: "0.9.21"),
     .package(url: "https://github.com/apple/swift-crypto.git", exact: "3.15.1"),
 ]
 package.targets.append(.systemLibrary(name: "SQLite3", path: "Linux/SQLite3", providers: [.apt(["libsqlite3-dev"])]))

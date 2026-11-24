@@ -646,7 +646,13 @@ class TimedWorld(M.World):
         if 'backstop' in self.c.token_403:
             self.note(event, 'backstop: every dispatch refused, HTTP 403')
             return
-        backstop.tick('token', now, out=out, get=fake_get)
+        # The harness models no phone-build runs, so only the slots of workflows it does model (#5154: main-t3's).
+        slots = getattr(backstop, 'SLOTS', None)
+        if slots is None:
+            backstop.tick('token', now, out=out, get=fake_get)
+        else:
+            backstop.tick('token', now, out=out, get=fake_get, workflows=backstop.WORKFLOWS,
+                          slots={name: times for name, times in slots.items() if name in backstop.WORKFLOWS})
         fired = [line for line in out.getvalue().splitlines() if 'dispatched' in line]
         if fired:
             self.note(event, 'backstop: ' + ' | '.join(fired))
