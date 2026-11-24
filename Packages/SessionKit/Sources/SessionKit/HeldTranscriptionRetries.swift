@@ -8,8 +8,9 @@ import Foundation
 /// card (the audit on #5124 found three that didn't, one after another).
 ///
 /// The card is owed for a spoken Margin from any surface (the #4715 Design ties it to saving one), for a spoken note (the
-/// listener's own recording; director's Default taken on #4715, 2026-11-23) and for a friend's packet placement (the
-/// same Default). The other purposes wait quietly and are retried whenever the listener does allow.
+/// listener's own recording; director's Default taken on #4715, 2026-11-23), for a friend's packet placement (the
+/// same Default) and for an episode map the listener asked for (on `main`, iOS asked at that tap; the pre-audit on
+/// #5124). The other purposes wait quietly and are retried whenever the listener does allow.
 public enum HeldTranscription: String, Sendable, CaseIterable {
     /// A spoken Margin saved in the player, or by a Shortcut onto a Library item (`Gate1AppModel` transcription).
     case playerMargin
@@ -22,8 +23,11 @@ public enum HeldTranscription: String, Sendable, CaseIterable {
     /// A friend's podcast packet: a transient transcript of the listener's copy places the Margins acoustic evidence
     /// could not (`ImportedPodcastPlacementCoordinator.scheduleTransientTranscript`).
     case friendPacketPlacement
-    /// The private episode map and Listening Map (`EpisodeMapPreparer`).
+    /// The private episode map and Listening Map (`EpisodeMapPreparer`) prepared in the background, unasked.
     case episodeMap
+    /// The same map when the listener asked for it (an explicit policy: Prepare Listening Map, or the download they
+    /// started for one finishing). With no spoken Margin it is the only way to reach Allow, so it owes the card.
+    case listenerEpisodeMap
     /// The source words around a spoken Margin (`Gate1AppModel+SourceWindowContext`).
     case sourceWindow
     /// The text-to-time map for an article's publisher audio (`PublisherAudioTextMapper`), which checks iOS's answer
@@ -67,7 +71,7 @@ public enum HeldTranscription: String, Sendable, CaseIterable {
     public var isSpokenMargin: Bool {
         switch self {
         case .playerMargin, .liveSessionMargin, .watchMargin, .shortcutMargin: true
-        case .friendPacketPlacement, .episodeMap, .sourceWindow, .publisherTextMap, .justHeardPeek, .spokenNote: false
+        case .friendPacketPlacement, .episodeMap, .listenerEpisodeMap, .sourceWindow, .publisherTextMap, .justHeardPeek, .spokenNote: false
         }
     }
 
@@ -76,7 +80,7 @@ public enum HeldTranscription: String, Sendable, CaseIterable {
     public var isListenersRecording: Bool { isSpokenMargin || self == .spokenNote }
 
     /// Whether this held work makes the in-app card owed.
-    public var makesAskOwed: Bool { isListenersRecording || self == .friendPacketPlacement }
+    public var makesAskOwed: Bool { isListenersRecording || self == .friendPacketPlacement || self == .listenerEpisodeMap }
 
     /// The purposes whose held work is carried into the next launch, one per stored key: the purpose the launch reports
     /// again to owe the card and register the sweep.
@@ -92,7 +96,7 @@ public enum HeldTranscription: String, Sendable, CaseIterable {
         switch self {
         case .playerMargin: .waitingList
         case .liveSessionMargin, .watchMargin, .shortcutMargin: .liveSessionSweep
-        case .friendPacketPlacement, .episodeMap, .sourceWindow, .publisherTextMap: .callerRegisters
+        case .friendPacketPlacement, .episodeMap, .listenerEpisodeMap, .sourceWindow, .publisherTextMap: .callerRegisters
         case .spokenNote: .spokenNoteSweep
         case .justHeardPeek: .none
         }
@@ -106,7 +110,8 @@ public enum HeldTranscription: String, Sendable, CaseIterable {
 
 /// The work held for the listener's answer, each piece once (by kind and key, the latest retry kept), oldest first.
 /// On Allow every retry runs, so no held path depends on its own bookkeeping to start again (the round-1 gap was a
-/// retry that needed `requestedURL`). On a decided no they are dropped. In memory only: a relaunch starts each path
+/// retry that needed `requestedURL`). On a decided no they are dropped, and each piece's decline (`whenDeclined`) runs,
+/// so work that kept files or a waiting status for the answer ends cleanly. In memory only: a relaunch starts each path
 /// again on its own, and it meets the hold again if the answer is still open.
 @MainActor
 public final class HeldTranscriptionRetries {
@@ -117,8 +122,22 @@ public final class HeldTranscriptionRetries {
     }
 
     private var entries: [Entry] = []
-    private let liveSessionSweep: @MainActor () -> Void
-    private let spokenNoteSweep: @MainActor () -> Void
+    private var declines: [(kind: HeldTranscription, key: String, decline: @MainActor () -> Void)] = []
+    private let liveSessionSweep: SweepRun
+    private let spokenNoteSweep: SweepRun
+    private let sweepFinished: (@MainActor (_ heldAcrossLaunchKey: String) -> Void)?
+    private var sweepRuns = 0
+    private var latestRun: [String: Int] = [:]
+    private var running: [Int: Task<Void, Never>] = [:]
+
+    /// A sweep that says when it is done: true once it ran to the end (whatever it filled), false when it could not run
+    /// yet (no store at launch, say), so the record that carries it across a launch must stay.
+    public typealias Sweep = @MainActor () async -> Bool
+
+    private enum SweepRun {
+        case started(@MainActor () -> Void)
+        case reportsDone(Sweep)
+    }
 
     /// The key the live-session sweep is held under: one sweep covers every live-session, Watch and Shortcut Margin.
     public static let liveSessionSweepKey = "live-session-spoken-margins"
@@ -128,12 +147,27 @@ public final class HeldTranscriptionRetries {
     /// `liveSessionSweep` transcribes every live-session spoken Margin that has no words yet
     /// (`LiveSessionSpokenMarginSweep`); `spokenNoteSweep` every spoken note take with none (`SpokenNoteTranscriptSweep`).
     /// Each runs once on Allow however many of its kind were held.
+    /// Here each sweep only starts, and the caller forgets the records that carry them across a launch.
     public init(
         liveSessionSweep: @escaping @MainActor () -> Void = {},
         spokenNoteSweep: @escaping @MainActor () -> Void = {}
     ) {
-        self.liveSessionSweep = liveSessionSweep
-        self.spokenNoteSweep = spokenNoteSweep
+        self.liveSessionSweep = .started(liveSessionSweep)
+        self.spokenNoteSweep = .started(spokenNoteSweep)
+        sweepFinished = nil
+    }
+
+    /// #4715: a sweep's held-across-launch record (`HeldTranscription.Retry.heldAcrossLaunchKey`) is forgotten only once
+    /// that sweep says it ran to the end, and only if no later Allow started it again meanwhile: `sweepFinished` gets the
+    /// key then. Forgetting it on Allow, while the sweep still ran, lost the held Margins and takes to a kill right after.
+    public init(
+        liveSessionSweep: @escaping Sweep,
+        spokenNoteSweep: @escaping Sweep,
+        sweepFinished: @escaping @MainActor (_ heldAcrossLaunchKey: String) -> Void
+    ) {
+        self.liveSessionSweep = .reportsDone(liveSessionSweep)
+        self.spokenNoteSweep = .reportsDone(spokenNoteSweep)
+        self.sweepFinished = sweepFinished
     }
 
     public var isEmpty: Bool { entries.isEmpty }
@@ -155,14 +189,53 @@ public final class HeldTranscriptionRetries {
         }
     }
 
+    /// What held work of `kind` under `key` does on a decided no, instead of waiting forever: delete what it kept for the
+    /// retry and say it can't be done, with no banner. A later call for the same kind and key replaces it. Allow and `drop`
+    /// forget it.
+    public func whenDeclined(_ kind: HeldTranscription, key: String, decline: @escaping @MainActor () -> Void) {
+        declines.removeAll { $0.kind == kind && $0.key == key }
+        declines.append((kind, key, decline))
+    }
+
     /// The gate held work for `purpose`. Registers the retry the sink owns: the live-session sweep for a live-session,
     /// Watch or Shortcut spoken Margin, the spoken-note sweep for a spoken note. Every other purpose's retry is the
     /// caller's or the waiting list's.
     public func reported(_ purpose: HeldTranscription) {
         switch purpose.retry {
-        case .liveSessionSweep: hold(.liveSessionMargin, key: Self.liveSessionSweepKey, retry: liveSessionSweep)
-        case .spokenNoteSweep: hold(.spokenNote, key: Self.spokenNoteSweepKey, retry: spokenNoteSweep)
+        case .liveSessionSweep: hold(.liveSessionMargin, key: Self.liveSessionSweepKey, retry: retry(liveSessionSweep, purpose))
+        case .spokenNoteSweep: hold(.spokenNote, key: Self.spokenNoteSweepKey, retry: retry(spokenNoteSweep, purpose))
         case .callerRegisters, .waitingList, .none: return
+        }
+    }
+
+    /// The sweeps still running, oldest first.
+    public var runningSweeps: [Task<Void, Never>] { running.sorted { $0.key < $1.key }.map(\.value) }
+
+    /// Waits until every sweep Allow started has ended.
+    public func sweepsEnded() async {
+        while let sweep = runningSweeps.first { await sweep.value }
+    }
+
+    private func retry(_ sweep: SweepRun, _ purpose: HeldTranscription) -> @MainActor () -> Void {
+        switch sweep {
+        case .started(let start):
+            return start
+        case .reportsDone(let sweep):
+            let launchKey = purpose.retry.heldAcrossLaunchKey
+            return { [weak self] in
+                guard let self else { return }
+                sweepRuns += 1
+                let run = sweepRuns
+                if let launchKey { latestRun[launchKey] = run }
+                running[run] = Task { @MainActor [weak self] in
+                    let ranToTheEnd = await sweep()
+                    guard let self else { return }
+                    running[run] = nil
+                    guard let launchKey, latestRun[launchKey] == run else { return }
+                    latestRun[launchKey] = nil
+                    if ranToTheEnd { sweepFinished?(launchKey) }
+                }
+            }
         }
     }
 
@@ -171,21 +244,26 @@ public final class HeldTranscriptionRetries {
     /// the speech service.
     public func drop(_ kind: HeldTranscription, keys: Set<String>) {
         entries.removeAll { $0.kind == kind && keys.contains($0.key) }
+        declines.removeAll { $0.kind == kind && keys.contains($0.key) }
     }
 
-    /// Settles the held work against iOS's answer: allowed runs every retry, oldest first; a decided no drops them;
-    /// undecided keeps them. Returns how many retries ran.
+    /// Settles the held work against iOS's answer: allowed runs every retry, oldest first; a decided no drops them and
+    /// runs every decline, oldest first; undecided keeps them. Returns how many retries ran.
     @discardableResult
     public func settle(access: SpeechRecognitionAccessState) -> Int {
         switch access {
         case .notDetermined:
             return 0
         case .denied, .restricted:
+            let declined = declines
             entries.removeAll()
+            declines.removeAll()
+            for entry in declined { entry.decline() }
             return 0
         case .authorized:
             let due = entries
             entries.removeAll()
+            declines.removeAll()
             for entry in due { entry.retry() }
             return due.count
         }
