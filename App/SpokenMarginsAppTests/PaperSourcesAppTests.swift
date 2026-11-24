@@ -127,7 +127,7 @@ final class PaperSourcesAppTests: XCTestCase {
         XCTAssertEqual(model.snapshot.itemId, playingBefore, "Add never starts playback")
         let abstractItem = try XCTUnwrap(model.store).loadItem(id: abstractItemID)
         XCTAssertEqual(abstractItem.sourceTitle, "Abstract · Zotero")
-        XCTAssertTrue(abstractItem.text.contains("We studied light at night."))
+        XCTAssertTrue(try XCTUnwrap(abstractItem.text).contains("We studied light at night."))
 
         // Two taps import once.
         await papers.add(rows[1].entry, model: model)
