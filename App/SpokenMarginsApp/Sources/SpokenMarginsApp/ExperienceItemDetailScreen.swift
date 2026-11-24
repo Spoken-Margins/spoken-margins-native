@@ -49,6 +49,8 @@ struct ExperienceItemDetailScreen: View {
     @State private var pdfExport: PDFCommentExportModel?
     /// A tap on Play or "Skip to …" made before its start is possible, kept until it can run (#3788).
     @StateObject private var arrival = FriendArrivalPresenter()
+    /// "Keep Sam’s readings together" under the friend's intro, from the second packet from one sender (#5033).
+    @StateObject private var senderOffer = SenderCollectionOfferPresenter()
     private let episodeLinker = ImportedFileEpisodeLinker()
 
     /// Finds whether the open item is a PDF, or a Word document with a kept original (#4338, #4595). A PDF needs only the
@@ -110,6 +112,7 @@ struct ExperienceItemDetailScreen: View {
                         }
                     }
                     if let friendIntro { FriendMarginsSummary(intro: friendIntro, receipt: sharingCoordinator.introReceipt) }
+                    SenderCollectionOfferRow(presenter: senderOffer)
                     if let description = model.selectedItem.descriptionText {
                         ItemDescriptionPreview(text: description).id(model.selectedItem.id)
                     }
@@ -267,6 +270,8 @@ struct ExperienceItemDetailScreen: View {
                 await refreshKeptOriginal()
             }
             .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Skip to the Margins" (#3365)
+            .onAppear { senderOffer.refresh(model: model, arriving: !newSharedMargins.isEmpty) }
+            .onChange(of: senderOfferKey) { senderOffer.refresh(model: model, arriving: !newSharedMargins.isEmpty) }
             .onDisappear {
                 WrittenMarginReadings.leftItemScreen(model.selectedItem.id)
                 arrival.cancel()
@@ -1064,6 +1069,12 @@ struct ExperienceItemDetailScreen: View {
     /// Shared Margins on this item that the listener hasn't heard (#474).
     private var newSharedMargins: [SharedMarginReview.Entry] {
         model.newSharedMargins(itemId: model.selectedItem.id)
+    }
+
+    /// Changes when something the sender collection offer reads changes: the open item, the Library's rows (a Margin the
+    /// listener saved, a packet that arrived), the collections, or the friend's waiting Margins.
+    private var senderOfferKey: String {
+        "\(model.selectedItem.id)|\(model.libraryPresentationRevision)|\(model.libraryCollections.collections.count)|\(newSharedMargins.count)"
     }
 
     private var itemMargins: [MarginRow] {

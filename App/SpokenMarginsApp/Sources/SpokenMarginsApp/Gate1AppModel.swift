@@ -1186,7 +1186,7 @@ final class Gate1AppModel: ObservableObject {
     /// Stops playing Margins inline. The item keeps its current play state.
     func endMarginMoment() {
         giveBackUnfinishedReview()
-        recordMarginMomentVoiceEnded()
+        recordMarginMomentEnded()
         marginMomentConductor?.cancel()
         marginMomentConductor = nil
         marginMoment = nil

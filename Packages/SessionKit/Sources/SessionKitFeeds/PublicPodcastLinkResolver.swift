@@ -84,7 +84,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
 
     public func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
         let trimmed = request.inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), url.scheme?.lowercased() == "https" else {
+        guard let url = URL(string: trimmed).map(ArxivPaperLink.openingURL), url.scheme?.lowercased() == "https" else { // #5049
             return unsupported(request: request, reason: "invalid_url")
         }
 
@@ -156,7 +156,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         requestTimeoutSeconds: TimeInterval
     ) async throws -> LinkResolutionResult {
         let trimmed = request.inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), url.scheme?.lowercased() == "https" else {
+        guard let url = URL(string: trimmed).map(ArxivPaperLink.openingURL), url.scheme?.lowercased() == "https" else { // #5049
             return unsupported(request: request, reason: "invalid_url")
         }
 
