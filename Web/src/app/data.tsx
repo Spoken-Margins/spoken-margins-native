@@ -9,12 +9,14 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { formatClock } from '../shared/clock.ts';
 import type { Episode, Margin, PlaybackPosition, Show } from '../shared/model.ts';
 import { browserStorage, forgetMirrored, mergeMirror, pruneMirror, readMirror } from './logic/position-mirror.ts';
+import { addedRow, inLibrary, isMigrated, membershipRow, prepareLibrary, removedRow, restoredRow, stillMovedOut } from './logic/library-membership.ts';
 import { mergeRefresh } from './logic/refresh.ts';
 import { keepingSharedAs, withSharedAs, type WrittenFacts } from './logic/shared-as.ts';
 import { keepingHeard, keepingStar, withStar } from './logic/star.ts';
 import { FailureGate, NotSavedError, notSavedMessage, shouldAskToPersist, type PersistState, type WriteKind } from './logic/storage.ts';
 import type { FeedRead } from './ports.ts';
 import { DEFAULT_SETTINGS, loadAll, putMany, putMargin, putSetting, putShowWithEpisodes, remove, removeShow, type Settings, type Snapshot } from './store/db.ts';
+import type { Membership } from './store/schema.ts';
 import { useUi } from './ui.tsx';
 
 export interface DataApi extends Snapshot {
@@ -43,9 +45,33 @@ export interface DataApi extends Snapshot {
   deleteMargin(id: string): Promise<void>;
   savePosition(position: PlaybackPosition): Promise<void>;
   setSetting<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void>;
+  /** Whether the Library follows membership rows (the one-time move has run, #4425). False until then. */
+  migrated: boolean;
+  /**
+   * Puts an episode in the Library (#4425): writes its "in" row, then updates the mirror at once, so a second call in
+   * the same tick sees it. An episode already in is left alone (its first `at` stays). A failure is shown every
+   * time (never a quiet repeat) and, without `quiet`, thrown as a `NotSavedError` so an Add button can reset. With
+   * `quiet` (a play, an import) it is logged and returned, with no toast, since nobody waits on it.
+   */
+  addToLibrary(episodeId: string, options?: { quiet?: boolean }): Promise<void>;
+  /**
+   * Takes an episode out of the Library (#4424): writes an "out" row, then updates the mirror at once. Nothing else is
+   * deleted. Returns the row it replaced (undefined if there was none), for `putBackInLibrary`. An episode already out
+   * is left alone and its "out" row returned. Throws a `NotSavedError` when the write fails, and the row stays.
+   */
+  removeFromLibrary(episodeId: string): Promise<Membership | undefined>;
+  /**
+   * Undo for `removeFromLibrary`: writes `previous` back, unless the episode was added again meanwhile (that newer "in"
+   * row stays). Throws a `NotSavedError` when the write fails.
+   */
+  putBackInLibrary(episodeId: string, previous: Membership | undefined): Promise<void>;
+  /** The Library notice's Put them back: an "in" row for each moved-out episode still without a row. Returns how many. */
+  putBackMovedOut(): Promise<number>;
+  /** The Library notice's Got it: forgets the moved-out list. */
+  dismissLibraryNotice(): Promise<void>;
 }
 
-const empty: Snapshot = { shows: [], episodes: [], margins: [], positions: [], settings: DEFAULT_SETTINGS };
+const empty: Snapshot = { shows: [], episodes: [], margins: [], positions: [], settings: DEFAULT_SETTINGS, library: {} };
 const DataContext = createContext<DataApi | null>(null);
 
 function upsert<T>(list: T[], items: readonly T[], key: (t: T) => string): T[] {
@@ -74,11 +100,36 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     loadAll()
-      .then((snapshot) => {
+      .then(async (snapshot) => {
         // A place copied to localStorage that IndexedDB never got (the page went mid-write) wins if it is newer (#4096).
         const storage = browserStorage();
         const { positions, written } = mergeMirror(snapshot.positions, readMirror(storage), new Set(snapshot.episodes.map((e) => e.id)));
-        setData({ ...snapshot, positions });
+        // The one-time move, then the keep pass on every later load (#4425). `data` is set once, after it, so the Library
+        // never flashes the old list or an empty state first.
+        const merged: Snapshot = { ...snapshot, positions };
+        const prepared = prepareLibrary({ ...merged }, new Date().toISOString());
+        let loaded = merged;
+        if (!isMigrated(snapshot.settings)) {
+          try {
+            // The rows and the moved-out list together, then `libraryModel` alone: a tab closed between the two runs the
+            // move again, and the rows already written keep at least as much.
+            await putMany('settings', prepared.rows);
+            if (prepared.finish) await putMany('settings', [prepared.finish]);
+            loaded = { ...merged, library: prepared.library, settings: { ...merged.settings, libraryMovedOut: prepared.movedOut, libraryModel: 'added' } };
+          } catch (error) {
+            // `libraryModel` stays unset, so the old rule holds for this session: the Library shows every episode.
+            console.error('The Library move failed', error);
+            toast('Your Library couldn’t be updated in this browser, so it shows every episode for now.', 'problem');
+          }
+        } else if (prepared.rows.length > 0) {
+          try {
+            await putMany('settings', prepared.rows);
+          } catch (error) {
+            console.error('The Library keep pass wasn’t saved', error); // Applied for this session; the next load tries again.
+          }
+          loaded = { ...merged, library: prepared.library };
+        }
+        setData(loaded);
         if (written.length > 0) void putMany('positions', written).then(() => pruneMirror(storage, positions), () => undefined);
         else pruneMirror(storage, positions);
       })
@@ -95,7 +146,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   /** Runs a write. On failure, shows `lead` and the reason, and returns the error to throw (or not). */
   const run = useCallback(
-    async (kind: WriteKind, lead: string, write: () => Promise<void>): Promise<NotSavedError | undefined> => {
+    async (kind: WriteKind, lead: string, write: () => Promise<void>, options: { quiet?: boolean } = {}): Promise<NotSavedError | undefined> => {
       try {
         await write();
         gate.current.worked(kind);
@@ -103,7 +154,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         const message = notSavedMessage(lead, error);
         console.error(message, error);
-        if (gate.current.failed(kind)) toast(message, 'problem');
+        // `quiet`: the listener isn't waiting on it (an episode that is already playing), so it is logged, not toasted.
+        if (!options.quiet && gate.current.failed(kind)) toast(message, 'problem');
         return new NotSavedError(message, { cause: error });
       }
     },
@@ -266,9 +318,82 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [run],
   );
 
+  const addToLibrary = useCallback(
+    async (episodeId: string, options: { quiet?: boolean } = {}) => {
+      const current = dataRef.current;
+      if (inLibrary(episodeId, current.library)) return;
+      const title = current.episodes.find((e) => e.id === episodeId)?.title ?? 'that episode';
+      const row = addedRow(current.library[episodeId], new Date().toISOString());
+      const failed = await run('library', `Adding “${title}” to your Library wasn’t saved.`, () => putMany('settings', [membershipRow(episodeId, row)]), { quiet: options.quiet });
+      if (failed) {
+        if (options.quiet) return;
+        throw failed;
+      }
+      // Several adds can land one after another (an import, then a play): each must see the last without a render.
+      const next = (d: Snapshot): Snapshot => ({ ...d, library: { ...d.library, [episodeId]: inLibrary(episodeId, d.library) ? d.library[episodeId]! : row } });
+      setData(next);
+      dataRef.current = next(dataRef.current);
+    },
+    [run],
+  );
+
+  const removeFromLibrary = useCallback(
+    async (episodeId: string) => {
+      const previous = dataRef.current.library[episodeId];
+      if (previous && !previous.in) return previous;
+      const title = dataRef.current.episodes.find((e) => e.id === episodeId)?.title ?? 'that episode';
+      const row = removedRow(new Date().toISOString());
+      const failed = await run('library', `Removing “${title}” from your Library wasn’t saved.`, () => putMany('settings', [membershipRow(episodeId, row)]));
+      if (failed) throw failed;
+      const next = (d: Snapshot): Snapshot => ({ ...d, library: { ...d.library, [episodeId]: row } });
+      setData(next);
+      dataRef.current = next(dataRef.current);
+      return previous;
+    },
+    [run],
+  );
+
+  const putBackInLibrary = useCallback(
+    async (episodeId: string, previous: Membership | undefined) => {
+      const current = dataRef.current;
+      const title = current.episodes.find((e) => e.id === episodeId)?.title ?? 'that episode';
+      const now = new Date().toISOString();
+      // With no earlier row the episode goes in as of now, the same as an Add.
+      const row = restoredRow(current.library[episodeId], previous ?? { in: true, at: now });
+      const failed = await run('library', `Putting “${title}” back in your Library wasn’t saved.`, () => putMany('settings', [membershipRow(episodeId, row)]));
+      if (failed) throw failed;
+      // Applied to the latest mirror, so a re-add that landed during the write is not undone.
+      const next = (d: Snapshot): Snapshot => ({ ...d, library: { ...d.library, [episodeId]: restoredRow(d.library[episodeId], row) } });
+      setData(next);
+      dataRef.current = next(dataRef.current);
+    },
+    [run],
+  );
+
+  const putBackMovedOut = useCallback(async () => {
+    const current = dataRef.current;
+    const ids = stillMovedOut(current.settings.libraryMovedOut, current.episodes, current.library);
+    const now = new Date().toISOString();
+    const rows = [...ids.map((id) => membershipRow(id, { in: true, at: now })), { key: 'libraryMovedOut', value: [] as string[] }];
+    const failed = await run('library', 'Your Library wasn’t updated.', () => putMany('settings', rows));
+    if (failed) throw failed;
+    const next = (d: Snapshot): Snapshot => {
+      const library = { ...d.library };
+      for (const id of ids) if (!Object.hasOwn(library, id)) library[id] = { in: true, at: now };
+      return { ...d, library, settings: { ...d.settings, libraryMovedOut: [] } };
+    };
+    setData(next);
+    dataRef.current = next(dataRef.current);
+    return ids.length;
+  }, [run]);
+
+  const dismissLibraryNotice = useCallback(() => setSetting('libraryMovedOut', []), [setSetting]);
+
+  const migrated = isMigrated(data.settings);
+
   const api = useMemo<DataApi>(
-    () => ({ ...data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting }),
-    [data, ready, persist, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting],
+    () => ({ ...data, ready, persist, migrated, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, removeFromLibrary, putBackInLibrary, putBackMovedOut, dismissLibraryNotice }),
+    [data, ready, persist, migrated, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, removeFromLibrary, putBackInLibrary, putBackMovedOut, dismissLibraryNotice],
   );
   return <DataContext.Provider value={api}>{children}</DataContext.Provider>;
 }

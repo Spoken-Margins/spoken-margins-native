@@ -7,13 +7,19 @@ import SessionKitFeeds
 /// followed, repeated or unusable, unticks what they don't want, and follows the rest one at a
 /// time through the app's normal follow path. Nothing is added to the Library, downloaded or
 /// prepared. Opens from Following and from the first-run drawer, and with a list of feed links from the
-/// "Follow Podcasts in Spoken Margins" Shortcut action (#4284).
+/// "Follow Podcasts in Spoken Margins" Shortcut action (#4284), or with the shows the listener's own AI suggested
+/// (Following's "Suggested by your AI" row, #4683).
 @MainActor
 final class OPMLImportModel: ObservableObject {
     /// Where the previewed feeds came from, for the screen's words.
     enum Origin: Equatable {
         case file
         case shortcut
+        /// The shows the listener's own AI suggested (#4683): a list of links, as a Shortcut's, under its own title.
+        case assistant
+
+        /// A list of links rather than a file: the screen says "list", never "file", and Cancel leaves.
+        var isLinkList: Bool { self != .file }
     }
 
     enum Phase: Equatable {
@@ -28,6 +34,12 @@ final class OPMLImportModel: ObservableObject {
     /// Ids of the new feeds that will be followed; all of them when a file is read.
     @Published private(set) var selected: Set<String> = []
     @Published private(set) var origin: Origin = .file
+    /// The links a Shortcut or the listener's AI passed in, as they were passed.
+    private(set) var passedFeedLinks: [String] = []
+    /// The preview this import showed, kept after Follow so a closed import knows what it offered.
+    private var previewed: OPMLImportPreview?
+    /// Called with the feed links an import followed, so they leave the AI's suggestions (#4683). Set by whoever made it.
+    var onFollowed: (@MainActor ([String]) -> Void)?
 
     private let subscriptions: @MainActor () -> [FeedSubscription]
     private let follow: @MainActor (String) async throws -> Void
@@ -63,6 +75,8 @@ final class OPMLImportModel: ObservableObject {
         phase = .choosing
         selected = []
         origin = .file
+        passedFeedLinks = []
+        previewed = nil
     }
 
     func showFailure(_ error: Error) {
@@ -72,6 +86,7 @@ final class OPMLImportModel: ObservableObject {
     }
 
     func load(fileAt url: URL) {
+        guard !isFollowing else { return }
         origin = .file
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
@@ -88,17 +103,36 @@ final class OPMLImportModel: ObservableObject {
         load(.file) { try OPMLParser.parse(data) }
     }
 
-    /// The links a Shortcut passed in (#4284), previewed exactly as the same feeds in a file would be.
-    func load(feedLinks: [String]) {
-        load(.shortcut) { try FeedLinkListParser.parse(feedLinks) }
+    /// The links a Shortcut (#4284) or the listener's AI (#4683) passed in, previewed exactly as the same feeds in a
+    /// file would be.
+    func load(feedLinks: [String], origin: Origin = .shortcut) {
+        guard !isFollowing else { return }
+        passedFeedLinks = feedLinks
+        load(origin.isLinkList ? origin : .shortcut) { try FeedLinkListParser.parse(feedLinks) }
+    }
+
+    /// The passed links this import has settled, which leave the AI's suggestions when it closes: those it followed,
+    /// and those it did not offer to follow (already followed, or unusable). Offered and not followed stays.
+    func settledFeedLinks() -> [String] {
+        let followed: [String]
+        switch phase {
+        case .following: return []
+        case .finished(let result): followed = result.followed.compactMap { $0.feed?.url }
+        case .choosing, .preview, .failed: followed = []
+        }
+        let offered = previewed?.toFollow.compactMap { $0.feed?.url } ?? []
+        return AIFollowSuggestionsRow.settled(passed: passedFeedLinks, offered: offered, followed: followed)
     }
 
     private func load(_ origin: Origin, document: () throws -> OPMLDocument) {
         guard !isFollowing else { return }
         self.origin = origin
+        previewed = nil
+        if !origin.isLinkList { passedFeedLinks = [] }
         do {
             let preview = OPMLImportPlanner.preview(try document(), existing: subscriptions())
             selected = Set(preview.toFollow.map(\.id))
+            previewed = preview
             phase = .preview(preview)
         } catch {
             showFailure(error)
@@ -143,11 +177,18 @@ final class OPMLImportModel: ObservableObject {
             try await self.follow(feedURL)
         }
         phase = .finished(result)
-        if !result.followed.isEmpty { didFollow() }
+        if !result.followed.isEmpty {
+            onFollowed?(result.followed.compactMap { $0.feed?.url })
+            didFollow()
+        }
     }
 
     static func message(for error: Error, origin: Origin = .file) -> String {
         switch (error as? OPMLError, origin) {
+        case (.tooLarge, .assistant):
+            return "Your AI's list is more than 4 MB of text, which is more than a podcast list needs. Nothing was imported."
+        case (.tooManyOutlines, .assistant):
+            return "Your AI's list has more than 5,000 lines. Nothing was imported."
         case (.tooLarge, .shortcut):
             return "The Shortcut passed in more than 4 MB of text, which is more than a podcast list needs. Nothing was imported."
         case (.tooManyOutlines, .shortcut):
@@ -177,10 +218,14 @@ struct OPMLImportScreen: View {
     /// Following's Follow sheet opens this screen from "Import from another app" (#3205): the file picker
     /// opens at once instead of waiting for a second tap.
     private let opensFilePickerOnAppear: Bool
+    /// What Done does instead of popping this screen: a Shortcut's import closes the whole drawer (#4290), and an
+    /// import from Following's Follow sheet closes that sheet (#5052). Cancel and the back button still pop.
+    private let onDone: (() -> Void)?
 
-    init(importer: @autoclosure @escaping () -> OPMLImportModel, opensFilePickerOnAppear: Bool = false) {
+    init(importer: @autoclosure @escaping () -> OPMLImportModel, opensFilePickerOnAppear: Bool = false, onDone: (() -> Void)? = nil) {
         _importer = StateObject(wrappedValue: importer())
         self.opensFilePickerOnAppear = opensFilePickerOnAppear
+        self.onDone = onDone
     }
 
     var body: some View {
@@ -189,7 +234,7 @@ struct OPMLImportScreen: View {
             .scrollContentBackground(.hidden)
             .background(AppColors.bone)
             .safeAreaInset(edge: .bottom) { actions }
-            .navigationTitle(importer.origin == .shortcut ? "Import from Apple Podcasts" : "Import from another app")
+            .navigationTitle(Self.title(for: importer.origin))
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarBackButtonHidden(importer.isFollowing)
             .fileImporter(isPresented: $isChoosingFile, allowedContentTypes: OPMLImportModel.contentTypes) { result in
@@ -243,7 +288,7 @@ struct OPMLImportScreen: View {
     private func previewSections(_ preview: OPMLImportPreview) -> some View {
         Section {
             if preview.toFollow.isEmpty {
-                Text(importer.origin == .shortcut ? "Nothing new to follow in this list." : "Nothing new to follow in this file.")
+                Text(importer.origin.isLinkList ? "Nothing new to follow in this list." : "Nothing new to follow in this file.")
             }
             ForEach(preview.toFollow) { candidate in
                 Toggle(isOn: Binding(
@@ -275,7 +320,7 @@ struct OPMLImportScreen: View {
                     feedLabel(feed.title, detail: nil)
                 }
             } header: {
-                countHeader(importer.origin == .shortcut ? "Repeated in the list" : "Repeated in the file", preview.duplicatesInFile.count)
+                countHeader(importer.origin.isLinkList ? "Repeated in the list" : "Repeated in the file", preview.duplicatesInFile.count)
             } footer: {
                 Text("Each feed is followed once.")
             }
@@ -340,22 +385,29 @@ struct OPMLImportScreen: View {
                 }
                 .disabled(importer.selected.isEmpty)
                 Button {
-                    // A Shortcut's list has no file to go back to choosing: Cancel leaves the import.
-                    let leaves = importer.origin == .shortcut
-                    importer.cancel()
-                    if leaves { dismiss() }
+                    // A list of links has no file to go back to choosing: Cancel leaves the import as it is, so whoever
+                    // hears it close can still read what it offered (#4683).
+                    if importer.origin.isLinkList { dismiss() } else { importer.cancel() }
                 } label: { Text("Cancel").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
                     .accessibilityIdentifier("opml.import.cancel")
             case .following:
                 Button { importer.cancel() } label: { Text("Stop").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
                     .accessibilityIdentifier("opml.import.stop")
             case .finished:
-                primaryButton("Done", id: "opml.import.done") { dismiss() }
+                primaryButton("Done", id: "opml.import.done") { if let onDone { onDone() } else { dismiss() } }
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(.bar)
+    }
+
+    static func title(for origin: OPMLImportModel.Origin) -> String {
+        switch origin {
+        case .file: return "Import from another app"
+        case .shortcut: return "Import from Apple Podcasts"
+        case .assistant: return AIFollowSuggestionsRow.title
+        }
     }
 
     private func primaryButton(_ title: String, id: String, action: @escaping () -> Void) -> some View {

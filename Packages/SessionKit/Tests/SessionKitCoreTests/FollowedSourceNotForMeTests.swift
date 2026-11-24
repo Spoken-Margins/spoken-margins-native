@@ -147,6 +147,47 @@ final class FollowedSourceNotForMeTests: XCTestCase {
         _ = await coordinator.refreshStale(force: true)
         XCTAssertEqual(try states(subscription.id)["ep-2"], .unseen)
     }
+
+    /// PR 6: the app marks through `markItem(_:of:)`, from the stored entry and its subscription. The mark it writes
+    /// is the one the coordinator checks after unfollow and refollow; `unmarkItem(_:of:)` takes exactly that mark off.
+    func testTheAppsMarkFromAStoredEntryAndItsSubscriptionSurvivesRefollowAndItsUndoClearsIt() async throws {
+        let store = store()
+        let coordinator = coordinator(marks: store.box)
+        let subscription = try await coordinator.follow(urlString: feedURL)
+        let entry = try XCTUnwrap(try repository.loadFeedEntries(subscriptionId: subscription.id).first { $0.episodeGUID == "ep-2" })
+        _ = try await coordinator.dismissEntry(id: entry.id)
+        try await store.markItem(entry, of: subscription)
+
+        try await coordinator.unfollow(subscriptionId: subscription.id)
+        let again = try await coordinator.follow(urlString: feedURL)
+        XCTAssertEqual(try states(again.id)["ep-2"], .dismissed)
+
+        try await store.unmarkItem(entry, of: subscription)
+        let stored = await store.markedItems(feedKey: try XCTUnwrap(NotForMeStore.feedKey(for: feedURL)))
+        XCTAssertTrue(stored.isEmpty)
+    }
+
+    /// Undo takes the mark off before it restores the entry. Restoring first and leaving the mark lets the next
+    /// refresh dismiss the episode again, which is why the app's Undo runs in that order.
+    func testUndoMustTakeTheMarkOffBeforeTheRefreshOrTheEpisodeIsDismissedAgain() async throws {
+        let store = store()
+        let coordinator = coordinator(marks: store.box)
+        let subscription = try await coordinator.follow(urlString: feedURL)
+        let entry = try XCTUnwrap(try repository.loadFeedEntries(subscriptionId: subscription.id).first { $0.episodeGUID == "ep-2" })
+        let dismissedFrom = try await coordinator.dismissEntry(id: entry.id)
+        let previous = try XCTUnwrap(dismissedFrom)
+        try await store.markItem(entry, of: subscription)
+
+        try await coordinator.undoDismissEntry(id: entry.id, restoring: previous)
+        _ = await coordinator.refreshStale(force: true)
+        XCTAssertEqual(try states(subscription.id)["ep-2"], .dismissed, "with the mark still there, the refresh dismisses it again")
+
+        // The app's order: the mark first, then the entry.
+        try await store.unmarkItem(entry, of: subscription)
+        try await coordinator.undoDismissEntry(id: entry.id, restoring: previous)
+        _ = await coordinator.refreshStale(force: true)
+        XCTAssertEqual(try states(subscription.id)["ep-2"], previous)
+    }
 }
 
 /// A JSON feed of `episodeCount` episodes whose GUIDs are `ep-N` and whose pages are `/episodes/N`.

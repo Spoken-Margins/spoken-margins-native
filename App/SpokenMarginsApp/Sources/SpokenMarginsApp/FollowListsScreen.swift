@@ -2,14 +2,15 @@ import SessionKit
 import SwiftUI
 
 /// The Lists screen, pushed from Following's toolbar (#4046 PR 3): every list with how many shows it holds, **New list**,
-/// and a swipe to delete. Adding a list by link, exporting and Rules arrive with later slices. A list only groups shows,
-/// so deleting one leaves every show followed.
+/// a swipe to delete, and the Rules row (PR 10b). Adding a list by link and exporting arrive with later slices. A list only
+/// groups shows, so deleting one leaves every show followed.
 struct FollowListsScreen: View {
     let model: Gate1AppModel
     let subscriptions: [FeedSubscription]
     let artwork: FollowingArtworkCache
 
     @ObservedObject private var listsState = FollowListsState.shared
+    @ObservedObject private var rulesState = ListeningRulesState.shared
     @State private var isNaming = false
     @State private var newName = ""
     /// Why the last name was refused; shown in an alert of its own.
@@ -76,12 +77,26 @@ struct FollowListsScreen: View {
                     .accessibilityIdentifier("followLists.new")
                 }
             }
+            // Rules apply to any show, not only to shows in a list, so the row is here with no lists too.
+            Section {
+                NavigationLink {
+                    RulesScreen(model: model, subscriptions: subscriptions)
+                        .miniPlayerKeepOut()
+                } label: {
+                    LabeledContent(ListeningRuleScreens.title, value: ListeningRuleScreens.rowValue(rules: rulesState.rules))
+                        .frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("followLists.rules")
+            }
         }
         .scrollContentBackground(.hidden)
         .background(AppColors.bone)
         .navigationTitle(FollowListWords.listsTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await model.reloadFollowLists() }
+        .task {
+            await model.reloadFollowLists()
+            await model.reloadListeningRules()
+        }
         .alert("New list", isPresented: $isNaming) {
             TextField("Name", text: $newName)
             Button("Cancel", role: .cancel) {}

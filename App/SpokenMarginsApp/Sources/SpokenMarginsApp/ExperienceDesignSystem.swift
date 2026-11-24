@@ -138,12 +138,23 @@ struct GutterRow<Gutter: View, Content: View>: View {
 
 struct ExperienceFilterChip<Content: View>: View {
     private let preferences = AppAccessibilityPreferences()
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .subheadline) private var wrappingVerticalPadding: CGFloat = 6
     let isActive: Bool
+    /// The Library's chips show words at every text size, so a long label may wrap onto a second line
+    /// inside a rounded rectangle (#4762). Other chips keep the one-line capsule.
+    let allowsWrapping: Bool
     let content: Content
 
-    init(isActive: Bool, @ViewBuilder content: () -> Content) {
+    init(isActive: Bool, allowsWrapping: Bool = false, @ViewBuilder content: () -> Content) {
         self.isActive = isActive
+        self.allowsWrapping = allowsWrapping
         self.content = content()
+    }
+
+    // A 19 pt radius on a 38 pt chip is a capsule, so the wrapping shape only differs once the chip grows.
+    private var shape: AnyShape {
+        allowsWrapping ? AnyShape(RoundedRectangle(cornerRadius: 19, style: .continuous)) : AnyShape(Capsule())
     }
 
     var body: some View {
@@ -153,15 +164,17 @@ struct ExperienceFilterChip<Content: View>: View {
                 Image(systemName: "checkmark").font(.caption.weight(.bold)).accessibilityHidden(true)
             }
             content
+                .fixedSize(horizontal: false, vertical: allowsWrapping)
         }
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(isActive ? AppColors.onEvergreen : AppColors.text)
             .padding(.horizontal, 13)
+            .padding(.vertical, allowsWrapping && dynamicTypeSize.isAccessibilitySize ? wrappingVerticalPadding : 0)
             .frame(minHeight: 38)
             .background(isActive ? AppColors.evergreen : AppColors.panel)
-            .clipShape(Capsule())
+            .clipShape(shape)
             .overlay {
-                Capsule().stroke(isActive ? AppColors.evergreen : AppColors.border)
+                shape.stroke(isActive ? AppColors.evergreen : AppColors.border)
             }
             .minimumTapTarget()
             .accessibilityAddTraits(isActive ? .isSelected : [])

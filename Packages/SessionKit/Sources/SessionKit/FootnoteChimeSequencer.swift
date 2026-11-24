@@ -67,6 +67,8 @@ public struct FootnoteChimeSequencer: Equatable, Sendable {
     private var offeredLabel: String?
     private var hearing: Run?
     private var shownAt: TimeInterval?
+    /// A note the listener asked for by its label before the player held a plan to find it in (`requestHearing`).
+    private var requested: String?
 
     public init() {}
 
@@ -91,8 +93,14 @@ public struct FootnoteChimeSequencer: Equatable, Sendable {
     ) -> Step {
         guard mode == .chime, tags.indices.contains(index) else {
             // A mode change, or the end of the text: nothing is offered or read any more.
-            if hearing != nil || offered != nil { reset() }
+            if hearing != nil || offered != nil || requested != nil { reset() }
             return .play
+        }
+        if let label = requested {
+            // A request made before there was a plan to look in: the first chunk asked about after it finds the note,
+            // or drops the request when this plan does not carry it.
+            requested = nil
+            if let note = tags.firstIndex(where: { $0 == .aside(label) }) { _ = beginHearing(chunkAt: note, tags: tags) }
         }
         rebaseRuns(onto: tags)
         if let hearing {
@@ -136,6 +144,18 @@ public struct FootnoteChimeSequencer: Equatable, Sendable {
         return run.chunks.lowerBound
     }
 
+    /// The listener asked for the note `label` (a Timeline entry) while the player holds no plan to find it in yet: the
+    /// item was not playing, or another one was. The first chunk the player asks about afterwards (`willStartChunk`)
+    /// turns this into `beginHearing` on the plan then in force, so in `chime` mode the note is read instead of offered.
+    /// The caller moves playback to the start of the citing sentence itself. Nothing shows on the card until then; a
+    /// plan that does not carry the note drops the request, and `reset()` (a seek the sequencer did not make, another
+    /// item, a stop) drops it too.
+    public mutating func requestHearing(label: String) {
+        hearing = nil
+        clearCard()
+        requested = label
+    }
+
     /// The card's Hear note button: reads the run the card is offering. Nil when no card is offered.
     public mutating func hearOfferedNote(tags: [Tag?]) -> Int? {
         rebaseRuns(onto: tags)
@@ -175,6 +195,7 @@ public struct FootnoteChimeSequencer: Equatable, Sendable {
     /// A new item, a recording, a seek the sequencer did not make, or leaving playback: nothing is offered.
     public mutating func reset() {
         hearing = nil
+        requested = nil
         clearCard()
     }
 

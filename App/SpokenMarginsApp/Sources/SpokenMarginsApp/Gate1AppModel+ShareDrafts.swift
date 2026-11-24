@@ -103,7 +103,8 @@ extension Gate1AppModel {
             sharingState.confirmsPrivateSharingRights = sharingState.isAppAuthoredItem
         }
         // A voice Margin with no words starts with placeholder words instead of being left out (#3027).
-        // The switch starts where the sender last put it for each Margin, so a re-share keeps it (#3472).
+        // The switch starts where the sender last put it for each Margin, so a re-share keeps it (#3472). Both are keyed
+        // by session and id, like the drafts, so a replay's "ij-001" doesn't take the first listen's choice (#4688).
         let lastSentReadAloud = (try? requireStore().loadLastSentReadAloud(itemId: selectedItem.id)) ?? [:]
         let lastSentLeadIns = (try? requireStore().loadLastSentLeadIns(itemId: selectedItem.id)) ?? [:]
         sharingState.drafts = candidates.map { interjection in
@@ -113,8 +114,8 @@ extension Gate1AppModel {
                     ?? (!hasStarredCandidates || interjection.isStarredForSharing == true),
                 hasVoice: interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) != nil,
                 itemTitle: selectedItem.title,
-                lastSentReadAloud: lastSentReadAloud[interjection.id],
-                lastSentLeadInMs: lastSentLeadIns[interjection.id]
+                lastSentReadAloud: lastSentReadAloud[interjection.sessionScopedId],
+                lastSentLeadInMs: lastSentLeadIns[interjection.sessionScopedId]
             )
         }
         // A Margin whose recording was made and then lost goes as words; the row says why it has no voice (#4688),
@@ -178,6 +179,12 @@ extension Gate1AppModel {
     func setShareDraftReadAloud(_ id: String, readAloud: Bool) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         sharingState.drafts[index].readAloud = readAloud
+    }
+
+    /// The sender's "Before your Margin" length (#4171), clamped to what a reader accepts.
+    func setShareDraftLeadIn(_ id: String, ms: Int) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        sharingState.drafts[index].leadInMs = SenderLeadIn.clamped(ms)
     }
 
     func setShareDraftAnchorBefore(_ id: String, value: String) {

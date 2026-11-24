@@ -3,7 +3,7 @@ import SessionKit
 
 /// The shows the listener's own AI suggested following, as the app holds them (#4683, Design section 2h). The store is
 /// `AIFollowSuggestions` in SessionKit; this keeps what it holds in a published array so Following can draw a count and a
-/// title from it. The row itself is PR 3c; until then a link list's follow entries are only stored here.
+/// title from it. Following's "Suggested by your AI" row observes it.
 @MainActor
 final class AIFollowSuggestionsModel: ObservableObject {
     let store: AIFollowSuggestions
@@ -33,6 +33,24 @@ final class AIFollowSuggestionsModel: ObservableObject {
     func remove(urls: [String]) {
         store.remove(urls: urls)
         reload()
+    }
+
+    /// The row's Dismiss: every suggestion goes, and what was there comes back for its Undo.
+    func dismissAll() -> [AIFollowSuggestions.Suggestion] {
+        let previous = store.dismissAll()
+        reload()
+        return previous
+    }
+
+    /// Undo of the row's Dismiss.
+    func restore(_ previous: [AIFollowSuggestions.Suggestion]) {
+        store.restore(previous)
+        reload()
+    }
+
+    /// The suggestions Following draws: those whose show is not followed yet (`followed` holds `FeedURLKey`s).
+    func pending(excluding followed: Set<String>) -> [AIFollowSuggestions.Suggestion] {
+        suggestions.filter { FeedURLKey.make($0.url).map { !followed.contains($0) } ?? true }
     }
 
     func reload() {

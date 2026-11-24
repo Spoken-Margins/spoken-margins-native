@@ -143,10 +143,30 @@ class GateChecks(unittest.TestCase):
         self.assertEqual(alert.checks_state([run('hosted fast: portable'), run('merge policy', conclusion='failure')], []),
                          ('ok', []))
 
+    def test_neither_is_the_job_that_writes_it_nor_a_pending_one(self):
+        # The job is `merge policy run`; the script writes the check `merge policy`, in progress while a PR waits (#4986).
+        # Each gate on its own, red or in progress, leaves the audit and the alert free to go ahead.
+        for name in ('merge policy', 'merge policy run'):
+            for kwargs in ({'conclusion': 'failure'}, {'status': 'in_progress', 'conclusion': None}):
+                with self.subTest(name=name, **kwargs):
+                    self.assertEqual(alert.checks_state([run('hosted fast: portable'), run(name, **kwargs)], []),
+                                     ('ok', []))
+
     def test_a_real_failure_beside_it_still_fails(self):
         state, names = alert.checks_state([run('hosted fast: portable', conclusion='failure'),
                                            run('merge policy', conclusion='failure')], [])
         self.assertEqual((state, names), ('failed', ['hosted fast: portable']))
+
+    def test_the_gate_as_a_commit_status_is_skipped_too(self):
+        # #5162: `merge policy` is a commit status now. A pending or failed one must not hold back the audit or the
+        # alert it waits for, or each waits on the other forever.
+        for state in ('pending', 'failure', 'error'):
+            with self.subTest(state=state):
+                self.assertEqual(alert.checks_state([run('hosted fast: portable')],
+                                                    [{'context': 'merge policy', 'state': state}]), ('ok', []))
+        self.assertEqual(alert.checks_state([run('hosted fast: portable')],
+                                            [{'context': 'merge policy', 'state': 'pending'},
+                                             {'context': 'main-t3', 'state': 'failure'}]), ('failed', ['main-t3']))
 
 
 class AlertBody(unittest.TestCase):

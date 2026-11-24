@@ -60,7 +60,6 @@ struct PlaybackScreen: View {
     @State private var timelinePull = TimelinePullHolder()
     @State private var playbackTick = 0 // bumped by each progress tick, so this screen follows the clock (#2074)
     @StateObject private var nowScene = NowSceneController()
-    @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
 
     /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
     /// looks first. On Now it sits in line with the title, so the screen gets no taller (#2262).
@@ -96,11 +95,19 @@ struct PlaybackScreen: View {
                                 VStack(alignment: .leading, spacing: 20) {
                                     if model.snapshot.phase == .finished {
                                         Text("Finished").font(.headline).foregroundStyle(AppColors.listeningAccent)
+                                        ArrivalFollowCard()
                                     }
                                     if model.isFirstMarginPromptShowing { FirstMarginPromptCard() }
                                     playbackHeader
                                         // The Library arrow lives in the header; once following scrolls it away, the toolbar shows it (#4453).
-                                        .onScrollVisibilityChange(threshold: 0.01) { nowScene.headerIsVisible = $0 }
+                                        // Gone below one threshold, back above another, so the toolbar arrow's own bar
+                                        // layout can't flip it on every pass (#4739).
+                                        .onScrollVisibilityChange(threshold: NowHeaderVisibility.goneBelow) {
+                                            nowScene.headerReachedGoneThreshold($0)
+                                        }
+                                        .onScrollVisibilityChange(threshold: NowHeaderVisibility.backAt) {
+                                            nowScene.headerReachedBackThreshold($0)
+                                        }
                                     capturePermissionRecovery
                                     importedCommentaryControl
                                     if model.selectedItem.isNativeAudio {
@@ -192,6 +199,8 @@ struct PlaybackScreen: View {
                             if selectedPane == .now { PinnedMarginCardView() }
                             // A note read where it is cited: the same slot, never beside a friend's card (#3777).
                             if selectedPane == .now { FootnoteCardPinnedView() }
+                            // The app's line before iOS asks about Speech Recognition; a friend's card keeps the slot first (#4715).
+                            if selectedPane == .now { SpeechAskCardSlot() }
                             if !model.recordingNavigationIsLocked, let feedback = model.playbackFeedbackTag {
                                 PlaybackFeedbackTagView(event: feedback.event, tag: feedback.tag)
                                     .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
@@ -244,22 +253,11 @@ struct PlaybackScreen: View {
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
-                // One meaning for the top-left arrow on every tab: leave the screen. The exception is the Timeline editor
-                // with the keyboard up, where the tab switch is hidden and this is the way back to Now (#4027).
-                let leading = PlaybackLeadingControl.control(
+                PlaybackLeadingToolbar(
                     pane: leadingControlPane, timelineEditorHasFocus: timelineDock.hidesDock,
-                    nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio)
-                if leading == .libraryExit {
-                    ToolbarItem(placement: .topBarLeading) { libraryExitButton }
-                } else if leading == .returnToNow {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button { selectedPane = .now } label: {
-                            Label("Now Playing", systemImage: "arrow.left")
-                        }
-                        .tint(AppColors.listeningAccent)
-                        .accessibilityIdentifier("timeline.nowPlaying.button")
-                    }
-                }
+                    nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio,
+                    returnToNow: { selectedPane = .now }
+                ) { libraryExitButton }
             }
             .scrollDismissesKeyboard(.interactively)
             .trackedSheet(item: $selectedInterjection) { interjection in
@@ -954,18 +952,14 @@ struct PlaybackScreen: View {
             itemText: model.selectedItem.text,
             itemHasNativeAudio: model.selectedItem.isNativeAudio
         ) {
+            // One look since #4781: the icon. VoiceOver and the Large Content Viewer still name it.
             Button(action: openSourceText) {
-                if usesVerbosePlaybackActions {
-                    PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")
-                    .frame(minHeight: 32)
-                    .expandedHitArea(vertical: 6)
-                } else {
-                    Image(systemName: "doc.plaintext")
-                    .frame(minWidth: 24, minHeight: 32)
-                    .expandedHitArea(horizontal: 10, vertical: 6)
-                }
+                Image(systemName: "doc.plaintext")
+                .frame(minWidth: 24, minHeight: 32)
+                .expandedHitArea(horizontal: 10, vertical: 6)
             }
             .accessibilityLabel("View native source text")
+            .accessibilityShowsLargeContentViewer { Label("Text", systemImage: "doc.plaintext") }
             .accessibilityIdentifier("playback.sourceText.button")
         }
 
@@ -991,8 +985,9 @@ struct PlaybackScreen: View {
         Button {
             isSleepTimerPresented = true
         } label: {
-            if usesVerbosePlaybackActions {
-                PlaybackControlLabel(title: model.sleepTimerIsActive ? model.sleepTimerDescription : "Sleep", systemImage: "moon.zzz")
+            // The moon alone, with the time left beside it while a timer runs (#4781).
+            if let text = model.sleepTimerCompactButtonText {
+                PlaybackControlLabel(title: text, systemImage: "moon.zzz")
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .frame(minHeight: 32)
                     .expandedHitArea(vertical: 6)
@@ -1003,6 +998,7 @@ struct PlaybackScreen: View {
             }
         }
         .accessibilityLabel(model.sleepTimerDescription)
+        .accessibilityShowsLargeContentViewer { Label(model.sleepTimerDescription, systemImage: "moon.zzz") }
         .accessibilityIdentifier("playback.sleepTimer.button")
         .popover(isPresented: $isSleepTimerPresented, arrowEdge: .top) {
             sleepTimerPopover
@@ -1012,18 +1008,11 @@ struct PlaybackScreen: View {
         Button {
             model.cyclePlaybackRate()
         } label: {
-            if usesVerbosePlaybackActions {
-                PlaybackControlLabel(title: model.compactPlaybackRateDescription, systemImage: "speedometer")
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .frame(minHeight: 32)
-                    .expandedHitArea(vertical: 6)
-            } else {
-                Text(model.compactPlaybackRateDescription)
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .frame(minHeight: 32)
-                    .expandedHitArea(vertical: 6)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
+            Text(model.compactPlaybackRateDescription)
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .frame(minHeight: 32)
+                .expandedHitArea(vertical: 6)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
         .accessibilityHint("Advances to the next playback speed")
@@ -1564,7 +1553,13 @@ struct PlaybackScreen: View {
                    lhsTime != rhsTime {
                     return lhsTime < rhsTime
                 }
-                return lhs.sortRank < rhs.sortRank
+                if lhs.sortRank != rhs.sortRank { return lhs.sortRank < rhs.sortRank }
+                // Several Margins with no place (#4233) share one position and no time: oldest first, then by id, so
+                // the order is the same on every draw.
+                if case .interjection(let left) = lhs, case .interjection(let right) = rhs, !left.hasPlace, !right.hasPlace {
+                    return left.createdAt != right.createdAt ? left.createdAt < right.createdAt : left.id < right.id
+                }
+                return false
             }
             return lhsPercent < rhsPercent
         }
@@ -1861,7 +1856,10 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .chapter(let chapter): return chapter.percent
         case .mediaChapter(_, let percent): return percent
         case .listeningMapScene(_, let percent): return percent
-        case .interjection(let interjection): return interjection.targetType == .item ? interjection.roughPercent : 101
+        case .interjection(let interjection):
+            guard interjection.targetType == .item else { return 101 }
+            // A Margin with no place (#4233) has zeros, not a position: it sorts after every placed entry.
+            return interjection.hasPlace ? interjection.roughPercent : MarginPlacePresentation.timelineSortPosition
         case .importedCommentary(_, _, let percent): return percent
         case .turn: return 101
         case .turnChapter: return 101
@@ -1883,7 +1881,7 @@ private enum PlaybackTimelineEntry: Identifiable {
 
     var interjectionMediaTimeMs: Int? {
         switch self {
-        case .interjection(let interjection): return interjection.anchor.mediaTimeMs
+        case .interjection(let interjection): return interjection.hasPlace ? interjection.anchor.mediaTimeMs : nil
         case .importedCommentary(_, let margin, _): return margin.resolution.localMediaTimeMs
         default: return nil
         }
@@ -2027,7 +2025,7 @@ private func interjectionPreview(_ interjection: Interjection) -> String {
        !transcript.isEmpty {
         return transcript
     }
-    return TranscriptionFailureWording.marginStatus(transcriptionStatus: interjection.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff) ?? interjection.transcriptionStatus
+    return TranscriptionFailureWording.marginStatus(transcriptionStatus: interjection.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff, speechRecognitionNotYetAsked: SpeechAskController.marginIsWaitingForAnswer(MarginIdentity.make(sessionId: interjection.sessionId, interjectionId: interjection.id))) ?? interjection.transcriptionStatus
 }
 
 private struct LightButtonStyle: ButtonStyle {

@@ -96,6 +96,36 @@ final class ShareStarTallyAppTests: XCTestCase {
         XCTAssertEqual(fixture.model.sharingState.openedFrom, .single)
     }
 
+    /// #4173 PR 4: "Starting with the Margins you starred." shows on Review only for a sheet that opened from stars, and
+    /// stays for that sheet when the listener changes the selection or goes back to Choose.
+    func testTheReviewCaptionShowsOnlyForASheetThatStartedFromStars() throws {
+        let fixture = try makeFixture(margins: ["m1", "m2"])
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = Build23SharingCoordinator(model: fixture.model)
+
+        coordinator.send(.begin)
+        XCTAssertNil(coordinator.snapshot.reviewCaption, "nothing starred")
+        coordinator.send(.cancel)
+
+        let first = try shown(fixture, "m1")
+        fixture.model.setStarredForSharing(first, starred: true, place: .now)
+        coordinator.send(.begin)
+        XCTAssertEqual(coordinator.snapshot.reviewCaption, "Starting with the Margins you starred.")
+        coordinator.send(.setFilter(.all))
+        coordinator.send(.setIncluded(id: Interjection.sessionScopedId(sessionId: fixture.sessionId, id: "m2"), included: true))
+        coordinator.send(.setIncluded(id: Interjection.sessionScopedId(sessionId: fixture.sessionId, id: "m1"), included: false))
+        coordinator.send(.returnToSelect)
+        XCTAssertEqual(coordinator.snapshot.reviewCaption, "Starting with the Margins you starred.", "the sheet keeps how it started")
+        coordinator.send(.cancel)
+
+        fixture.model.presentReplyBackShare(ReplyBackOffer(replies: [try shown(fixture, "m2")], others: [], friendLabels: ["Cole"]))
+        XCTAssertNil(coordinator.snapshot.reviewCaption, "a reply sheet, with a starred Margin on the item")
+        coordinator.send(.cancel)
+
+        fixture.model.openMarginShare(try shown(fixture, "m1"))
+        XCTAssertNil(coordinator.snapshot.reviewCaption, "a one-Margin share of a starred Margin")
+    }
+
     func testASendTapWritesOneLineWithCountsAndNoMarginWords() throws {
         let fixture = try makeFixture(margins: ["m1", "m2"])
         defer { try? FileManager.default.removeItem(at: fixture.root) }

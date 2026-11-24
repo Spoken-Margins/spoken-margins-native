@@ -494,6 +494,16 @@
    "line": null,
    "reachable": true,
    "note": ""
+  },
+  {
+   "id": "ImportInboxScreen",
+   "title": "Import Inbox",
+   "group": "Settings",
+   "kind": "screen",
+   "file": "ImportInboxScreen.swift",
+   "line": 37,
+   "reachable": true,
+   "note": "Failed shares with Retry and Delete, and links waiting for a connection (#4781)."
   }
  ],
  "edges": [
@@ -3030,6 +3040,62 @@
    "present_line": null,
    "condition": "The listener has Margins on the item",
    "notes": "share() asks model.itemShareStart(); on .share, openItemShareSheet() -> openPlaybackShareStartingWithFriendAnswers() opens the player's Share sheet (Gate1RootView.swift), or the reply sheet on a friend's item the listener answered. With nothing to send it shows the Nothing to share yet alert instead (#4229)."
+  },
+  {
+   "id": "e186",
+   "from": "OUTSIDE_APP",
+   "to": "ExperienceRecordingView",
+   "control": "Shortcuts or Siri: Record a Margin (Back Tap, Action Button, Home Screen)",
+   "control_kind": "entry",
+   "presentation": "entry",
+   "file": "RecordMarginShortcutIntent.swift",
+   "line": 42,
+   "anchor": "model.dispatchGate2CompactCommand(.beginInterjection, origin: origin)",
+   "present_line": null,
+   "condition": "no live session is running and an item is in the player",
+   "notes": "RecordMarginShortcutIntent opens the app (openAppWhenRun) and RecordMarginRoute picks the route (#4923): a running live session records on the live session's own recording screen (router.open(.speak), line 35; not in this map, see docs/design/live-sessions/live-sessions.json job L19); else the player's item starts the same recording as the on-screen Add a Margin (this arrow); else a quick session (QuickMarginRecordingView, #4927, not in this map). Locked, iOS asks to unlock first."
+  },
+  {
+   "id": "e187",
+   "from": "SettingsScreen",
+   "to": "ImportInboxScreen",
+   "control": "\"Import Inbox\" (tray), with a count when something waits",
+   "control_kind": "row",
+   "presentation": "push",
+   "file": "ImportInboxScreen.swift",
+   "line": 12,
+   "anchor": "NavigationLink(value: SettingsPage.importInbox)",
+   "present_line": null,
+   "condition": "",
+   "notes": "Value link on Settings' NavigationStack path (#4781). The Inbox never opens by itself."
+  },
+  {
+   "id": "e188",
+   "from": "ExperienceLibraryScreen",
+   "to": "ImportInboxScreen",
+   "control": "\"See why\" on the failed shared article banner",
+   "control_kind": "button",
+   "presentation": "push",
+   "file": "Gate1AppModel+FailedSharedArticles.swift",
+   "line": 23,
+   "anchor": "perform: { [weak self] in self?.openImportInbox() }",
+   "present_line": null,
+   "condition": "a shared article couldn't be added",
+   "notes": "The banner can show over any tab. openImportInbox sets requestedSettingsPage and selects the Settings tab, which sets its path to [.importInbox] (#4781). Refused while recording."
+  },
+  {
+   "id": "e189",
+   "from": "ExperienceLibraryScreen",
+   "to": "ImportInboxScreen",
+   "control": "\"See why\" on the failed shared link banner",
+   "control_kind": "button",
+   "presentation": "push",
+   "file": "Gate1AppModel+ImportInbox.swift",
+   "line": 293,
+   "anchor": "identifier: \"feedback.sharedLinkFailed.seeWhy\"",
+   "present_line": null,
+   "condition": "a shared link failed for a reason other than the network",
+   "notes": "Same route as the article banner (#4781)."
   }
  ],
  "omitted": {
@@ -3209,6 +3275,16 @@
     "e147",
     "e168"
    ]
+  },
+  {
+   "id": "j18",
+   "name": "Record a spoken Margin on what's playing from outside the app",
+   "start": "OUTSIDE_APP",
+   "via": [],
+   "target": "ExperienceRecordingView",
+   "final_cost": 1,
+   "final": "Speak, then tap Save & resume. Saying “stop margin” can end it with no tap instead (Settings, on by default, #3940), but listening is best effort: the first Margin before Speech Recognition is allowed has no phrase.",
+   "note": "The entry is one action: a Back Tap, the Action Button or a Home Screen tap that runs the Record a Margin shortcut (#4923); recording starts with no tap. Setting up Back Tap once is not counted. With a live session running (a Kindle book read by Speak Screen) the route is the live session's recording screen instead: see job L19 in docs/design/live-sessions/live-sessions.json and its Kindle comparison in SITUATIONS.md."
   }
  ]
 }

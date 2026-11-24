@@ -139,7 +139,10 @@ extension Gate1AppModel {
     /// Plays the new shared Margins on `itemId` in turn. Afterwards the item goes back to where the listener left
     /// off: playing on with `thenContinue`, paused without it. `entries` are the Margins an offer already read; without
     /// them the review reads them.
-    func reviewNewMargins(itemId: String, thenContinue: Bool, entries offered: [SharedMarginReview.Entry]? = nil) {
+    func reviewNewMargins(
+        itemId: String, thenContinue: Bool, entries offered: [SharedMarginReview.Entry]? = nil,
+        startingEarlier: StartEarlier.Plan? = nil
+    ) {
         guard !rejectNavigationOrSessionMutationWhileRecording("review_new_margins") else { return }
         let entries = offered ?? newSharedMargins(itemId: itemId)
         guard !entries.isEmpty else {
@@ -166,11 +169,18 @@ extension Gate1AppModel {
             voiceURLs[step.anchor.marginId] = url
             return true
         }
-        guard snapshot.itemId == itemId,
-              let sequence = MarginMomentSequence(
-                  itemId: itemId, reviewing: steps.map(\.anchor),
-                  returnToMediaTimeMs: snapshot.currentMediaTimeMs, resumesAtEnd: thenContinue
-              ) else { return }
+        // "Start a minute earlier" on a friend's Margin playing by itself (#4171) reviews that Margin with the longer run-up.
+        let reviewing = steps.map(\.anchor)
+        let built: MarginMomentSequence?
+        if let startingEarlier {
+            // No return place: Stop in the longer run-up pauses where it is, never a minute ahead at the Margin, and the
+            // episode plays on from the Margin after it (the Design's "Stop after a reached Margin").
+            built = StartEarlier.review(itemId: itemId, margins: reviewing, plan: startingEarlier)
+        } else {
+            built = MarginMomentSequence(
+                itemId: itemId, reviewing: reviewing, returnToMediaTimeMs: snapshot.currentMediaTimeMs, resumesAtEnd: thenContinue)
+        }
+        guard snapshot.itemId == itemId, let sequence = built else { return }
         // The review plays these voices; the automatic shared-Margin prompts mustn't play them again.
         entries.forEach { sharedMarginOffers.markAnnounced($0.interjection.id) }
         // Written down before the review first moves the source, for the endings it can't give the place back at.

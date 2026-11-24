@@ -61,7 +61,7 @@ final class LinkListArrivalAppTests: XCTestCase {
 
         XCTAssertTrue(result.attempted)
         XCTAssertTrue(result.allLanded)
-        XCTAssertEqual(model.feedbackEvent?.message, "Made “Morning brief” with 2 items.")
+        XCTAssertEqual(model.feedbackEvent?.message, "Made “Morning brief” with 2 items. 1 show to review in Following.")
         XCTAssertEqual(model.feedbackEvent?.action?.identifier, "linkList.undo.button")
         let collection = try XCTUnwrap(model.libraryCollections.collections.first { $0.name == "Morning brief" })
         XCTAssertEqual(collection.itemIDs.count, 2, "the follow entry is not a member")
@@ -105,7 +105,7 @@ final class LinkListArrivalAppTests: XCTestCase {
         let result = await model.runLinkListArrival(brief(title: nil), route: .pasteAndGo)
 
         XCTAssertTrue(result.allLanded)
-        XCTAssertEqual(model.feedbackEvent?.message, "Added 2 links from your list.")
+        XCTAssertEqual(model.feedbackEvent?.message, "Added 2 links from your list. 1 show to review in Following.")
         XCTAssertEqual(model.feedbackEvent?.action?.identifier, "linkList.undo.button")
         XCTAssertEqual(model.libraryCollections.collections.count, collectionsBefore)
         XCTAssertEqual(model.aiFollowSuggestionsModel.suggestions.count, 1)
@@ -119,7 +119,7 @@ final class LinkListArrivalAppTests: XCTestCase {
         let result = await model.runLinkListArrival(list, route: .quickFolderAutomatic)
 
         XCTAssertTrue(result.allLanded)
-        XCTAssertEqual(model.feedbackEvent?.message, "Your AI suggested 1 show.")
+        XCTAssertEqual(model.feedbackEvent?.message, "Your AI suggested 1 show. They're at the top of Following.")
         XCTAssertNil(model.feedbackEvent?.action, "nothing was made, so nothing to undo")
         XCTAssertEqual(model.libraryItems.count, itemsBefore)
         XCTAssertFalse(model.libraryCollections.collections.contains { $0.name == "Shows" })
@@ -297,6 +297,7 @@ final class LinkListArrivalAppTests: XCTestCase {
         XCTAssertTrue(handoffFolder.pending().isEmpty, "the third failed try removes it")
         XCTAssertEqual(model.linkListArrival.handoffRetry.tries(for: entry.id), 0)
         XCTAssertEqual(model.feedbackEvent?.kind, .warning, "the arrival's banner names what couldn't be added")
+        XCTAssertEqual(model.feedbackEvent?.message, "“Mixed” has 1 item. 1 couldn't be added.", "the retry says what the list holds (#5071)")
     }
 
     /// A share, a Retry and the network's return all run the drain: within one foreground a list with a dead link is tried once.

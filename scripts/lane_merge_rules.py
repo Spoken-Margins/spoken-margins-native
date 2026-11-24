@@ -71,6 +71,11 @@ AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
 CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)  # how the audit task's verdict line opens
 
 
+# The start of every reason audit_blocker gives when no audit covers the head yet. merge_policy.py treats a PR held only
+# for this (or for the owner's tap) as waiting, not failed; an audit with blocking findings never starts with it.
+AUDIT_MISSING = 'has no Codex or Claude audit'
+
+
 def audit_blocker(comments: list[dict], head: str) -> str | None:
     """Why the Codex or Claude audits on the PR don't clear its head, or None when the newest audit of the head is clean.
 
@@ -88,12 +93,12 @@ def audit_blocker(comments: list[dict], head: str) -> str | None:
             verdict = next((line.strip() for line in rest.splitlines() if line.strip()), '')
             audits.append((AUDIT_SHA.findall(heading), verdict))
     if not audits:
-        return 'has no Codex or Claude audit comment yet'
+        return f'{AUDIT_MISSING} comment yet'
     on_head = [verdict for shas, verdict in audits if any(head.startswith(sha) for sha in shas)]
     if not on_head:
         audited = next((shas[0] for shas, _ in reversed(audits) if shas), None)
-        return (f'has no Codex or Claude audit of its head: the audit is on `{audited}`, the head is `{head[:7]}`' if audited
-                else f'has no Codex or Claude audit naming its head `{head[:7]}`')
+        return (f'{AUDIT_MISSING} of its head: the audit is on `{audited}`, the head is `{head[:7]}`' if audited
+                else f'{AUDIT_MISSING} naming its head `{head[:7]}`')
     if not CLEAN_AUDIT.match(on_head[-1]):
         return f'the Codex or Claude audit on the head `{head[:7]}` has blocking findings (it doesn\'t say "No blocking findings")'
     return None
@@ -130,17 +135,31 @@ INHERITED_CACHE = Path(os.environ.get('SM_LANE_INHERITED_CACHE') or
                        Path.home() / 'Library/Caches/SpokenMarginsLane/inherited-holds.json')
 
 
-def inherited_check(github, tree: Path, base: str, head: str):
+def short_error(text: str, limit: int = 320) -> str:
+    """<text> cut to about <limit> characters, keeping its end. A read's error names the path first and the reason last,
+    and a search path alone is 200 characters: cutting the end off left "gh api search/issues?...page=1:" with no reason
+    in merge group run 45291666840 (2026-11-23)."""
+    if len(text) <= limit:
+        return text
+    head = limit // 3
+    return text[:head] + ' … ' + text[-(limit - head - 3):]
+
+
+def inherited_check(github, tree: Path, base: str, head: str, api=None):
     """#712: a function from the PR's comments to the reasons its inherited audit findings hold it (see
     scripts/lane_inherited_holds.py). The lookup reads other PRs' audits for the commits this PR brings in beyond
-    next; the rules come from next's copy, like the other policies. A lookup that can't finish holds the merge."""
+    next; the rules come from next's copy, like the other policies. A lookup that can't finish holds the merge.
+
+    api, when given, is the GitHub read the lookup uses instead of its own one-try `gh api`: merge_policy.py passes one
+    that waits out rate limits and shares one search between every PR of a run."""
     try:
         policy = base_policy(tree, base, INHERITED_POLICY)
         if policy is None:
             raise RuntimeError(f'{base} has no {INHERITED_POLICY} yet')
-        holds = policy.find_holds(tree, github.repo, f'origin/{base}', head, github.pr, cache=INHERITED_CACHE)
+        reads = {'api': api} if api is not None else {}
+        holds = policy.find_holds(tree, github.repo, f'origin/{base}', head, github.pr, cache=INHERITED_CACHE, **reads)
     except Exception as error:  # noqa: BLE001 - any failure to look holds the merge instead of waving it through
-        why = f'{INHERITED_FAILED}: {str(error)[:200]}. Remove and re-add automerge to check again'
+        why = f'{INHERITED_FAILED}: {short_error(str(error))}. Remove and re-add automerge to check again'
         return lambda comments: [why]
     return lambda comments: policy.reasons(policy.unresolved(holds, comments, head), head)
 

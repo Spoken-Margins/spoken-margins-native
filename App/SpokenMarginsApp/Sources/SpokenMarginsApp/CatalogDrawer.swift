@@ -34,8 +34,17 @@ final class CatalogDrawerModel: ObservableObject {
     /// Why the last search failed, in words. The subject list stays usable underneath it.
     @Published private(set) var searchError: String?
     @Published private(set) var isSearchPending = false
-    /// The import a "Follow Podcasts in Spoken Margins" Shortcut opened (#4284), shown over the drawer's list.
-    @Published var shortcutImport: OPMLImportModel?
+    /// The import a "Follow Podcasts in Spoken Margins" Shortcut (#4284) or Following's "Suggested by your AI" row
+    /// (#4683) opened, shown over the drawer's list. However it goes (Cancel, Done, back, the sheet closing, a newer
+    /// list replacing it), `importClosed` hears about it.
+    @Published var shortcutImport: OPMLImportModel? {
+        didSet {
+            guard let oldValue, oldValue !== shortcutImport else { return }
+            importClosed?(oldValue)
+        }
+    }
+    /// Told when an import from a list closes, so the AI's suggestions can drop what it settled (#4683).
+    var importClosed: (@MainActor (OPMLImportModel) -> Void)?
     /// The "Got a link from a friend?" card shows on the first-launch opening while the Library holds no friend's packet (#3782).
     @Published private(set) var showsFriendLinkCard = false
     /// Under the card's Paste button when what was pasted holds no share link; cleared by the next paste.
@@ -99,6 +108,7 @@ final class CatalogDrawerModel: ObservableObject {
         self.subscriptions = subscriptions
         self.follow = follow
         self.makeOPMLImport = makeOPMLImport
+        packetOpenFailures?.onFriendItemOpened = { [weak self] in self?.friendItemOpened($0) }
     }
 
     /// The app's drawer: the bundled snapshot plus a cache in Application Support.
@@ -189,6 +199,19 @@ final class CatalogDrawerModel: ObservableObject {
         recordFriendFileArrival()
     }
 
+    /// The import says a friend's item opened. If that is the first one of this first launch, it is remembered as the
+    /// arrival item, so its end can offer to follow its show (#4672). An item the listener opened themselves never is.
+    func friendItemOpened(_ itemId: String) {
+        let hadReached = welcomeOrder.reachedFriendItem
+        welcomeOrder.friendItemOpened()
+        // A file or link that arrives while the first-run drawer shows picks leaves the order where it was (the drawer
+        // stays), so that case is the file having opened underneath it.
+        let openedUnderPicks = isPresented && isFirstRunOpening && friendFileOpenedUnderneath
+        guard openedUnderPicks || (!hadReached && welcomeOrder.reachedFriendItem) else { return }
+        var arrival = FirstLaunchArrival(defaults: defaults)
+        arrival.recordItem(itemId)
+    }
+
     /// The sheet that said a friend's link or file could not be opened has closed. The drawer that file withdrew comes
     /// back: at once on the Library, otherwise at the next visit. Nothing is held back by that file any more, so Done
     /// with nothing picked plays the Welcome sample as on any first launch (#3801).
@@ -277,14 +300,15 @@ final class CatalogDrawerModel: ObservableObject {
         }
     }
 
-    /// A Shortcut passed in podcast feed links (#4284): the drawer opens, if it isn't open already, on their
-    /// import preview. Nothing is followed until the listener taps Follow there. A second list while the first
-    /// is still following is turned away rather than stopping that run. False when there is no import.
+    /// A Shortcut passed in podcast feed links (#4284), or the listener tapped the shows their AI suggested
+    /// (`origin: .assistant`, #4683): the drawer opens, if it isn't open already, on their import preview. Nothing
+    /// is followed until the listener taps Follow there. A second list while the first is still following is
+    /// turned away rather than stopping that run. False when there is no import.
     @discardableResult
-    func openShortcutImport(feedLinks: [String]) -> Bool {
+    func openShortcutImport(feedLinks: [String], origin: OPMLImportModel.Origin = .shortcut) -> Bool {
         guard let makeOPMLImport, shortcutImport?.isFollowing != true else { return false }
         let importer = makeOPMLImport()
-        importer.load(feedLinks: feedLinks)
+        importer.load(feedLinks: feedLinks, origin: origin)
         shortcutImport = importer
         if !isPresented { present() }
         return true
@@ -296,6 +320,13 @@ final class CatalogDrawerModel: ObservableObject {
         // Held back by a friend's file, Done with nothing picked plays nothing: the Library has the friend's episode (#3796).
         let nothingToPlay = !welcomeOrder.playsWelcomeSampleOnClose && picks.isEmpty
         playsOnDismiss = isFirstRunOpening && startFirstListen != nil && !friendFileOpenedUnderneath && !nothingToPlay
+        isPresented = false
+    }
+
+    /// Done on the preview a Shortcut opened (#4290): the whole drawer closes, back to wherever the listener was, and
+    /// nothing plays. Bringing shows in from Apple Podcasts is not a first pick, so the first-run play doesn't apply.
+    func finishAfterShortcutImport() {
+        playsOnDismiss = false
         isPresented = false
     }
 
@@ -523,7 +554,8 @@ struct CatalogDrawerView: View {
             )) {
                 if let importer = drawer.shortcutImport {
                     // A new list from the Shortcut is a new screen, not the old one's state.
-                    OPMLImportScreen(importer: importer).id(ObjectIdentifier(importer))
+                    OPMLImportScreen(importer: importer, onDone: importer.origin == .shortcut ? { drawer.finishAfterShortcutImport() } : nil)
+                        .id(ObjectIdentifier(importer))
                 }
             }
         }
@@ -566,6 +598,12 @@ struct CatalogDrawerView: View {
     @ViewBuilder
     private var importLink: some View {
         if let makeOPMLImport = drawer.makeOPMLImport {
+            #if !SPOKEN_MARGINS_LEGACY
+            // Above the file import: most iPhone listeners are in Apple Podcasts, which has no export (#4290).
+            ApplePodcastsImportRow()
+                .padding(.horizontal, 16)
+                .accessibilityIdentifier("catalog.drawer.importApplePodcasts")
+            #endif
             NavigationLink {
                 OPMLImportScreen(importer: makeOPMLImport())
             } label: {
