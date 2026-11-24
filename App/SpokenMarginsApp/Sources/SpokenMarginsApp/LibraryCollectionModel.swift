@@ -45,11 +45,14 @@ final class LibraryCollectionModel: ObservableObject {
         if let storedFolders, storedFolders != folders { folders = storedFolders }
     }
 
-    /// Makes a collection holding `itemIDs`, in that order (Select's Add to Collection, a new name typed inline).
-    func create(name: String, itemIDs: [String], store: SQLiteSessionStore, now: Date = Date()) async -> Outcome {
+    /// Makes a collection holding `itemIDs`, in that order (Select's Add to Collection, a new name typed inline). `id`
+    /// is the new collection's, for a caller that keeps a link to it (the sender offer, #5033).
+    func create(
+        name: String, itemIDs: [String], store: SQLiteSessionStore, id: String = "collection-\(UUID().uuidString)", now: Date = Date()
+    ) async -> Outcome {
         guard ItemCollectionEditing.normalizedName(name) != nil else { return .needsName }
         guard let created = LibraryCollectionAdding.creating(
-            name: name, with: itemIDs, id: "collection-\(UUID().uuidString)", now: now, in: collections
+            name: name, with: itemIDs, id: id, now: now, in: collections
         ) else { return .nameTaken }
         if let failure = await save(created.collection, store: store) { return .failed(failure) }
         return .saved

@@ -47,6 +47,8 @@ struct ExperienceItemDetailScreen: View {
     @State private var pdfExport: PDFCommentExportModel?
     /// A tap on Play or "Skip to …" made before its start is possible, kept until it can run (#3788).
     @StateObject private var arrival = FriendArrivalPresenter()
+    /// "Keep Sam's readings together" and its later silent joins (#5033).
+    @StateObject private var senderCollection = SenderCollectionOfferPresenter()
     private let episodeLinker = ImportedFileEpisodeLinker()
 
     /// Finds whether the open item is a PDF, or a Word document with a kept original (#4338, #4595). A PDF needs only the
@@ -99,6 +101,13 @@ struct ExperienceItemDetailScreen: View {
                     if let friendIntro { FriendMarginsSenderLine(intro: friendIntro) }
                     hero
                     if let friendIntro { FriendMarginsSummary(intro: friendIntro, receipt: sharingCoordinator.introReceipt) }
+                    // Under the friend's intro, once the listener has answered a sender who sent two or more items (#5033).
+                    if case .offer(let offer) = senderCollectionDecision {
+                        SenderCollectionOfferRow(
+                            offer: offer,
+                            makeCollection: { senderCollection.openSheet(for: offer) },
+                            notNow: { senderCollection.decline(offer) })
+                    }
                     if let description = model.selectedItem.descriptionText {
                         ItemDescriptionPreview(text: description).id(model.selectedItem.id)
                     }
@@ -238,6 +247,10 @@ struct ExperienceItemDetailScreen: View {
             .task(id: "\(model.selectedItem.id)|\(model.libraryItems.contains { $0.id == model.selectedItem.id })") {
                 await refreshKeptOriginal()
             }
+            // A later item from a sender whose collection the listener made through the offer joins it (#5033).
+            .task(id: senderCollectionDecision) {
+                if case .join(let join) = senderCollectionDecision { await senderCollection.join(join, model: model) }
+            }
             .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Skip to the Margins" (#3365)
             .onDisappear {
                 WrittenMarginReadings.leftItemScreen(model.selectedItem.id)
@@ -251,6 +264,9 @@ struct ExperienceItemDetailScreen: View {
             }
             .trackedSheet(item: $collectionItem) { item in
                 ItemCollectionSheet(item: item).environmentObject(model)
+            }
+            .trackedSheet(item: $senderCollection.sheetOffer) { offer in
+                SenderCollectionOfferSheet(offer: offer, presenter: senderCollection).environmentObject(model)
             }
             .trackedSheet(isPresented: $showsReactions) {
                 ExperienceReactionsScreen().environmentObject(model)
@@ -294,6 +310,11 @@ struct ExperienceItemDetailScreen: View {
             .newMarginsOffer($pendingNewMarginsOffer)
             .miniPlayerKeepOut()
         }
+    }
+
+    /// What the sender offer shows or does on this item (#5033): nothing, the offer row, or a silent join.
+    private var senderCollectionDecision: SenderCollectionOffer.Decision {
+        senderCollection.decision(itemID: model.selectedItem.id, model: model)
     }
 
     private var hero: some View {
