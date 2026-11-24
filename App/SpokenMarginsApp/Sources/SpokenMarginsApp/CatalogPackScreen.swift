@@ -87,6 +87,7 @@ struct CatalogPackButton: View {
                 followButton(title: CatalogPackWords.buttonTitle(state))
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("catalog.pack.\(pack.id).followAll")
     }
 
@@ -94,8 +95,7 @@ struct CatalogPackButton: View {
         Button { drawer.followAll(pack) } label: {
             Text(title).font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
         }
-        .buttonStyle(.borderedProminent)
-        .tint(AppColors.evergreen)
+        .filledActionButton()
     }
 }
 
@@ -127,6 +127,7 @@ struct CatalogPackScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) { CatalogDrawerBottomInset() }
         .toolbar { CatalogDrawerDoneButton() }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("catalog.packScreen")
     }
 

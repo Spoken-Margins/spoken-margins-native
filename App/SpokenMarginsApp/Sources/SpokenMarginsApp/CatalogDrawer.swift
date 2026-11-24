@@ -945,8 +945,11 @@ struct CatalogDrawerBottomInset: View {
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if toast.undo != nil {
-                    Button(FollowingDismissMessages.undoTitle) { drawer.undoToast() }
-                        .frame(minWidth: 44, minHeight: 44)
+                    Button { drawer.undoToast() } label: {
+                        Text(FollowingDismissMessages.undoTitle)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
                         .accessibilityIdentifier("catalog.drawer.toast.undo")
                 }
             }
