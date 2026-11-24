@@ -112,6 +112,14 @@ final class SenderCollectionOfferTests: XCTestCase {
         XCTAssertEqual(join.banner, "Added to HIST 210.")
     }
 
+    func testAnItemTheListenerTookOutOfTheCollectionIsNotAddedBack() {
+        var record = SenderCollectionOfferRecord()
+        record.recordCollection("c1", for: sam)
+        record.recordPlaced(["a", "b"])
+        let items = [item("a", [sender(sam)], own: 1), item("b", [sender(sam)])]
+        XCTAssertEqual(decide("b", items, collections: [collection("c1", "From Sam", ["a"])], record: record), .none)
+    }
+
     func testAnItemAlreadyInTheRecordedCollectionShowsNothing() {
         var record = SenderCollectionOfferRecord()
         record.recordCollection("c1", for: sam)
@@ -174,6 +182,7 @@ final class SenderCollectionOfferTests: XCTestCase {
         var record = SenderCollectionOfferRecord()
         record.recordDeclined(for: sam)
         record.recordCollection("collection-1", for: ana)
+        record.recordPlaced(["item-1", "item-2"])
         record.save(to: defaults)
 
         let reopened = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -181,6 +190,8 @@ final class SenderCollectionOfferTests: XCTestCase {
         XCTAssertEqual(loaded, record)
         XCTAssertEqual(loaded.choice(for: sam), .declined)
         XCTAssertEqual(loaded.choice(for: ana), .collection("collection-1"))
+        XCTAssertTrue(loaded.wasPlaced("item-2"))
+        XCTAssertFalse(loaded.wasPlaced("item-3"))
     }
 
     func testARecordThatCannotBeReadStartsEmpty() throws {

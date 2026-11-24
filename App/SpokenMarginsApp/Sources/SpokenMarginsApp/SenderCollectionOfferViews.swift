@@ -24,7 +24,11 @@ final class SenderCollectionOfferPresenter: ObservableObject {
 
     /// What the open item's screen shows or does, from the Library's rows (items in Recently Deleted are not among them).
     func decision(itemID: String, model: Gate1AppModel) -> SenderCollectionOffer.Decision {
-        guard !itemID.isEmpty else { return .none }
+        // Most items carry no friend's Margins: answer those from their own row, without reading the whole Library.
+        guard !itemID.isEmpty,
+              let row = model.libraryItems.first(where: { $0.id == itemID }),
+              row.sharedMargins.senders.contains(where: { SenderCollectionOffer.senderID(of: $0) != nil })
+        else { return .none }
         return SenderCollectionOffer.decide(
             itemID: itemID,
             items: model.libraryItems.map(SenderCollectionOffer.ItemSenders.init),
@@ -58,6 +62,7 @@ final class SenderCollectionOfferPresenter: ObservableObject {
         switch await model.libraryCollections.create(name: name, itemIDs: offer.itemIDs, store: store, id: id) {
         case .saved:
             record.recordCollection(id, for: offer.senderID)
+            record.recordPlaced(offer.itemIDs)
             record.save(to: defaults)
             model.collectionsChanged()
             let saved = model.libraryCollections.collections.first { $0.id == id }?.name
@@ -82,6 +87,8 @@ final class SenderCollectionOfferPresenter: ObservableObject {
         defer { joining.remove(key) }
         switch await model.libraryCollections.add([join.itemID], toCollectionID: join.collectionID, store: store) {
         case .success(let added):
+            record.recordPlaced([join.itemID])
+            record.save(to: defaults)
             model.collectionsChanged()
             // Zero when the collection was deleted meanwhile, or the item was already in it: nothing to say.
             if added > 0 { model.reportConfirmation(join.banner) }

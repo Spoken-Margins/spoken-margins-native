@@ -248,8 +248,8 @@ struct ExperienceItemDetailScreen: View {
                 await refreshKeptOriginal()
             }
             // A later item from a sender whose collection the listener made through the offer joins it (#5033).
-            .task(id: senderCollectionDecision) {
-                if case .join(let join) = senderCollectionDecision { await senderCollection.join(join, model: model) }
+            .task(id: senderCollectionDecision) { [decision = senderCollectionDecision] in
+                if case .join(let join) = decision { await senderCollection.join(join, model: model) }
             }
             .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Skip to the Margins" (#3365)
             .onDisappear {

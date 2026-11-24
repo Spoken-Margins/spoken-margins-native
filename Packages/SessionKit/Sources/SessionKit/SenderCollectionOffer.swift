@@ -88,7 +88,9 @@ public enum SenderCollectionOffer {
         for senderID in senderIDs {
             guard case .collection(let collectionID) = record.choice(for: senderID) else { continue }
             // A deleted collection drops the link and counts as Not now: no join and no new offer.
-            guard let collection = collections.first(where: { $0.id == collectionID }),
+            // An item this offer already placed and the listener took out by hand stays out.
+            guard !record.wasPlaced(itemID),
+                  let collection = collections.first(where: { $0.id == collectionID }),
                   !collection.itemIDs.contains(itemID) else { continue }
             return .join(Join(senderID: senderID, collectionID: collection.id, collectionName: collection.name, itemID: itemID))
         }
@@ -134,12 +136,23 @@ public struct SenderCollectionOfferRecord: Equatable, Sendable {
     }
 
     public static let defaultsKey = "senderCollectionOfferV1"
+    /// The items the offer has put in a collection, so one the listener took out again is never added back.
+    public static let placedDefaultsKey = "senderCollectionOfferPlacedV1"
     private static let declinedValue = "declined"
 
     public private(set) var choices: [String: Choice]
+    public private(set) var placedItemIDs: Set<String>
 
-    public init(choices: [String: Choice] = [:]) {
+    public init(choices: [String: Choice] = [:], placedItemIDs: Set<String> = []) {
         self.choices = choices
+        self.placedItemIDs = placedItemIDs
+    }
+
+    public func wasPlaced(_ itemID: String) -> Bool { placedItemIDs.contains(itemID) }
+
+    /// Records the items Make a Collection or a join put in the sender's collection.
+    public mutating func recordPlaced(_ itemIDs: [String]) {
+        placedItemIDs.formUnion(itemIDs)
     }
 
     public func choice(for senderID: String) -> Choice? { choices[senderID] }
@@ -160,7 +173,8 @@ public struct SenderCollectionOfferRecord: Equatable, Sendable {
         for (senderID, value) in stored where SenderID.isValid(senderID) && !value.isEmpty {
             choices[senderID] = value == declinedValue ? .declined : .collection(value)
         }
-        return Self(choices: choices)
+        let placed = (defaults.stringArray(forKey: placedDefaultsKey) ?? []).filter { !$0.isEmpty }
+        return Self(choices: choices, placedItemIDs: Set(placed))
     }
 
     public func save(to defaults: UserDefaults) {
@@ -171,5 +185,6 @@ public struct SenderCollectionOfferRecord: Equatable, Sendable {
             }
         }
         defaults.set(stored, forKey: Self.defaultsKey)
+        defaults.set(placedItemIDs.sorted(), forKey: Self.placedDefaultsKey)
     }
 }
