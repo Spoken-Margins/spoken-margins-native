@@ -821,9 +821,10 @@ enum PDFStructuredTextExtractor {
     /// needs three lines; any other run needs five, so a short list or a
     /// paragraph's last line is never taken for a table. An uncaptioned run is a
     /// table only when a table caption is on this page, the next, or the three
-    /// before (long tables run on). Failing that, a run of three or more near a
-    /// figure caption is text printed inside the figure: axis ticks, panel
-    /// labels, screenshots.
+    /// before (long tables run on), unless a figure caption sits right below it.
+    /// Failing that, a run of three or more near a figure caption is text printed
+    /// inside the figure: axis ticks, panel labels, screenshots. The rule is
+    /// `PDFCellRunRole` in SessionKit (#4588).
     private static func tableAndFigureLineIndices(
         in lines: [TextLine],
         layout: BodyLayout,
@@ -833,6 +834,7 @@ enum PDFStructuredTextExtractor {
         let cells = lines.map(layout.looksLikeTableCell)
         let captions = lines.indices.filter { isTableCaption(lines[$0].text) || isFigureCaption(lines[$0].text) }
         let tableCaptions = captions.filter { isTableCaption(lines[$0].text) }
+        let figureCaptions = captions.filter { !isTableCaption(lines[$0].text) }
         var result = captionedTableLines(in: lines, captions: tableCaptions, layout: layout)
         var figure = Set<Int>()
         var index = 0
@@ -852,13 +854,21 @@ enum PDFStructuredTextExtractor {
                 if cells[probe] { end = probe }
                 probe += 1
             }
-            let length = end - index + 1
-            let captioned = tableCaptions.contains { $0 >= index - 3 && $0 <= end + 3 }
             let run = (index...end).filter { !captions.contains($0) && !result.contains($0) }
-            if captioned ? length >= 3 : (nearTableCaption && length >= 5) {
-                result.formUnion(run)
-            } else if nearFigureCaption && length >= 3 {
-                figure.formUnion(run)
+            // How far each figure caption's top is below the run's lowest line, in points.
+            var gaps: [Int: Double] = [:]
+            if let lowest = (index...end).filter({ !captions.contains($0) }).compactMap({ lines[$0].bounds?.minY }).min() {
+                for caption in figureCaptions where caption > index && caption <= end + PDFCellRunRole.captionReach {
+                    if let top = lines[caption].bounds?.maxY { gaps[caption] = Double(lowest - top) }
+                }
+            }
+            switch PDFCellRunRole.role(start: index, end: end, tableCaptions: tableCaptions,
+                                       figureCaptions: figureCaptions, figureCaptionGaps: gaps,
+                                       bodySize: Double(layout.bodySize), nearTableCaption: nearTableCaption,
+                                       nearFigureCaption: nearFigureCaption) {
+            case .table: result.formUnion(run)
+            case .figure: figure.formUnion(run)
+            case nil: break
             }
             index = end + 1
         }
