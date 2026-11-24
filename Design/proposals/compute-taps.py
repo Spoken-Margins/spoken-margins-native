@@ -15,8 +15,9 @@ are applied first, then the via screens, then the target (no interleaving).
 
 A two-person job (the sharing loop) has "legs" instead of a start and target:
 each leg names its "person", its own start, via, via_edges, target and
-final_cost, and every leg after the first says in "handoff" what passes from
-one person to the next (a link in Messages, a packet file). Each leg is counted
+final_cost, and a leg that changes person says in "handoff" what passes from
+one person to the next (a link in Messages, a packet file). An arrow whose
+control_kind is "auto" (a page that moves on by itself) costs 0. Each leg is counted
 as a job of its own; the job's taps are the sum, and the route names each
 person's taps.
 """
@@ -35,6 +36,8 @@ def load(path):
 
 
 def edge_cost(e):
+    if e.get("control_kind") == "auto":
+        return 0
     return 2 if e.get("control_kind") in DOUBLE_KINDS else 1
 
 
@@ -212,7 +215,7 @@ def check(base, prop, screens, edges, jobs, start):
         for n, leg in enumerate(legs):
             if "legs" in j and not leg.get("person"):
                 problems.append("job %s leg %d names no person" % (j["id"], n + 1))
-            if "legs" in j and n and not leg.get("handoff"):
+            if "legs" in j and n and leg.get("person") != legs[n - 1].get("person") and not leg.get("handoff"):
                 problems.append("job %s leg %d names no hand-off" % (j["id"], n + 1))
             for x in leg.get("via_edges", []):
                 if x not in eids:
