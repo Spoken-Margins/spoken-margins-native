@@ -730,22 +730,29 @@ struct FollowingShowRowView: View {
 }
 
 /// The status on a show row's last line: "Adding…" or "In Library". "In Library" is one `Text` with the glyph inline, so a
-/// narrow column can only break it at the space, never inside "Library" (#4723).
+/// narrow column can only break it at the space, never inside "Library" (#4723). Both states are exactly one caption line
+/// tall, so neither changes the row's height (#5295).
 struct FollowingShowStatusView: View {
     let status: FollowingRowStatus
     let showID: String
+    /// The room left for the mini spinner beside "Adding…".
+    private static let spinnerWidth: CGFloat = 16
 
     var body: some View {
         switch status {
         case .adding:
-            HStack(spacing: 4) {
-                ProgressView().controlSize(.mini)
-                Text("Adding…")
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("sources.show.\(showID).adding")
+            // The mini spinner is an overlay on the text's leading padding, not a stack item, so the view's height and
+            // first-text baseline are exactly the caption Text's, the same as In Library. As a stack item the spinner
+            // grew the row by about 11 pt while the episode was added (#5295).
+            Text("Adding…")
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
+                .padding(.leading, Self.spinnerWidth + 4)
+                .overlay(alignment: .leading) {
+                    ProgressView().controlSize(.mini).fixedSize()
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("sources.show.\(showID).adding")
         case .inLibrary:
             Text("\(Image(systemName: "checkmark.circle")) In Library")
                 .font(.caption)
