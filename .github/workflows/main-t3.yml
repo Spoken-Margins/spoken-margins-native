@@ -258,7 +258,7 @@ jobs:
   bisect:
     name: 'main-t3 bisect: which merge broke main?'
     needs: [decide, t3]
-    if: ${{ always() && needs.t3.outputs.state == 'failure' }}
+    if: ${{ !cancelled() && needs.t3.outputs.state == 'failure' }}
     runs-on: xcode-27
     timeout-minutes: 240
     # The App's key is an `agent-identity` secret (main only; see the decide job). `deployment: false`: no deployment

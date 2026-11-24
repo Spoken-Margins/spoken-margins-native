@@ -376,7 +376,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(jobs['t3']['outputs'], {'state': '${{ steps.run.outputs.state }}'})
         bisect = jobs['bisect']
         self.assertEqual(bisect['needs'], ['decide', 't3'])  # t3 needs decide, so the trunk gate still holds
-        self.assertEqual(bisect['if'], "${{ always() && needs.t3.outputs.state == 'failure' }}")
+        # !cancelled(), not always(): a run the owner cancels must not hold a Mac and the concurrency group for
+        # 4 hours or open a revert (audit on b0d3d2f). It still runs after the failed t3 job a red main makes.
+        self.assertEqual(bisect['if'], "${{ !cancelled() && needs.t3.outputs.state == 'failure' }}")
 
     def test_the_bisect_job_has_its_own_clock_history_and_the_rights_it_uses(self):
         jobs = self.jobs()
