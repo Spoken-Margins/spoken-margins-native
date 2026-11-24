@@ -409,6 +409,28 @@ class TheWorkflow(unittest.TestCase):
         self.assertNotIn('continue-on-error', self.steps('portable')[tests])
         self.assertFalse(any('swift build --build-tests' in run for run in runs), 'swift test builds them')
 
+    def test_a_pr_with_swift_inputs_runs_the_tests_in_their_own_job(self):
+        # The owner's call (2026-11-24): on a PR, in a job of their own, so the portable check stays quick, and only
+        # when the diff reaches a Swift input. A merge group skips it; the portable job runs them there.
+        job = self.jobs['linux-core-pr']
+        self.assertEqual(job['name'], 'hosted fast: Linux core')
+        self.assertEqual(job['needs'], 'scope')
+        self.assertEqual(job['runs-on'], 'ubuntu-latest')
+        for part in ("github.event_name == 'pull_request'", "needs.scope.outputs.mac != 'false'",
+                     "needs.scope.result == 'success'", 'github.event.pull_request.head.repo.full_name == github.repository',
+                     "vars.LANE_HOSTED_FAST == 'on'"):
+            self.assertIn(part, job['if'])
+        run = next(s for s in job['steps'] if 'scripts/linux_core_tests.py run' in s.get('run', ''))
+        self.assertNotIn('if', run)
+        self.assertNotIn('continue-on-error', run)
+        self.assertNotIn('continue-on-error', job)
+        cache = next(s for s in job['steps'] if s.get('uses', '').startswith('actions/cache@'))
+        portable_cache = next(s for s in self.steps('portable') if s.get('uses', '').startswith('actions/cache@'))
+        self.assertEqual(cache['with']['key'], portable_cache['with']['key'])
+        checkout = job['steps'][0]
+        self.assertIs(checkout['with']['persist-credentials'], False)
+        self.assertNotIn('permissions', job, 'the workflow default, contents: read')
+
     def test_a_red_portable_job_stops_the_macs(self):
         self.assertEqual(self.jobs['stop-macs-on-red']['needs'], 'portable')
         self.assertIn("needs.portable.result == 'failure'", self.jobs['stop-macs-on-red']['if'])

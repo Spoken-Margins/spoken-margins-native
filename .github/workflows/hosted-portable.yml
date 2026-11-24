@@ -336,6 +336,47 @@ jobs:
             echo "docs_only=false" | tee -a "$GITHUB_OUTPUT"
           fi
 
+  linux-core-pr:
+    # The owner's call (2026-11-24): SessionKitCoreTests on Linux run on a PR again, but as their own job, so the
+    # portable check keeps its quick-tier speed (2026-11-20) and only a PR whose diff reaches a Swift input waits for
+    # them. Without it a PR that breaks them is found only in the merge queue, where GitHub removes the culprit only
+    # after the entries ahead finish: #5207's catalog break and #5185 held every entry behind them for about six hours on
+    # 2026-11-24. A merge group skips this job (a skipped job reports success); the portable job runs the same tests there.
+    # It blocks a merge only once the "protect main" ruleset requires 'hosted fast: Linux core'. That is a step for the
+    # owner, after the job has run on the open PRs: required earlier, a PR whose last run predates the job waits for a
+    # check that never comes.
+    # Cost and catch: 8 to 9 free hosted Linux minutes (512 s p50 on 2026-11-20) per push of a PR with Swift inputs; no
+    # Mac, no tokens. From 2026-11-22 to 11-24, 38 failed queue groups and about 575 Mac minutes began with these tests,
+    # from 9 PRs, plus #5207 on 11-24. Waste signal: a month in which no PR's first red is here, or the queue still
+    # fails on these tests about as often.
+    name: 'hosted fast: Linux core'
+    needs: scope
+    if: >-
+      !cancelled() && needs.scope.result == 'success' && github.event_name == 'pull_request' &&
+      needs.scope.outputs.mac != 'false' &&
+      github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .build-linux
+          key: sessionkit-linux-swift6.2.4-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: sessionkit-linux-swift6.2.4-
+      - name: SessionKitCoreTests on Linux
+        run: python3 scripts/linux_core_tests.py run
+      - name: Keep the step logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-core-pr-test-runs
+          path: artifacts/test-runs/
+          if-no-files-found: ignore
+          retention-days: 7
+
   sessionkit:
     name: 'hosted fast: SessionKit core'
     needs: scope
