@@ -101,7 +101,7 @@ public enum MarginsControlCenter {
     ) -> [Row] {
         let thread = MarginThreadPresentation.rows(
             itemId: itemId, localMargins: localMargins, layers: layers, importedMargins: importedMargins)
-        let local = Dictionary(localMargins.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let local = Dictionary(localMargins.map { ($0.sessionScopedId, $0) }, uniquingKeysWith: { first, _ in first })
         let imported = Dictionary(importedMargins.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return thread.compactMap { row in
             switch row.reference {

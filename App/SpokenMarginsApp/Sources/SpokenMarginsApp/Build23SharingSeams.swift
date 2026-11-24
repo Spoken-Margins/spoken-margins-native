@@ -191,6 +191,9 @@ struct Build23SharingSnapshot: Equatable {
     var sendWaitCount: Int? = nil
     /// How many waited voices didn't come; set once every wait has ended, and it raises the alert.
     var sendWaitFailedCount: Int? = nil
+    /// Listening Map scenes whose model-written title and summary stay on this phone (#3449, #4635). Review and the
+    /// recipient preview say so when it is above zero.
+    var withheldMapSceneCount: Int = 0
 }
 
 extension Build23SharingSnapshot {
@@ -404,6 +407,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     private var previewFingerprint: String?
     private var previewGeneration = 0
     private var previewTask: Task<Void, Never>?
+    /// The withheld-map note's count for the sheet the listener opened (#4635). Readable so tests can await it.
+    private(set) var withheldNoteTask: Task<Void, Never>?
     private var modelChangeCancellables: Set<AnyCancellable> = []
     private var modelChangePending = false
     /// Whether the sheet's episode was playing at the last check, so a position tick redraws nothing (#3839).
@@ -624,7 +629,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 // At least 1 while the wait is set: the pass that ends it runs on the next change.
                 max(wait.waitingIDs.filter { voiceMargins[$0]?.waits == true }.count, 1)
             },
-            sendWaitFailedCount: sendWaitFailedCount
+            sendWaitFailedCount: sendWaitFailedCount,
+            withheldMapSceneCount: state.withheldMapSceneCount
         )
     }
 
@@ -758,6 +764,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 // The playback screen's Share opens on the review, where Share is pinned (#1507).
                 send(.advanceToReview)
             }
+            startWithheldMapNote()
         case .setFilter(let filter):
             model.sharingState.draftFilter = filter
         case .setSenderDisplayLabel(let label):
@@ -857,6 +864,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             sendWait = nil
             sendWaitFailedCount = nil
             pendingShare = nil
+            withheldNoteTask?.cancel()
             leadInPreviewStart?.cancel()
             leadInPreview.stop()
             model.cancelBulkSharePreparation()
@@ -1016,6 +1024,15 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         model.listeningSignals.share(packetURL: packetURL)
     }
 
+    /// Starts the share review's withheld-map note when the listener opens the sheet (#4635). The count comes from the
+    /// store; the public-source check runs only when it is above zero (`Gate1AppModel.refreshWithheldMapNote`). Never
+    /// blocks the sheet, and a reopen on another item cancels the earlier count.
+    private func startWithheldMapNote() {
+        withheldNoteTask?.cancel()
+        guard let store = try? model.requireStore() else { return }
+        withheldNoteTask = Task { [model] in await model.refreshWithheldMapNote(store: store) }
+    }
+
     private func buildRecipientPreview() {
         guard stage == .review,
               snapshot.canAdvance else { return }
@@ -1034,6 +1051,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         previewFingerprint = nil
         previewState = .building
         stage = .recipientPreview
+        let store = try? model.requireStore()
         previewTask = Task { [weak self] in
             // The archive is written off the main thread (#2510), so the build is awaited here, not in the tap.
             guard let model = self?.model else { return }
@@ -1048,6 +1066,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 self.stage = .review
                 return
             }
+            // The packet ran its own public-source check; Review and the preview now say what it actually left out.
+            if let store { await self.model.recountWithheldMapNote(store: store, itemId: self.model.selectedItem.id) }
             do {
                 let preview = try await Task.detached(priority: .userInitiated) {
                     try Self.roundTrippedPreview(fileURL: fileURL)

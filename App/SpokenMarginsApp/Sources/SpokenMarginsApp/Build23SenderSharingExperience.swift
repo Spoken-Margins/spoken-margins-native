@@ -109,6 +109,15 @@ struct Build23SenderSharingExperience: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("build23.sender.left-out-notice")
                 }
+                // Model-written Listening Map text that stays on this phone (#3449, #4635), said before the sender sends.
+                if snapshot.stage == .review,
+                   let note = MapTextDisclosure.withheldNote(sceneCount: snapshot.withheldMapSceneCount) {
+                    Label(note, systemImage: "info.circle")
+                        .font(.subheadline)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("build23.sender.map-text-stays-notice")
+                }
                 stageContent(snapshot)
             }
             .frame(maxWidth: 960, alignment: .leading)
@@ -914,7 +923,10 @@ struct Build23SenderSharingExperience: View {
                         onShareFile: sendPreviewedFile
                     )
 
-                    Build23VerifiedRecipientPreviewPanel(preview: verifiedPreview)
+                    Build23VerifiedRecipientPreviewPanel(
+                        preview: verifiedPreview,
+                        withheldMapSceneCount: snapshot.withheldMapSceneCount
+                    )
                 } else {
                     unavailablePreview(
                         title: "The preview is not available.",
