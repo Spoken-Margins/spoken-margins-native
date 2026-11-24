@@ -12,7 +12,7 @@ public enum PaperSource: Codable, Hashable, Sendable {
     /// The listener's own Zotero library, or one collection of it, read with the key they connected in Settings.
     case zoteroUser(userID: Int, collectionKey: String?)
     /// A PubMed saved search's RSS link, made with its Create RSS button. `limit` is the item count the link asks
-    /// for, when it names a sensible one. Recognized, not yet read (a real RSS reply is still needed, see #4341).
+    /// for, when it names a sensible one. Read as papers by `PubMedPaperReader` (#5201).
     case pubMedRSS(token: String, limit: Int?)
 
     public enum Provider: String, Codable, Sendable { case zotero, pubmed }
@@ -290,7 +290,7 @@ public struct PaperSourceRow: Identifiable, Equatable, Sendable {
 
     public init(record: PaperSourceRecord) {
         id = record.id
-        title = record.title.isEmpty ? "Zotero library" : record.title
+        title = record.title.isEmpty ? (record.source.provider == .pubmed ? "PubMed search" : "Zotero library") : record.title
         providerName = record.source.provider == .pubmed ? "PubMed" : "Zotero"
         paperCount = record.paperCount
         newCount = record.isQuiet ? 0 : record.newCount

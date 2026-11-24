@@ -24,7 +24,7 @@ struct ZoteroSettingsScreen: View {
                         .accessibilityHint("Forgets the key on this iPhone. Lists you follow from your library keep their papers.")
                         .accessibilityIdentifier("zotero.disconnect")
                 } footer: {
-                    Text("Follow your collections from Following, then +, then Papers from Zotero.")
+                    Text("Follow your collections from Following, then +, then Papers from Zotero or PubMed.")
                 }
             } else {
                 Section {

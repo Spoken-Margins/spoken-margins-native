@@ -110,7 +110,7 @@ final class PaperSourceFollowingTests: XCTestCase {
         let store = try store()
         let fake = try realZotero()
         let following = PaperSourceFollowing(store: store, fetcher: PaperSourceFetcher(transport: fake.transport))
-        for link in ["https://example.com/feed.xml", "https://pubmed.ncbi.nlm.nih.gov/rss/search/1abcDEF/?limit=15", "not a link"] {
+        for link in ["https://example.com/feed.xml", "not a link"] {
             let outcome = await following.follow(pasted: link, apiKey: nil, zoteroConnected: false, now: date(0))
             XCTAssertEqual(outcome, .notAPaperLink, link)
         }

@@ -172,7 +172,7 @@ final class PaperSourcesState: ObservableObject {
     func refreshProblemLine(id: String) -> String? {
         guard let problem = refreshProblems[id] else { return nil }
         if problem == .offline { return PaperSourceScreen.offlineSnapshotLine }
-        return problem.message(zoteroConnected: connection != nil)
+        return problem.message(zoteroConnected: connection != nil, provider: record(id: id)?.source.provider ?? .zotero)
     }
 
     // MARK: Follow
