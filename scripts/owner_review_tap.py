@@ -19,6 +19,16 @@ from __future__ import annotations
 
 OWNER_LOGIN = 'uncomposed'  # the owner's GitHub login (owner_tap_alert.OWNER_LOGIN; a test keeps them equal)
 DECISIVE = ('APPROVED', 'CHANGES_REQUESTED', 'DISMISSED')
+# The tap paths (lane_merge_rules.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES; a test keeps them equal). The approval is
+# the tap only on a PR touching one: elsewhere nobody asked for it, and the bridge must not queue a PR on it (#5274
+# audit).
+OWNER_TAP_FILES = {'scripts/lane_merge_rules.py'}
+OWNER_TAP_PREFIXES = ('.github/',)
+
+
+def touches_tap_paths(paths) -> bool:
+    """Whether any of the changed <paths> is one only the owner's tap merges."""
+    return any(p in OWNER_TAP_FILES or p.startswith(OWNER_TAP_PREFIXES) for p in paths or [] if p)
 
 
 def _login(review: dict) -> str:

@@ -37,6 +37,9 @@ on:
   # The owner's review (2026-11-24): his approval of the head is his tap as the `owner-tap` label is
   # (scripts/owner_review_tap.py), so the list drops the PR when he approves and takes it back when his approval is
   # dismissed or he asks for changes. GitHub takes no `paths` filter here; the script reads the PR's files first.
+  # Cost and catch: one Linux job of a few seconds, no Mac, no tokens, per review the owner submits or has dismissed
+  # (anyone else's review skips the job); catches #5212, #5252 and #5256, approved on 2026-11-24 and still listed as
+  # waiting for his tap. Waste signal: he keeps adding `owner-tap` anyway, and these runs never change the list.
   pull_request_review:
     types: [submitted, dismissed]
   push:

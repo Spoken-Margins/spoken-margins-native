@@ -243,10 +243,12 @@ class OwnerTapTests(unittest.TestCase):
                                  (0, []))
 
 
-def approved(number, state='APPROVED', commit=None, login='uncomposed', **kw):
-    """A PR with no arming label and one review in the GraphQL shape the PR query asks for."""
+def approved(number, state='APPROVED', commit=None, login='uncomposed', paths=('.github/workflows/x.yml',), **kw):
+    """A PR with no arming label and one review in the GraphQL shape the PR query asks for. By default it touches a
+    tap path, the only kind of PR the approval arms."""
     found = pr(number, armed=False, **kw)
     found['headRefOid'] = f'head{number}'
+    found['files'] = {'nodes': [{'path': path} for path in paths]}
     found['reviews'] = {'nodes': [{'state': state, 'submittedAt': '2026-11-24T06:12:29Z', 'author': {'login': login},
                                    'commit': {'oid': commit or f'head{number}'}}]}
     return found
@@ -278,8 +280,29 @@ class OwnerApprovalTests(unittest.TestCase):
         self.assertEqual(run(github, '--pr', '1', '--action', 'unlabeled', '--label', 'automerge')[0], 0)
         self.assertEqual((github.disabled, github.dequeued), ([], []))
 
+    def test_the_approval_arms_only_a_pr_touching_the_tap_paths(self):
+        # #5274 audit: the approval is the owner's tap, the gate on `.github/` and lane_merge_rules.py PRs. On any
+        # other PR it would queue a PR nobody armed, which removing `automerge` or a manual dequeue could not stop.
+        github = FakeGitHub({1: approved(1, auto=False, paths=('scripts/lane_merge_rules.py',)),
+                             2: approved(2, auto=False, paths=('App/Foo.swift', '.github/CODEOWNERS')),
+                             3: approved(3, auto=False, paths=('App/Foo.swift',)),
+                             4: approved(4, auto=False, paths=('scripts/lane_merge_rules_test.py', 'x/.github/y')),
+                             5: approved(5, auto=False, paths=())})
+        self.assertEqual((run(github, '--sweep')[0], github.merged), (0, [1, 2]))
+
+    def test_removing_automerge_from_an_approved_ordinary_pr_takes_it_out(self):
+        github = FakeGitHub({1: approved(1, queued=True, paths=('App/Foo.swift',))})
+        self.assertEqual(run(github, '--pr', '1', '--action', 'unlabeled', '--label', 'automerge')[0], 0)
+        self.assertEqual(github.dequeued, ['PR_1'])
+
+    def test_the_tap_paths_match_lane_merge_rules(self):
+        import lane_merge_rules
+        self.assertEqual(owner_review_tap.OWNER_TAP_FILES, lane_merge_rules.OWNER_TAP_FILES)
+        self.assertEqual(owner_review_tap.OWNER_TAP_PREFIXES, lane_merge_rules.OWNER_TAP_PREFIXES)
+
     def test_the_query_asks_for_the_owners_reviews_and_the_head(self):
         self.assertIn('headRefOid', bridge.PR_FIELDS)
+        self.assertIn('files(first: 100) { nodes { path } }', bridge.PR_FIELDS)
         self.assertIn(f'reviews(last: 100, author: "{owner_review_tap.OWNER_LOGIN}")', bridge.PR_FIELDS)
         self.assertIn('commit { oid }', bridge.PR_FIELDS)
         self.assertIs(bridge.owner_review_tap, owner_review_tap)

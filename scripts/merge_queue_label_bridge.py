@@ -32,11 +32,13 @@ alone, so a PR tapped with `owner-tap` is queued by the next sweep (the VPS back
 minutes). `needs-fix` still stops it, and only `automerge` added again says "fixed". Removing a label takes the PR out
 only when neither arming label is left.
 
-The owner's approving review of the PR's current head arms it the same way as `owner-tap` (owner, 2026-11-24): it is
-the same tap, under the same rule merge_policy.py reads (scripts/owner_review_tap.py; his latest approve,
-request-changes or dismissed review decides, on the head commit, and nobody else's review counts). On 2026-11-24
-#5212, #5252 and #5256 were approved by him and nothing queued them. The PR query carries his reviews, so this costs
-no extra call. A review starts no run here (this job's `agent-identity` environment admits main only, and a review
+The owner's approving review of the PR's current head arms a PR touching those tap paths the same way as `owner-tap`
+(owner, 2026-11-24): it is the same tap, under the same rule merge_policy.py reads (scripts/owner_review_tap.py; his
+latest approve, request-changes or dismissed review decides, on the head commit, and nobody else's review counts).
+On 2026-11-24 #5212, #5252 and #5256 were approved by him and nothing queued them. On any other PR his approval arms
+nothing (#5274 audit): nobody asked for the queue there, and neither removing `automerge` nor a manual dequeue could
+stop it. The PR query carries his reviews and the first 100 changed paths, so this costs no extra call; a tap path
+past the first 100 is missed, which leaves the PR unarmed until the label, never armed by mistake. A review starts no run here (this job's `agent-identity` environment admits main only, and a review
 event's ref is the PR's), so the next sweep queues an approved PR, as for a label added with GITHUB_TOKEN.
 
 Every call is tried a few times. One plain line per PR. Exit 1 when a PR could not be queued or unqueued, so the
@@ -95,7 +97,7 @@ CHECK_ACTIONS = ('edited', 'converted_to_draft', 'opened', 'reopened', 'synchron
 # The owner's reviews ride along for his approval (owner_review_tap.py): no extra call. The login is
 # owner_review_tap.OWNER_LOGIN; a test keeps them equal.
 PR_FIELDS = 'id number isDraft title state headRefOid labels(first: 50) { nodes { name } } autoMergeRequest { enabledAt } ' \
-            'mergeQueueEntry { id } ' \
+            'mergeQueueEntry { id } files(first: 100) { nodes { path } } ' \
             'reviews(last: 100, author: "uncomposed") { nodes { state submittedAt author { login } commit { oid } } }'
 PR_QUERY = '''query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) { %s } }
@@ -249,14 +251,16 @@ def labels(pr):
 
 
 def owner_approved(pr):
-    """Whether the owner's latest decisive review approves the PR's current head (owner_review_tap.py)."""
-    return bool(owner_review_tap) and owner_review_tap.owner_approved(
+    """Whether the PR touches the tap paths and the owner's latest decisive review approves its current head
+    (owner_review_tap.py). On any other PR the approval is not a tap and arms nothing."""
+    return bool(owner_review_tap) and owner_review_tap.touches_tap_paths(
+        node.get('path') for node in ((pr.get('files') or {}).get('nodes') or [])) and owner_review_tap.owner_approved(
         ((pr.get('reviews') or {}).get('nodes') or []), pr.get('headRefOid') or '')
 
 
 def armed(pr):
-    """Whether the PR asks for the queue: the `automerge` label, the owner's `owner-tap` label, or his approval of
-    the head."""
+    """Whether the PR asks for the queue: the `automerge` label, the owner's `owner-tap` label, or, on a PR touching
+    the tap paths, his approval of the head."""
     return bool(labels(pr) & {LABEL, OWNER_TAP}) or owner_approved(pr)
 
 
