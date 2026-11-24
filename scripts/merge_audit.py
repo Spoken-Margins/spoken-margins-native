@@ -226,6 +226,17 @@ def passed_queue_check(check_runs: list[dict]) -> bool:
                and (run.get('app') or {}).get('slug') == 'github-actions' for run in check_runs)
 
 
+QUEUE_STATUS_CREATOR = 'github-actions[bot]'  # the job's GITHUB_TOKEN; any other writer of the context is ignored
+
+
+def passed_queue_status(statuses: list[dict]) -> bool:
+    """Whether the newest `merge policy` commit status written by GitHub Actions is a success (#5162: the check is a
+    status now). The API lists a commit's statuses newest first."""
+    ours = [s for s in statuses if s.get('context') == QUEUE_CHECK
+            and (s.get('creator') or {}).get('login') == QUEUE_STATUS_CREATOR]
+    return bool(ours) and ours[0].get('state') == 'success'
+
+
 class GitHub:
     def __init__(self, repo: str):
         self.repo = repo
@@ -254,9 +265,15 @@ class GitHub:
         try:
             runs = json.loads(self.api(f'repos/{self.repo}/commits/{merge_commit_sha}/check-runs?check_name='
                                        + QUEUE_CHECK.replace(' ', '%20')))
+            if passed_queue_check(runs.get('check_runs') or []):
+                return True  # merged before #5162, when the check was a check run
+        except (RuntimeError, ValueError):
+            pass
+        try:
+            statuses = json.loads(self.api(f'repos/{self.repo}/commits/{merge_commit_sha}/statuses?per_page=100'))
         except (RuntimeError, ValueError):
             return False
-        return passed_queue_check(runs.get('check_runs') or [])
+        return passed_queue_status(statuses if isinstance(statuses, list) else [])
 
     def pushed_commits(self, before: str, after: str) -> list[str]:
         if before == ZERO:

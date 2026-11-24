@@ -26,20 +26,22 @@ enum LiveSessionSpokenMargins {
     }
 
     /// The on-device transcript of a spoken Margin, or nil when speech recognition isn't allowed or heard nothing.
-    static func transcribe(audioPath: String) async -> String? {
-        let text = try? await SystemSpeechTranscriptionClient().transcribe(audioPath: audioPath)
+    /// `surface` says where the Margin was recorded. A nil from the Speech Recognition hold loses nothing: the gate reports
+    /// the hold with `surface` to the speech ask, which owes the card and sweeps these Margins after Allow (#4715).
+    static func transcribe(audioPath: String, for surface: HeldTranscription) async -> String? {
+        let text = try? await SystemSpeechTranscriptionClient().transcribe(audioPath: audioPath, for: surface)
         let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    /// Transcribes each spoken Margin in an unsaved session that has no words yet, and files the words in.
+    /// Transcribes each spoken Margin in an unsaved session that has no words yet, and files the words in: on a session
+    /// screen's open, and after Allow for the Margins the hold kept from their words.
     @MainActor
     static func transcribeMissing() async {
-        for margin in await LiveSessionFileWorker.shared.spokenWithoutWords() {
-            guard let text = await transcribe(audioPath: margin.audioPath) else { continue }
-            let id = margin.marginId
-            await updateStored(marginId: id) { $0.setTranscript(text, forMarginId: id) }
+        let filled = await LiveSessionSpokenMarginSweep.fillMissingWords(files: .shared) {
+            await transcribe(audioPath: $0, for: .liveSessionMargin)
         }
+        if !filled.isEmpty { NotificationCenter.default.post(name: changedOnDisk, object: nil) }
     }
 
     /// True while a live session spoken Margin records on the phone. A play from the Lock Screen, headphones or the
@@ -191,7 +193,9 @@ final class LiveSessionSpokenCapture: ObservableObject {
 
     init(
         files: LiveSessionFileWorker = .shared, recorder: any LiveSessionMarginRecorder = LiveSessionPhoneRecorder(),
-        transcribe: @escaping @Sendable (String) async -> String? = { await LiveSessionSpokenMargins.transcribe(audioPath: $0) }
+        transcribe: @escaping @Sendable (String) async -> String? = {
+            await LiveSessionSpokenMargins.transcribe(audioPath: $0, for: .liveSessionMargin)
+        }
     ) {
         self.files = files
         self.recorder = recorder

@@ -9,8 +9,8 @@ final class TranscriptionFailureWordingTests: XCTestCase {
         describing: SessionKitError.persistenceFailed("speech_recognition_not_authorized")
     )
 
-    func testDeclinedSpeechRecognitionNamesItAndHowToTurnItOn() {
-        let notice = TranscriptionFailureWording.notice(error: speechRecognitionOff, isRetry: false)
+    func testDeclinedSpeechRecognitionNamesItAndHowToTurnItOn() throws {
+        let notice = try XCTUnwrap(TranscriptionFailureWording.notice(error: speechRecognitionOff, isRetry: false))
 
         XCTAssertFalse(notice.isFailure, "Declining a permission isn't an app failure")
         XCTAssertTrue(notice.message.contains("Audio saved"))
@@ -19,8 +19,8 @@ final class TranscriptionFailureWordingTests: XCTestCase {
         XCTAssertFalse(notice.message.lowercased().contains("fail"))
     }
 
-    func testRetryWithSpeechRecognitionOffSaysTheSame() {
-        let notice = TranscriptionFailureWording.notice(error: speechRecognitionOff, isRetry: true)
+    func testRetryWithSpeechRecognitionOffSaysTheSame() throws {
+        let notice = try XCTUnwrap(TranscriptionFailureWording.notice(error: speechRecognitionOff, isRetry: true))
 
         XCTAssertFalse(notice.isFailure)
         XCTAssertTrue(notice.message.contains("Speech Recognition is off"))
@@ -45,9 +45,9 @@ final class TranscriptionFailureWordingTests: XCTestCase {
         var warnings: [String] = []
         var failures: [String] = []
 
-        TranscriptionFailureWording.notice(error: speechRecognitionOff, isRetry: false)
+        TranscriptionFailureWording.notice(error: speechRecognitionOff, isRetry: false)?
             .present(warning: { warnings.append($0) }, failure: { failures.append($0) })
-        TranscriptionFailureWording.notice(error: "network", isRetry: false)
+        TranscriptionFailureWording.notice(error: "network", isRetry: false)?
             .present(warning: { warnings.append($0) }, failure: { failures.append($0) })
 
         XCTAssertEqual(warnings.count, 1)

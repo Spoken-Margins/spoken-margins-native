@@ -1,7 +1,7 @@
 // Followed shows refresh (#2977 audit, rough edge 1): the Following tab's Refresh control, the 30-minute limit on
 // automatic reads, merging without duplicates, and a feed that needs the server skipped quietly with one line.
 import { expect, test, type Page, type Request } from '@playwright/test';
-import { FEED_ORIGIN, feedFixture, serveFixtures, shot } from './fixtures.ts';
+import { FEED_ORIGIN, feedFixture, followAndAdd, serveFixtures, shot } from './fixtures.ts';
 
 const FEED = `${FEED_ORIGIN}/refreshing.rss`;
 const RELAY = 'https://relay.test';
@@ -46,8 +46,10 @@ async function follow(page: Page, address: string) {
 test('the Refresh control adds a new episode once, and opening the app again within 30 minutes reads nothing', async ({ page }, info) => {
   const feed = await serveChangingFeed(page);
   await follow(page, FEED);
-  await expect(page.getByText('Following Spoken Margins Test Show. 3 episodes added to your Library.')).toBeVisible();
+  await expect(page.getByText('Following Spoken Margins Test Show. Open it to pick episodes for your Library.')).toBeVisible();
   expect(feed.reads).toBe(1);
+  // Two episodes go in the Library; a refresh never adds one (#4425).
+  await followAndAdd(page, 'Spoken Margins Test Show', ['Episode 3: No link, GUID and audio', 'Episode 2: No link, no GUID, audio only']);
   await expect(page.getByTestId('refresh-status')).toHaveText('Checked just now');
 
   // Opening the app again (and coming back to it) leaves a feed read moments ago alone.
@@ -70,9 +72,9 @@ test('the Refresh control adds a new episode once, and opening the app again wit
   await page.getByRole('button', { name: 'Check for new episodes' }).click();
   await expect(page.getByText('No new episodes.')).toBeVisible();
   await tab(page, 'Library');
-  await expect(page.getByRole('button', { name: /Episode 4: Fresh this morning/ })).toHaveCount(1);
-  await expect(page.getByRole('button', { name: /Episode 3: No link, GUID and audio/ })).toHaveCount(1);
-  await expect(page.getByRole('button', { name: /Episode 2: No link, no GUID, audio only/ })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: /Episode 4: Fresh this morning/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^(?!More for ).*Episode 3: No link, GUID and audio/ })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: /^(?!More for ).*Episode 2: No link, no GUID, audio only/ })).toHaveCount(1);
 });
 
 test('a feed that needs the server is skipped quietly once that is off, with one line and the way to say yes', async ({ page }, info) => {

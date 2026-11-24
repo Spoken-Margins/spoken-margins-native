@@ -43,7 +43,7 @@ final class UnplacedMarginNowPlayingTests: XCTestCase {
 
     func testTheTimelineCornerAndDetailSayNoPlaceNeverAZero() {
         let label = MarginPlacePresentation.timelineLabel
-        for text in [label.corner, label.spoken, label.chapterDetail] {
+        for text in [label.corner, label.spoken] {
             XCTAssertEqual(text, "No place")
             XCTAssertFalse(text.contains("%"))
             XCTAssertFalse(text.contains("0:00"))

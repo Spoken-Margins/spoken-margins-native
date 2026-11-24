@@ -416,4 +416,50 @@ final class MarginCommentPlanTests: XCTestCase {
             )
         }
     }
+
+    // MARK: Tidy version to review (#4339)
+
+    func testAnUnansweredTidyIsFlaggedAndItsCommentStillCarriesTheAuthorsWords() {
+        let text = "The first sentence. The second sentence."
+        let spoken = margin("spoken", at: 0, transcript: "um so the the result", display: "um so the the result")
+        let plain = margin("plain", at: 0, transcript: "The result.", display: "The result.", createdAt: 2)
+        let written = margin("written", at: 0, display: "um a typed note", written: true, createdAt: 3)
+        let plan = MarginCommentPlan.make(itemId: itemId, document: document(text), margins: [spoken, plain, written])
+        XCTAssertEqual(plan.entries.map(\.tidyToReview), [true, false, false])
+        XCTAssertEqual(plan.entries[0].commentText, "um so the the result", "an unanswered proposal is never sent")
+    }
+
+    func testUpdatingWordsTakesTheApprovedTidyAndKeepsWhereTheCommentLands() throws {
+        let text = "The first sentence. The second sentence."
+        let at = try offset(of: "second", in: text)
+        var spoken = margin("spoken", at: at, transcript: "um so the the result", display: "um so the the result")
+        let other = margin("other", at: 0, transcript: "Fine.", display: "Fine.", createdAt: 2)
+        let pending = margin("pending", at: 0, transcription: "pending", createdAt: 3)
+        let plan = MarginCommentPlan.make(
+            itemId: itemId, document: document(text, segments: [(0, text.count, 1)]), margins: [spoken, other, pending]
+        )
+
+        spoken.cleanedTranscript = "So the result."
+        spoken.displayText = "So the result."
+        spoken.tidyDecision = MarginTidyDecision(choice: .usedTidy, source: .fillers, decidedAt: Date(timeIntervalSince1970: 5))
+        let updated = plan.updatingWords(from: [spoken])
+
+        let before = try XCTUnwrap(plan.entries.first { $0.marginId == "spoken" })
+        let after = try XCTUnwrap(updated.entries.first { $0.marginId == "spoken" })
+        XCTAssertEqual(after.commentText, "So the result.")
+        XCTAssertFalse(after.tidyToReview)
+        XCTAssertEqual(after.sentence, before.sentence)
+        XCTAssertEqual(after.sentenceText, before.sentenceText)
+        XCTAssertEqual(after.pageIndex, before.pageIndex)
+        XCTAssertEqual(updated.entries.filter { $0.marginId != "spoken" }, plan.entries.filter { $0.marginId != "spoken" },
+                       "a Margin not passed in keeps its entry")
+
+        // "Use my original words" brings the words and the flag back.
+        spoken.cleanedTranscript = nil
+        spoken.displayText = spoken.transcript
+        spoken.tidyDecision = nil
+        let back = updated.updatingWords(from: [spoken])
+        XCTAssertEqual(back.entries.first { $0.marginId == "spoken" }?.commentText, "um so the the result")
+        XCTAssertEqual(back.entries.first { $0.marginId == "spoken" }?.tidyToReview, true)
+    }
 }

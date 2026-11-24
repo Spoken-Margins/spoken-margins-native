@@ -46,6 +46,10 @@ final class ImportedPodcastPlacementCoordinator {
         var passesDidChange: @MainActor (SharedMarginPlacementPasses, SharedMarginPlacementPasses) -> Void
         /// A strong reference to the model, taken by a transcription that has to keep the model alive until it finishes.
         var retainHost: @MainActor () -> AnyObject?
+        /// The transient transcript met the hold on iOS's prompt (#4715): makes the card owed and keeps `retry` for Allow.
+        var transcriptionHeld: @MainActor (_ itemId: String, _ retry: @escaping @MainActor () -> Void) -> Void = { itemId, retry in
+            SpeechAskController.shared.transcriptionHeld(.friendPacketPlacement, key: itemId, retry: retry)
+        }
     }
 
     /// What `resolve` did with a request. A rejected preflight and an evaluated empty piece of work are different:
@@ -128,7 +132,8 @@ final class ImportedPodcastPlacementCoordinator {
                 let timeline = try await self.deps.transcriber.transcribeSourceAudio(
                     url: localSourceURL,
                     itemId: itemId,
-                    durationMs: durationMs
+                    durationMs: durationMs,
+                    for: .friendPacketPlacement
                 )
                 MainThreadOperationLabels.shared.scoped("transientTranscriptResolve") {
                     self.admission[itemId] = nil
@@ -142,12 +147,25 @@ final class ImportedPodcastPlacementCoordinator {
                 self.deps.recordDiagnostic("recipientAlignmentTranscript:\(itemId)", "consumed_and_deleted")
             } catch {
                 self.admission[itemId] = nil
+                if HeldTranscription.isHold(error) {
+                    self.deps.transcriptionHeld(itemId) { [weak self] in
+                        self?.retryAfterSpeechAllowed(itemId: itemId, localURL: localSourceURL)
+                    }
+                }
                 try? await self.deps.purgeTransientCaches(itemId)
                 self.deps.recordDiagnostic(
                     "recipientAlignmentTranscript:\(itemId)", "failed_and_deleted:\(SafeErrorText.describe(error))")
             }
         }
         return true
+    }
+
+    /// The listener allowed Speech Recognition after this episode's transcript was held back by the ask (#4715): place it
+    /// again now. The failed attempt's cooldown is cleared, since the attempt never reached iOS. The file is the one the
+    /// held transcript was for, so it never depends on `requestedURL`, which a direct transient request does not set.
+    func retryAfterSpeechAllowed(itemId: String, localURL: URL) {
+        lastTransientStart[itemId] = nil
+        resolve(itemId: itemId, localURL: localURL)
     }
 
     // MARK: Placement

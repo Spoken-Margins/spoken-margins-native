@@ -11,8 +11,27 @@ import UIKit
 @MainActor
 final class NowSceneController: ObservableObject {
     @Published private(set) var state: PlaybackNowSceneState?
-    /// Whether the Now header, with the Library arrow in it, is on screen. Following scrolls it away.
-    @Published var headerIsVisible = true
+    /// Whether the Now header, with the Library arrow in it, is on screen. Following scrolls it away. Two thresholds
+    /// decide it (`NowHeaderVisibility`), so the toolbar arrow it brings can't move the header back and forth (#4739).
+    @Published private(set) var headerIsVisible = true
+    private var header = NowHeaderVisibility()
+
+    /// Whether at least `NowHeaderVisibility.goneBelow` of the header is on screen.
+    func headerReachedGoneThreshold(_ visible: Bool) {
+        header.reachedGoneThreshold(visible)
+        publishHeader()
+    }
+
+    /// Whether at least `NowHeaderVisibility.backAt` of the header is on screen.
+    func headerReachedBackThreshold(_ visible: Bool) {
+        header.reachedBackThreshold(visible)
+        publishHeader()
+    }
+
+    /// Published only on a change, so a threshold report that changes nothing redraws nothing.
+    private func publishHeader() {
+        if headerIsVisible != header.isVisible { headerIsVisible = header.isVisible }
+    }
     /// The ids (first Character offsets) of the sentences on screen. Not published: a scroll changes it constantly, and
     /// only `playingIsAbove` is drawn.
     private(set) var visibleSentenceIDs: Set<Int> = []
@@ -165,6 +184,8 @@ struct PlaybackLivePassageView: View {
     let openReader: (Int) -> Void
     @State private var sourceIndex = PlaybackLivePassage.SourceIndex(TimelineSourceContent(text: ""))
     @State private var sourceVersion = 0
+    /// The item's footnote markers as shown (#5109), scanned once per text.
+    @State private var footnotes = FootnoteDisplayText.none
     @State private var margins: [PlaybackLivePassage.Margin] = []
     @State private var lastOffset: Int?
     @State private var playbackTick = 0 // bumped by each progress tick: the current sentence follows the source offset (#2074)
@@ -243,7 +264,7 @@ struct PlaybackLivePassageView: View {
             }
             .onChange(of: input) { _, _ in rebuild() }
             .onChange(of: model.selectedItem.timelineSource) { _, value in
-                sourceIndex = PlaybackLivePassage.SourceIndex(value)
+                sourceIndex = PlaybackLivePassage.SourceIndex(value, footnotes: footnotes)
                 sourceVersion &+= 1
             }
             .onChange(of: model.marginRows) { _, _ in updateMargins() }
@@ -288,7 +309,8 @@ struct PlaybackLivePassageView: View {
         rebuilds &+= 1
         builtInput = input
         scene.reset(text: input.text, chapters: input.chapters)
-        sourceIndex = PlaybackLivePassage.SourceIndex(model.selectedItem.timelineSource)
+        footnotes = FootnoteDisplayText(text: input.text)
+        sourceIndex = PlaybackLivePassage.SourceIndex(model.selectedItem.timelineSource, footnotes: footnotes)
         sourceVersion &+= 1
         updateMargins()
     }
@@ -486,7 +508,7 @@ private struct NowSceneRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(sentence.text)
+            .accessibilityLabel(fragments.map(\.text).joined())
             .accessibilityHint("Open the full source at the current sentence")
             .accessibilityValue(isLit ? "Current sentence" : "")
             .accessibilityAddTraits(isLit ? .isSelected : [])

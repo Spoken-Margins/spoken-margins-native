@@ -98,6 +98,15 @@ struct ExperienceItemDetailScreen: View {
                     let friendIntro = FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin))
                     if let friendIntro { FriendMarginsSenderLine(intro: friendIntro) }
                     hero
+                    // At the accessibility text sizes the status lines and the second choice sit here, under the
+                    // title, and only the main button stays pinned, so the pinned area leaves room to read (#5110).
+                    // Below those sizes the layout pins every part, so the choices aren't worked out a second time.
+                    if ItemStartControlsLayout(accessibilityTextSize: dynamicTypeSize.isAccessibilitySize) != .allPinned {
+                        let inlineStart = startControls(.inline)
+                        if inlineStart.drawsAnything {
+                            VStack(alignment: .leading, spacing: 8) { inlineStart }
+                        }
+                    }
                     if let friendIntro { FriendMarginsSummary(intro: friendIntro, receipt: sharingCoordinator.introReceipt) }
                     if let description = model.selectedItem.descriptionText {
                         ItemDescriptionPreview(text: description).id(model.selectedItem.id)
@@ -115,6 +124,8 @@ struct ExperienceItemDetailScreen: View {
                     SourceFollowSuggestionCard()
                     ManualSourceFollowButton()
                     if !model.selectedItem.overview.isEmpty { overview }
+                    // A PDF's Paper note: purpose, findings and evidence from the listener's own Margins (#4340).
+                    if model.offersPaperNote(itemId: model.selectedItem.id) { PaperNoteSection() }
                     sessions
                     structure
                     if let edition = model.selectedListeningEdition { ListeningEditionScenes(edition: edition) }
@@ -130,7 +141,7 @@ struct ExperienceItemDetailScreen: View {
             }
             // The main listening button stays pinned at the bottom, within thumb reach, above the mini player (#149).
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                VStack(alignment: .leading, spacing: 8) { primaryPlaybackAction }
+                VStack(alignment: .leading, spacing: 8) { startControls(.pinned) }
                     .padding(.horizontal, horizontalSizeClass == .regular ? 30 : 18)
                     .padding(.vertical, 10)
                     .frame(maxWidth: 900)
@@ -245,6 +256,7 @@ struct ExperienceItemDetailScreen: View {
                 PDFCommentExportSheet(export: export) { count in
                     model.presentFeedback(UserFeedbackEvent(kind: .success, message: PDFCommentExportState.doneMessage(count: count)))
                 }
+                .environmentObject(model) // the Tidy version card it opens acts through the model (#4339)
             }
             .trackedSheet(item: $collectionItem) { item in
                 ItemCollectionSheet(item: item).environmentObject(model)
@@ -540,57 +552,27 @@ struct ExperienceItemDetailScreen: View {
         }
     }
 
-    @ViewBuilder
-    private var primaryPlaybackAction: some View {
-        if [.waiting, .preparing].contains(model.selectedItemStartupAudioState) {
-            HStack(spacing: 10) {
-                if model.selectedItemStartupAudioState == .preparing {
-                    ProgressView()
-                        .tint(AppColors.evergreen)
-                }
-                Text(model.selectedItemStartupAudioProgressDescription)
-                    .fontWeight(.semibold)
-            }
-            .foregroundStyle(AppColors.secondaryText)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(model.selectedItemStartupAudioProgressDescription)
-            .accessibilityIdentifier("item.start.preparing")
-        }
+    /// The start controls in one place on the screen (#5110): pinned at the bottom, or at the top of the scrolling
+    /// content. `ItemStartControlsLayout` says which parts each place draws at the listener's text size.
+    private func startControls(_ placement: ItemStartControls.Placement) -> ItemStartControls {
         let choices = listeningChoices
         // While the friend's intro shows, a tap that can't start yet is kept (#3788). Otherwise the buttons act as before.
         let holdsEarlyTap = FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin)) != nil
-        if let line = arrival.line {
-            Text(line)
-                .font(.subheadline)
-                .foregroundStyle(AppColors.secondaryText)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("item.arrival.waitingLine")
-        }
-        Button {
-            tapped(.play, holdsEarlyTap: holdsEarlyTap)
-        } label: {
-            Label(choices.primaryTitle, systemImage: "play.fill")
-                .frame(maxWidth: .infinity, minHeight: 52)
-        }
-        .filledActionButton()
-        .accessibilityLabel(choices.primaryAccessibilityLabel ?? choices.primaryTitle)
-        .accessibilityIdentifier("item.start.button")
-        if let secondaryTitle = choices.secondaryTitle, let secondaryAction = choices.secondaryAction {
-            Button {
-                // Only "Skip to …" waits on a Margin's audio; "Listen without them" and "Play from the start" need none.
-            tapped(.skip, holdsEarlyTap: holdsEarlyTap && secondaryAction == .reviewNewMargins(thenContinue: false))
-            } label: {
-                // Words only, as on the screens the owner reviewed (#3247): the line already says whose Margins.
-                Text(secondaryTitle)
-                    .fontWeight(.semibold)
-                    .frame(maxWidth: .infinity, minHeight: 44)
+        let startup = model.selectedItemStartupAudioState
+        return ItemStartControls(
+            placement: placement,
+            layout: ItemStartControlsLayout(accessibilityTextSize: dynamicTypeSize.isAccessibilitySize),
+            preparing: [.waiting, .preparing].contains(startup)
+                ? ItemStartControls.Preparing(showsSpinner: startup == .preparing, description: model.selectedItemStartupAudioProgressDescription)
+                : nil,
+            arrivalLine: arrival.line,
+            choices: choices,
+            onMainButton: { tapped(.play, holdsEarlyTap: holdsEarlyTap) },
+            // Only "Skip to …" waits on a Margin's audio; "Listen without them" and "Play from the start" need none.
+            onSecondChoice: {
+                tapped(.skip, holdsEarlyTap: holdsEarlyTap && choices.secondaryAction == .reviewNewMargins(thenContinue: false))
             }
-            .buttonStyle(.bordered)
-            .tint(AppColors.evergreen)
-            .accessibilityLabel(choices.secondaryAccessibilityLabel ?? secondaryTitle)
-            .accessibilityIdentifier(secondaryAction == .reviewNewMargins(thenContinue: false) ? "item.reviewNewMargins.button" : "item.listenWithout.button")
-        }
+        )
     }
 
     /// A tap on a pinned button. With the friend's intro showing it goes through the keeper, which runs it now or keeps it
@@ -1069,7 +1051,7 @@ struct ExperienceItemDetailScreen: View {
         model.selectedItem.interjections
             .filter { $0.status == "active" }
             .sorted { $0.createdAt > $1.createdAt }
-            .map { MarginRow(interjection: $0, itemTitle: model.selectedItem.title, sessionDate: nil) }
+            .map { MarginRow(interjection: $0, itemTitle: model.selectedItem.title, sessionDate: nil, transcriptWaitsForAnswer: MarginRow.waitsForAnswer($0)) }
     }
 
     private var readinessLabel: String {
