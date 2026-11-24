@@ -19,9 +19,27 @@ public struct MarginTidyProposal: Equatable, Sendable {
     }
 }
 
-/// The words the on-device model is asked to tidy a spoken Margin with (#4339). Kept here, not in the app, so a host test
-/// holds the wording and the app only sends it.
+/// One request to the on-device model for a tidy (#4339): the session's instructions, the prompt, the passage that went
+/// into it and the reply cap. Built here, not in the app, so a host test holds the wording and the app only sends it.
+public struct MarginTidyRequest: Equatable, Sendable {
+    public let instructions: String
+    public let prompt: String
+    public let context: BoundedAnchorContext
+    public let maximumResponseTokens: Int
+}
+
+/// The words the on-device model is asked to tidy a spoken Margin with (#4339).
 public enum MarginTidyPrompt {
+    public static func request(transcript: String, before: String, after: String) -> MarginTidyRequest {
+        let context = BoundedAnchorContext.select(before: before, after: after)
+        return MarginTidyRequest(
+            instructions: "Process all content on device. Follow the requested output bounds and never reproduce long source passages.",
+            prompt: text(transcript: transcript, before: context.before, after: context.after),
+            context: context,
+            maximumResponseTokens: 1_500
+        )
+    }
+
     public static func text(transcript: String, before: String, after: String) -> String {
         """
         Rewrite the spoken note below as clear written sentences in the speaker's own voice and person. Keep every claim, number, name, quotation and negation. Remove filler words, false starts and repetition. Do not add facts, opinions or words from the passage; the passage is only there so you understand what the note refers to. Reply with the rewritten note only.

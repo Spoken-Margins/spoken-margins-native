@@ -208,6 +208,16 @@ public enum MarginTidy {
         "anyway", "yeah", "yes", "okay", "ok", "first", "now", "um", "uh",
     ]
 
+    /// Whether `text` reads as another language by the same test `fillerOnly` uses to leave it alone.
+    static func isForeign(_ text: String) -> Bool {
+        looksForeign(text.split(whereSeparator: \.isWhitespace).map(Token.init))
+    }
+
+    /// Whether `text` has an English function word.
+    static func isEnglish(_ text: String) -> Bool {
+        hasEnglishFunctionWord(text.split(whereSeparator: \.isWhitespace).map(Token.init))
+    }
+
     /// Whether a common function word of another language rules the text out, or most of its letters are not Latin.
     private static func looksForeign(_ tokens: [Token]) -> Bool {
         let words = tokens.map { $0.core.lowercased() }
@@ -251,6 +261,11 @@ public enum MarginTidyGuard {
         case nameMissing(String)
         case quotationMissing(String)
         case negationDropped
+        /// A capitalised word, not first in its sentence, that the speaker never said: a name the model brought in,
+        /// usually from the passage ("the colonel" becoming "Colonel Varga").
+        case nameAdded(String)
+        /// The Margin was said in another language and the proposal is in English.
+        case languageChanged
         case tooShort
         case tooLong
         case copiedFromPassage
@@ -277,9 +292,13 @@ public enum MarginTidyGuard {
         let proposalLowered = Set(proposalWords.flatMap { $0.lowercased().split(separator: "-").map(String.init) })
         let proposalNumbers = Set(numbers(in: proposal))
         for number in numbers(in: original) where !proposalNumbers.contains(number) { return .numberMissing(number) }
-        for word in originalWords.flatMap({ $0.lowercased().split(separator: "-").map(String.init) })
-        where numberWords.contains(word) && !proposalLowered.contains(word) {
-            return .numberMissing(word)
+        // "one" after "the", "this", "no" and the like is a pronoun ("the one by Chen"), not a count.
+        let originalLowered = originalWords.map { $0.lowercased() }
+        for (index, whole) in originalLowered.enumerated() {
+            for word in whole.split(separator: "-").map(String.init) where numberWords.contains(word) && !proposalLowered.contains(word) {
+                if word == "one", whole == "one", index > 0, pronounOneLeaders.contains(originalLowered[index - 1]) { continue }
+                return .numberMissing(word)
+            }
         }
 
         // Every capitalised word that is not the first of a sentence.
@@ -294,8 +313,21 @@ public enum MarginTidyGuard {
         let proposalSpans = Set(quotedSpans(in: proposal))
         for span in quotedSpans(in: original) where !proposalSpans.contains(span) { return .quotationMissing(span) }
 
-        // As many negations as were said, or more.
-        if negationCount(in: proposalWords) < negationCount(in: originalWords) { return .negationDropped }
+        // As many negations as were said, or more. A false start said twice ("it's not, it's not the whole story",
+        // "no no no") counts once: tidying it away is the point.
+        if negationCount(in: proposalWords) < negationCount(in: withoutRepeatedRuns(originalWords)) { return .negationDropped }
+
+        // No name the speaker did not say.
+        let originalLowerSet = Set(originalWords.flatMap { word in
+            [word.lowercased()] + word.lowercased().split(separator: "-").map(String.init) + nameStems(word).map { $0.lowercased() }
+        })
+        for name in capitalisedMidSentenceWords(in: proposal) {
+            let stems = nameStems(name).map { $0.lowercased() } + [name.lowercased()]
+            if !stems.contains(where: originalLowerSet.contains) { return .nameAdded(name) }
+        }
+
+        // Said in another language, answered in English.
+        if MarginTidy.isForeign(original), !MarginTidy.isForeign(proposal), MarginTidy.isEnglish(proposal) { return .languageChanged }
 
         let ratio = Double(spokenWordCount(proposalWords)) / Double(spokenWordCount(originalWords))
         if ratio < lengthRange.lowerBound { return .tooShort }
@@ -407,9 +439,39 @@ public enum MarginTidyGuard {
     private static func normalizedSpan(_ span: String) -> String {
         span.replacingOccurrences(of: "’", with: "'")
             .trimmingCharacters(in: CharacterSet.alphanumerics.inverted.union(.whitespacesAndNewlines))
+            .lowercased()
     }
 
-    private static let negations: Set<String> = ["not", "no", "never", "nothing", "none", "neither", "nor", "without", "cannot"]
+    private static let negations: Set<String> = [
+        "not", "no", "never", "nothing", "none", "neither", "nor", "without", "cannot", "nobody", "nowhere",
+    ]
+
+    /// Words before a "one" that make it a pronoun rather than a number.
+    private static let pronounOneLeaders: Set<String> = ["the", "this", "that", "which", "each", "every", "any", "no", "another"]
+
+    /// `words` with a run of one to six words said again straight away dropped to one copy, comparing lowercased words
+    /// without punctuation and skipping fillers: "it's not, uh, it's not the whole story" -> "it's not the whole story".
+    static func withoutRepeatedRuns(_ words: [String]) -> [String] {
+        let spoken = words.filter { !DeterministicInterjectionCleanup.unambiguousFillers.contains($0.lowercased()) }
+        let keys = spoken.map { $0.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "'" } }
+        var result: [String] = [], resultKeys: [String] = []
+        for (word, key) in zip(spoken, keys) {
+            result.append(word)
+            resultKeys.append(key)
+            var length = min(6, resultKeys.count / 2)
+            while length >= 1 {
+                let tail = resultKeys.suffix(length), before = resultKeys.dropLast(length).suffix(length)
+                if Array(tail) == Array(before) {
+                    result.removeLast(length)
+                    resultKeys.removeLast(length)
+                    length = min(6, resultKeys.count / 2)
+                } else {
+                    length -= 1
+                }
+            }
+        }
+        return result
+    }
 
     private static func negationCount(in words: [String]) -> Int {
         words.filter { word in
