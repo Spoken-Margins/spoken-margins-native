@@ -726,6 +726,8 @@ These came in the project chat, so most have no comment of his to link. Each cit
     - #4713: goes to the desk (T4 request on #5243).
     - #4574 and #4937: groundwork, but each still has cloud work left. #4574 needs #4802's conflict and token step. #4937 needs its Done when 7 probes. They stay `ready`.
 
+- **PRs run the whole Linux portable plan again before they reach the merge queue (2026-11-24, #5281, PR #5294).** Only 3 PRs merged between 09:00 and 12:20Z with about 30 armed. Since 2026-11-20 a PR had run only a quick tier of `hosted fast: portable`, with no runner-tests and no Linux SessionKitCoreTests, so the queue was the first place those ran. In the 24 hours to 12:30Z, 18 of the 58 PRs that left the queue failed portable, and each failure rebuilt every group behind it. The thread "Speed up the merge queue" offered three options: the full Linux plan on PRs (its pick, about 12 more free Linux minutes per push), Mac checks on PRs too, or changing the queue settings. He took the first by merging #5294 at 17:41Z and wrote "merged" in the thread. Mac checks still run only in the queue. What would show it's waste: two weeks in which merge groups fail portable as often per merged PR as in the week before.
+
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
   - Verification layers: tests that pass while the app is broken usually fake the boundary that broke, such as audio sessions, players, file paths across containers and network responses.
