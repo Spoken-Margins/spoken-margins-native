@@ -225,7 +225,8 @@ def derive(samples, previous=None, window=WINDOW):
         p95s = {step: percentile([r['seconds'] for r in rows_], 0.95) for step, rows_ in by_step.items() if len(rows_) >= MIN_SAMPLES}
         old = previous.get(name, {})
         if not p95s:
-            limits[name] = {**old, 'note': f'fewer than {MIN_SAMPLES} samples; kept the previous value'} if old else None
+            limits[name] = ({**{k: v for k, v in old.items() if k != 'derived_seconds'},
+                            'note': f'fewer than {MIN_SAMPLES} samples; kept the previous value'} if old else None)
             continue
         step, p95 = max(p95s.items(), key=lambda item: item[1])
         used = by_step[step]
