@@ -71,6 +71,26 @@ extension Gate1AppModel {
         }
     }
 
+    /// The listener moved the source: a skip, a scrub, a chapter jump, a Skim landing or a tap in the reader. A running
+    /// Margin moment hears it as a new place (#1646, #1656), and a caught-up card is put away. One call for both, so a
+    /// new transport path can't tell one and forget the other (#4785 audit).
+    func listenerMovedSource() {
+        marginMomentConductor?.sourceMoved()
+        noteCatchUp(.scrub)
+    }
+
+    /// A compact command arrived (Lock Screen, AirPods, CarPlay, Watch, the playback screen's compact buttons). A move
+    /// tells the Margin moment and puts the card away, and so does Play (`CatchUpRun.Event.event(for:sourceIsPlaying:)`).
+    /// Called before any of the command's own early returns. A recording puts the card away only once it really began
+    /// (`compactRecordingBegan`), so a refused one leaves it.
+    func noteTransportCommand(_ command: CompactControlCommand) {
+        if command.movesPlaybackPosition { marginMomentConductor?.sourceMoved() }
+        guard command != .beginInterjection else { return }
+        if let event = CatchUpRun.Event.event(for: command, sourceIsPlaying: snapshot.status.isPlaybackActive) {
+            noteCatchUp(event)
+        }
+    }
+
     /// A voice of the run started: that friend Margin is heard.
     func noteCatchUpVoiceStarted(_ marginId: String) {
         guard var current = catchUp, current.run.isRunning, current.run.friendMarginIds.contains(marginId) else { return }

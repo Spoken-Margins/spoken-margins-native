@@ -171,3 +171,20 @@ public struct CatchUpRun: Equatable, Sendable {
         return "Heard your \(what) on \u{201C}\(title)\u{201D}."
     }
 }
+
+extension CatchUpRun.Event {
+    /// What a transport command means for the caught-up card. Lock Screen, AirPods, CarPlay, Watch and the playback
+    /// screen's compact buttons reach the model as compact commands, not through the app's own Play button, so each one
+    /// is mapped here. Listed without a default so a new command has to choose. `.togglePlayPause` is Play only when the
+    /// source isn't already playing; a pause, a rate change or the end of a recording leaves the card where it is.
+    public static func event(for command: CompactControlCommand, sourceIsPlaying: Bool) -> CatchUpRun.Event? {
+        switch command {
+        case .play: .play
+        case .togglePlayPause: sourceIsPlaying ? nil : .play
+        case .skipBack, .skipForward, .skimBackward, .skimForward, .seekToMediaTime, .jumpToChapter: .scrub
+        case .beginInterjection: .recordingStarted
+        case .pause, .setPlaybackRate, .finishInterjection, .cancelInterjection, .generateInterjectionSummary,
+             .submitFollowup: nil
+        }
+    }
+}

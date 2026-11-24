@@ -92,6 +92,7 @@ extension Gate1AppModel {
     /// A Margin started from the Lock Screen, headphones or a Live Activity goes through the engine without a link;
     /// once it is recording, it names its screen and takes the suggestion the same way.
     func compactRecordingBegan() {
+        noteCatchUp(.recordingStarted) // only once the recording really began (#4785)
         marginCapture.setPresentationContext(RecordingPresentationContext(snapshot: snapshot, startedAt: Date()))
         suggestSharedMarginReply()
         engine?.changeReplyOfCurrentCapture(to: marginCapture.pendingReply?.link)

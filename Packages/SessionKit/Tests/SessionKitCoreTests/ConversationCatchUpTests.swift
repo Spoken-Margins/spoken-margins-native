@@ -229,6 +229,36 @@ final class ConversationCatchUpTests: XCTestCase {
         XCTAssertNotNil(ended.card, "a later Stop has nothing to stop")
     }
 
+    /// Lock Screen, AirPods, CarPlay, Watch and the compact buttons arrive as compact commands. Each one that moves the
+    /// source, plays it or starts a recording puts the card away, as the app's own buttons do (#4785 audit).
+    func testEveryTransportCommandThatPlaysMovesOrRecordsPutsTheCardAway() {
+        for command in CompactControlCommand.allCases {
+            for playing in [false, true] {
+                var ended = makeRun()
+                ended.handle(.completed(stillNew: 0))
+                if let event = CatchUpRun.Event.event(for: command, sourceIsPlaying: playing) { ended.handle(event) }
+                let goes: Bool
+                switch command {
+                case .play, .skipBack, .skipForward, .skimBackward, .skimForward, .seekToMediaTime, .jumpToChapter,
+                     .beginInterjection:
+                    goes = true
+                case .togglePlayPause:
+                    goes = !playing
+                case .pause, .setPlaybackRate, .finishInterjection, .cancelInterjection, .generateInterjectionSummary,
+                     .submitFollowup:
+                    goes = false
+                }
+                XCTAssertEqual(ended.card == nil, goes, "\(command), playing: \(playing)")
+                XCTAssertEqual(command.movesPlaybackPosition && ended.card != nil, false, "every move is a scrub: \(command)")
+            }
+        }
+        var running = makeRun()
+        for command in CompactControlCommand.allCases {
+            if let event = CatchUpRun.Event.event(for: command, sourceIsPlaying: false) { running.handle(event) }
+        }
+        XCTAssertTrue(running.isRunning, "mid-run, transport belongs to the review")
+    }
+
     func testTheCaughtUpCardsWords() throws {
         struct Row {
             let name: String; let run: CatchUpRun; let stillNew: Int

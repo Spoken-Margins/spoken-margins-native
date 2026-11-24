@@ -164,7 +164,7 @@ extension Gate1AppModel {
         case .seekToLeadIn(let ms) where marginMoment != nil:
             // A review's episode plays on between Margins and nothing hops ahead by itself: this tap is the hop. The
             // review's own Margin plays when the episode reaches it, so nothing is marked or dismissed here.
-            marginMomentConductor?.sourceMoved()
+            listenerMovedSource()
             seekMedia(toMediaTimeMs: ms)
         case .seekToLeadIn(let ms):
             // An announced Margin is not offered when the episode crosses it again, so give it back first: the lead-in

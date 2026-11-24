@@ -2093,7 +2093,7 @@ final class Gate1AppModel: ObservableObject {
             "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
             "requestedMediaTimeMs": String(mediaTimeMs ?? -1)
         ])
-        if command.movesPlaybackPosition { marginMomentConductor?.sourceMoved() } // before any return below (#1656)
+        noteTransportCommand(command) // before any return below (#1656, #4785)
         if command == .beginInterjection { gate2CompactControls.recordingWillTakeAudioSession() } // #2967
         if command == .beginInterjection, !snapshot.isRecording, snapshot.skimBridgeState == nil,
            !handOffPlayingMarginToRecording() { return }

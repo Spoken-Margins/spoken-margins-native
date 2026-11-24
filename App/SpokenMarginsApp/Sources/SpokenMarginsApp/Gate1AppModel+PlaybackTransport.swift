@@ -20,7 +20,7 @@ import PDFKit
 /// Playback transport: skips, seeks and playback rate (#1022).
 extension Gate1AppModel {
     func skipBack() {
-        marginMomentConductor?.sourceMoved() // a skip over a Margin doesn't play it (#1646)
+        listenerMovedSource() // a skip over a Margin doesn't play it (#1646)
         recordDeveloperDiagnostic("skip.request", ["direction": "back", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
         restoreSkimOriginBeforeCanonicalTransport()
         synchronizeStreamingSpeechAnchorIfNeeded()
@@ -33,7 +33,7 @@ extension Gate1AppModel {
     }
 
     func skipBackMedia() {
-        marginMomentConductor?.sourceMoved() // a skip over a Margin doesn't play it (#1646)
+        listenerMovedSource() // a skip over a Margin doesn't play it (#1646)
         recordDeveloperDiagnostic("skip.request", ["direction": "back", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
         restoreSkimOriginBeforeCanonicalTransport()
         run { engine in
@@ -43,7 +43,7 @@ extension Gate1AppModel {
     }
 
     func skipForward() {
-        marginMomentConductor?.sourceMoved() // a skip over a Margin doesn't play it (#1646)
+        listenerMovedSource() // a skip over a Margin doesn't play it (#1646)
         recordDeveloperDiagnostic("skip.request", ["direction": "forward", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
         restoreSkimOriginBeforeCanonicalTransport()
         synchronizeStreamingSpeechAnchorIfNeeded()
@@ -57,7 +57,7 @@ extension Gate1AppModel {
     }
 
     func skipForwardMedia() {
-        marginMomentConductor?.sourceMoved() // a skip over a Margin doesn't play it (#1646)
+        listenerMovedSource() // a skip over a Margin doesn't play it (#1646)
         recordDeveloperDiagnostic("skip.request", ["direction": "forward", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
         restoreSkimOriginBeforeCanonicalTransport()
         run { engine in
@@ -125,8 +125,7 @@ extension Gate1AppModel {
 
     @discardableResult
     func seekMedia(toMediaTimeMs mediaTimeMs: Int) -> Bool {
-        marginMomentConductor?.sourceMoved()
-        noteCatchUp(.scrub) // a scrub after a catch-up run puts the caught-up card away (#4785)
+        listenerMovedSource()
         recordDeveloperDiagnostic("seek.media.request", ["timeMs": String(mediaTimeMs)])
         restoreSkimOriginBeforeCanonicalTransport()
         return run { engine in
@@ -174,7 +173,7 @@ extension Gate1AppModel {
 
     @discardableResult
     func seekText(toCharOffset charOffset: Int) -> Bool {
-        marginMomentConductor?.sourceMoved()
+        listenerMovedSource()
         restoreSkimOriginBeforeCanonicalTransport() // a tap in the reader ends a Skim summary, as a media seek does (#1471)
         if playingImportedCommentary != nil, heldMarginVoice?.kind != .shared { stopImportedCommentaryPlayback(resumeSource: false) } // Add a Margin holds the voice and moves the source under it (#1672)
         recordDeveloperDiagnostic("seek.text.request", ["offset": String(charOffset)])
