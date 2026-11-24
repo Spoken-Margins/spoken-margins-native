@@ -896,6 +896,11 @@ PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snaps
 # SessionKitTraceTests targets, whose real-time AVFoundation tests need a sound output (PORTABLE_LEFT_OUT 'package').
 # Between them the three plans run every fast-plan step (test_fast_split.py checks it).
 FAST_SPLIT_PLANS = ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest')
+# Plans that run only host steps (no Xcode scheme).
+HOST_ONLY_PLANS = ('slow', 'mac-build', 'main-mac')
+# --plan mac-build's reason for every test step it leaves out (#5281).
+MAC_BUILD_LEFT_OUT = ('the merge queue builds on the Mac and runs no Mac tests (#5281); --plan main-mac runs them on main '
+                      '(main-slow.yml), and the Linux job runs the core tests the two platforms share')
 HOSTED_SESSIONKIT_STEPS = ('package-build', 'package-core', 'package-core-serial')
 MAC_REST_STEPS = ('hot-file-ratchet', 'runner-tests', 'ops', 'package-build', 'package', 'tools', 'shipped-compat')
 # The whole runner-tests step, here and on the Mac, runs one test module per process, four at a time, slowest first
@@ -2265,6 +2270,35 @@ class Run:
         # With the dot: parallel_unittest.py matches by prefix, and a future test_sm_status_x must not leave too.
         return [f'{module}.' for module in modules]
 
+    def mac_build(self):
+        """--plan mac-build (#5281): the merge queue's Mac job, build only. It compiles SessionKit and every one of
+        its test targets with the Mac's Swift (the Linux job builds with another Swift and cannot see Apple-only code),
+        and runs the shipped build's packet and database checks when the diff reaches them: those are guards, which
+        stay on every merge. The Mac tests themselves (SessionKitCoreTests on the Mac, SessionKitTests, the runner
+        tests that drive Apple tools, ops) run on main instead, in --plan main-mac. Linux runs the 9,950 core tests the
+        two share on every merge group."""
+        self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
+        self.shipped_compat()
+        for name in ('package-core', 'package', 'runner-tests', 'ops', 'tools'):
+            self.skip(name, MAC_BUILD_LEFT_OUT)
+        if input_identity() != self.manifest['input_sha256']:
+            raise RuntimeError(inputs_changed_message('Inputs changed during the Mac build', self.input_files))
+
+    def main_mac(self):
+        """--plan main-mac (#5281): every Mac test the merge queue's build-only job leaves out, plus the slow tier,
+        on main for main-slow.yml: fast-hosted-sessionkit and fast-mac-rest in full (no diff, nothing left out),
+        then the slow tier's runner module."""
+        with host_test_slot(f'verify-tests main-mac in {ROOT}', out=sys.stdout,
+                            max_wait=BUILD_SLOT_WAIT_SECONDS) as held:
+            self.manifest['host_test_slot'] = held
+            self.save()
+            self.hosted_sessionkit()
+            self.mac_rest()
+            modules = sorted(slow_tier.SLOW_RUNNER_MODULES)
+            if modules:
+                self.command('slow-runner-tests', [sys.executable, '-c', MAC_REST_RUNNER_LOADER,
+                                                   *(f'{m}.' for m in modules)], **RUNNER_TESTS_LIMITS)
+
     def slow(self):
         """--plan slow (#5145): exactly the tests --leave-out-slow leaves out, for main-slow.yml and phone-build."""
         modules = sorted(slow_tier.SLOW_RUNNER_MODULES)
@@ -2620,7 +2654,7 @@ def read_changed_files(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--plan', choices=['fast', 'fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest', 'slow', *PLANS],
+    parser.add_argument('--plan', choices=['fast', 'fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest', 'slow', 'mac-build', 'main-mac', *PLANS],
                         default='fast')
     parser.add_argument('--device', help='Supported simulator UDID (including iPad); overrides phone preference')
     parser.add_argument('--ios', type=int, help='Required iOS major version, e.g. 26 or 27; never falls back to another OS')
@@ -2679,7 +2713,7 @@ def main():
         output = args.output or ROOT / 'artifacts/test-runs' / (
             datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '-' + args.plan)
         run = Run(output.resolve(), args.plan,
-                  read_changed_files(args.changed_files) if args.plan in ('fast', 'fast-mac-rest') else None)
+                  read_changed_files(args.changed_files) if args.plan in ('fast', 'fast-mac-rest', 'mac-build') else None)
         if args.pr_quick:
             run.manifest['pr_quick'] = True
             run.save()  # in the evidence from the start, not only from the first step's save
@@ -2693,7 +2727,11 @@ def main():
                 run.fast()
             elif args.plan == 'slow':
                 run.slow()
-            if args.plan not in ('fast', *FAST_SPLIT_PLANS, 'slow') and not args.build_only:
+            elif args.plan == 'mac-build':
+                run.mac_build()
+            elif args.plan == 'main-mac':
+                run.main_mac()
+            if args.plan not in ('fast', *FAST_SPLIT_PLANS, *HOST_ONLY_PLANS) and not args.build_only:
                 if journeys:
                     run.manifest['scripted_journeys'] = journeys
                     run.xcode(args.plan, args.device, args.rebuild, args.ios,

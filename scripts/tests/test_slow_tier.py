@@ -110,7 +110,37 @@ class LeaveOutTests(unittest.TestCase):
         plans = re.findall(r'\.venv/bin/python scripts/verify-tests\.py --plan (\S+)([^\n]*)', workflow)
         self.assertGreaterEqual(len(plans), 4)
         for plan, rest in plans:
+            if plan == 'mac-build':  # #5281: the merge queue's Mac build runs no tests, so it has none to leave out
+                self.assertNotIn('--leave-out-slow', rest)
+                continue
             self.assertIn('--leave-out-slow', rest, plan)
+
+    def test_the_merge_queue_mac_job_builds_and_runs_no_tests(self):
+        # #5281: in a merge group the Mac job builds only; the test plans run on PRs and dispatches, and on main.
+        workflow = (ROOT / '.github/workflows/hosted-portable.yml').read_text()
+        workflow = workflow[workflow.index('\n  mac-rest:\n'):workflow.index('\n  stop-macs-on-red:\n')]
+
+        def step_if(name):
+            block = workflow[workflow.index(f'- name: {name}\n'):]
+            return block[:block.index('run:')]
+        self.assertIn("if: github.event_name == 'merge_group'", step_if('Mac build (merge queue, no tests)'))
+        self.assertIn('--plan mac-build $CHANGED_ARGS', workflow)
+        for name in ('SessionKit build and SessionKitCoreTests', 'Install BlackHole (virtual audio output)',
+                     'Mac rest of the fast plan'):
+            self.assertIn("github.event_name != 'merge_group'", step_if(name), name)
+        # The Changed files step comes first: the build's shipped-build checks read the diff.
+        self.assertLess(workflow.index('- name: Changed files'), workflow.index('- name: Mac build (merge queue'))
+
+    def test_main_mac_holds_every_mac_test_and_the_slow_tier(self):
+        source = (SCRIPTS / 'verify-tests.py').read_text()
+        body = source[source.index('    def main_mac(self):'):source.index('    def slow(self):')]
+        for call in ('self.hosted_sessionkit()', 'self.mac_rest()', 'slow_tier.SLOW_RUNNER_MODULES'):
+            self.assertIn(call, body)
+        build = source[source.index('    def mac_build(self):'):source.index('    def main_mac(self):')]
+        self.assertIn('self.shipped_compat()', build)  # the packet and database guards stay on every merge
+        done = subprocess.run([sys.executable, str(SCRIPTS / 'verify-tests.py'), '--plan', 'main-mac',
+                               '--leave-out-slow', '--list'], capture_output=True, text=True, cwd=ROOT)
+        self.assertNotEqual(done.returncode, 0)  # main-mac never leaves the slow tier out
 
     def test_the_sessionkit_runner_passes_a_skip_to_each_split_run(self):
         script = (SCRIPTS / 'run-sessionkit-tests.sh').read_text()
@@ -163,8 +193,8 @@ class MainSlowTests(unittest.TestCase):
 
     def test_the_workflow_runs_the_slow_plan_on_a_schedule_and_reports(self):
         workflow = (ROOT / '.github/workflows/main-slow.yml').read_text()
-        self.assertEqual(len(re.findall(r"- cron: '", workflow)), 3)
-        self.assertIn('verify-tests.py --plan slow', workflow)
+        self.assertEqual(re.findall(r"- cron: '([^']+)'", workflow), ['47 7 * * *', '40 1-22/3 * * *'])
+        self.assertIn('verify-tests.py --plan main-mac', workflow)  # #5281: the slow tier and every Mac test
         self.assertIn('scripts/main_slow.py report', workflow)
         self.assertIn('scripts/main_slow.py lost', workflow)
         lost = workflow[workflow.index('- name: Record a lost run'):]
