@@ -677,6 +677,26 @@ class FinishEligibleTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn('Mac finisher goes first', why)
 
+    def test_a_merge_conflict_hand_off_is_taken_at_once(self):
+        # Owner, 2026-11-24: a conflict needs no Mac and no person, so it skips the finisher's hour.
+        # The bodies come from lane_conflicts.py itself, so a change to its marker breaks this test.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            'lane_conflicts', Path(__file__).resolve().parents[2] / 'scripts' / 'lane_conflicts.py')
+        lc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(lc)
+        for body in (lc.comment_body('main', 'b' * 40, 'a' * 40, ['docs/decisions.md']),
+                     lc.no_merge_ref_body('main', 'b' * 40, 'a' * 40)):
+            with self.subTest(body=body[:60]):
+                ok, why = self.ok(labels=('needs-mac',), comments=[c(body, ago(minutes=5))])
+                self.assertTrue(ok, why)
+                self.assertEqual(why, 'merge conflict')
+        # A newer hand-off for another reason puts the hour back.
+        conflict = c(lc.comment_body('main', 'b' * 40, 'a' * 40, ['x']), ago(hours=3))
+        ok, why = self.ok(labels=('needs-mac',), comments=[conflict], handing_at=ago(minutes=20))
+        self.assertFalse(ok)
+        self.assertIn('Mac finisher goes first', why)
+
     def test_lane_fail_on_the_head_qualifies_but_an_older_head_or_a_runner_fault_does_not(self):
         head = 'a' * 40
         report = ('Lane report x — FAIL\n\ncommit `aaaaaaa`\nsimulator build (fail)\nGate1AppModel.swift:10:5: error: x')

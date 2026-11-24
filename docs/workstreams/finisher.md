@@ -16,7 +16,7 @@ Two things share the "finisher" name. Don't mix them up.
 | What it is | An interactive Claude Code session on the Mac, run by a person or a lead | A launchd job that starts headless `claude -p` runs, one fresh session per job |
 | Doc | This page | [ops/claude/README.md](../../ops/claude/README.md) |
 | Claims a PR with | `Finisher <name> taking this.` | `Finisher Claude taking this.` |
-| Order | The finisher goes first on a stalled PR | Waits an hour after the stall, so the finisher goes first; backs off for 2 hours when another finisher has claimed the PR |
+| Order | The finisher goes first on a stalled PR | Waits an hour after the stall, so the finisher goes first, except for a merge conflict, which it takes on its next tick (owner, 2026-11-24); backs off for 2 hours when another finisher has claimed the PR |
 
 The worker's rules (checked: `STALL_GRACE`, `OTHER_FINISHER_HOLD`, `OTHER_FINISHER_CLAIM_RE`, `OWN_FINISHER_CLAIM` in `sm_claude_worker.py`) are why a human-started finisher never races it for the first hour.
 
