@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/vergecast" rel="self" type="application/rss+xml"/>
+    <title>The Vergecast</title>
+    <link>https://www.theverge.com/the-vergecast</link>
+    <language>en</language>
+    <copyright>© 2022 Vox Media, Inc. All Rights Reserved</copyright>
+    <description>The Vergecast is the flagship daily podcast from The Verge about small gadgets, Big Tech, and everything in between. Every Friday, Nilay Patel and David Pierce hang out and make sense of the week’s most important technology news. And Monday through Thursday, David leads a selection of The Verge’s expert staffers in an exploration of how gadgets and software affect our lives – and which ones you should bring into yours.&amp;nbsp;</description>
+    <image>
+      <url>https://megaphone-images.spotifycdn.com/podcasts/e4c412e6-e1f0-11e8-9bde-83f9d376f059/image/fa367fa8b1b6ca01fc4b8c34d83ba4d8.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>The Vergecast</title>
+      <link>https://www.theverge.com/the-vergecast</link>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle>What’s new and next in tech</itunes:subtitle>
+    <itunes:author>The Verge</itunes:author>
+    <itunes:summary>The Vergecast is the flagship daily podcast from The Verge about small gadgets, Big Tech, and everything in between. Every Friday, Nilay Patel and David Pierce hang out and make sense of the week’s most important technology news. And Monday through Thursday, David leads a selection of The Verge’s expert staffers in an exploration of how gadgets and software affect our lives – and which ones you should bring into yours.&amp;nbsp;</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>The Vergecast is the flagship daily podcast from The Verge about small gadgets, Big Tech, and everything in between. Every Friday, Nilay Patel and David Pierce hang out and make sense of the week’s most important technology news. And Monday through Thursday, David leads a selection of The Verge’s expert staffers in an exploration of how gadgets and software affect our lives – and which ones you should bring into yours.&nbsp;</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Vox Media Podcast Network</itunes:name>
+      <itunes:email>vergecast@theverge.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone-images.spotifycdn.com/podcasts/e4c412e6-e1f0-11e8-9bde-83f9d376f059/image/fa367fa8b1b6ca01fc4b8c34d83ba4d8.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Technology">
+    </itunes:category>
+    <itunes:category text="News">
+      <itunes:category text="Tech News"/>
+    </itunes:category>
+    <itunes:new-feed-url>https://feeds.megaphone.fm/vergecast</itunes:new-feed-url>
+    

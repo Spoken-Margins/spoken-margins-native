@@ -22,19 +22,25 @@ final class FirstRunCatalogDrawerTests: XCTestCase {
         }
     }
 
-    /// #470: a short hand-picked "Writers" row of Substack publications, followed as article feeds.
-    func testWritersSubjectOffersExactlyItsHandPickedStarterRowOfNewsletters() throws {
+    /// #470: a short hand-picked "Writers" row of Substack publications leads the chip, followed as article feeds.
+    /// Since the packs (#4285, PR 5) the chip also lists the packs' other newsletters after the row, as the Design
+    /// says ("the new shows also appear in Top and the subject chips"); every one is still a newsletter.
+    func testWritersSubjectLeadsWithItsHandPickedStarterRowOfNewsletters() throws {
         let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot()))
         XCTAssertTrue(catalog.visibleSubjects.contains { $0.id == "writers" && $0.title == "Writers" })
         let starterRow = try XCTUnwrap(catalog.starterRows?.first { $0.subjectId == "writers" })
+        XCTAssertTrue((6...10).contains(starterRow.entryIds.count), "keep the row short: \(starterRow.entryIds.count)")
         let writers = catalog.entries(forSubject: "writers")
-        XCTAssertEqual(writers.map(\.id), starterRow.entryIds)
-        XCTAssertTrue((6...10).contains(writers.count), "keep it short: \(writers.count)")
+        XCTAssertEqual(Array(writers.map(\.id).prefix(starterRow.entryIds.count)), starterRow.entryIds)
         for entry in writers {
             XCTAssertEqual(entry.kind, .articleFeed, entry.id)
             XCTAssertEqual(entry.kind.identityKind, .articleFeed, entry.id)
             XCTAssertEqual(entry.contentKind, .newsletter, entry.id)
-            XCTAssertTrue(entry.feedURL.hasPrefix("https://") && entry.feedURL.hasSuffix("/feed"), entry.feedURL)
+            XCTAssertTrue(entry.feedURL.hasPrefix("https://"), entry.feedURL)
+        }
+        for id in starterRow.entryIds {
+            let entry = try XCTUnwrap(writers.first { $0.id == id })
+            XCTAssertTrue(entry.feedURL.hasSuffix("/feed"), "the hand-picked row is Substack feeds: \(entry.feedURL)")
         }
         XCTAssertFalse(catalog.entries(forSubject: "news").contains { $0.contentKind == .newsletter }, "podcast subjects are unchanged")
     }

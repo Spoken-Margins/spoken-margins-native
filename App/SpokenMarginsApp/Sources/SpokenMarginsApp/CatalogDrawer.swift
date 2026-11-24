@@ -1,6 +1,34 @@
 import SwiftUI
 import SessionKit
 
+/// What the drawer's packs need from the app (#4285): quiet follows and one refresh after a Follow all batch, the Not
+/// for me snapshot and its hidden sources, and hiding, showing again and unfollowing a catalog source. Nil in tests
+/// and previews that have none: Follow all then follows through the drawer's ordinary `follow`, and nothing is hidden.
+struct CatalogDrawerPackActions {
+    /// Follows without fetching episodes at once; `refreshAfterBatch` runs once after the batch.
+    var followQuietly: @MainActor (String) async throws -> String
+    var refreshAfterBatch: @MainActor () async -> Void
+    /// Awaited before the first list is published, so a hidden source never shows and then snaps away.
+    var notForMe: @MainActor () async -> NotForMeSnapshot
+    /// The snapshot as the store last published it, read synchronously at each opening, so a hide made on a Show
+    /// screen or a hide the reconcile cleared since the last opening shows at once.
+    var currentNotForMe: @MainActor () -> NotForMeSnapshot
+    var hiddenSources: @MainActor () async -> [NotForMeStore.HiddenSource]
+    /// Hides a source; the second value is its followed source id when the drawer knows one.
+    var hide: @MainActor (SourceCatalogEntry, String?) async -> Void
+    var showAgain: @MainActor (String) async -> Void
+    /// Unfollows the subscription with this source id, else the one whose feed matches; false when none matched or
+    /// it failed.
+    var unfollow: @MainActor (_ feedURL: String, _ sourceId: String?) async -> Bool
+}
+
+/// The drawer's own toast (#4285 §2a): the app's top banner sits under the sheet and can't be seen.
+struct CatalogDrawerToast: Identifiable {
+    let id = UUID()
+    let message: String
+    let undo: (@MainActor () async -> Void)?
+}
+
 /// B1 M1: the first-run drawer of popular podcasts. It reads the bundled catalog snapshot
 /// (works offline), refreshes from the remote catalog when online, and follows a show in one
 /// tap through the app's normal follow path.
@@ -19,8 +47,21 @@ final class CatalogDrawerModel: ObservableObject {
     static let owedAfterFriendFileFailedKey = "catalogDrawerOwedAfterFriendFileFailedV1"
 
     @Published var isPresented = false
-    @Published var selectedSubject: String? { didSet { refreshEntries() } }
+    /// Packs, Top or a subject (#4285). Every opening resets it: Packs when a pack is visible, otherwise Top.
+    @Published var selectedChip: CatalogDrawerChip = .top { didSet { refreshEntries() } }
+    /// The subject whose list shows, nil for Top. On the Packs chip the list below is Top's, though packs show.
+    var selectedSubject: String? {
+        get { selectedChip.listSubject }
+        set { selectedChip = newValue.map(CatalogDrawerChip.subject) ?? .top }
+    }
     @Published private(set) var catalog: SourceCatalog? { didSet { refreshEntries() } }
+    /// What the listener said Not for me to (#4285), read before the first list is published.
+    @Published private(set) var notForMeSnapshot: NotForMeSnapshot = .empty { didSet { refreshEntries() } }
+    /// The Not for me screen's rows, newest first, read when the screen opens.
+    @Published private(set) var hiddenSources: [NotForMeStore.HiddenSource] = []
+    @Published private(set) var toast: CatalogDrawerToast?
+    /// The Pack and Not for me screens pushed inside the drawer (#4285 PR 9).
+    @Published var path: [CatalogDrawerRoute] = []
     /// The rows for the selected subject, refiltered only when the catalog or subject changes
     /// (#246: it was refiltered on every render, including one per Follow tap).
     @Published private(set) var entries: [SourceCatalogEntry] = []
@@ -71,7 +112,13 @@ final class CatalogDrawerModel: ObservableObject {
     /// Shows tapped in this opening, in tap order. A pick's `sourceId` arrives when its follow lands and is
     /// dropped when the follow fails.
     private var picks: [(key: String, sourceId: String?)] = []
-    private var followTasks: [Task<Void, Never>] = []
+    /// Each pick's follow, in tap order, so Done can wait for them one at a time (#4285 §2f).
+    private var followTasks: [(key: String, task: Task<Void, Never>)] = []
+    /// An opening began before the catalog loaded: the start chip is chosen when it arrives, so there is no flash
+    /// from Top to Packs.
+    private var startChipPending = false
+    private let packActions: CatalogDrawerPackActions?
+    private var toastTask: Task<Void, Never>?
     /// Set by the first-run opening; Done then plays. Opened from Following, Done only closes.
     private var isFirstRunOpening = false
     private var playsOnDismiss = false
@@ -96,8 +143,10 @@ final class CatalogDrawerModel: ObservableObject {
         startFirstListen: (@MainActor ([String], Bool) async -> Void)? = nil,
         libraryHoldsFriendPacket: (@Sendable () async -> Bool)? = nil,
         openFriendLink: (@MainActor (URL) -> Void)? = nil,
-        packetOpenFailures: PacketOpenFailurePresenter? = nil
+        packetOpenFailures: PacketOpenFailurePresenter? = nil,
+        packs: CatalogDrawerPackActions? = nil
     ) {
+        self.packActions = packs
         self.libraryHoldsFriendPacket = libraryHoldsFriendPacket
         self.openFriendLink = openFriendLink
         self.packetOpenFailures = packetOpenFailures
@@ -273,6 +322,15 @@ final class CatalogDrawerModel: ObservableObject {
         friendFileOpenedUnderneath = false
         showsFriendLinkCard = false
         friendLinkNote = nil
+        searchText = ""
+        path = []
+        dismissToast()
+        if let packActions { notForMeSnapshot = packActions.currentNotForMe() }
+        if let catalog {
+            selectedChip = CatalogDrawerChip.start(in: catalog, notForMe: notForMeSnapshot)
+        } else {
+            startChipPending = true
+        }
         isPresented = true
     }
 
@@ -356,13 +414,23 @@ final class CatalogDrawerModel: ObservableObject {
         Task { await playFirstListenIfRequested() }
     }
 
-    /// Run after the sheet has closed, so a Terms sheet the play needs has nothing to collide with. Waits for
-    /// follows still in flight, which Done doesn't have to.
+    /// Run after the sheet has closed, so a Terms sheet the play needs has nothing to collide with. Waits for the
+    /// picks in tap order until one has landed, not for all of them (#4285: a Follow all of eight waits for its
+    /// first podcast only), then starts the first listen with that pick first. A failed pick is skipped; if every
+    /// pick fails, the Welcome sample plays, as with no pick.
     func playFirstListenIfRequested() async {
         guard playsOnDismiss, let startFirstListen else { return }
         playsOnDismiss = false
-        for task in followTasks { await task.value }
-        await startFirstListen(picks.compactMap { $0.sourceId }, welcomeOrder.playsWelcomeSampleOnClose)
+        var leading: String?
+        for (key, task) in followTasks {
+            await task.value
+            if let sourceId = picks.first(where: { $0.key == key && $0.sourceId != nil })?.sourceId {
+                leading = sourceId
+                break
+            }
+        }
+        let ids = FirstListenPickOrder.sourceIds(leading: leading, settledInTapOrder: picks.compactMap { $0.sourceId })
+        await startFirstListen(ids, welcomeOrder.playsWelcomeSampleOnClose)
     }
 
     /// Called when the sheet closes, however it closes.
@@ -379,22 +447,34 @@ final class CatalogDrawerModel: ObservableObject {
             loadError = "The podcast list isn't available in this build."
             return
         }
+        // Hides are read first, so a hidden source never shows and then snaps away (#4285, the #3753 shape).
+        if let packActions { notForMeSnapshot = await packActions.notForMe() }
         do {
             catalog = try await store.current()
         } catch {
             loadError = "The podcast list couldn't be read."
             return
         }
+        applyPendingStartChip()
         if case .updated = await store.refresh() {
             catalog = (try? await store.current()) ?? catalog
         }
+    }
+
+    private func applyPendingStartChip() {
+        guard startChipPending, let catalog else { return }
+        startChipPending = false
+        selectedChip = CatalogDrawerChip.start(in: catalog, notForMe: notForMeSnapshot)
     }
 
     /// The stored catalog for Following's kind and subject tags (#485): no refresh, and it
     /// doesn't count as the drawer's load, so opening the drawer still refreshes it.
     func loadSnapshot() async {
         guard catalog == nil, let store, let snapshot = try? await store.current() else { return }
+        // Hides first here too: Following loads the catalog before the drawer ever opens (#4285 §5 `store`).
+        if let packActions, catalog == nil { notForMeSnapshot = await packActions.notForMe() }
         if catalog == nil { catalog = snapshot }
+        applyPendingStartChip()
     }
 
     var supportsSearch: Bool { searcher != nil }
@@ -451,7 +531,7 @@ final class CatalogDrawerModel: ObservableObject {
         }
         followStates[show.id] = .following
         picks.append((show.id, nil))
-        followTasks.append(Task { [weak self] in
+        followTasks.append((show.id, Task { [weak self] in
             guard let self else { return }
             do {
                 let sourceId = try await self.follow(feedURL)
@@ -461,11 +541,13 @@ final class CatalogDrawerModel: ObservableObject {
                 self.settlePick(key: show.id, sourceId: nil)
                 self.followStates[show.id] = .failed(ListenerErrorText.message(for: error))
             }
-        })
+        }))
     }
 
     private func refreshEntries() {
-        entries = catalog?.entries(forSubject: selectedSubject) ?? []
+        // Hidden sources are left out of Top and every subject (#4285). Search still finds them.
+        let snapshot = notForMeSnapshot
+        entries = (catalog?.entries(forSubject: selectedChip.listSubject) ?? []).filter { !snapshot.isHidden($0) }
     }
 
     func state(for entry: SourceCatalogEntry) -> FollowState? {
@@ -498,12 +580,19 @@ final class CatalogDrawerModel: ObservableObject {
         case .failed, nil:
             break
         }
+        _ = startFollow(entry, quietly: false)
+    }
+
+    /// Follows one catalog entry as a pick. `quietly` skips the at-once episode fetch (Follow all's later sources).
+    /// Returns the follow's task, so a batch can wait for it.
+    private func startFollow(_ entry: SourceCatalogEntry, quietly: Bool) -> Task<Void, Never> {
         followStates[entry.id] = .following
         picks.append((entry.id, nil))
-        followTasks.append(Task { [weak self] in
+        let follow = quietly ? (packActions?.followQuietly ?? self.follow) : self.follow
+        let task = Task { [weak self] in
             guard let self else { return }
             do {
-                let sourceId = try await self.follow(entry.feedURL)
+                let sourceId = try await follow(entry.feedURL)
                 self.recordFollowedSource(sourceId, for: entry)
                 self.settlePick(key: entry.id, sourceId: sourceId)
                 self.followStates[entry.id] = .followed
@@ -511,7 +600,154 @@ final class CatalogDrawerModel: ObservableObject {
                 self.settlePick(key: entry.id, sourceId: nil)
                 self.followStates[entry.id] = .failed(ListenerErrorText.message(for: error))
             }
-        })
+        }
+        followTasks.append((entry.id, task))
+        return task
+    }
+
+    // MARK: Packs (#4285)
+
+    /// Packs with at least one visible source, in §2f order.
+    var visiblePacks: [SourceCatalogPack] {
+        guard let catalog else { return [] }
+        return CatalogPackRanking.visiblePacks(in: catalog, notForMe: notForMeSnapshot)
+    }
+
+    /// The chip bar: Packs first when a pack is visible, then Top, then the subjects.
+    var showsPacksChip: Bool { !visiblePacks.isEmpty }
+
+    func pack(id: String) -> SourceCatalogPack? { catalog?.packs?.first { $0.id == id } }
+
+    func visibleSources(of pack: SourceCatalogPack) -> [SourceCatalogEntry] {
+        guard let catalog else { return [] }
+        return CatalogPackRanking.visibleSources(of: pack, in: catalog, notForMe: notForMeSnapshot)
+    }
+
+    func footnote(for pack: SourceCatalogPack) -> String {
+        guard let catalog else { return "" }
+        return CatalogPackRanking.footnote(
+            pace: CatalogPackRanking.packPace(of: pack, in: catalog, notForMe: notForMeSnapshot),
+            visibleSources: visibleSources(of: pack))
+    }
+
+    func paceWords(for entry: SourceCatalogEntry) -> String? {
+        guard let catalog else { return nil }
+        return CatalogPackPace.rowWords(CatalogPackPace.measure(for: entry, in: catalog))
+    }
+
+    func buttonState(for pack: SourceCatalogPack) -> CatalogPackButtonState {
+        let sources = visibleSources(of: pack)
+        return CatalogPackRanking.buttonState(visibleSourceIds: sources.map(\.id), states: followStates(for: sources))
+    }
+
+    /// Follow all, Follow the other N−k, or Retry R. The first source in §2f order fetches its episodes at once;
+    /// the rest follow quietly, and one refresh runs after the batch. A second tap while anything from the pack is
+    /// in flight does nothing.
+    func followAll(_ pack: SourceCatalogPack) {
+        let sources = visibleSources(of: pack)
+        let targets = CatalogPackFollowPlan.targets(visibleSources: sources, states: followStates(for: sources))
+        guard !targets.isEmpty else { return }
+        let tasks = targets.enumerated().map { index, entry in startFollow(entry, quietly: index > 0) }
+        guard targets.count > 1, let refresh = packActions?.refreshAfterBatch else { return }
+        Task {
+            for task in tasks.dropFirst() { await task.value }
+            await refresh()
+        }
+    }
+
+    /// "Not for me (H)": how many sources are hidden.
+    var hiddenCount: Int { notForMeSnapshot.hiddenFeedKeys.count }
+
+    func reloadHiddenSources() async {
+        guard let packActions else { return }
+        hiddenSources = await packActions.hiddenSources().sorted { $0.hiddenAt > $1.hiddenAt }
+    }
+
+    private func refreshNotForMe() async {
+        guard let packActions else { return }
+        notForMeSnapshot = await packActions.notForMe()
+    }
+
+    /// Show again on the Not for me screen: the hide goes and so does its row. It doesn't follow the source.
+    func showAgain(_ source: NotForMeStore.HiddenSource, feedURL: String) async {
+        guard let packActions else { return }
+        await packActions.showAgain(feedURL)
+        await refreshNotForMe()
+        await reloadHiddenSources()
+    }
+
+    /// The feed a hidden source's row brings back: its catalog entry's, else one rebuilt from the key, which the
+    /// store matches by key.
+    func feedURL(for source: NotForMeStore.HiddenSource) -> String {
+        if let id = source.catalogEntryId, let entry = catalog?.entries.first(where: { $0.id == id }) { return entry.feedURL }
+        if let entry = catalog?.entries.first(where: { SourceCatalog.feedKey($0.feedURL) == source.feedKey }) { return entry.feedURL }
+        return source.feedKey // the key is itself an https feed address (`FeedURLKey`)
+    }
+
+    private func sourceId(for entry: SourceCatalogEntry) -> String? {
+        let recorded = defaults.dictionary(forKey: Self.followedSourcesKey) as? [String: String] ?? [:]
+        if let id = recorded[entry.id] { return id }
+        let key = SourceCatalog.feedKey(entry.feedURL)
+        return subscriptions().first { SourceCatalog.feedKey($0.source.canonicalURL) == key }?.source.id
+    }
+
+    /// Unfollow on a Pack row. Toast: "Unfollowed <title>." Undo follows it again.
+    func unfollowFromPack(_ entry: SourceCatalogEntry) {
+        guard let packActions else { return }
+        let sourceId = sourceId(for: entry)
+        Task { [weak self] in
+            guard await packActions.unfollow(entry.feedURL, sourceId), let self else { return }
+            self.followStates[entry.id] = nil
+            self.picks.removeAll { $0.key == entry.id } // no longer something Done could play
+            self.showToast(CatalogPackWords.unfollowedToast(title: entry.title)) { [weak self] in
+                self?.toggleFollow(entry)
+            }
+        }
+    }
+
+    /// Not for me on a Pack row: it unfollows if followed, then hides the source, so the hide isn't dropped by the
+    /// reconcile of a list that still holds it. Undo removes the hide, then follows it again if it was followed.
+    func notForMeFromPack(_ entry: SourceCatalogEntry) {
+        guard let packActions else { return }
+        let wasFollowed = state(for: entry) == .followed
+        let sourceId = wasFollowed ? sourceId(for: entry) : nil
+        Task { [weak self] in
+            if wasFollowed { _ = await packActions.unfollow(entry.feedURL, sourceId) }
+            await packActions.hide(entry, sourceId)
+            guard let self else { return }
+            self.followStates[entry.id] = nil
+            self.picks.removeAll { $0.key == entry.id }
+            await self.refreshNotForMe()
+            self.showToast(CatalogPackWords.hiddenMessage(title: entry.title)) { [weak self] in
+                await packActions.showAgain(entry.feedURL)
+                await self?.refreshNotForMe()
+                if wasFollowed { self?.toggleFollow(entry) }
+            }
+        }
+    }
+
+    /// Shows a toast with Undo for 6 seconds, or until the next one; then the summary comes back.
+    func showToast(_ message: String, undo: (@MainActor () async -> Void)?) {
+        toastTask?.cancel()
+        let toast = CatalogDrawerToast(message: message, undo: undo)
+        self.toast = toast
+        toastTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(CatalogPackWords.toastSeconds))
+            guard !Task.isCancelled, self?.toast?.id == toast.id else { return }
+            self?.toast = nil
+        }
+    }
+
+    func undoToast() {
+        guard let toast else { return }
+        dismissToast()
+        Task { await toast.undo?() }
+    }
+
+    private func dismissToast() {
+        toastTask?.cancel()
+        toastTask = nil
+        toast = nil
     }
 
     /// A finished follow fills in its pick, keeping the tap order; a failed one is removed. A retry of a
@@ -539,7 +775,7 @@ struct CatalogDrawerView: View {
     @EnvironmentObject private var drawer: CatalogDrawerModel
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $drawer.path) {
             VStack(spacing: 0) {
                 if drawer.showsFriendLinkCard, !drawer.showsSearchResults {
                     FirstLaunchFriendLinkCardView(drawer: drawer)
@@ -564,6 +800,14 @@ struct CatalogDrawerView: View {
                 }
             }
             .task { await drawer.load() }
+            .navigationDestination(for: CatalogDrawerRoute.self) { route in
+                switch route {
+                case .pack(let id):
+                    CatalogPackScreen(packId: id)
+                case .notForMe:
+                    CatalogNotForMeScreen()
+                }
+            }
             .navigationDestination(isPresented: Binding(
                 get: { drawer.shortcutImport != nil },
                 set: { if !$0 { drawer.shortcutImport = nil } }
@@ -631,27 +875,35 @@ struct CatalogDrawerView: View {
         }
     }
 
+    /// Drawn once the catalog has loaded, with the list, so the chip never flashes from Top to Packs (#4285). A
+    /// failed load shows no chips.
+    @ViewBuilder
     private var subjectBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                subjectChip(id: nil, title: "Top")
-                ForEach(drawer.subjects) { subject in
-                    subjectChip(id: subject.id, title: subject.title)
+        if drawer.catalog != nil, drawer.loadError == nil {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    if drawer.showsPacksChip {
+                        subjectChip(.packs, title: CatalogPackWords.packsChipTitle)
+                    }
+                    subjectChip(.top, title: "Top")
+                    ForEach(drawer.subjects) { subject in
+                        subjectChip(.subject(subject.id), title: subject.title)
+                    }
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
         }
     }
 
-    private func subjectChip(id: String?, title: String) -> some View {
-        let isSelected = drawer.selectedSubject == id
-        return Button { drawer.selectedSubject = id } label: {
+    private func subjectChip(_ chip: CatalogDrawerChip, title: String) -> some View {
+        let isSelected = drawer.selectedChip == chip
+        return Button { drawer.selectedChip = chip } label: {
             CatalogSubjectChipLabel(title: title, isSelected: isSelected)
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityIdentifier("catalog.subject.\(id ?? "top")")
+        .accessibilityIdentifier("catalog.subject.\(chip.identifierSuffix)")
     }
 
     @ViewBuilder
@@ -661,37 +913,93 @@ struct CatalogDrawerView: View {
         } else if drawer.catalog == nil {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            let states = drawer.followStates(for: drawer.entries)
             List {
-                Section {
-                    ForEach(drawer.entries) { entry in
-                        CatalogDrawerRow(entry: entry, state: states[entry.id]) { drawer.toggleFollow(entry) }
-                            .equatable()
+                if drawer.selectedChip == .packs, drawer.showsPacksChip {
+                    Section {
+                        EmptyView()
+                    } header: {
+                        Text(CatalogPackWords.packsHeader)
+                            .font(.footnote)
+                            .textCase(nil)
                     }
-                } header: {
-                    Text("New episodes and posts show up in Following. Nothing downloads until you choose it.")
-                        .font(.footnote)
-                        .textCase(nil)
+                    // Each pack is its own section with two rows, so a tap on one can never reach the other.
+                    ForEach(drawer.visiblePacks, id: \.id) { pack in
+                        CatalogPackSection(pack: pack)
+                    }
+                } else {
+                    let states = drawer.followStates(for: drawer.entries)
+                    Section {
+                        ForEach(drawer.entries) { entry in
+                            CatalogDrawerRow(entry: entry, state: states[entry.id]) { drawer.toggleFollow(entry) }
+                                .equatable()
+                        }
+                    } header: {
+                        Text(CatalogPackWords.followingNote)
+                            .font(.footnote)
+                            .textCase(nil)
+                    }
+                }
+                if drawer.hiddenCount > 0 {
+                    Section {
+                        NavigationLink(value: CatalogDrawerRoute.notForMe) {
+                            Label(CatalogPackWords.notForMeRowTitle(hidden: drawer.hiddenCount), systemImage: "eye.slash")
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        }
+                        .listRowBackground(Color.clear)
+                        .accessibilityIdentifier("catalog.drawer.notForMe")
+                    }
                 }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .safeAreaInset(edge: .bottom) {
-                if let summary = drawer.followedSummary {
-                    Text(summary)
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(.bar)
-                        .accessibilityIdentifier("catalog.drawer.followedCount")
+            .safeAreaInset(edge: .bottom) { CatalogDrawerBottomInset() }
+        }
+    }
+}
+
+/// The Pack and Not for me screens pushed inside the drawer (#4285 PR 9). #4286's quiz adds its own route here.
+enum CatalogDrawerRoute: Hashable {
+    case pack(String)
+    case notForMe
+}
+
+/// The drawer's bottom inset: the summary ("Following 2 shows and 1 newsletter"), and in its place for 6 seconds the
+/// drawer's own toast with Undo, because the app's top banner sits under the sheet (#4285 §2a).
+struct CatalogDrawerBottomInset: View {
+    @EnvironmentObject private var drawer: CatalogDrawerModel
+
+    var body: some View {
+        if let toast = drawer.toast {
+            HStack(spacing: 12) {
+                Text(toast.message)
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if toast.undo != nil {
+                    Button { drawer.undoToast() } label: {
+                        Text(FollowingDismissMessages.undoTitle)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                        .accessibilityIdentifier("catalog.drawer.toast.undo")
                 }
             }
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(.bar)
+            .accessibilityElement(children: .contain)
+        } else if let summary = drawer.followedSummary {
+            Text(summary)
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(.bar)
+                .accessibilityIdentifier("catalog.drawer.followedCount")
         }
     }
 }
 
 /// Artwork, details and a Follow control for one show. At accessibility text sizes the control stacks under the
 /// artwork and text instead of growing beside them and crushing the title (#1934).
-private struct CatalogShowRowLayout<Details: View, Control: View>: View {
+struct CatalogShowRowLayout<Details: View, Control: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let artworkURL: URL?
     @ViewBuilder let details: Details

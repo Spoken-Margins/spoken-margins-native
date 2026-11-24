@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/unexplainable" rel="self" type="application/rss+xml"/>
+    <title>Unexplainable</title>
+    <language>en</language>
+    <copyright>© 2021 Vox Media, Inc. All Rights Reserved</copyright>
+    <description>Unexplainable&amp;nbsp;takes listeners right up to the edge of what we know…and then keeps on going. The&amp;nbsp;Unexplainable&amp;nbsp;team — Noam Hassenfeld, Julia Longoria, Byrd Pinkerton, and Meradith Hoddinott — tackles scientific mysteries, unanswered questions, and everything we learn diving into the unknown. New episodes Mondays and Wednesdays.
+
+From Vox and the Vox Media Podcast Network.</description>
+    <image>
+      <url>https://megaphone-images.spotifycdn.com/podcasts/bf04a680-6afe-11eb-a86a-3f07259749a3/image/d510ec950f9a501094c11003381fcedc.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>Unexplainable</title>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle>What we don't know is awesome</itunes:subtitle>
+    <itunes:author>Vox</itunes:author>
+    <itunes:summary>Unexplainable&amp;nbsp;takes listeners right up to the edge of what we know…and then keeps on going. The&amp;nbsp;Unexplainable&amp;nbsp;team — Noam Hassenfeld, Julia Longoria, Byrd Pinkerton, and Meradith Hoddinott — tackles scientific mysteries, unanswered questions, and everything we learn diving into the unknown. New episodes Mondays and Wednesdays.
+
+From Vox and the Vox Media Podcast Network.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>Unexplainable&nbsp;takes listeners right up to the edge of what we know…and then keeps on going. The&nbsp;Unexplainable&nbsp;team — Noam Hassenfeld, Julia Longoria, Byrd Pinkerton, and Meradith Hoddinott — tackles scientific mysteries, unanswered questions, and everything we learn diving into the unknown. New episodes Mondays and Wednesdays.</p><p><br></p><p>From Vox and the Vox Media Podcast Network. </p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Vox</itunes:name>
+      <itunes:email>podcasting@voxmedia.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone-images.spotifycdn.com/podcasts/bf04a680-6afe-11eb-a86a-3f07259749a3/image/d510ec950f9a501094c11003381fcedc.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Science">
+      <itunes:category text="Life Sciences"/>
+      <itunes:category text="Natural Sciences"/>
+    </itunes:category>
+    
