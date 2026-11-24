@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import XCTest
 @testable import SessionKit
 import SessionKitTestInputs
@@ -239,6 +242,19 @@ final class ShareLinkOpenedTests: XCTestCase {
         XCTAssertEqual(recorder.count, 0)
     }
 
+    /// Before the listener's own sent links are read, nothing is sent: a cold launch from their own link can't signal it.
+    @MainActor
+    func testNothingIsSentBeforeYourOwnLinksAreKnown() async {
+        let defaults = freshDefaults()
+        let signals = FriendLinkSignals(defaults: defaults)
+        signals.recordArrival(id: id, token: token, offered: true, now: now)
+        let recorder = Recorder()
+        let signaller = FriendLinkSignaller(signals: signals, client: ShareLinkOpenedClient(host: "h.example", transport: recorder.transport()),
+                                            defaults: defaults, ownLinkIDs: { nil }, now: { [now] in now })
+        XCTAssertNil(signaller.signal(ids: [id]))
+        XCTAssertEqual(recorder.count, 0)
+    }
+
     func testSignalsArePrunedAfterThirtyOneDays() {
         let defaults = freshDefaults()
         let signals = FriendLinkSignals(defaults: defaults)
@@ -367,13 +383,16 @@ final class ShareLinkOpenedTests: XCTestCase {
         XCTAssertNil(status.line(forItem: "item", receiptsOn: true), "no line before the file is read")
         await status.load()
         XCTAssertEqual(status.line(forItem: "item", receiptsOn: true)?.text, "Link sent today")
-        await status.runChecks(receiptsOn: false)
+        let defaults = freshDefaults()
+        defaults.set(false, forKey: ShareLinkOpenedPolicy.defaultsKey)
+        await status.runChecks(defaults: defaults)
         XCTAssertEqual(recorder.count, 0, "switch off checks nothing")
-        await status.runChecks(receiptsOn: true)
+        defaults.removeObject(forKey: ShareLinkOpenedPolicy.defaultsKey)
+        await status.runChecks(defaults: defaults)
         XCTAssertEqual(recorder.count, 1)
         XCTAssertEqual(status.line(forItem: "item", receiptsOn: true)?.text, "Link sent today · Opened")
         XCTAssertEqual(status.line(forItem: "item", receiptsOn: false)?.text, "Link sent today")
-        await status.runChecks(receiptsOn: true)
+        await status.runChecks(defaults: defaults)
         XCTAssertEqual(recorder.count, 1, "an opened record is never checked again")
         await status.waitForSaves()
         XCTAssertEqual(file.load(now: now).first?.opened, true, "the answer survives a relaunch")
@@ -385,11 +404,13 @@ final class ShareLinkOpenedTests: XCTestCase {
         let recorder = Recorder()
         recorder.fails = true
         let status = SentLinkStatus(file: file, client: ShareLinkOpenedClient(host: "h.example", transport: recorder.transport()), now: { [now] in now })
+        XCTAssertNil(status.knownLinkIDs, "own links are unknown until the file is read")
         status.add(record(id))
-        await status.runChecks(receiptsOn: true)
+        let defaults = freshDefaults()
+        await status.runChecks(defaults: defaults)
         XCTAssertEqual(status.line(forItem: "item", receiptsOn: true)?.text, "Link sent today")
-        XCTAssertEqual(status.linkIDs, [id])
-        await status.runChecks(receiptsOn: true)
+        XCTAssertEqual(status.knownLinkIDs, [id])
+        await status.runChecks(defaults: defaults)
         XCTAssertEqual(recorder.count, 1, "the ten-minute rule holds after a failure")
     }
     #endif

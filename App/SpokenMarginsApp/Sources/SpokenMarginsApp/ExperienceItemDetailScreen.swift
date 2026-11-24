@@ -49,6 +49,8 @@ struct ExperienceItemDetailScreen: View {
     @StateObject private var arrival = FriendArrivalPresenter()
     /// Settings' "Show when links are opened" (#5275): off means no notice here and no mark sent.
     @AppStorage(ShareLinkOpenedPolicy.defaultsKey) private var showsOpenedReceipts = true
+    /// The listener's own sent links: no notice until they are read, so their own link never shows it (#5275).
+    @ObservedObject private var sentLinks = SentLinkStatus.shared
     /// The item whose screen tapped Don't tell, or sent the mark from a start control; the notice changes or goes there.
     @State private var linkNoticeToldNotItemID: String?
     @State private var linkNoticeSentItemID: String?
@@ -256,7 +258,7 @@ struct ExperienceItemDetailScreen: View {
                 await refreshKeptOriginal()
             }
             .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Skip to the Margins" (#3365)
-            .task { await SentLinkStatus.shared.load() } // the listener's own links, so opening one never signals it (#5275)
+            .task { await sentLinks.load() } // the listener's own links, so opening one never signals it (#5275)
             .onDisappear {
                 WrittenMarginReadings.leftItemScreen(model.selectedItem.id)
                 arrival.cancel()
@@ -1062,9 +1064,11 @@ struct ExperienceItemDetailScreen: View {
     /// Shared Margins on this item that the listener hasn't heard (#474).
     /// Whether this arrival by link shows the opened notice, and which links its start controls signal (#5275).
     private var friendLinkArrival: FriendLinkArrival {
-        FriendLinkArrival.make(
+        // Until the listener's own links are read, nothing counts: the error is a missed notice, never their own link.
+        guard let own = sentLinks.knownLinkIDs else { return FriendLinkArrival(linkIDs: [], senderName: nil) }
+        return FriendLinkArrival.make(
             waiting: newSharedMargins, signals: FriendLinkSignals().all(now: Date()),
-            receiptsOn: showsOpenedReceipts, ownLinkIDs: SentLinkStatus.shared.linkIDs)
+            receiptsOn: showsOpenedReceipts, ownLinkIDs: own)
     }
 
     /// "When you open these Margins, Ana can see that you did." under the sender line, until a start control sends the

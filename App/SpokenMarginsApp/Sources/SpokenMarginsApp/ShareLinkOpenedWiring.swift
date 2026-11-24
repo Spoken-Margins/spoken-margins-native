@@ -10,6 +10,7 @@ extension SentLinkStatus {
 }
 
 extension FriendLinkSignaller {
-    /// Sends the friend's opened marks from the item screen's start controls. The listener's own links are never sent.
-    static let shared = FriendLinkSignaller(signals: FriendLinkSignals(), client: .live, ownLinkIDs: { SentLinkStatus.shared.linkIDs })
+    /// Sends the friend's opened marks from the item screen's start controls. The listener's own links are never sent,
+    /// and nothing is sent before they are read.
+    static let shared = FriendLinkSignaller(signals: FriendLinkSignals(), client: .live, ownLinkIDs: { SentLinkStatus.shared.knownLinkIDs })
 }

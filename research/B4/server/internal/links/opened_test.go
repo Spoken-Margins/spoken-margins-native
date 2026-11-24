@@ -249,3 +249,49 @@ func inode(t *testing.T, path string) uint64 {
 	}
 	return uint64(info.Sys().(*syscall.Stat_t).Ino)
 }
+
+// One live link whose meta.json can't be rewritten must not stop the sweep deleting another link's expired content.
+func TestSweepGoesOnPastALinkItCannotRewrite(t *testing.T) {
+	made := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	s, expired := openedStore(t, made)
+	preview, packet, _, _ := loadVector(t)
+	stuck, _, err := s.Put(packet, preview, made.Add(20*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stuckDir := filepath.Join(s.dir, stuck)
+	if err := os.Chmod(stuckDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(stuckDir, 0o700) })
+	if _, err := os.CreateTemp(stuckDir, ".probe-"); err == nil {
+		t.Skip("this user can write a read-only folder (root?)")
+	}
+	n, err := s.Sweep(made.Add(Lifetime + time.Hour))
+	if err != nil || n != 1 {
+		t.Fatalf("sweep: %d %v, want 1 deleted and no error", n, err)
+	}
+	if _, err := os.Stat(filepath.Join(s.dir, expired, "packet")); !os.IsNotExist(err) {
+		t.Fatal("the expired link's packet outlived its 30 days")
+	}
+}
+
+// A CLI takedown writes its tombstone and then deletes the content. A mark that lands between the two (it rewrites
+// the live metadata it read) must not make the link read opened or take a mark once the content is gone.
+func TestNoMarkOnceTheContentIsGone(t *testing.T) {
+	v := loadOpenedVector(t)
+	now := time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC)
+	s, id := openedStore(t, now)
+	if err := s.MarkOpened(id, v.TokenHex, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.deleteContent(id); err != nil {
+		t.Fatal(err)
+	}
+	if s.IsOpened(id, v.TokenHex, now) {
+		t.Fatal("a link with no content reads opened")
+	}
+	if err := s.MarkOpened(id, v.OtherTokenHex, now); err == nil {
+		t.Fatal("a link with no content took a mark")
+	}
+}

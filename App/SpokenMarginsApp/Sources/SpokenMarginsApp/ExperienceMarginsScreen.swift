@@ -202,7 +202,7 @@ struct ExperienceMarginsScreen: View, Equatable {
                 rowsLoaded = true
             }
             // One screen-level check each time the tab appears, never per heading, never in the background (#5275).
-            .task { await sentLinks.runChecks(receiptsOn: showsOpenedReceipts) }
+            .task { await sentLinks.runChecks() }
             .refreshable { await model.refreshMarginRowsAsync() }
             .scrollDismissesKeyboard(.interactively)
             .searchKeyboardDoneBar() // #4636

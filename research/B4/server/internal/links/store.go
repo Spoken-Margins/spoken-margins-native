@@ -247,16 +247,12 @@ func (s *Store) Sweep(now time.Time) (int, error) {
 		if err := s.live(e.Name(), now); err == nil {
 			// Rewriting every live link's meta.json each day leaves the file system's change time saying
 			// only which day the sweep ran, so it can't date an opened mark to the hour (#5275).
-			if err := s.rewriteMetaLocked(e.Name(), false); err != nil {
-				return n, err
-			}
+			// A link whose file can't be rewritten keeps its old times; it must not stop the sweep deleting others.
+			_ = s.rewriteMetaLocked(e.Name(), false)
 			continue
 		} else if errors.Is(err, ErrGone) {
 			if s.parked(e.Name(), now) {
 				continue
-			}
-			if err := s.rewriteMetaLocked(e.Name(), true); err != nil {
-				return n, err
 			}
 			stored := false
 			for _, name := range contentFiles {
@@ -267,6 +263,9 @@ func (s *Store) Sweep(now time.Time) (int, error) {
 			if err := s.deleteContent(e.Name()); err != nil {
 				return n, err
 			}
+			// After the content is gone, so a mark that can't be dropped never keeps content past its life; the
+			// next sweep tries again.
+			_ = s.rewriteMetaLocked(e.Name(), true)
 			if stored {
 				n++
 			}
@@ -356,7 +355,7 @@ func (s *Store) MarkOpened(id, token string, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	if meta.Disabled || !now.Before(meta.ExpiresAt) {
+	if meta.Disabled || !now.Before(meta.ExpiresAt) || !s.hasPreview(id) {
 		return ErrGone
 	}
 	mark := openedMark(token)
@@ -384,7 +383,7 @@ func (s *Store) IsOpened(id, token string, now time.Time) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	meta, err := s.readMeta(id)
-	if err != nil || meta.Disabled || !now.Before(meta.ExpiresAt) {
+	if err != nil || meta.Disabled || !now.Before(meta.ExpiresAt) || !s.hasPreview(id) {
 		return false
 	}
 	mark := openedMark(token)
@@ -400,6 +399,13 @@ func (s *Store) IsOpened(id, token string, now time.Time) bool {
 // make from the link's key and id.
 func ValidOpenedToken(token string) bool {
 	return len(token) == 64 && ValidID(token[:32]) && ValidID(token[32:])
+}
+
+// hasPreview says the link's content is still there. A takedown from the CLI deletes it after writing the tombstone,
+// so a mark written between the two can't make a taken-down link read opened (Live checks the same).
+func (s *Store) hasPreview(id string) bool {
+	_, err := os.Stat(filepath.Join(s.dir, id, previewFile))
+	return err == nil
 }
 
 func openedMark(token string) string {

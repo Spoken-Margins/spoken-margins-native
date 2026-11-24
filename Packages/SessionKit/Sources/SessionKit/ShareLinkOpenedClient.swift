@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Talks to the link server's opened marks (#5275): `POST /l/<id>/opened` with the opened-token as the body
 /// when a friend presses Play, and `GET /l/<id>/opened` with the token in a header when the sender's Margins

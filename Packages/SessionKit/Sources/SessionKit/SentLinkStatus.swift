@@ -56,17 +56,23 @@ public final class SentLinkStatus: ObservableObject {
         return SentLinkLine.make(records: records.filter { $0.itemID == itemID }, receiptsOn: receiptsOn, now: now())
     }
 
+    /// The listener's own sent links, or nil until the file is read: a caller that must not mistake their own link for
+    /// a friend's waits for it.
+    public var knownLinkIDs: Set<String>? { loaded ? linkIDs : nil }
+
     /// Asks the server about the records that are due (``ShareLinkOpenedPolicy/checksToRun(_:receiptsOn:now:)``),
-    /// one request each. A failure keeps the last known state; the next appearance tries again after ten minutes.
-    public func runChecks(receiptsOn: Bool) async {
+    /// one request each. The switch is read before every request, so turning it off stops a run already going. A
+    /// failure keeps the last known state; the next appearance tries again after ten minutes.
+    public func runChecks(defaults: UserDefaults = .standard) async {
         await load()
         guard !checking else { return }
-        let due = ShareLinkOpenedPolicy.checksToRun(records, receiptsOn: receiptsOn, now: now())
+        let due = ShareLinkOpenedPolicy.checksToRun(records, receiptsOn: ShareLinkOpenedPolicy.isOn(defaults), now: now())
         guard !due.isEmpty else { return }
         checking = true
         defer { checking = false }
         let client = client
         for record in due {
+            guard ShareLinkOpenedPolicy.isOn(defaults) else { break }
             let answer = await client.isOpened(id: record.id, token: record.token)
             guard let index = records.firstIndex(where: { $0.id == record.id }) else { continue }
             records[index].lastCheckedAt = now()

@@ -41,7 +41,8 @@ export function inSenderCheck(host: unknown = globalThis): boolean {
 /**
  * Posts the mark. A simple request (`no-cors`, a text body, no extra headers), so the browser sends no preflight and no
  * cookie, and the page never reads the answer. True when the request left; a network failure is false, and the next
- * start control on the same arrival tries again.
+ * start control on the same arrival tries again. A `no-cors` answer can't be read, so a refused post (429) also counts
+ * as sent and is not retried; the app, which can read it, counts only a 204.
  */
 export async function postOpened(origin: string, id: string, token: string, fetchImpl: typeof fetch = fetch): Promise<boolean> {
   try {

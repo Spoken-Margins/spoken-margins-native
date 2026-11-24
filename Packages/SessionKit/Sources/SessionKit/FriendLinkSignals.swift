@@ -67,12 +67,14 @@ public final class FriendLinkSignaller {
     private let signals: FriendLinkSignals
     private let client: ShareLinkOpenedClient
     private let defaults: UserDefaults
-    private let ownLinkIDs: @MainActor () -> Set<String>
+    /// The listener's own sent links, or nil until they are read: then nothing is sent, so a link the listener sent
+    /// themselves is never signalled because its record wasn't loaded yet.
+    private let ownLinkIDs: @MainActor () -> Set<String>?
     private let now: @Sendable () -> Date
     private var inFlight: Set<String> = []
 
     public init(signals: FriendLinkSignals, client: ShareLinkOpenedClient, defaults: UserDefaults = .standard,
-                ownLinkIDs: @escaping @MainActor () -> Set<String>, now: @escaping @Sendable () -> Date = Date.init) {
+                ownLinkIDs: @escaping @MainActor () -> Set<String>?, now: @escaping @Sendable () -> Date = Date.init) {
         self.signals = signals
         self.client = client
         self.defaults = defaults
@@ -90,7 +92,7 @@ public final class FriendLinkSignaller {
     @discardableResult
     public func signal(ids: [String]) -> Task<Void, Never>? {
         let receiptsOn = ShareLinkOpenedPolicy.isOn(defaults)
-        let own = ownLinkIDs()
+        guard let own = ownLinkIDs() else { return nil }
         let entries = signals.all(now: now())
         var due: [(id: String, token: String)] = []
         for id in Set(ids).sorted() {
