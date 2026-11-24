@@ -42,6 +42,12 @@
 # then `mac-rest`, or `sessionkit` with the variable off) stop or leave the queue (#2596): a PR the cheap job
 # already fails has no use for a hosted-Mac slot, and the org has five of them.
 #
+# Guards first (merge groups only): the Mac jobs also wait for `guards`, about 2 minutes of hosted Linux running the
+# repository's rule tests (scripts/queue_guards.py), and `stop-on-guard-red` cancels the run when one of those tests
+# fails. `stop-macs-on-red` fired only when `portable` ended, 16 minutes in at the median, after the app build (8
+# minutes) had finished and most of Mac rest (25) had run. No result of `guards` skips a Mac job: a skipped required
+# check counts as passed, so only the cancel stops them, and a cancel that fails leaves them running as before.
+#
 # The slow tier (#5145, owner 2026-11-23): every plan here runs with --leave-out-slow, which leaves out the tests in
 # scripts/slow_tier.py (slow on these runners, no failure in 30 days, none a packet, database or owner-data guard) and
 # names them in the log. main-slow.yml runs exactly those on main nightly and before the phone builds.
@@ -326,12 +332,47 @@ jobs:
             echo "docs_only=false" | tee -a "$GITHUB_OUTPUT"
           fi
 
+  guards:
+    # The repository's rule tests first, in a merge group only (scripts/queue_guards.py says which and why). The Mac
+    # jobs below wait for this job; when a guard test fails (output `red`), stop-on-guard-red cancels the run, so the
+    # queue drops the group in minutes instead of when `portable` ends. 2026-11-20 to 11-24: 157 merge groups failed first in
+    # `portable` while their Mac jobs ran beside it (1,569 Mac minutes), and 117 of them failed a test this job runs.
+    # `portable` still runs every one of these tests and stays the required check: a skipped Mac job reports success,
+    # so a red here must be red there too, which test_fast_portable keeps true. Not on a PR push: the Mac jobs are
+    # queue-only there, and the quick tier runs the Swift scans itself (#5220). No result of this job skips a Mac job
+    # (audit on 089d17c): a failure in checkout, setup-python or Python tools (a PyPI flake, which `portable` may not
+    # hit) is not `red` and cancels nothing, and if the cancel itself fails (#5217's token budget) the Mac jobs run.
+    # Cost and catch: about 2 minutes of hosted Linux per merge group (the scans took 59 s on a PR's portable job,
+    # 75 s for the whole set in one process on the owner's Mac), and that much later Mac start in each group, beside a
+    # 16-minute `portable`. Waste signal: a month in which it fails no group, or it passes 5 minutes.
+    name: 'hosted fast: guards'
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      red: ${{ steps.guard-tests.outcome == 'failure' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Python tools
+        run: bash scripts/bootstrap-python-tools.sh
+      - name: Repository guard tests
+        id: guard-tests
+        run: .venv/bin/python scripts/queue_guards.py
+
   sessionkit:
     name: 'hosted fast: SessionKit core'
-    needs: scope
+    needs: [scope, guards]
     # Not with LANE_HOSTED_MAC_REST `on`: the mac-rest job below runs these tests then (#2596).
     if: >-
-      !cancelled() && needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && vars.LANE_HOSTED_MAC_REST != 'on' && (github.event_name != 'pull_request' ||
+      !cancelled() &&
+      needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && vars.LANE_HOSTED_MAC_REST != 'on' && (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on'))
     # The image and Xcode the lane Mac builds with (hosted-app-macos.yml says why), so the two can't disagree.
     runs-on: xcode-27
@@ -409,9 +450,10 @@ jobs:
     # Cost and catch: about 8 minutes of hosted Mac per merge group that touches the app (hosted-app-macos.yml on main
     # took 6 to 8 minutes, 2026-11-20). It would have caught #4602. Waste signal: a month in which it never fails.
     name: 'hosted app: build (no tests)'
-    needs: scope
+    needs: [scope, guards]
     if: >-
-      !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.app != 'false' &&
+      !cancelled() &&
+      needs.scope.result == 'success' && needs.scope.outputs.app != 'false' &&
       (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch')
     runs-on: xcode-27
     timeout-minutes: 45
@@ -494,7 +536,7 @@ jobs:
     # Mac's), and RealSpeechTranscriberTests skipped, with no en_US SpeechTranscriber model. macos-26 matches the lane
     # Mac's OS but has no Xcode 27, and Xcode 26.6 does not compile SessionKit's tests (run 39836269608). #2469 tracks it.
     name: 'hosted fast: Mac rest'
-    needs: scope
+    needs: [scope, guards]
     # Merge queue (#4693): with the repository variable MERGE_QUEUE_MAC set to `queue-only`, this job runs in the
     # merge queue and on a dispatch, never on a PR push. On a PR it is then skipped, which reports success, so the
     # one required check name passes on the PR and is earned in the queue: one Mac run per merge instead of one per
@@ -502,7 +544,8 @@ jobs:
     # --ref <branch>`). Unset (today), PRs run it as before, because the lane still merges on it. The variable goes
     # on in the same hour the ruleset starts requiring the queue.
     if: >-
-      !cancelled() && needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && (github.event_name != 'pull_request' ||
+      !cancelled() &&
+      needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && (github.event_name != 'pull_request' ||
       ((github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on') &&
        vars.MERGE_QUEUE_MAC != 'queue-only' && vars.LANE_HOSTED_MAC_REST == 'on'))
     runs-on: xcode-27
@@ -673,6 +716,29 @@ jobs:
           RUN: ${{ github.run_id }}
         run: gh run cancel "$RUN" || true
 
+  stop-on-guard-red:
+    # The same cancel when a guard test fails (merge groups only); a setup failure in `guards` is not red and cancels
+    # nothing. The run's Mac jobs may become ready in the same moment, but they wait for a Mac slot and start slower
+    # than this Linux job, so the cancel reaches them queued. Its failed check stays red, which the queue and
+    # merge_queue_dequeued.py read as the PR's failure (`needs-fix`); `portable` and the Mac checks end `cancelled`.
+    # The group is dropped about 2 minutes in instead of when `portable` ends (median 16.5 minutes), so a broken PR
+    # leaves the queue before more groups are built on it: #5172 stayed queued for 2 h 10 min on 2026-11-23 and 25
+    # groups failed with it on the same rule.
+    name: stop-on-guard-red
+    needs: guards
+    if: always() && needs.guards.outputs.red == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the Mac jobs of this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN: ${{ github.run_id }}
+        run: gh run cancel "$RUN" || true
+
   linux-retry-tally:
     # #3529: a SessionKitCoreTests test that fails on Linux and passes on its rerun counts as a pass (owner,
     # 2026-10-24), and each such retry-pass is tallied on #2176, so three in 7 days open its own `Flaky:` issue. The
@@ -769,7 +835,7 @@ jobs:
     # (the trunk, or the lane-check/** base under test), never the PR's head, and the head reaches the shell only through env. Same-repo runs only. Its outcome is read from the
     # check jobs only: owner-tap-alert and linux-retry-tally run `always()` and end `success` even when every check skipped.
     name: rearm
-    needs: [portable, scope, sessionkit, mac-rest, app-compile, stop-macs-on-red, linux-retry-tally, owner-tap-alert]
+    needs: [portable, scope, guards, sessionkit, mac-rest, app-compile, stop-macs-on-red, stop-on-guard-red, linux-retry-tally, owner-tap-alert]
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 3
