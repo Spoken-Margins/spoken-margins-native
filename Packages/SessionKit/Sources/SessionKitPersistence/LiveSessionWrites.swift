@@ -23,4 +23,15 @@ public enum LiveSessionWrites {
         try store.seed(item: item)
         return try LiveSessionMarginPlacer.placeLinked(placed, itemId: item.id, repository: store)
     }
+
+    /// The saved spoken Margins that still have no words (#4715): said while Speech Recognition was undecided, or before
+    /// the session's own transcription reached them. The live session's sweep looks only at unsaved sessions, so once a
+    /// session is saved these go to the app's ordinary Margin transcription, which files a hold on the waiting list
+    /// (kept across a relaunch) and retries it on Allow.
+    public static func spokenAwaitingWords(_ linked: Linked) -> [Interjection] {
+        linked.map(\.saved).filter { margin in
+            guard margin.audioPath != nil, margin.transcriptionStatus != "transcribed" else { return false }
+            return (margin.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
 }

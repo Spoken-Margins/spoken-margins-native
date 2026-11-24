@@ -32,6 +32,27 @@ public struct MarginHearing: Equatable, Sendable {
         self.kind = kind
         self.outcome = outcome
     }
+
+    /// Whether the Margin a Margin moment voiced is one of the listener's own spoken Margins on `itemId`, from the store,
+    /// never the card's label. One row by its identity ("session::margin"), not every session of the item: it runs at
+    /// every voice end, so the app reads it off the main thread (#2256).
+    public static func isListenersOwnSpokenMargin(
+        marginIdentity: String, itemId: String, repository: InterjectionByIdReading
+    ) -> Bool {
+        guard let (sessionId, id) = MarginIdentity.split(marginIdentity),
+              let margin = try? repository.loadInterjection(id: id, sessionId: sessionId) else { return false }
+        return margin.itemId == itemId && margin.isSpokenItemMargin
+    }
+
+    /// The hearing of a spoken Margin whose voice a Margin moment stopped, `reachedEnd` or early.
+    public static func spokenVoiceEnded(
+        marginIdentity: String, itemId: String, reachedEnd: Bool, repository: InterjectionByIdReading
+    ) -> MarginHearing {
+        MarginHearing(
+            isListenersOwn: isListenersOwnSpokenMargin(marginIdentity: marginIdentity, itemId: itemId, repository: repository),
+            kind: .spoken, outcome: reachedEnd ? .reachedEnd : .stoppedEarly
+        )
+    }
 }
 
 extension OnboardingProgress {
