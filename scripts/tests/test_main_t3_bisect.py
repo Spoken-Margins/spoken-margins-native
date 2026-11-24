@@ -331,9 +331,11 @@ class CommandTests(unittest.TestCase):
                                     env={B.REVERT_TOKEN_ENV: ''}, then_revert=True)
         self.assertEqual(opened, [])
         comments = [(c[0][2], c[1]) for c in calls if c[0][:2] == ('issue', 'comment')]
-        self.assertEqual([n for n, _ in comments], ['5', '9'])
-        self.assertIn('## Not reverted automatically', comments[1][1])
-        self.assertIn(B.REVERT_TOKEN_ENV, comments[1][1])
+        self.assertEqual([n for n, _ in comments], ['5', '9', '5'])  # the failure issue hears how the revert ended
+        for _, text in comments[1:]:
+            self.assertIn('Not reverted automatically', text)
+            self.assertIn(B.REVERT_TOKEN_ENV, text)
+            self.assertIn('will not retry', text)
 
     def test_bisect_never_reads_the_revert_token_and_leaves_a_request_for_revert(self):
         """The probes run older commits' code for hours: the write token must not be in their environment, and an App
@@ -360,6 +362,30 @@ class CommandTests(unittest.TestCase):
                 self.assertEqual(B.command_revert(argparse.Namespace(evidence=tmp)), 0)
             finally:
                 B.t3.gh = saved
+
+    def test_an_unreadable_request_or_one_with_no_failure_issue_is_handled(self):
+        import argparse
+        import json
+        posted = []
+        saved = (B.t3.gh, B.t3.repo, B.revert_safety)
+        B.t3.gh = lambda *a, **k: posted.append(a) or ''
+        B.t3.repo = lambda: 'o/r'
+        B.revert_safety = lambda *a, **k: (None, ['main moved'])
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                (Path(tmp) / B.REVERT_REQUEST).write_text('{"sha": ')
+                self.assertEqual(B.command_revert(argparse.Namespace(evidence=tmp)), 0)
+                self.assertEqual(posted, [])
+                (Path(tmp) / B.REVERT_REQUEST).write_text(json.dumps(
+                    {'sha': 'c' * 40, 'red': 'd' * 40, 'culprit_issue': 9, 'failure_issue': None}))
+                os.environ[B.REVERT_TOKEN_ENV] = 'app-token'
+                try:
+                    self.assertEqual(B.command_revert(argparse.Namespace(evidence=tmp)), 0)
+                finally:
+                    os.environ.pop(B.REVERT_TOKEN_ENV, None)
+                self.assertEqual([a[2] for a in posted], ['9'])
+        finally:
+            B.t3.gh, B.t3.repo, B.revert_safety = saved
 
     def test_revert_checks_the_rules_again_on_the_newest_main(self):
         """Main can move between the two steps: a fix forward that lands then stops the revert."""

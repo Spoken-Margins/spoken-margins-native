@@ -731,14 +731,22 @@ def command_revert(args) -> int:
         print('No revert to open: the bisection named no culprit, or refused to revert it (its issue says why).',
               flush=True)
         return 0
-    request = json.loads(path.read_text())
+    try:
+        request = json.loads(path.read_text())
+        issue = int(request['culprit_issue'])
+        sha, red = request['sha'], request['red']
+    except (ValueError, KeyError, TypeError) as error:
+        print(f'::warning::The revert request is unreadable, so nothing is reverted: {error!r}', flush=True)
+        return 0
     token = os.environ.get(REVERT_TOKEN_ENV) or None
-    issue = int(request['culprit_issue'])
     pr_url, commit = None, None
     try:
-        commit, refusals = revert_safety(request['sha'], request['red'], [], token)
+        commit, refusals = revert_safety(sha, red, [], token)
     except Exception as error:  # noqa: BLE001 - whatever broke, the culprit issue says the revert did not happen
         refusals = [f'could not check whether the revert is safe: {error!r}'[:250]]
+    if not token:
+        refusals.append('the App token did not reach the revert step (its mint failed, or the App is not set up), '
+                        'and re-running the job will not retry the revert, because this culprit issue is now open')
     if refusals:
         said = not_reverted_section(refusals).strip()
     else:
@@ -751,9 +759,10 @@ def command_revert(args) -> int:
     print(said, flush=True)
     try:
         t3.gh('issue', 'comment', str(issue), '-R', t3.repo(), '--body-file', '-', stdin=said)
-        if pr_url and request.get('failure_issue'):
+        # The failure issue was told a revert comes next, so it hears how that ended either way.
+        if request.get('failure_issue'):
             t3.gh('issue', 'comment', str(request['failure_issue']), '-R', t3.repo(), '--body-file', '-',
-                  stdin=f'Bisected to `{request["sha"][:7]}`: {said}')
+                  stdin=f'Bisected to `{sha[:7]}` (culprit issue #{issue}): {said}')
     except (RuntimeError, KeyError, ValueError) as error:
         print(f'::warning::Could not post the revert result: {error}', flush=True)
     return 0
