@@ -1,6 +1,16 @@
 import XCTest
 @testable import SessionKit
 
+final class FindInTextSeekPlanTests: XCTestCase {
+    func testSeekPlanTable() {
+        XCTAssertEqual(FindInTextSeekPlan.plan(loadedItemId: "a", selectedItemId: "a"), .seekInPlace)
+        XCTAssertEqual(FindInTextSeekPlan.plan(loadedItemId: "b", selectedItemId: "a"), .openThenSeek)
+        XCTAssertEqual(FindInTextSeekPlan.plan(loadedItemId: nil, selectedItemId: "a"), .openThenSeek)
+        XCTAssertEqual(FindInTextSeekPlan.plan(loadedItemId: "A", selectedItemId: "a"), .openThenSeek)
+        XCTAssertEqual(FindInTextSeekPlan.plan(loadedItemId: "", selectedItemId: "a"), .openThenSeek)
+    }
+}
+
 final class FindInTextPresentationTests: XCTestCase {
     private func match(excerpt: String = "see the cat sat", s: Int = 8, e: Int = 11, before: Bool = false, after: Bool = false,
                        title: String? = "Methods", span: ItemTextSearch.SkippedSpan? = nil) -> ItemTextSearch.Match {

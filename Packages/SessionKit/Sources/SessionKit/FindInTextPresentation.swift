@@ -1,5 +1,19 @@
 import Foundation
 
+/// What a tapped Find in text result does (#5035). The engine's text seek throws unless the item is the loaded
+/// session, so a result on any other item first opens it through the Timeline's own call, then seeks.
+public enum FindInTextSeekPlan: Equatable, Sendable {
+    /// The player holds this item: seek where it is (a paused player stays paused).
+    case seekInPlace
+    /// The player holds another item, or none: open the item first, then seek.
+    case openThenSeek
+
+    /// `loadedItemId` is the player snapshot's item; `selectedItemId` is the item the sheet searched.
+    public static func plan(loadedItemId: String?, selectedItemId: String) -> FindInTextSeekPlan {
+        loadedItemId == selectedItemId ? .seekInPlace : .openThenSeek
+    }
+}
+
 /// The words and shapes of the "Find in text" sheet (#5035), kept out of the view so they can be host-tested.
 /// Presentation only: it reads a finished `ItemTextSearch.Result` and changes nothing.
 public enum FindInTextPresentation {

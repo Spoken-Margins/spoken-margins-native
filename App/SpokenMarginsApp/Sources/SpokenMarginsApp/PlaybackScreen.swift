@@ -51,6 +51,7 @@ struct PlaybackScreen: View {
     @State private var mediaScrubState = PlaybackScrubState()
     @State private var textScrubState = PlaybackScrubState()
     @State private var isSleepTimerPresented = false
+    @State private var isFindInTextPresented = false
     @State private var sourceTextTarget: PlaybackTextReaderTarget?
     @State private var isPlaybackOptionsPresented = false
     @State private var pendingOptionsDestination: OptionsDestination?
@@ -258,6 +259,18 @@ struct PlaybackScreen: View {
                     nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio,
                     returnToNow: { selectedPane = .now }
                 ) { libraryExitButton }
+                if selectedPane == .timeline,
+                   FindInTextPresentation.buttonState(isRecordedAudio: model.selectedItem.isNativeAudio, text: model.selectedItem.text) != .hidden {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { isFindInTextPresented = true } label: {
+                            Label(FindInTextPresentation.buttonLabel, systemImage: "magnifyingglass")
+                        }
+                        .accessibilityIdentifier("playback.findInText.button")
+                    }
+                }
+            }
+            .trackedSheet(isPresented: $isFindInTextPresented) {
+                FindInTextSheet().environmentObject(model)
             }
             .scrollDismissesKeyboard(.interactively)
             .trackedSheet(item: $selectedInterjection) { interjection in
