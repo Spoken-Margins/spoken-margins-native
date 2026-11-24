@@ -9,7 +9,8 @@ import SessionKitFeeds
 /// prepared. Opens from Following and from the first-run drawer, and with a list of feed links from the
 /// "Follow Podcasts in Spoken Margins" Shortcut action (#4284), or with the shows the listener's own AI suggested
 /// (Following's "Suggested by your AI" row, #4683). A long list can be unticked or ticked in one tap, is shown A to Z, and
-/// above 10 new shows can be searched (#4920, `OPMLImportSelection`).
+/// above 10 new shows can be searched (#4920, `OPMLImportSelection`). A file's lists, the lists it includes by web address
+/// and its rules are offered and saved too (#4046 PR 5, 8, 13), through `saveExtras`.
 @MainActor
 final class OPMLImportModel: ObservableObject {
     /// Where the previewed feeds came from, for the screen's words.
@@ -58,6 +59,17 @@ final class OPMLImportModel: ObservableObject {
     private var previewed: OPMLImportPreview?
     /// Called with the feed links an import followed, so they leave the AI's suggestions (#4683). Set by whoever made it.
     var onFollowed: (@MainActor ([String]) -> Void)?
+    /// The listener's lists, so a list in the file says it adds to one of theirs (#4046 PR 5). Set by whoever made it.
+    var existingLists: @MainActor () -> [FollowList] = { [] }
+    /// Saves the file's lists, includes and rules after the follows, and answers with the line the result shows. Set by
+    /// whoever made it; without it the file's lists are not offered.
+    var saveExtras: (@MainActor (OPMLImportExtras) async -> String?)?
+    /// Ids of the file's lists that will be saved; all of them when a file is read.
+    @Published private(set) var listsOn: Set<String> = []
+    /// Ids of the file's included lists that will keep updating; all of them when a file is read.
+    @Published private(set) var includesOn: Set<String> = []
+    /// "Added 2 lists." after an import that saved lists.
+    @Published private(set) var extrasLine: String?
 
     private let subscriptions: @MainActor () -> [FeedSubscription]
     private let follow: @MainActor (String) async throws -> Void
@@ -95,6 +107,9 @@ final class OPMLImportModel: ObservableObject {
         origin = .file
         passedFeedLinks = []
         previewed = nil
+        listsOn = []
+        includesOn = []
+        extrasLine = nil
     }
 
     func showFailure(_ error: Error) {
@@ -148,9 +163,17 @@ final class OPMLImportModel: ObservableObject {
         previewed = nil
         if !origin.isLinkList { passedFeedLinks = [] }
         do {
-            let preview = OPMLImportPlanner.preview(try document(), existing: subscriptions())
+            var preview = OPMLImportPlanner.preview(try document(), existing: subscriptions(), existingLists: existingLists())
+            if saveExtras == nil {
+                preview.lists = []
+                preview.includes = []
+                preview.rules = []
+            }
             // A home-network feed starts unticked (#4858); the listener can still tick it.
             setSelection(OPMLImportSelection(preview: preview, startingTicks: preview.defaultSelection))
+            listsOn = Set(preview.lists.map(\.id))
+            includesOn = Set(preview.includes.map(\.id))
+            extrasLine = nil
             previewed = preview
             phase = .preview(preview)
         } catch {
@@ -159,6 +182,24 @@ final class OPMLImportModel: ObservableObject {
     }
 
     func isSelected(_ candidate: SourceCandidate) -> Bool { selection?.isTicked(candidate.id) ?? false }
+
+    func setListOn(_ id: String, _ isOn: Bool) {
+        if isOn { listsOn.insert(id) } else { listsOn.remove(id) }
+    }
+
+    func setIncludeOn(_ id: String, _ isOn: Bool) {
+        if isOn { includesOn.insert(id) } else { includesOn.remove(id) }
+    }
+
+    /// The import button's title and whether it can be tapped: "Follow 3", "Add lists" or a disabled "Follow".
+    func primaryButton(for preview: OPMLImportPreview) -> (title: String, isEnabled: Bool) {
+        OPMLImportListWords.primaryButton(ticked: selected.count, preview: preview, listsOn: listsOn)
+    }
+
+    /// The list the file's includes attach to, or nil, and then they are not offered.
+    func includeTarget(for preview: OPMLImportPreview) -> OPMLPlannedList? {
+        preview.includes.isEmpty ? nil : OPMLIncludeImporter.targetList(preview: preview, listsOn: listsOn)
+    }
 
     func setSelected(_ candidate: SourceCandidate, _ isOn: Bool) {
         selection?.setTicked(candidate.id, isOn)
@@ -207,7 +248,14 @@ final class OPMLImportModel: ObservableObject {
     func followSelected() async {
         guard case .preview(let preview) = phase else { return }
         let ticked = preview.toFollow.filter { selected.contains($0.id) }
-        guard !ticked.isEmpty else { return }
+        guard !ticked.isEmpty else {
+            // "Add lists": every show in the lists that are on is already followed.
+            guard primaryButton(for: preview).isEnabled else { return }
+            let result = OPMLImportResult()
+            phase = .finished(result)
+            await saveFileExtras(preview: preview, result: result)
+            return
+        }
         // Follow counts every ticked show, shown or hidden by a search; the search goes before following starts.
         searchText = ""
         phase = .following(done: 0, total: ticked.count)
@@ -224,6 +272,16 @@ final class OPMLImportModel: ObservableObject {
             onFollowed?(result.followed.compactMap { $0.feed?.url })
             didFollow()
         }
+        await saveFileExtras(preview: preview, result: result)
+    }
+
+    /// Lists, includes and rules are saved after the follows, for the shows that ended up followed, so a list never names a
+    /// show the listener doesn't follow.
+    private func saveFileExtras(preview: OPMLImportPreview, result: OPMLImportResult) async {
+        guard let saveExtras, !preview.lists.isEmpty || !preview.includes.isEmpty || !preview.rules.isEmpty else { return }
+        let target = includeTarget(for: preview)
+        extrasLine = await saveExtras(OPMLImportExtras(
+            preview: preview, result: result, listsOn: listsOn, includesOn: target == nil ? [] : includesOn))
     }
 
     static func message(for error: Error, origin: Origin = .file) -> String {
@@ -367,6 +425,9 @@ struct OPMLImportScreen: View {
                 }
             }
             // The search is for shows to follow: sections with nothing to tick are hidden while one is typed.
+            if !matches.isSearching {
+                fileExtrasSections(preview)
+            }
             if !matches.isSearching, let unusable = OPMLImportPreviewWords.unusableSection(preview, source: source) {
                 Section {
                     if unusable.names.isEmpty {
@@ -394,6 +455,45 @@ struct OPMLImportScreen: View {
                      ?? (importer.origin.isLinkList ? "Nothing new to follow in this list." : "Nothing new to follow in this file."))
             } header: {
                 countHeader("New", 0)
+            }
+        }
+    }
+
+    /// The file's lists, the lists it includes by web address and its rules (#4046 PR 5, 8, 13).
+    @ViewBuilder
+    private func fileExtrasSections(_ preview: OPMLImportPreview) -> some View {
+        if !preview.lists.isEmpty {
+            Section {
+                ForEach(preview.lists) { list in
+                    Toggle(isOn: Binding(get: { importer.listsOn.contains(list.id) }, set: { importer.setListOn(list.id, $0) })) {
+                        feedLabel(OPMLImportListWords.row(list), detail: OPMLImportListWords.mergeLine(list, existing: importer.existingLists()))
+                    }
+                    .tint(AppColors.evergreen)
+                    .accessibilityIdentifier("opml.import.list.\(list.name)")
+                }
+            } header: {
+                Text(OPMLImportListWords.sectionTitle)
+            } footer: {
+                Text(OPMLImportListWords.footer)
+            }
+        }
+        if importer.includeTarget(for: preview) != nil {
+            Section {
+                ForEach(preview.includes) { include in
+                    Toggle(isOn: Binding(get: { importer.includesOn.contains(include.id) }, set: { importer.setIncludeOn(include.id, $0) })) {
+                        feedLabel(include.rowText, detail: ListLinkWords.host(include.url))
+                    }
+                    .tint(AppColors.evergreen)
+                    .accessibilityIdentifier("opml.import.include.\(include.title)")
+                }
+            } header: {
+                Text(OPMLImportListWords.includesTitle)
+            }
+        }
+        if let rulesLine = preview.rulesLine {
+            Section {
+                Label(rulesLine, systemImage: "line.3.horizontal.decrease")
+                    .accessibilityIdentifier("opml.import.rules")
             }
         }
     }
@@ -499,6 +599,12 @@ struct OPMLImportScreen: View {
 
     @ViewBuilder
     private func resultSections(_ result: OPMLImportResult) -> some View {
+        if let line = importer.extrasLine {
+            Section {
+                Label(line, systemImage: "list.bullet")
+                    .accessibilityIdentifier("opml.import.listsResult")
+            }
+        }
         Section {
             if result.followed.isEmpty {
                 Text("No feeds were followed.")
@@ -542,11 +648,12 @@ struct OPMLImportScreen: View {
                 primaryButton(importer.phase == .choosing ? "Choose OPML file" : "Choose another file", id: "opml.import.choose") {
                     isChoosingFile = true
                 }
-            case .preview:
-                primaryButton(importer.selected.isEmpty ? "Follow" : "Follow \(importer.selected.count)", id: "opml.import.follow") {
+            case .preview(let preview):
+                let button = importer.primaryButton(for: preview)
+                primaryButton(button.title, id: "opml.import.follow") {
                     importer.startFollowing()
                 }
-                .disabled(importer.selected.isEmpty)
+                .disabled(!button.isEnabled)
                 // While a search is typed, the field's own Cancel sits at the top; this one would drop the whole import.
                 if !isSearching {
                     Button {
@@ -620,4 +727,12 @@ private struct ImportSearchField: ViewModifier {
             content
         }
     }
+}
+
+/// What an OPML import brings beyond follows (#4046 PR 5, 8, 13), handed to whoever saves it.
+struct OPMLImportExtras: Sendable {
+    var preview: OPMLImportPreview
+    var result: OPMLImportResult
+    var listsOn: Set<String>
+    var includesOn: Set<String>
 }
