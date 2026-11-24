@@ -2,7 +2,7 @@ import SessionKit
 import SwiftUI
 
 /// The Lists screen, pushed from Following's toolbar (#4046 PR 3): every list with how many shows it holds, **New list**,
-/// a swipe to delete, and the Rules row (PR 10b). Adding a list by link and exporting arrive with later slices. A list only
+/// a swipe to delete, **Add a list by link** (PR 7a), **Export all follows** (PR 5) and the Rules row (PR 10b). A list only
 /// groups shows, so deleting one leaves every show followed.
 struct FollowListsScreen: View {
     let model: Gate1AppModel
@@ -11,6 +11,12 @@ struct FollowListsScreen: View {
 
     @ObservedObject private var listsState = FollowListsState.shared
     @ObservedObject private var rulesState = ListeningRulesState.shared
+    @ObservedObject private var linksState = ListLinksState.shared
+    @EnvironmentObject private var catalogDrawer: CatalogDrawerModel
+    @State private var isAddingByLink = false
+    /// Browse on the Follow sheet: the catalog opens once the sheet has gone.
+    @State private var opensCatalogAfterFollowSheet = false
+    @State private var isExporting = false
     @State private var isNaming = false
     @State private var newName = ""
     /// Why the last name was refused; shown in an alert of its own.
@@ -52,7 +58,8 @@ struct FollowListsScreen: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(row.name).foregroundStyle(AppColors.text)
-                                Text(row.subtitle)
+                                Text(ListLinkWords.overviewSubtitle(
+                                    showCount: row.subtitle, ownLink: ListLinkScreens.ownLink(ofList: row.id, in: linksState.links)))
                                     .font(.subheadline)
                                     .foregroundStyle(AppColors.secondaryText)
                             }
@@ -77,6 +84,30 @@ struct FollowListsScreen: View {
                     .accessibilityIdentifier("followLists.new")
                 }
             }
+            Section {
+                Button { isAddingByLink = true } label: {
+                    Label(ListLinkWords.addListByLink, systemImage: "link")
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
+                .accessibilityIdentifier("followLists.addByLink")
+                if !subscriptions.isEmpty {
+                    Button {
+                        guard !isExporting else { return }
+                        isExporting = true
+                        Task {
+                            await model.exportAllFollows()
+                            isExporting = false
+                        }
+                    } label: {
+                        Label(ListLinkWords.exportAllFollows, systemImage: "doc.text")
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    .disabled(isExporting)
+                    .accessibilityIdentifier("followLists.exportAll")
+                }
+            } footer: {
+                if !subscriptions.isEmpty { Text(ListLinkWords.exportAllFooter) }
+            }
             // Rules apply to any show, not only to shows in a list, so the row is here with no lists too.
             Section {
                 NavigationLink {
@@ -96,6 +127,7 @@ struct FollowListsScreen: View {
         .task {
             await model.reloadFollowLists()
             await model.reloadListeningRules()
+            await model.reloadListLinks()
         }
         .alert("New list", isPresented: $isNaming) {
             TextField("Name", text: $newName)
@@ -119,6 +151,18 @@ struct FollowListsScreen: View {
         }
         .trackedSheet(item: $addingShows) { list in
             FollowListAddShowsSheet(model: model, subscriptions: subscriptions, listID: list.id)
+        }
+        .trackedSheet(isPresented: $isAddingByLink, onDismiss: {
+            guard opensCatalogAfterFollowSheet else { return }
+            opensCatalogAfterFollowSheet = false
+            catalogDrawer.present()
+        }) {
+            FollowSheet(browse: {
+                opensCatalogAfterFollowSheet = true
+                isAddingByLink = false
+            }, focusesField: true)
+            .environmentObject(model)
+            .environmentObject(catalogDrawer)
         }
         .accessibilityIdentifier("followLists.screen")
     }

@@ -49,13 +49,21 @@ public enum SharedPostVoiceoverLookup {
 
     /// A LessWrong or EA Forum post (#3438) is not read as a page: Type III Audio's narration is found with one call
     /// (`TypeIIIAudioNarration`), made only when `fetchNarration` is given, for those two sites' post addresses.
+    /// The article feed route (#4640): asks `FollowedSourceCoordinator.articleFeedAudio` about one page. Given only on
+    /// the listener's open or play, never at import.
+    public typealias ArticleFeedAudio = @Sendable (URL) async -> ArticleFeedAudioOutcome
+
+    /// With `articleFeedAudio`, an address that is neither a Type III nor a Substack address, or a `/p/` page that
+    /// carries no Substack data at all, asks the article's own feed instead of stopping (#4640). Nil keeps the
+    /// provider lookups exactly as they were.
     public static func find(
         sharedURL: URL,
         articleURL: String,
         itemId: String,
         fetched: FetchedPageMemo?,
         fetchPage: FetchPage,
-        fetchNarration: TypeIIIAudioNarration.Fetch? = nil
+        fetchNarration: TypeIIIAudioNarration.Fetch? = nil,
+        articleFeedAudio: ArticleFeedAudio? = nil
     ) async -> Outcome {
         let candidates = [sharedURL, URL(string: articleURL)].compactMap { $0 }
         if let narrated = candidates.first(where: { TypeIIIAudioNarration.postURL(for: $0) != nil }) {
@@ -79,7 +87,10 @@ public enum SharedPostVoiceoverLookup {
             guard page.data.count <= maximumPageBytes else { return .failed(URLError(.dataLengthExceedsMaximum).localizedDescription) }
             (html, finalURL) = (String(decoding: page.data, as: UTF8.self), page.finalURL)
         } else {
-            guard let pageURL = candidates.first(where: PublisherNarrationEvidence.mayHaveVoiceover) else { return .notSubstack }
+            guard let pageURL = candidates.first(where: PublisherNarrationEvidence.mayHaveVoiceover) else {
+                guard let articleFeedAudio else { return .notSubstack }
+                return await fromArticleFeed(candidates: candidates, itemId: itemId, articleFeedAudio)
+            }
             do {
                 (html, finalURL) = try await fetchPage(pageURL)
             } catch {
@@ -87,9 +98,28 @@ public enum SharedPostVoiceoverLookup {
             }
         }
         guard let audio = PublisherNarrationEvidence.publisherAudio(postPage: html, finalURL: finalURL, itemId: itemId) else {
-            return .noVoiceover(reason: PublisherNarrationEvidence.absence(postPage: html, finalURL: finalURL))
+            let absence = PublisherNarrationEvidence.absence(postPage: html, finalURL: finalURL)
+            // A `/p/` page on a site that isn't Substack: its own feed gets a chance.
+            if absence == "no_preloads", let articleFeedAudio {
+                return await fromArticleFeed(candidates: candidates, itemId: itemId, articleFeedAudio)
+            }
+            return .noVoiceover(reason: absence)
         }
         return .found(audio)
+    }
+
+    private static func fromArticleFeed(candidates: [URL], itemId: String, _ articleFeedAudio: ArticleFeedAudio) async -> Outcome {
+        // The address the article was read from comes second in `candidates`; it is the page the feed lists.
+        guard let page = candidates.reversed().first(where: { $0.scheme?.lowercased() == "https" }) else {
+            return .noVoiceover(reason: "article_feed_invalid_url")
+        }
+        switch await articleFeedAudio(page) {
+        case .found(let audioURL, let durationMs, _):
+            return .found(PublisherAudio(itemId: itemId, audioURL: audioURL, durationMs: durationMs,
+                                         detectedFrom: PublisherAudioSource.articleFeedEnclosure.rawValue))
+        case .none(let reason): return .noVoiceover(reason: "article_feed_\(reason)")
+        case .failed(let token): return .failed("article_feed_\(token)")
+        }
     }
 }
 
