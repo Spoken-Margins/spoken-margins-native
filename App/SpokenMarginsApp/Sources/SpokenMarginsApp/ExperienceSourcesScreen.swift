@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Following (#1865): one row per followed show, newest episode first, with "N new", a play button for the
 /// newest unplayed episode and a chevron into the show's own screen. Quiet shows sit in a collapsed group
-/// at the bottom. The plus opens the Follow sheet (#3205): Paste, Browse and Import from another app.
+/// at the bottom. The plus opens the Follow sheet (#3205): Paste, Browse and Import from another app. Pull down to refresh.
 ///
 /// It does not watch `Gate1AppModel`: it reads what it shows through a `ScreenInputsFeed`, so a model publish that
 /// leaves the list as it was does not rebuild it while the listener scrolls (#4028). The tab bar redraws on every publish
@@ -73,7 +73,6 @@ struct ExperienceSourcesScreen: View, Equatable {
         var quickFolderName: String?
         var quickFolderPath: String?
         var quickFolderProblem: QuickFolderStatus.Problem?
-        var isRefreshingQuickAddFeed: Bool
         var importingEntryIds: Set<String>
         var subscriptionIDs: [String]
         /// What `FollowingByList` needs to tell which rows are in a list.
@@ -98,7 +97,6 @@ struct ExperienceSourcesScreen: View, Equatable {
             quickFolderName = folder.name
             quickFolderPath = folder.path
             quickFolderProblem = folder.problem
-            isRefreshingQuickAddFeed = model.isRefreshingQuickAddFeed
             importingEntryIds = model.importingFollowedSourceEntryIds
             subscriptionIDs = model.feedSubscriptions.map(\.id)
             subscriptions = model.feedSubscriptions
@@ -219,16 +217,8 @@ struct ExperienceSourcesScreen: View, Equatable {
             .navigationTitle("Following")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Plain icon buttons, at most two: Following's title centres like the other tabs' only then (#4955). Refresh is the pull-down.
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button(action: { model.refreshQuickAddFeed(trigger: .refreshButton) }) {
-                        Group {
-                            if inputs.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
-                        }
-                        .minimumTapTarget()
-                    }
-                    .disabled(inputs.isRefreshingQuickAddFeed)
-                    .accessibilityLabel("Refresh Following")
-                    .accessibilityIdentifier("quickAdd.refresh.button")
                     // Hidden while the listener follows nothing, so the empty Following tab is unchanged.
                     if !inputs.showsEmptyState {
                         Button(action: { isShowingLists = true }) {
