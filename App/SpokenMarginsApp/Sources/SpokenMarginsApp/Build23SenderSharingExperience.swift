@@ -6,6 +6,7 @@ import SwiftUI
 @MainActor
 struct Build23SenderSharingExperience: View {
     @ObservedObject var coordinator: Build23SharingCoordinator
+    @EnvironmentObject private var model: Gate1AppModel
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var hasBegun = false
@@ -47,6 +48,14 @@ struct Build23SenderSharingExperience: View {
         #endif
     }
 
+    /// The header's Export (#5306): close this sheet the way Cancel does, then open the Export screen on the same item.
+    /// The session is read first, while the sheet still names the one it was sharing from.
+    private func switchToExport() {
+        let sessionId = model.exportSessionForShareSwitch()
+        coordinator.send(.cancel)
+        model.openExportFromShareSheet(sessionId: sessionId)
+    }
+
     /// Whether the main Share button makes a link. False in a build without links, and while the server says no.
     private var sharesLink: Bool {
         #if SM_SHARE_LINK_CREATION
@@ -76,6 +85,15 @@ struct Build23SenderSharingExperience: View {
                         .foregroundStyle(AppColors.text)
                         .accessibilityIdentifier("build23.sender.heading")
                     Spacer()
+                    // One tap to Export for the same item (#5306). A reply sheet stays as it is.
+                    if ShareExportSwitch.offersExport(isReplyBack: snapshot.isReplyBack) {
+                        Button(ShareExportSwitch.exportButtonTitle, systemImage: "doc.text") {
+                            switchToExport()
+                        }
+                        .labelStyle(.titleAndIcon)
+                        .accessibilityHint(ShareExportSwitch.exportButtonHint)
+                        .accessibilityIdentifier("build23.sender.export")
+                    }
                     Button("Cancel", role: .cancel) {
                         coordinator.send(.cancel)
                     }

@@ -240,6 +240,31 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             XCTAssertTrue(element("export.format.picker").waitForExistence(timeout: 8), "Export did not open the Export screen")
             XCTAssertFalse(element("build23.sender.experience").exists, "Export opened the friend sheet")
         }
+
+        // #5306: one tap from Export to Share and one tap back, for the same episode.
+        XCTContext.runActivity(named: "J12 item, step 5: Share on the Export screen opens the Share Margins sheet in one tap") { _ in
+            let exportShare = element("export.share.button")
+            XCTAssertTrue(exportShare.waitForExistence(timeout: 5) && exportShare.isHittable, "The Export screen has no Share button on screen")
+            beginStep()
+            exportShare.tap(); taps += 1
+            XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "Share on the Export screen did not open the Share Margins sheet")
+            XCTAssertEqual(taps - tapsAtStepStart, 1, "Export to Share took more than one tap")
+            endStep("Export screen to the Share Margins sheet")
+        }
+
+        XCTContext.runActivity(named: "J12 item, step 6: Export on the Share Margins sheet goes back to Export for the same episode") { _ in
+            let cleanUpQuestion = app.alerts["Remove ums and long pauses?"]
+            if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() }
+            let sheetExport = element("build23.sender.export")
+            XCTAssertTrue(sheetExport.waitForExistence(timeout: 5) && sheetExport.isHittable, "The Share Margins sheet has no Export button on screen")
+            beginStep()
+            sheetExport.tap(); taps += 1
+            waitUntil("The Share Margins sheet did not close on Export", timeout: 8) { !self.element("build23.sender.experience").exists }
+            XCTAssertTrue(element("export.format.picker").waitForExistence(timeout: 8), "Export on the Share Margins sheet did not open the Export screen")
+            XCTAssertTrue(app.staticTexts[episodeTitle].firstMatch.exists, "The Export screen is not on the episode Share was for")
+            XCTAssertEqual(taps - tapsAtStepStart, 1, "Share to Export took more than one tap")
+            endStep("Share Margins sheet back to the Export screen")
+        }
     }
 
     /// #4688: with only a friend's Margins on the item, Share says why instead of opening a sheet with nothing to send.

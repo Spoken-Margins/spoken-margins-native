@@ -9,6 +9,9 @@ import UIKit
 struct ExportScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @State private var isSharePresented = false
+    /// Why the toolbar's Share has nothing to send here (#5306), as the item screen's Share says it (#4229).
+    @State private var shareExplanation: ItemShareStart.Explanation?
+    @State private var checksShare = false
 
     var body: some View {
         NavigationStack {
@@ -20,7 +23,7 @@ struct ExportScreen: View {
                     Text(model.selectedItem.title)
                         .font(.headline)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Take a session out for yourself or your tools, as Markdown or JSON. To send Margins to a friend, use Share.")
+                    Text(ShareExportSwitch.exportScreenIntro)
                         .foregroundStyle(AppColors.secondaryText)
                     Text("Export a session")
                         .font(.headline)
@@ -173,8 +176,42 @@ struct ExportScreen: View {
                     }
                     .accessibilityIdentifier("export.home.button")
                 }
+                // One tap to the Share Margins sheet for the same item (#5306): the friend sheet the item screen's Share opens.
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(ShareExportSwitch.shareButtonTitle, systemImage: "square.and.arrow.up", action: switchToShare)
+                        .labelStyle(.titleAndIcon)
+                        .disabled(model.selectedItem.id.isEmpty || checksShare)
+                        .accessibilityHint(ShareExportSwitch.shareButtonHint)
+                        .accessibilityIdentifier("export.share.button")
+                }
+            }
+            .alert(
+                shareExplanation?.title ?? "",
+                isPresented: Binding(get: { shareExplanation != nil }, set: { if !$0 { shareExplanation = nil } }),
+                presenting: shareExplanation
+            ) { _ in
+                Button("OK", role: .cancel) {}
+            } message: { explanation in
+                Text(explanation.message)
             }
             .miniPlayerKeepOut()
+        }
+    }
+
+    /// The toolbar's Share (#5306): the Share Margins sheet when this item has Margins to send, otherwise an alert that
+    /// says why, by the item screen's own rule (`ItemShareStart`). A second tap while the check runs does nothing.
+    private func switchToShare() {
+        guard !checksShare, !model.isSharingInterjectionsPresented else { return }
+        checksShare = true
+        let itemId = model.selectedItem.id
+        Task {
+            defer { checksShare = false }
+            let start = await model.itemShareStart()
+            guard model.selectedItem.id == itemId else { return }
+            switch start {
+            case .share: model.hangTelemetry.labels.scoped("exportShare") { model.openItemShareSheet() }
+            case .nothingYet(let explanation): shareExplanation = explanation
+            }
         }
     }
 
