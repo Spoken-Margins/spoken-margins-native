@@ -583,15 +583,6 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    #if DEBUG
-    /// Tests that model a write through the app must share its serialized connection.
-    /// Opening another connection also races unrelated offline-ledger startup work.
-    func libraryStoreForTesting() throws -> SQLiteSessionStore {
-        precondition(Self.isRunningUnitTests)
-        return try requireStore()
-    }
-    #endif
-
     init(
         sourceLinkResolver: LinkResolutionClient? = nil,
         sourceLinkHandoffStore: SourceLinkHandoffStore? = nil,

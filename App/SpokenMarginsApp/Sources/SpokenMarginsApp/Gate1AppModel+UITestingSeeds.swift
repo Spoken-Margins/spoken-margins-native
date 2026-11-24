@@ -5,6 +5,15 @@ import SessionKitPersistence
 /// UI-testing content seeds (#986), moved unchanged out of the central model.
 /// Startup ordering, launch hooks and every stored property remain in Gate1AppModel.
 extension Gate1AppModel {
+    #if DEBUG
+    /// Tests that model a write through the app must share its serialized connection.
+    /// Opening another connection also races unrelated offline-ledger startup work.
+    func libraryStoreForTesting() throws -> SQLiteSessionStore {
+        precondition(Self.isRunningUnitTests)
+        return try requireStore()
+    }
+    #endif
+
     func seedUITestingGeneratedTimelineIfNeeded(sessionId: String, engine: SessionEngine, store: SQLiteSessionStore) throws {
         guard UITestingHooks.seed.seedsGeneratedTimeline,
               try store.loadTurns(sessionId: sessionId).isEmpty else {
