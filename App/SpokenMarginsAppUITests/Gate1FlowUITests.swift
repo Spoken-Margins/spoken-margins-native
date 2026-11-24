@@ -568,6 +568,11 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(seededStart.waitForExistence(timeout: 4), app.debugDescription)
         seededStart.tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        // Pause before touring the tabs (#5310). Since #5196 the fixture article keeps playing after its start tap, and
+        // the simulator's synthesizer reads it to the end within this test's half minute. A finished session hides the
+        // mini player by design (NarrationOwnership.miniPlayerVisibility, "session_finished"), so the bar was gone by
+        // the second Following visit. A paused session is still Now Playing, which is what the tabs must keep.
+        pausePlaybackIfNeeded()
         app.buttons["playback.home.button"].tap()
         XCTAssertTrue(element("miniPlayer.bar").waitForExistence(timeout: 4))
         assertMiniPlayerClearsRootNavigation()
