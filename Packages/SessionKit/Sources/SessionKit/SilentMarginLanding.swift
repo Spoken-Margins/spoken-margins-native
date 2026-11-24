@@ -208,12 +208,13 @@ public struct SilentMarginLanding: Equatable, Sendable {
 
     /// The playhead a Skim press passes to `SkimStopRouting.startAction` for a voiced Margin (#4938). A seek to a note can land a
     /// second short of it; from there a press into the next Margin's lead-in would seek back and replay it, where a press from the
-    /// note itself plays the Margin now. So while `landing` shows (in milliseconds) and lies before the target, the press counts
-    /// from the later of the playhead and the landing's place.
+    /// note itself plays the Margin now. So while `landing`'s window covers the playhead (in milliseconds, dismissed or not) and it
+    /// lies before the target, the press counts from the later of the playhead and the last gathered note before the target: the
+    /// press has passed every gathered note (`skimTarget`), and the target's lead-in may start at the last of them.
     public static func startPlayhead(playhead: Int, landing: SilentMarginLanding?, target: SkimStops.Target) -> Int {
         guard let landing, landing.unit == .milliseconds, landing.isShowing(playhead: playhead),
-              landing.position < target.stop.position else { return playhead }
-        return max(playhead, landing.position)
+              let passed = landing.notes.last(where: { $0.position < target.stop.position }) else { return playhead }
+        return max(playhead, passed.position)
     }
 
     private func search(

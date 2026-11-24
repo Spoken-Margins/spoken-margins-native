@@ -175,4 +175,19 @@ final class SilentMarginLandingOwnTests: XCTestCase {
         XCTAssertEqual(SilentMarginLanding.startPlayhead(playhead: 6_000, landing: landing, target: target), 6_000, "never earlier")
         XCTAssertEqual(SilentMarginLanding.startPlayhead(playhead: 60_000, landing: landing, target: target), 60_000, "card gone")
     }
+
+    func testAPressFromInsideABurstCountsFromTheLastGatheredNote() throws {
+        // Notes at 4 and 7 s, a spoken Margin at 20 s: the press at 4.5 s has passed both notes, and the lead-in starts at 7 s.
+        let stops = SkimStops(chapters: [], margins: [ownStop("a", 4_000), ownStop("b", 7_000), SkimStop(kind: .margin, id: "v", position: 20_000)])
+        let landing = try XCTUnwrap(SilentMarginLanding(own: stops.stops[0], in: stops, margins: [note("a", 4_000), note("b", 7_000)], itemId: "item-1"))
+        let target = try XCTUnwrap(landing.skimTarget(direction: .forward, playhead: 4_500, in: stops))
+        XCTAssertEqual(target.stop.id, "v")
+        XCTAssertEqual(target.leadInStart, 7_000)
+        let playhead = SilentMarginLanding.startPlayhead(playhead: 4_500, landing: landing, target: target)
+        XCTAssertEqual(playhead, 7_000)
+        XCTAssertEqual(SkimStopRouting.startAction(playhead: playhead, target: target), .playNow, "never a seek back before the notes")
+        XCTAssertEqual(
+            SilentMarginLanding.startPlayhead(playhead: 4_500, landing: landing.dismissed(), target: target), 7_000,
+            "the same after Dismiss")
+    }
 }

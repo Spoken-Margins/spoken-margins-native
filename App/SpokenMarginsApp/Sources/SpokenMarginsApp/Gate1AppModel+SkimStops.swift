@@ -80,8 +80,9 @@ extension Gate1AppModel {
         guard let itemId = skimSource?.itemId else { return }
         // A press that lands on a stop ends the card for a silent Margin the listener went to (#4934). Only a press runs this, never
         // a view's read, so it may write. The next change reads `silentMarginLanding` in `skimStopChoice` first, so it clears after that.
-        // The landing that showed is kept for the voiced branch: a seek to a note can land a second short of it (#4938).
-        let landed = shownSilentMarginLanding
+        // The landing is kept for the voiced branch: a seek to a note can land a second short of it, and the press has passed every
+        // note it gathered (#4938). Dismissed or not: `skimTarget` skips its notes either way; `startPlayhead` checks its window.
+        let landed = silentMarginLanding.flatMap { $0.itemId == itemId ? $0 : nil }
         silentMarginLanding = nil
         // A friend's Margin that is sounding or waiting gives way: the stop is where the listener is going now.
         if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }

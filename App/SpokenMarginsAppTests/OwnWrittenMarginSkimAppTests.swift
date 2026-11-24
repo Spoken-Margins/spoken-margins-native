@@ -210,6 +210,8 @@ final class OwnWrittenMarginSkimAppTests: XCTestCase {
 
         try addNote(fixture, id: "late", atMs: 12_000)
         try await pollUntil { model.skimStopList?.stops.contains { $0.id == "late" && $0.isOwnWritten } == true }
+        try await pollUntil { model.snapshot.canSkimForward }
+        XCTAssertTrue(model.snapshot.canSkimForward, "the forward arrow turns bright once the note is a stop")
 
         model.skimForward()
         defer { model.pause() }
