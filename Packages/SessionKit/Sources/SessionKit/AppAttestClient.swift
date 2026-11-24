@@ -267,6 +267,12 @@ public final class AttestedServerClient: @unchecked Sendable {
         }
     }
 
+    /// True when the last answer was an `invalid_assertion` that didn't replace the key, and the next one would (#4134):
+    /// the sender check then calls the refusal retryable instead of final.
+    var nextInvalidAssertionReplacesKey: Bool {
+        store.invalidAssertionStreak >= 1 && store.invalidAssertionStreak < Self.invalidAssertionsBeforeReplacing && mayReplaceForAssertion()
+    }
+
     /// At most one replacement for `invalid_assertion` a day. A replacement dated in the future (the clock was set back)
     /// doesn't hold the next one off for longer than a day.
     private func mayReplaceForAssertion() -> Bool {

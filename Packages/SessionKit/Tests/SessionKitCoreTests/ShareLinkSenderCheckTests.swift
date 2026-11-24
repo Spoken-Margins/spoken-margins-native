@@ -273,7 +273,8 @@ final class ShareLinkSenderCheckLiveTests: XCTestCase {
         let rows: [(Int, String, ShareLinkUncheckedReason)] = [
             (401, #"{"error":"clock_skew"}"#, .clockSkew),
             (401, #"{"error":"unknown_key"}"#, .unknownKey),
-            (401, #"{"error":"invalid_assertion"}"#, .invalidAssertion),
+            // The live fake starts each run fresh, so one refusal is the first: the next tap would replace the key.
+            (401, #"{"error":"invalid_assertion"}"#, .invalidAssertionOnce),
             (401, #"{"error":"missing_assertion"}"#, .missingAssertion),
             (401, "not json", .missingAssertion),
             (401, "", .missingAssertion),
@@ -291,6 +292,29 @@ final class ShareLinkSenderCheckLiveTests: XCTestCase {
             let other = await outcome(status: status, body: body)
             XCTAssertEqual(other, .notChecked(reason), "\(status) \(body)")
         }
+    }
+
+    /// The first `invalid_assertion` is retryable (the next tap replaces the key); past the day's replacement it is final.
+    func testOneKeyRefusalIsRetryableAndPastTheReplacementItIsFinal() async {
+        let name = "ShareLinkSenderCheckLiveTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let client = AttestedServerClient(
+            provider: Provider(), store: AppAttestKeyStore(defaults: defaults), consent: { true },
+            server: { URL(string: "https://links.example.test\($0)")! }
+        ) { url, _, _ in
+            switch url.path {
+            case "/api/v1/attest/challenge": return (200, Data(#"{"challenge":"\#(Data(repeating: 1, count: 32).base64EncodedString())"}"#.utf8))
+            case "/api/v1/attest/register": return (201, Data("{}".utf8))
+            default: return (401, Data(#"{"error":"invalid_assertion"}"#.utf8))
+            }
+        }
+        let first = await ShareLinkSenderCheck.check(using: client)
+        let second = await ShareLinkSenderCheck.check(using: client)
+        let third = await ShareLinkSenderCheck.check(using: client)
+        XCTAssertEqual(first, .notChecked(.invalidAssertionOnce))
+        XCTAssertEqual(second, .notChecked(.invalidAssertion), "the replacement ran, its new key was refused too: final")
+        XCTAssertEqual(third, .notChecked(.invalidAssertion), "the day's replacement is spent")
     }
 
     /// A registration that failed is waited out; the taps during the wait say so, not "Apple's call failed".

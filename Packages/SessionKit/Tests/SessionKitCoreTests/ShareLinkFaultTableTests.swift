@@ -57,6 +57,7 @@ final class ShareLinkFaultTableTests: XCTestCase {
         (.registrationWaiting, .cantVerify),
         (.clockSkew, .clockWrong),
         (.unknownKey, .cantVerify),
+        (.invalidAssertionOnce, .notVerified),
         (.invalidAssertion, .cantVerify),
         (.missingAssertion, .cantVerify),
         (.rejected, .cantVerify),
@@ -98,9 +99,15 @@ final class ShareLinkFaultTableTests: XCTestCase {
         XCTAssertEqual(ShareLinkFaultPolicy.fromInfoPlist(nil), .off)
         XCTAssertEqual(ShareLinkFaultPolicy.fromInfoPlist([:]), .off)
         XCTAssertEqual(ShareLinkFaultPolicy.fromInfoPlist([ShareLinkFaultPolicy.infoPlistKey: false]), .off)
-        XCTAssertEqual(ShareLinkFaultPolicy.fromInfoPlist([ShareLinkFaultPolicy.infoPlistKey: "YES"]), .off, "a string is not the switch")
         XCTAssertEqual(ShareLinkFaultPolicy.fromInfoPlist([ShareLinkFaultPolicy.infoPlistKey: 1]), .off)
         XCTAssertEqual(ShareLinkFaultPolicy.fromInfoPlist([ShareLinkFaultPolicy.infoPlistKey: true]), .refuse)
+        // A build setting reaches the plist as text: an unset one is empty, which is off.
+        for text in ["", "$(SM_SHARE_LINK_REFUSE_UNCHECKED)", "NO", "no", "false", "0", "YESS"] {
+            XCTAssertEqual(ShareLinkFaultPolicy.fromInfoPlist([ShareLinkFaultPolicy.infoPlistKey: text]), .off, text)
+        }
+        for text in ["YES", "yes", "true", "TRUE", " YES "] {
+            XCTAssertEqual(ShareLinkFaultPolicy.fromInfoPlist([ShareLinkFaultPolicy.infoPlistKey: text]), .refuse, text)
+        }
     }
 
     // MARK: The upload's refusals

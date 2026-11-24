@@ -277,9 +277,13 @@ public struct ShareLinkFaultPolicy: Equatable, Sendable {
         self.refusesUnchecked = refusesUnchecked
     }
 
-    /// The build's switch: on only when the Info.plist key is the Boolean true.
+    /// The build's switch: on when the Info.plist key is the Boolean true, or `YES` / `true` as a build setting writes it
+    /// (`SMShareLinkRefuseUnchecked: $(SM_SHARE_LINK_REFUSE_UNCHECKED)`, set in Release only). Anything else is off.
     public static func fromInfoPlist(_ info: [String: Any]?) -> ShareLinkFaultPolicy {
-        ShareLinkFaultPolicy(refusesUnchecked: (info?[infoPlistKey] as? Bool) == true)
+        let value = info?[infoPlistKey]
+        if let flag = value as? Bool { return ShareLinkFaultPolicy(refusesUnchecked: flag) }
+        let text = (value as? String)?.trimmingCharacters(in: .whitespaces).lowercased()
+        return ShareLinkFaultPolicy(refusesUnchecked: text == "yes" || text == "true")
     }
 
     /// The line for an unchecked sender, or nil to make the link without a permit.
@@ -288,7 +292,7 @@ public struct ShareLinkFaultPolicy: Equatable, Sendable {
         guard refusesUnchecked else { return nil }
         switch reason {
         case .cannotAttest: return .phoneCantMakeLinks
-        case .attestFailed: return .notVerified
+        case .attestFailed, .invalidAssertionOnce: return .notVerified
         case .clockSkew: return .clockWrong
         case .serverError: return .unavailable
         case .registrationWaiting, .unknownKey, .invalidAssertion, .missingAssertion, .rejected: return .cantVerify

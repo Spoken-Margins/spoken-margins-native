@@ -111,9 +111,12 @@ service's `minimumBuild` hides "Share link" and says to update. Builds 35 and 36
 already read `minimumBuild` and hide the button below it (Build 37 has no tag in the
 repository; this plan assumes it matches 36). So the order is:
 
-1. Ship build N: the first build with #4134, refuse mode on
-   (`SMShareLinkRefuseUnchecked` in the Release Info.plist) and the App Attest
-   entitlement (#1593).
+1. Ship build N: the first build with #4134, refuse mode on and the App Attest
+   entitlement (#1593). Refuse mode is the app target's Info.plist key
+   `SMShareLinkRefuseUnchecked: $(SM_SHARE_LINK_REFUSE_UNCHECKED)` in `project.yml`,
+   with the build setting `YES` in the Release configuration only, so Debug and
+   Simulator builds keep making links (the Simulator can't attest). Neither is in
+   `project.yml` today, which is off.
 2. `smserver switch -public DIR -minimum-build N links on`. Older builds lose
    "Share link" and keep "Send as a file".
 3. Only then restart `serve` with `-links-require-permit`.

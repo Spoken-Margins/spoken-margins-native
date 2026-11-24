@@ -53,6 +53,8 @@ public enum ShareLinkUncheckedReason: Equatable, Sendable, CaseIterable {
     case clockSkew
     /// 401 `unknown_key` after the client's one key replacement.
     case unknownKey
+    /// 401 `invalid_assertion` once, with the key's one replacement still to come on the next refusal: may pass on a retry.
+    case invalidAssertionOnce
     /// 401 `invalid_assertion` past the bounded re-attest.
     case invalidAssertion
     /// 401 `missing_assertion`, or a 401 the app can't read.
@@ -94,7 +96,11 @@ public enum ShareLinkSenderCheck {
             guard let standing = decode(answer.body) else { return .failed(.failed) }
             return .standing(standing)
         case 429: return .failed(.busy)
-        default: return .notChecked(uncheckedReason(status: answer.status, body: answer.body))
+        default:
+            let reason = uncheckedReason(status: answer.status, body: answer.body)
+            // One refusal of the key is not yet past the bounded re-attest: the next tap replaces it (#4134).
+            if reason == .invalidAssertion, client.nextInvalidAssertionReplacesKey { return .notChecked(.invalidAssertionOnce) }
+            return .notChecked(reason)
         }
     }
 
