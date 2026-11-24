@@ -34,7 +34,25 @@ jobs:
   watch:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # The stall look reads as the GitHub App, whose API budget is larger than GITHUB_TOKEN's 1,000 requests an hour for
+    # the repository (exhausted on 2026-11-23, #5217). The alarm issue is still written with GITHUB_TOKEN
+    # (SM_WRITE_TOKEN), so it stays authored by github-actions[bot], which the script looks for. The budget step stays
+    # on GITHUB_TOKEN too: it exists to watch that token's budget.
+    environment:
+      name: agent-identity
+      deployment: false
     steps:
+      - id: app-token
+        # A failed mint falls back to GITHUB_TOKEN instead of failing the run.
+        continue-on-error: true
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.SM_APP_ID }}
+          private-key: ${{ secrets.SM_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: read
+          permission-issues: read
+          permission-checks: read
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
@@ -56,7 +74,8 @@ jobs:
         run: python3 scripts/api_budget_watch.py  # exits 0 whatever GitHub answers, so the stall look always runs
       - name: Look for a stall
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          SM_WRITE_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
         run: python3 scripts/merge_stall_watch.py
