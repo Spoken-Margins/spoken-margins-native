@@ -1122,6 +1122,36 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.sharingState.drafts.count, 1)
     }
 
+    /// #5050: the source talked under the share flow for about 50 s. Opening Share pauses it; closing leaves it paused.
+    func testOpeningShareWhilePlayingPausesAndClosingDoesNotResume() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        XCTAssertEqual(model.snapshot.status, .playing)
+        model.selectedItem.interjections = [shareableInterjection(itemId: model.selectedItem.id)]
+
+        model.prepareShareInterjections()
+
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        model.isSharingInterjectionsPresented = false
+        XCTAssertEqual(model.snapshot.status, .paused, "closing the share flow leaves the source paused")
+    }
+
+    func testOpeningShareWhilePausedLeavesPlaybackPaused() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.dismissFeedback()
+        model.selectedItem.interjections = [shareableInterjection(itemId: model.selectedItem.id)]
+
+        model.prepareShareInterjections()
+
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertNotEqual(model.feedbackEvent?.message, "Paused.", "nothing was sounding, so the share flow paused nothing")
+    }
+
     func testShareWordDeletionSupportsUndoAndRedoWithoutAllowingInsertedText() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

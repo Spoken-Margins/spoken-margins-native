@@ -6,7 +6,8 @@
 /// players do. Ducking was the other choice (Default taken on #5050): it keeps the source moving past what the listener
 /// was hearing.
 ///
-/// Only the listener resumes. The flow keeps no note that it paused, so nothing can resume on its behalf later.
+/// Only the listener resumes. There is no close rule on purpose: the flow keeps no note that it paused, so nothing can
+/// resume on its behalf later. `Gate1AppModelWorkflowTests` checks that closing the sheet leaves the source paused.
 public enum ShareFlowPlayback: Equatable, Sendable {
     /// Pause what is sounding, through the player's ordinary pause.
     case pause
@@ -16,11 +17,5 @@ public enum ShareFlowPlayback: Equatable, Sendable {
     /// The share sheet has just opened.
     public static func onOpen(isPlaying: Bool) -> ShareFlowPlayback {
         isPlaying ? .pause : .leaveAlone
-    }
-
-    /// The share flow has closed: sent, cancelled or dismissed. Playback stays as the listener left it, so a source the
-    /// share paused stays paused and one the listener restarted under the sheet keeps playing.
-    public static func onClose(isPlaying _: Bool) -> ShareFlowPlayback {
-        .leaveAlone
     }
 }

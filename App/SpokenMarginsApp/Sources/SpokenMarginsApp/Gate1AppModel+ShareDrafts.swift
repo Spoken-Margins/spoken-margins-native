@@ -51,7 +51,8 @@ extension Gate1AppModel {
 
     /// "Share this Margin" on Margin details (#3211): the friend sheet with only that Margin, starting on the review.
     /// Share always means another listener, so this makes a packet and never a Markdown file. Like the Margins tab's
-    /// Share it leaves the playing session and the current screen alone; only `selectedItem` follows the Margin's item.
+    /// Share it keeps the session and the current screen; only `selectedItem` follows the Margin's item, and playback
+    /// pauses as it does for every share (#5050).
     func openMarginShare(_ margin: Interjection) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_margin_share") else { return }
         guard ShareableMargins.canShare(margin) else { return reportFailure(ShareableMargins.singleMarginRefusal) }
