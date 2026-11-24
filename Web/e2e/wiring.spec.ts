@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { expect, test, type Page, type Request } from '@playwright/test';
 import { MESSAGES } from '../src/app/logic/messages.ts';
 import { readPacket } from '../src/packet/read.ts';
-import { FEED_ORIGIN, SHOTS_DIR, feedFixture, nowTab, seconds, serveAudio, serveFixtures, shot } from './fixtures.ts';
+import { FEED_ORIGIN, SHOTS_DIR, feedFixture, followAndAdd, nowTab, seconds, serveAudio, serveFixtures, shot } from './fixtures.ts';
 
 const FEED = `${FEED_ORIGIN}/enclosure-only-episodes.rss`;
 const EPISODE_3 = 'Episode 3: No link, GUID and audio';
@@ -139,7 +139,7 @@ test('the play button on a show passes over a paid newest post and starts the ne
   await serveAudio(page, 'https://audio.example/**');
 
   await follow(page, 'https://thezvi.substack.com/feed');
-  await expect(page.getByText(/Following .*2 episodes/)).toBeVisible();
+  await expect(page.getByText(/Following .*Open it to pick episodes for your Library/)).toBeVisible();
   await tab(page, 'Following');
   expect(pageReads).toHaveLength(0);
 
@@ -172,9 +172,10 @@ test('a Substack post with only the automatic voice plays it after a tap, readin
   const relayCalls = countRelay(page);
 
   await follow(page, 'https://thezvi.substack.com/feed');
-  await expect(page.getByText(/Following .*1 episode/)).toBeVisible();
+  await expect(page.getByText(/Following .*Open it to pick episodes for your Library/)).toBeVisible();
+  await followAndAdd(page, /^Open Don.t Worry About the Vase/, [TITLE]);
   await tab(page, 'Library');
-  const row = page.getByRole('button', { name: new RegExp(TITLE) });
+  const row = page.getByRole('button', { name: new RegExp(`^(?!More for ).*${TITLE}`) });
   await expect(row).toContainText('voice checked when you play');
   // Following the feed read no post page (owner, 2026-10-21: only on a listener's tap).
   expect(pageReads).toHaveLength(0);
@@ -212,7 +213,7 @@ test('a feed that blocks browsers asks before any relay call, then follows throu
   await shot(page, info, '26-relay-ask');
 
   await ask.getByRole('button', { name: 'Use the server' }).click();
-  await expect(page.getByText('Following Spoken Margins Test Show. 3 episodes added to your Library.')).toBeVisible();
+  await expect(page.getByText('Following Spoken Margins Test Show. Open it to pick episodes for your Library.')).toBeVisible();
   expect(relayCalls).toHaveLength(1);
   const asked = new URL(relayCalls[0]!.url());
   expect(asked.pathname).toBe('/api/v1/relay');
@@ -289,6 +290,7 @@ test.describe('offline', () => {
   test('a followed show and its episodes are still there offline', async ({ page, context }, info) => {
     await follow(page, FEED);
     await expect(page.getByText(/Following Spoken Margins Test Show\./)).toBeVisible();
+    await followAndAdd(page, 'Spoken Margins Test Show', ['Episode 3: No link, GUID and audio', 'Episode 2: No link, no GUID, audio only', 'Episode 1: Has a link']);
     await page.evaluate(() => navigator.serviceWorker.ready);
     await page.reload();
     await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);

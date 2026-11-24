@@ -5,6 +5,7 @@ import { useData } from './data.tsx';
 import { useRestoreFocus } from './focus.ts';
 import { NeedsRelayConsent } from './ports.ts';
 import { looksPrivateFeedLink, RELAY_PRIVATE_LINE, relayOnFirstRead, settingsAfterAnswer, whenBlocked } from './logic/relay-consent.ts';
+import { close, expired, pause, remainingMs, resume, start, toastMs } from './logic/toast-timer.ts';
 
 // The pop-up text for the feed relay (#2977, owner 2026-10-30: "you need to use a route through our
 // server, and we don't collect data"). Settings shows the same words.
@@ -13,14 +14,21 @@ export const RELAY_BODY =
   'Your browser isn’t allowed to read this feed directly. Spoken Margins can read it through its own server instead. ' +
   'The server passes the feed straight to you and keeps nothing: no record of what you follow or play, and nothing that identifies you.';
 
+/** A button on an info toast, such as Undo. `run` is called once, and the toast closes. */
+export interface ToastAction {
+  label: string;
+  run(): void | Promise<void>;
+}
+
 interface Toast {
   id: number;
   text: string;
   tone: 'info' | 'problem';
+  action?: ToastAction;
 }
 
 interface UiApi {
-  toast(text: string, tone?: Toast['tone']): void;
+  toast(text: string, tone?: Toast['tone'], action?: ToastAction): void;
   /**
    * A standing problem that is on screen exactly while its owner says so: `notice(key, text)` shows it, `notice(key,
    * undefined)` takes it down, and calling it again with the same words changes nothing. Unlike `toast` it is a state to
@@ -43,12 +51,12 @@ export function UiProvider({ children }: { children: ReactNode }) {
   // A note goes after a few seconds, and only the latest is shown. A problem stays until the listener
   // closes it, so nobody has to read it against a timer (WCAG 2.2.1).
   const toast = useCallback(
-    (text: string, tone: Toast['tone'] = 'info') => {
+    (text: string, tone: Toast['tone'] = 'info', action?: ToastAction) => {
       const id = nextId.current++;
-      setToasts((list) => [...list.filter((t) => t.tone === 'problem'), { id, text, tone }]);
-      if (tone === 'info') window.setTimeout(() => dismiss(id), 6000);
+      // Only an info toast has an action, and each one keeps its own timer (`InfoToast`).
+      setToasts((list) => [...list.filter((t) => t.tone === 'problem'), { id, text, tone, action: tone === 'info' ? action : undefined }]);
     },
-    [dismiss],
+    [],
   );
 
   const notice = useCallback((key: string, text: string | undefined, onClose?: () => void) => {
@@ -113,12 +121,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
           {toasts
             .filter((t) => t.tone === 'info')
             .map((t) => (
-              <p key={t.id} className="toast toast-info">
-                <span className="toast-mark" aria-hidden="true">
-                  i
-                </span>
-                {t.text}
-              </p>
+              <InfoToast key={t.id} text={t.text} action={t.action} onDone={() => dismiss(t.id)} />
             ))}
         </div>
       </div>
@@ -132,6 +135,62 @@ export function UiProvider({ children }: { children: ReactNode }) {
         />
       )}
     </UiContext.Provider>
+  );
+}
+
+/**
+ * One info toast with its own timer: 6 s, fixed, for a plain note; 10 s for one with a button, paused while keyboard
+ * focus or the pointer is inside it (#4424, WCAG 2.2.1). The action runs once and closes the toast.
+ */
+function InfoToast({ text, action, onDone }: { text: string; action?: ToastAction; onDone: () => void }) {
+  const hasAction = action !== undefined;
+  const timer = useRef(start(toastMs(hasAction), performance.now()));
+  const done = useRef(onDone);
+  done.current = onDone;
+  const ran = useRef(false);
+  const [focused, setFocused] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const paused = hasAction && (focused || hovered);
+
+  useEffect(() => {
+    timer.current = paused ? pause(timer.current, performance.now()) : resume(timer.current, performance.now());
+    if (paused) return;
+    const id = window.setTimeout(() => {
+      const result = expired(timer.current, performance.now());
+      timer.current = result.timer;
+      if (result.fire) done.current();
+    }, remainingMs(timer.current, performance.now()));
+    return () => window.clearTimeout(id);
+  }, [paused]);
+
+  const onAction = () => {
+    if (!action || ran.current) return;
+    ran.current = true;
+    timer.current = close(timer.current);
+    done.current();
+    Promise.resolve()
+      .then(() => action.run())
+      .catch((error) => console.error('A toast action failed.', error));
+  };
+
+  return (
+    <p
+      className={hasAction ? 'toast toast-info toast-with-action' : 'toast toast-info'}
+      onPointerEnter={hasAction ? () => setHovered(true) : undefined}
+      onPointerLeave={hasAction ? () => setHovered(false) : undefined}
+      onFocus={hasAction ? () => setFocused(true) : undefined}
+      onBlur={hasAction ? () => setFocused(false) : undefined}
+    >
+      <span className="toast-mark" aria-hidden="true">
+        i
+      </span>
+      {hasAction ? <span>{text}</span> : text}
+      {action && (
+        <button type="button" className="toast-action" onClick={onAction}>
+          {action.label}
+        </button>
+      )}
+    </p>
   );
 }
 
