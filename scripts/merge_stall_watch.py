@@ -142,6 +142,13 @@ def gh(*args: str, stdin: str | None = None) -> str:
     return subprocess.run(['gh', *args], check=True, capture_output=True, text=True, input=stdin).stdout
 
 
+def gh_write(*args: str, stdin: str | None = None) -> str:
+    """A write (open or close the alarm issue). SM_WRITE_TOKEN, when set, is the token it uses, so the issue stays
+    authored by BOT while the reads run on the GitHub App's larger API budget (#5217)."""
+    env = {**os.environ, 'GH_TOKEN': os.environ['SM_WRITE_TOKEN']} if os.environ.get('SM_WRITE_TOKEN') else None
+    return subprocess.run(['gh', *args], check=True, capture_output=True, text=True, input=stdin, env=env).stdout
+
+
 def api(path: str) -> list | dict:
     """One read; a path that asks for per_page=100 reads every page, as a list of pages."""
     return json.loads(gh('api', '--paginate', '--slurp', path) if 'per_page=100' in path else gh('api', path))
@@ -189,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     if alarm and last_merge > parse_time(alarm['created_at']):  # not "within the hour": a scheduled run can come late
         print(f'Something merged {minutes(now - last_merge)} minutes ago: closing #{alarm["number"]}.')
         if not args.dry_run:
-            gh('issue', 'close', str(alarm['number']), '--repo', repo, '--comment', 'Merging is moving again.')
+            gh_write('issue', 'close', str(alarm['number']), '--repo', repo, '--comment', 'Merging is moving again.')
         return 0
     if alarm:
         print(f'Still stalled; #{alarm["number"]} already says so.')
@@ -208,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
         with tempfile.NamedTemporaryFile('w', suffix='.md') as handle:
             handle.write(body)
             handle.flush()
-            gh('issue', 'create', '--repo', repo, '--title', 'Merging has stalled', '--body-file', handle.name)
+            gh_write('issue', 'create', '--repo', repo, '--title', 'Merging has stalled', '--body-file', handle.name)
     return 0
 
 
