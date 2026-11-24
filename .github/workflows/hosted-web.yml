@@ -50,7 +50,9 @@ concurrency:
 jobs:
   changes:
     # Does the diff reach the web app? A PR: its merge commit against parent 1. A merge group: everything the group
-    # adds to main's tip (base_sha), so a group whose head entry is not a web change still tests a web PR ahead of it.
+    # adds to the trunk itself (refs/heads/main, fetched), so a group whose head entry is not a web change still tests
+    # a web PR ahead of it. Not merge_group.base_sha: behind another entry that is the previous entry's queue commit,
+    # so its diff held only the last PR (#5179, 2026-11-23).
     # A dispatch, or any trouble reading the diff: yes.
     name: 'hosted web: changes'
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -66,11 +68,14 @@ jobs:
       - name: Changed web paths
         id: diff
         env:
-          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          QUEUE_TRUNK: ${{ github.event.merge_group.base_ref }}
         run: |
           list="$RUNNER_TEMP/changed-files.txt"
-          if [ -n "$QUEUE_BASE" ]; then
-            git diff --name-only --no-renames "$QUEUE_BASE" HEAD > "$list" || rm -f "$list"
+          if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
+            trunk="${QUEUE_TRUNK#refs/heads/}"
+            trunk="refs/remotes/origin/${trunk:-main}"
+            git fetch --no-tags origin "+refs/heads/${trunk#refs/remotes/origin/}:$trunk" &&
+              git diff --name-only --no-renames "$(git merge-base HEAD "$trunk")" HEAD > "$list" || rm -f "$list"
           elif [ "$GITHUB_EVENT_NAME" = pull_request ] && git rev-parse --verify --quiet HEAD^2 > /dev/null; then
             git diff --name-only --no-renames "$(git merge-base HEAD^1 HEAD^2)" HEAD^2 > "$list" || rm -f "$list"
           fi
