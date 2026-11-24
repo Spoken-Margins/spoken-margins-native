@@ -30,7 +30,12 @@ final class PDFCommentExportModel: ObservableObject, Identifiable {
     let itemTitle: String
     let document: PDFCommentExportState.Document
     private let itemId: String
-    private let original: URL
+    /// The kept file the copy is made from; nil for a PDF this iPhone has no copy of until the listener chooses one.
+    private var original: URL?
+    /// Where an accepted chosen PDF is kept (#4338, PR 6).
+    private let originals: ItemOriginalStore?
+    /// The page count the item's text recorded, which a chosen PDF must match.
+    private var expectedPageCount = 0
     private let margins: [Interjection]
     private let store: SQLiteSessionStore?
     private let defaults: UserDefaults
@@ -45,14 +50,16 @@ final class PDFCommentExportModel: ObservableObject, Identifiable {
     private var reportedSent = false
 
     init(
-        itemId: String, itemTitle: String, original: URL, margins: [Interjection],
-        store: SQLiteSessionStore?, document: PDFCommentExportState.Document = .pdf, defaults: UserDefaults = .standard
+        itemId: String, itemTitle: String, original: URL?, margins: [Interjection],
+        store: SQLiteSessionStore?, originals: ItemOriginalStore? = nil,
+        document: PDFCommentExportState.Document = .pdf, defaults: UserDefaults = .standard
     ) {
         self.document = document
         self.state = PDFCommentExportState(plan: MarginCommentPlan(entries: []), spots: nil, document: document)
         self.itemId = itemId
         self.itemTitle = itemTitle
         self.original = original
+        self.originals = originals
         self.margins = margins
         self.store = store
         self.defaults = defaults
@@ -66,13 +73,17 @@ final class PDFCommentExportModel: ObservableObject, Identifiable {
     func toggle(_ id: String) { state.toggle(id) }
     func dismissFailure() { state.dismissFailure() }
 
-    /// Reads the item's text, plans the comments and places them on the kept file, off the main thread. Runs once.
+    /// Reads the item's text, plans the comments and places them on the kept file, off the main thread. Runs once. A PDF
+    /// this iPhone has no copy of stops at the plan and asks for the file (`chooseFile`).
     func load() async {
         guard !loaded else { return }
         loaded = true
         let author = defaults.string(forKey: Self.authorDefaultsKey) ?? ""
-        let (itemId, original, margins, store, document) = (itemId, original, margins, store, document)
-        let outcome: Result<(MarginCommentPlan, [PDFMarginPlacement], [String: PDFCommentExportState.Spot]), Error> =
+        let (itemId, margins, store, document, originals) = (itemId, margins, store, document, originals)
+        // The screen looked for a kept copy when the item opened; a file chosen in this sheet before (PR 6) may have been
+        // kept since, so look again rather than ask twice.
+        let known = original
+        let outcome: Result<(MarginCommentPlan, Int, PDFCommentExporter.Preview?, URL?), Error> =
             await Task.detached(priority: .userInitiated) {
                 Result {
                     switch document {
@@ -81,24 +92,32 @@ final class PDFCommentExportModel: ObservableObject, Identifiable {
                             throw PDFCommentWriter.Failure.unreadable
                         }
                         let plan = MarginCommentPlan.make(itemId: itemId, document: structured, margins: margins)
-                        let preview = try PDFCommentExporter.preview(source: original, plan: plan)
-                        return (plan, preview.placements, preview.spots)
+                        let pageCount = structured.extraction.pageCount
+                        let kept = known ?? (originals?.kind(itemId: itemId) == .pdf ? originals?.url(itemId: itemId) : nil)
+                        guard let kept else { return (plan, pageCount, nil, nil) }
+                        return (plan, pageCount, try PDFCommentExporter.preview(source: kept, plan: plan), kept)
                     case .word:
                         // A Word item is its plain text: the Margins' anchors are offsets into it.
-                        guard let store, let text = try store.loadItem(id: itemId).text else {
+                        guard let store, let text = try store.loadItem(id: itemId).text, let original = known else {
                             throw DocxCommentWriter.Failure.notADocx
                         }
                         let plan = MarginCommentPlan.make(itemId: itemId, text: text, margins: margins)
                         let preview = try WordCommentExporter.preview(source: original, plan: plan)
-                        return (plan, [], preview.spots)
+                        return (plan, 0, PDFCommentExporter.Preview(placements: [], spots: preview.spots), original)
                     }
                 }
             }.value
         switch outcome {
-        case .success(let (plan, placements, spots)):
+        case .success(let (plan, pageCount, preview, kept)):
             self.plan = plan
-            self.placements = placements
-            state = PDFCommentExportState(plan: plan, spots: spots, authorName: author, document: document)
+            self.expectedPageCount = pageCount
+            self.original = kept
+            if let preview {
+                placements = preview.placements
+                state = PDFCommentExportState(plan: plan, spots: preview.spots, authorName: author, document: document)
+            } else {
+                state = .waitingForOriginal(plan: plan, authorName: author)
+            }
         case .failure(let error):
             state = PDFCommentExportState(plan: MarginCommentPlan(entries: []), spots: [:], authorName: author, document: document)
             switch error {
@@ -108,11 +127,52 @@ final class PDFCommentExportModel: ObservableObject, Identifiable {
         }
     }
 
+    /// The listener chose a file for a PDF this iPhone has no copy of (#4338, PR 6). It is copied beside the item, off the
+    /// main thread, and checked (`PDFCommentExporter.check`): the same page count, and at least half the Margins on their
+    /// sentence. An accepted file becomes the item's kept original, so the question is not asked again, and the sheet
+    /// fills in; a refused one is removed and the card says why. A second pick while one is checked does nothing.
+    func chooseFile(at url: URL) {
+        guard document == .pdf, state.beginCheckingChosenFile() else { return }
+        let (plan, itemId, originals, expectedPageCount) = (plan, itemId, originals, expectedPageCount)
+        Task {
+            let decided: Result<(URL, PDFCommentExporter.Preview), PDFOriginalCheck.Refusal> =
+                await Task.detached(priority: .userInitiated) {
+                    guard let originals else { return .failure(.unreadable) }
+                    let access = url.startAccessingSecurityScopedResource()
+                    defer { if access { url.stopAccessingSecurityScopedResource() } }
+                    // A copy in the item's folder first, so the check reads a file this app owns and an accepted file
+                    // is kept by a rename. Never the picked file itself, and never a half file under the final name.
+                    guard let staged = try? originals.stage(copying: url, itemId: itemId, kind: .pdf) else {
+                        return .failure(.unreadable)
+                    }
+                    switch PDFCommentExporter.check(chosen: staged.url, plan: plan, expectedPageCount: expectedPageCount) {
+                    case .refused(let refusal):
+                        originals.discard(staged)
+                        return .failure(refusal)
+                    case .accepted(let preview):
+                        guard let kept = try? originals.commit(staged) else {
+                            originals.discard(staged)
+                            return .failure(.unreadable)
+                        }
+                        return .success((kept, preview))
+                    }
+                }.value
+            switch decided {
+            case .success(let (kept, preview)):
+                original = kept
+                placements = preview.placements
+                state = PDFCommentExportState(plan: plan, spots: preview.spots, authorName: state.authorName, document: document)
+            case .failure(let refusal):
+                state.refuseChosenFile(refusal)
+            }
+        }
+    }
+
     /// Builds the copy in a fresh temporary folder and offers it to the share sheet. A second tap while one runs does
     /// nothing (`beginExport` refuses it).
     func export() {
-        guard state.beginExport() else { return }
-        let (plan, placements, original, document) = (plan, placements, original, document)
+        guard let original, state.beginExport() else { return }
+        let (plan, placements, document) = (plan, placements, document)
         let ids = state.includedIds
         let author = state.authorForComments
         let fileName = PDFCommentExportFileName.make(title: itemTitle, document: document)

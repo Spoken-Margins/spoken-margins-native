@@ -10,7 +10,7 @@
 
 ## Starting points
 
-- `SettingsScreen` (in `Gate1RootView.swift` until A2 moves it) has 8 sections in release builds: Margin Output; Bring Your Own Listening Map; Playback & Voice; Offline Storage; AI Features; Recently Deleted; Import Inbox; Support & Privacy. There's also a DEBUG-only Developer section.
+- `SettingsScreen.swift` has, in release builds since #4781: Help & Diagnostics (Share Diagnostics first); Voice; Storage; Notes Folder; Hidden senders and Hidden Margins when they have entries; Import & Export (the Import Inbox is one row and a page, `ImportInboxScreen.swift`); Privacy & Legal (About & Legal collapsed last). There's also a DEBUG-only Developer section.
 - There are about 13 adjustable settings and 15 actions.
 - `HelpScreen` names the Library and lists what the Link field takes (fixed in #782).
 

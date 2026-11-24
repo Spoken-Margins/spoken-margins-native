@@ -18,14 +18,20 @@
 #
 # A held PR that is only waiting shows pending, not red (2026-11-22, Cole: "threads that are pending can show pending
 # as long as they're not using the runner for that"). The job is named `merge policy run`; the check named `merge policy`
-# (the one the ruleset requires) is a check run the script creates when it starts and finishes when it is done. When the
-# only blockers are a missing audit or a missing owner tap, on a pull_request event, the script leaves that check run
-# in_progress and exits 0, so no runner waits and the PR reads as pending. The audit or the tap re-runs this workflow
-# (see above) and the next run finishes the check run as success or failure. Every other hold, an unreadable audit and
-# every merge_group entry still finish it as failure. A run that is cancelled or killed leaves it in_progress, which
-# blocks the merge, never passes it.
+# (the one the ruleset requires) is a commit status with that context, which the script posts as `pending` when it
+# starts and posts again with the verdict when it is done, on the PR's head or, in the queue, on the merge group's head.
+# When the only blockers are a missing audit or a missing owner tap, on a pull_request event, the script leaves that
+# status pending and exits 0, so no runner waits and the PR reads as pending. The audit or the tap re-runs this workflow
+# (see above) and the next run posts success or failure. Every other hold, an unreadable audit and every merge_group
+# entry end as failure. A run that is cancelled posts error; one that is killed leaves it pending. Either blocks the
+# merge, never passes it.
 #
-# Cost and catch: one Linux job of about 30 seconds per PR event and per queue entry, plus two Checks API calls, no Mac
+# A status, not a check run (#5162). It was a check run made through the Checks API, and GitHub files such a check run
+# into whichever GitHub Actions check suite exists first on the commit. When that was the merge-queue label bridge's
+# suite, the merge queue refused the PR with "Required status check 'merge policy' is expected" while the check showed
+# success (#5147, #5155, #5176, #5178). A commit status belongs to no check suite, so there is nothing to race.
+#
+# Cost and catch: one Linux job of about 30 seconds per PR event and per queue entry, plus two Statuses API calls, no Mac
 # minutes, no tokens. It carries the rules lane-runner.py enforced before merging (it held 10 owner-tap PRs and every audited PR in the
 # 400 merges to 2026-11-19). Waste signal: a month in which it never blocks a PR that would otherwise have merged.
 name: merge-policy
@@ -47,10 +53,10 @@ on:
 permissions:
   contents: read
   pull-requests: read
-  # `checks: write` is for the one check run this job posts under the required name (see "A held PR that is only
-  # waiting shows pending" above). It is the job's own check run, made with its own GITHUB_TOKEN, so the ruleset's
-  # integration (GitHub Actions) accepts it.
-  checks: write
+  # `statuses: write` is for the one commit status this job posts under the required name (see "A held PR that is only
+  # waiting shows pending" above). It is made with the job's own GITHUB_TOKEN, so its creator is github-actions[bot],
+  # the GitHub Actions app the ruleset names as the check's source. No `checks: write`: the job writes no check run.
+  statuses: write
 
 # No `concurrency` group on purpose (#4905). A re-arm (remove `needs-fix`, add `automerge`) fires two label events in the
 # same second. With `cancel-in-progress` one of the two runs was cancelled, and when the cancelled run was the newer
@@ -100,23 +106,23 @@ jobs:
             python3 scripts/merge_policy.py "$@" | tee -a "$GITHUB_STEP_SUMMARY"
             exit "${PIPESTATUS[0]}"
           fi
-          if python3 scripts/merge_policy.py --help | grep -q -e --report-sha; then
-            # The script writes the `merge policy` check run itself, and may leave it pending (#4986).
+          if grep -q 'statuses/' scripts/merge_policy.py; then
+            # The script writes the `merge policy` commit status itself, and may leave it pending (#4986, #5162).
             python3 scripts/merge_policy.py "$@" --report-sha "$SHA" --details-url "$DETAILS_URL" | tee -a "$GITHUB_STEP_SUMMARY"
             exit "${PIPESTATUS[0]}"
           fi
-          # Bootstrap, until main's script has --report-sha: the script is main's, the workflow file is the PR's or the
-          # group's, so the PR that adds the flag runs with a script that doesn't know it. Write the check run here,
-          # pass or fail only, as the job's own name used to. Remove this branch once #4986's script is on main.
+          # Bootstrap, until main's script writes a status (#5162): the script is main's, the workflow file is the PR's
+          # or the group's, so the PR that moves the check to a status runs with a script that still writes a check run,
+          # which this file's token no longer may. Write the status here, pass or fail only. Remove this branch once
+          # #5162's script is on main.
           set +e
           python3 scripts/merge_policy.py "$@" | tee -a "$GITHUB_STEP_SUMMARY"
           code="${PIPESTATUS[0]}"
           set -e
-          if [ "$code" = 0 ]; then conclusion=success; title='May merge'; else conclusion=failure; title='May not merge'; fi
-          gh api -X POST "repos/$GH_REPO/check-runs" -f name='merge policy' -f head_sha="$SHA" -f status=completed \
-            -f conclusion="$conclusion" -f details_url="$DETAILS_URL" -f "output[title]=$title" \
-            -f "output[summary]=See the run's log (bootstrap: the check is written by the workflow, #4986)."
-          # Exit 0 either way: the failure is in the check run above. The job is named `merge policy run`, which main's
+          if [ "$code" = 0 ]; then state=success; title='May merge'; else state=failure; title='May not merge'; fi
+          gh api -X POST "repos/$GH_REPO/statuses/$SHA" -f state="$state" -f context='merge policy' \
+            -f description="$title (bootstrap: written by the workflow, #5162)" -f target_url="$DETAILS_URL"
+          # Exit 0 either way: the failure is in the status above. The job is named `merge policy run`, which main's
           # audit and owner-tap alert do not know to ignore as they ignore `merge policy` (owner_tap_alert.GATE_CHECKS),
           # so a red job here would keep the PR from ever being audited or alerted: each waiting on the other.
           exit 0

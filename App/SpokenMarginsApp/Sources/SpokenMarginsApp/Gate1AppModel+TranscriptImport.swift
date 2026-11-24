@@ -12,7 +12,8 @@ extension Gate1AppModel {
         var refreshQuickFolderWhenFinished = false
         var openImportedItemWhenFinished = false
         var quickAccessFileToDismiss: QuickAccessFile?
-        /// The text import's own navigation and words, for the Quick Folder inbox, which queues what it adds (#1990).
+        /// The text import's own navigation and words. The Quick Folder inbox that changed them (#1990) is gone (#4274); they
+        /// stay as general options of the route.
         var navigatesWhenFinished = true
         var confirmationOverride: ((Int) -> String)?
         /// Hears how the pick ended, once, after its items are saved and its banner is posted: the ids it saved in the
