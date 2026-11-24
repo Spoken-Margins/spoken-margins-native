@@ -271,7 +271,12 @@ final class SpeechAskHeldTranscriptionTests: XCTestCase {
             ("friend's packet then a spoken note held", .unanswered, false, [.friendPacketPlacement, .spokenNote], true, .margins),
             ("answered Not now, spoken note held", .notNow, false, [.spokenNote], false, .margins),
             ("never recorded, friend's packet held", .unanswered, false, [.friendPacketPlacement], true, .friendPlacement),
-            ("never recorded, episode map held", .unanswered, false, [.episodeMap], false, .margins),
+            ("never recorded, background episode map held", .unanswered, false, [.episodeMap], false, .margins),
+            ("never recorded, episode map they asked for held", .unanswered, false, [.listenerEpisodeMap], true, .listeningMap),
+            ("answered Not now, episode map they asked for held", .notNow, false, [.listenerEpisodeMap], false, .listeningMap),
+            ("episode map they asked for, then a friend's packet", .unanswered, false, [.listenerEpisodeMap, .friendPacketPlacement], true, .friendPlacement),
+            ("episode map they asked for, then a spoken note", .unanswered, false, [.listenerEpisodeMap, .spokenNote], true, .margins),
+            ("spoken Margin and episode map they asked for", .unanswered, true, [.listenerEpisodeMap], true, .margins),
             ("never recorded, source window held", .unanswered, false, [.sourceWindow], false, .margins),
             ("never recorded, publisher map held", .unanswered, false, [.publisherTextMap], false, .margins),
             ("never recorded, episode map and source window", .unanswered, false, [.episodeMap, .sourceWindow], false, .margins),
@@ -306,6 +311,21 @@ final class SpeechAskHeldTranscriptionTests: XCTestCase {
         XCTAssertEqual(ask.cardWording, .margins)
     }
 
+    /// The pre-audit on #5124: a listener with no spoken Margin who asks for an episode's Listening Map met the hold and
+    /// never got the card (on `main`, iOS asked at that tap). The map they asked for owes it, in words about the map, and
+    /// shows when they reach for text too; a map prepared in the background stays quiet.
+    func testAnEpisodeMapTheListenerAskedForOwesTheCardInItsOwnWords() {
+        XCTAssertEqual(SpeechRecognitionAsk.CardWording.listeningMap.headline, "This episode's Listening Map needs speech recognition.")
+        var asked = SpeechRecognitionAsk(storedAnswer: nil)
+        asked.transcriptionHeld(.listenerEpisodeMap)
+        XCTAssertTrue(asked.isOwed(access: .notDetermined))
+        XCTAssertTrue(asked.cardDue(at: .reachedForText, access: .notDetermined, shownThisLaunchForReAsk: false))
+        XCTAssertEqual(asked.cardWording, .listeningMap)
+        var background = SpeechRecognitionAsk(storedAnswer: nil)
+        background.transcriptionHeld(.episodeMap)
+        XCTAssertFalse(background.isOwed(access: .notDetermined))
+    }
+
     /// Each purpose, by name: whether it owes the card and how it starts again after Allow. A new purpose must be added
     /// here, so its answer is a decision, not a default.
     func testEveryPurposeSaysWhetherItIsOwedAndHowItRetries() {
@@ -316,6 +336,7 @@ final class SpeechAskHeldTranscriptionTests: XCTestCase {
             .shortcutMargin: (true, .liveSessionSweep),
             .friendPacketPlacement: (true, .callerRegisters),
             .episodeMap: (false, .callerRegisters),
+            .listenerEpisodeMap: (true, .callerRegisters),
             .sourceWindow: (false, .callerRegisters),
             .publisherTextMap: (false, .callerRegisters),
             .justHeardPeek: (false, .none),
@@ -326,6 +347,103 @@ final class SpeechAskHeldTranscriptionTests: XCTestCase {
             XCTAssertEqual(purpose.makesAskOwed, expected.owed, purpose.rawValue)
             XCTAssertEqual(purpose.retry, expected.retry, purpose.rawValue)
         }
+    }
+
+    /// #4715, a decided no cleans up: a held source window keeps its heard audio and a held map says it waits, so a decided
+    /// no must end each one (delete the audio, mark the Margin unavailable; the map's status stops waiting) instead of
+    /// leaving them waiting forever. Allow and `drop` forget the decline.
+    @MainActor
+    func testADecidedNoRunsEachHeldPiecesDeclineAndAllowForgetsIt() {
+        for decided in [SpeechRecognitionAccessState.denied, .restricted] {
+            let retries = HeldTranscriptionRetries()
+            var declined: [String] = []
+            var retried = 0
+            retries.hold(.sourceWindow, key: "s::m1") { retried += 1 }
+            retries.whenDeclined(.sourceWindow, key: "s::m1") { declined.append("m1 first") }
+            retries.whenDeclined(.sourceWindow, key: "s::m1") { declined.append("m1") }
+            retries.hold(.episodeMap, key: "item") { retried += 1 }
+            retries.whenDeclined(.episodeMap, key: "item") { declined.append("map") }
+            XCTAssertEqual(retries.settle(access: .notDetermined), 0)
+            XCTAssertEqual(declined, [], "undecided keeps waiting")
+            XCTAssertEqual(retries.settle(access: decided), 0)
+            XCTAssertEqual(declined, ["m1", "map"], "\(decided): each decline once, the latest for a key, oldest first")
+            XCTAssertEqual(retried, 0)
+            XCTAssertTrue(retries.isEmpty)
+            XCTAssertEqual(retries.settle(access: decided), 0)
+            XCTAssertEqual(declined.count, 2, "a decline runs once")
+        }
+
+        let allowed = HeldTranscriptionRetries()
+        var declined = 0
+        allowed.hold(.sourceWindow, key: "s::m1") {}
+        allowed.whenDeclined(.sourceWindow, key: "s::m1") { declined += 1 }
+        allowed.hold(.sourceWindow, key: "s::m2") {}
+        allowed.whenDeclined(.sourceWindow, key: "s::m2") { declined += 1 }
+        allowed.drop(.sourceWindow, keys: ["s::m2"])
+        XCTAssertEqual(allowed.settle(access: .authorized), 1)
+        XCTAssertEqual(allowed.settle(access: .denied), 0)
+        XCTAssertEqual(declined, 0, "Allow and drop forget the decline")
+    }
+
+    /// #4715: a kill right after Allow must not lose held Margins or takes. Each sweep's held-across-launch record is
+    /// forgotten only after that sweep ran to the end, never on Allow itself, and never for a sweep that could not run yet.
+    @MainActor
+    func testASweepsLaunchRecordIsForgottenOnlyAfterTheSweepRanToTheEnd() async {
+        let (started, startedSignal) = AsyncStream<Void>.makeStream()
+        let (gate, opens) = AsyncStream<Void>.makeStream()
+        var forgotten: [String] = []
+        let retries = HeldTranscriptionRetries(
+            liveSessionSweep: {
+                startedSignal.yield()
+                for await _ in gate { break }
+                return true
+            },
+            spokenNoteSweep: { false },
+            sweepFinished: { forgotten.append($0) }
+        )
+        retries.reported(.liveSessionMargin)
+        retries.reported(.spokenNote)
+        XCTAssertEqual(retries.settle(access: .authorized), 2)
+        for await _ in started { break }
+        XCTAssertEqual(forgotten, [], "the live-session sweep is still running")
+        opens.yield()
+        await retries.sweepsEnded()
+        XCTAssertEqual(forgotten, [SpeechRecognitionAsk.liveSessionMarginHeldKey], "the note sweep could not run yet")
+    }
+
+    /// A hold reported while its sweep still runs starts the sweep again on the next Allow; the first run ending must
+    /// not forget the record the second run still needs.
+    @MainActor
+    func testAnOlderSweepEndingLeavesTheRecordForTheNewerRun() async {
+        var gates: [AsyncStream<Void>.Continuation] = []
+        let (started, startedSignal) = AsyncStream<Void>.makeStream()
+        var forgotten: [String] = []
+        let retries = HeldTranscriptionRetries(
+            liveSessionSweep: {
+                let (gate, opens) = AsyncStream<Void>.makeStream()
+                gates.append(opens)
+                startedSignal.yield()
+                for await _ in gate { break }
+                return true
+            },
+            spokenNoteSweep: { true },
+            sweepFinished: { forgotten.append($0) }
+        )
+        var runs = started.makeAsyncIterator()
+        retries.reported(.watchMargin)
+        retries.settle(access: .authorized)
+        let olderRun = retries.runningSweeps.last
+        _ = await runs.next()
+        retries.reported(.shortcutMargin)
+        retries.settle(access: .authorized)
+        _ = await runs.next()
+        gates[0].yield()
+        await olderRun?.value
+        XCTAssertEqual(retries.runningSweeps.count, 1, "the older run ended")
+        XCTAssertEqual(forgotten, [], "the newer run still needs the record")
+        gates[1].yield()
+        await retries.sweepsEnded()
+        XCTAssertEqual(forgotten, [SpeechRecognitionAsk.liveSessionMarginHeldKey])
     }
 
     /// The sink registers the live-session sweep itself for a live-session, Watch or Shortcut Margin, once however many

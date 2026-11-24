@@ -46,6 +46,8 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
     /// A friend's packet placement met the hold. In memory: after a relaunch it is set again only when placement meets the
     /// hold again.
     private var friendPlacementHeld = false
+    /// An episode map the listener asked for met the hold. In memory, like `friendPlacementHeld`.
+    private var listenerMapHeld = false
 
     /// `hasSavedSpokenMargin` is true at launch when a spoken Margin is on the waiting list.
     public init(storedAnswer: String?, hasSavedSpokenMargin: Bool = false) {
@@ -90,7 +92,7 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
         access == .notDetermined && answer == .unanswered && hasReasonToAsk
     }
 
-    private var hasReasonToAsk: Bool { hasSavedSpokenMargin || friendPlacementHeld }
+    private var hasReasonToAsk: Bool { hasSavedSpokenMargin || friendPlacementHeld || listenerMapHeld }
 
     /// Transcription work met the hold. The listener's own recording (a spoken Margin from any surface, or a spoken
     /// note) owes the card in the Margins words; a friend's packet placement gives it its own reason. The rest wait
@@ -98,6 +100,8 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
     public mutating func transcriptionHeld(_ kind: HeldTranscription) {
         if kind.isListenersRecording {
             hasSavedSpokenMargin = true
+        } else if kind == .listenerEpisodeMap {
+            listenerMapHeld = true
         } else if kind.makesAskOwed {
             friendPlacementHeld = true
         }
@@ -118,10 +122,17 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
             headline: "Your friend's Margins land at the right moment if you allow speech recognition.",
             detail: nil,
             yesAccessibilityLabel: "Yes, allow speech recognition")
+        public static let listeningMap = CardWording(
+            headline: "This episode's Listening Map needs speech recognition.",
+            detail: nil,
+            yesAccessibilityLabel: "Yes, allow speech recognition")
     }
 
+    /// The Margins words once the listener has a spoken Margin; otherwise the reason they have, a friend's packet first.
     public var cardWording: CardWording {
-        !hasSavedSpokenMargin && friendPlacementHeld ? .friendPlacement : .margins
+        if hasSavedSpokenMargin { return .margins }
+        if friendPlacementHeld { return .friendPlacement }
+        return listenerMapHeld ? .listeningMap : .margins
     }
 
     /// Whether the card shows at `moment`. A save arms the card whatever the answer to whether it shows now.

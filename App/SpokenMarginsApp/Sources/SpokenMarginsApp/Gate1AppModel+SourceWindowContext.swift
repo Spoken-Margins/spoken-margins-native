@@ -51,9 +51,8 @@ extension Gate1AppModel {
         HeardSourceWindowFiles.deleteInBackground(heardSourceWindows.adopt(files, key: key))
         let totalMs = files.reduce(0) { $0 + $1.durationMs }
         diagnostics[diagnosticKey] = "captured:\(totalMs)ms;segments=\(files.count);before=\(window.coversBeforeAnchor ? 1 : 0);after=\(window.coversAfterAnchor ? 1 : 0);end=\(window.endReason)"
-        // #652: drop the files when the Margin is gone or its context is already ready, since nothing would use them.
-        // If the Margins can't be read, keep them: a later schedule may still need them.
-        // The Margin read and the schedule run on the main thread after the write; label them for the hang probe (#2512).
+        // #652: drop the files when the Margin is gone or its context is already ready; if the Margins can't be read, keep
+        // them for a later schedule. The read and the schedule run on the main thread; label them for the hang probe (#2512).
         hangTelemetry.labels.scoped("heardSourceWindow") {
             guard !files.isEmpty, let store, let margins = try? store.loadInterjections(sessionId: window.request.sessionId) else { return }
             let interjection = margins.first(where: { $0.id == window.request.interjectionId })
@@ -65,8 +64,8 @@ extension Gate1AppModel {
         }
     }
 
-    /// No heard audio yet: the tap delivers it about a minute after playback resumes. If it never arrives (the
-    /// listener stopped, or the tap wasn't running), say so instead of leaving context pending forever.
+    /// No heard audio yet: the tap delivers it about a minute after playback resumes. If it never arrives (the listener
+    /// stopped, or the tap wasn't running), say so instead of leaving context pending forever.
     private func awaitHeardSourceWindow(for interjection: Interjection) {
         let key = Self.marginIdentity(interjection)
         diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "waiting:heard_audio"
@@ -77,11 +76,28 @@ extension Gate1AppModel {
                   let store = self.store,
                   let current = try? store.loadInterjections(sessionId: interjection.sessionId).first(where: { $0.id == interjection.id }),
                   current.anchorContextStatus != .ready else { return }
-            self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "failed:heard_audio_unavailable"
-            self.run { engine in
-                self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjection.id, sessionId: interjection.sessionId)
-                self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
-            }
+            self.markSourceWindowUnavailable(interjection, diagnostic: "failed:heard_audio_unavailable")
+        }
+    }
+
+    /// The Margin's source context can't be recovered: its row says so, with no banner.
+    private func markSourceWindowUnavailable(_ interjection: Interjection, diagnostic: String) {
+        diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = diagnostic
+        run { engine in
+            snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjection.id, sessionId: interjection.sessionId)
+            refreshSelectedItemInBackground()
+            refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
+        }
+    }
+
+    /// #4715: a held source window waits for the answer with its heard audio kept. A decided no ends it: the audio goes and
+    /// the Margin reads unavailable, unless a retry is already working on it.
+    private func whenSourceWindowDeclined(_ interjection: Interjection, diagnostic: String) {
+        let key = Self.marginIdentity(interjection)
+        SpeechAskController.shared.heldRetries.whenDeclined(.sourceWindow, key: key) { [weak self] in
+            guard let self, !self.pendingSourceContextInterjectionIds.contains(key) else { return }
+            self.heardSourceWindows.discardInBackground(key)
+            self.markSourceWindowUnavailable(interjection, diagnostic: diagnostic)
         }
     }
 
@@ -99,6 +115,7 @@ extension Gate1AppModel {
             guard let self else { return }
             var parts: [(startMediaTimeMs: Int, timeline: MediaTimeline)] = []
             var failure: String?
+            var held = false
             for file in files {
                 // A unique folder per segment: the transcriber reuses an existing export in the same folder.
                 let scratchID = "heard-\(UUID().uuidString)"
@@ -111,6 +128,7 @@ extension Gate1AppModel {
                 } catch {
                     failure = SafeErrorText.describe(error)
                     self.noteSourceWindowHeld(interjection, error: error)
+                    held = held || HeldTranscription.isHold(error)
                 }
                 // The scratch folder holds a whole exported window; clear it off the main actor (#2510).
                 _ = try? await Self.offMain {
@@ -119,13 +137,18 @@ extension Gate1AppModel {
                     }
                 }
             }
-            HeardSourceWindowFiles.deleteInBackground(files)
+            let timeline = HeardAudioWindow.episodeTimeline(parts)
+            let outcome = SourceWindowTranscriptionOutcome(hasWords: !timeline.segments.isEmpty, held: held)
             await MainActor.run {
+                // #4715: a held window goes back before the mark clears, so Allow's retry and the 240 s wait both find it.
+                HeardSourceWindowFiles.deleteInBackground(self.heardSourceWindows.finishTranscription(of: files, key: key, outcome: outcome))
                 self.pendingSourceContextInterjectionIds.remove(key)
-                let timeline = HeardAudioWindow.episodeTimeline(parts)
                 let transcriptionKey = Self.marginDiagnosticKey("sourceWindowTranscription", interjection)
                 self.run { engine in
-                    if timeline.segments.isEmpty {
+                    if outcome == .waitingForAnswer {
+                        self.diagnostics[transcriptionKey] = "waiting:speech_recognition" // still pending; Allow retries it
+                        self.whenSourceWindowDeclined(interjection, diagnostic: "failed:heard_audio:\(failure ?? "no_speech")")
+                    } else if outcome == .unavailable {
                         self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjection.id, sessionId: interjection.sessionId)
                         self.diagnostics[transcriptionKey] = "failed:heard_audio:\(failure ?? "no_speech")"
                         if reportsResult { self.reportWarning("Source context could not be recovered from the audio you heard.") }
@@ -136,7 +159,7 @@ extension Gate1AppModel {
                     self.refreshSelectedItemInBackground()
                     self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
                     // After the row refresh, so the banner reads the status the retry stored (#3856).
-                    if reportsResult, !timeline.segments.isEmpty {
+                    if reportsResult, outcome == .completed {
                         self.reportConfirmation(self.contextRetryResultMessage(sessionId: interjection.sessionId, interjectionId: interjection.id))
                     }
                 }
@@ -155,8 +178,7 @@ extension Gate1AppModel {
               let canonicalSourceURL = URL(string: sourceURLString) else {
             return false
         }
-        // Acoustic evidence can fail before note transcription even starts. That
-        // fallback must not race the note for the speech-recognition service.
+        // Acoustic evidence can fail before note transcription starts; that fallback must not race the note for the speech service.
         let saved = try? store.loadInterjection(id: interjection.id, sessionId: interjection.sessionId) // one row, not every Margin of the session (#2506)
         guard saved?.transcriptionStatus != "pending",
               !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) else { return false }
@@ -223,8 +245,8 @@ extension Gate1AppModel {
             ?? podcastDownloadCoordinator?.validatedLocalURL(for: item.id)
             ?? canonicalSourceURL
         if !transcriptionURL.isFileURL {
-            // #156: a window can't be cut from a stream after the fact (AVFoundation stops the export). Use the
-            // minute before and after the Margin that the player's tap kept, once it has been handed over.
+            // #156: a window can't be cut from a stream after the fact (AVFoundation stops the export). Use the minute
+            // either side of the Margin that the player's tap kept, once handed over.
             if heardSourceWindows.segments(for: Self.marginIdentity(interjection)) != nil {
                 transcribeHeardSourceWindow(for: interjection, itemId: item.id, reportsResult: reportsResult)
             } else if reportsResult {
@@ -245,8 +267,7 @@ extension Gate1AppModel {
             snapshot = try engine.sourceWindowContextPending(interjectionId: interjection.id, sessionId: interjection.sessionId)
             refreshSelectedItemInBackground()
         }
-        // #871: at most two of these run at once, nearest the playhead first. A finished download used to start
-        // one per Margin, all together.
+        // #871: at most two of these run at once, nearest the playhead first (a finished download used to start one per Margin).
         let identity = Self.marginIdentity(interjection)
         sourceWindowJobQueue.enqueue(id: identity, anchorMediaTimeMs: anchorMediaTimeMs, playhead: { [weak self, itemId = item.id] in
             // Asked each time the queue picks a job, so a seek while jobs wait is followed. A retry the listener
@@ -308,36 +329,32 @@ extension Gate1AppModel {
                     self.diagnostics[Self.marginDiagnosticKey("sourceWindowSignature", sessionId: interjection.sessionId, interjectionId: interjectionId)] = reference.evidence.isEmpty
                         ? "unavailable:\(reference.failure ?? "temporary_audio_unavailable")"
                         : "complete:\(reference.evidence.count)"
-                    self.pendingSourceContextInterjectionIds.remove(identity)
                     if reportsResult {
                         self.reportConfirmation(self.contextRetryResultMessage(sessionId: interjection.sessionId, interjectionId: interjectionId))
                     }
                 }
             } catch {
+                // #4715: the hold is no failure. The Margin stays pending and Allow schedules it again; the defer clears the mark.
                 self.noteSourceWindowHeld(interjection, error: error)
-                self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "failed:\(SafeErrorText.describe(error))"
-                self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "unavailable"
-                self.pendingSourceContextInterjectionIds.remove(identity)
-                self.run { engine in
-                    self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjectionId, sessionId: interjection.sessionId)
-                    self.refreshSelectedItemInBackground()
-                    self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjectionId)
+                let failed = "failed:\(SafeErrorText.describe(error))"
+                guard SourceWindowTranscriptionOutcome(hasWords: false, held: HeldTranscription.isHold(error)) == .unavailable else {
+                    self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "waiting:speech_recognition"
+                    return self.whenSourceWindowDeclined(interjection, diagnostic: failed)
                 }
+                self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "unavailable"
+                self.markSourceWindowUnavailable(interjection, diagnostic: failed)
                 if reportsResult {
                     self.reportWarning(ListenerErrorText.line(prefix: "Source context could not be recovered:", error: error))
                 }
-                // Source-window context is redundant, best-effort evidence.
-                // The Margin and its timestamp are already durable, and the
-                // Timeline exposes the retry state. Do not turn this expected
-                // degradation into a global error banner after every Margin.
+                // Source-window context is redundant, best-effort evidence: the Margin and its timestamp are durable and the Timeline
+                // shows the retry state, so this expected degradation is no global error banner after every Margin.
             }
         }
     }
 
     func retrySourceWindowContexts(itemId: String) {
         guard let store else { return }
-        // The item's Margins in one read: every Margin filed under it, as `deleteItem` counts them. The loop this replaced
-        // opened each session of the item and then each session's Margins (#2506).
+        // The item's Margins in one read, every Margin filed under it as `deleteItem` counts them; the loop this replaced opened each session (#2506).
         let interjections = (try? store.loadInterjections(itemId: itemId)) ?? []
         for interjection in interjections where interjection.canHaveSourceContext
             && interjection.status != "deleted"
@@ -438,8 +455,7 @@ extension Gate1AppModel {
         }
     }
 
-    /// A diagnostics string only, so it reads the file (size, and an `AVAudioFile` open for the length) away from
-    /// the main actor (#2510).
+    /// A diagnostics string only, so it reads the file (size, and an `AVAudioFile` open for the length) off the main actor (#2510).
     nonisolated static func interjectionAudioEvidence(for path: String, applicationSupportDirectory: URL?) -> String {
         guard let url = resolvedInterjectionAudioURL(for: path, applicationSupportDirectory: applicationSupportDirectory) else {
             return "duration_ms=unknown;bytes=unknown"
