@@ -32,7 +32,8 @@ final class PaperNoteWriteAndTableTests: XCTestCase {
         let before = try XCTUnwrap(store.loadSession(id: sessionId))
         let playingItem = model.selectedItem.id
         XCTAssertTrue(model.canWritePaperAnswer, "a started item can be written to")
-        let context = try XCTUnwrap(await model.paperNoteWriteContext(document: nil))
+        let loaded = await model.paperNoteWriteContext(document: nil)
+        let context = try XCTUnwrap(loaded)
         XCTAssertEqual(try context.character(for: .whereYouAre), 20)
         XCTAssertNotEqual(try context.character(for: .startOfPaper), 20)
 
@@ -64,7 +65,8 @@ final class PaperNoteWriteAndTableTests: XCTestCase {
         let (model, store, root) = try makeModel()
         defer { try? FileManager.default.removeItem(at: root) }
         let sessionId = try XCTUnwrap(model.snapshot.sessionId)
-        let context = try XCTUnwrap(await model.paperNoteWriteContext(document: nil))
+        let loaded = await model.paperNoteWriteContext(document: nil)
+        let context = try XCTUnwrap(loaded)
         XCTAssertTrue(model.writePaperAnswer(draftId: "old", role: .purpose, text: "First go.", choice: .startOfPaper, context: context))
         let old = try XCTUnwrap(try answers(store, session: sessionId).first)
 
@@ -97,7 +99,8 @@ final class PaperNoteWriteAndTableTests: XCTestCase {
         XCTAssertTrue(model.hasPaperNotesInScope)
 
         func dataRows() async throws -> [String] {
-            let url = try XCTUnwrap(await model.preparePaperNotesTableFileURL(format: .csv))
+            let prepared = await model.preparePaperNotesTableFileURL(format: .csv)
+            let url = try XCTUnwrap(prepared)
             defer { MarginMarkdownShare.discardShare(url) }
             XCTAssertEqual(url.lastPathComponent, "Paper notes.csv")
             let text = String(decoding: try Data(contentsOf: url).dropFirst(3), as: UTF8.self)
