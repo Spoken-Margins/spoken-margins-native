@@ -780,12 +780,13 @@ enum PDFStructuredTextExtractor {
 
         /// A short label printed in a figure that doesn't pass for a table cell
         /// ("Base Model EA-3B", "(b) Supervised Finetuning"): at most eight words,
-        /// not a sentence, narrower than the text column (#4588).
+        /// not a sentence or a section heading, narrower than the text column (#4588).
         func looksLikeFigureLabel(_ line: TextLine) -> Bool {
             if looksLikeTableCell(line) { return true }
             guard let bounds = line.bounds, lineWidth > 0, bounds.width < lineWidth * 0.8 else { return false }
             let tokens = line.text.split(separator: " ")
             return !tokens.isEmpty && tokens.count <= 8 && !PDFStructuredTextExtractor.looksLikeProse(line.text)
+                && !PDFStructuredTextExtractor.looksLikeSectionHeading(line.text)
         }
 
         /// A display equation: math set apart from the text column (centred or
