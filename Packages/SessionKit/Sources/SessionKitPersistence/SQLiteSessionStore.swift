@@ -737,17 +737,18 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return revisions.filter { $0.interjectionId == interjectionId }
     }
 
-    /// For each Margin of an item that was ever shared as text, the read-aloud choice its newest share carried (#3472).
+    /// For each Margin of an item that was ever shared as text, the read-aloud choice its newest share carried (#3472),
+    /// keyed by `Interjection.sessionScopedId` (#4688): each pass numbers its Margins from "ij-001".
     /// One read for the item's shares that pulls only the Margin id and the choice out of each row, so the share sheet
     /// decodes no transcripts and reads no share once per Margin. Shares are saved once and never changed. `updated_at`
     /// counts whole seconds and share ids are random, so two shares saved in the same second are ordered by `rowid`,
     /// which is the order they were inserted in, not by `id`.
     public func loadLastSentReadAloud(itemId: String) throws -> [String: Bool] {
-        struct Row: Decodable { let margin: String; let choice: Int }
+        struct Row: Decodable { let session: String?; let margin: String; let choice: Int }
         var choices: [String: Bool] = [:]
         try readTexts(
             """
-            SELECT json_object('margin', json_extract(payload, '$.interjectionId'), 'choice', json_extract(payload, '$.sentReadAloud'))
+            SELECT json_object('session', json_extract(payload, '$.sessionId'), 'margin', json_extract(payload, '$.interjectionId'), 'choice', json_extract(payload, '$.sentReadAloud'))
             FROM records WHERE kind = 'interjection_share_revision' AND item_id = ?
               AND CASE WHEN json_valid(payload)
                        THEN json_extract(payload, '$.sentReadAloud') IS NOT NULL AND json_extract(payload, '$.interjectionId') IS NOT NULL
@@ -756,21 +757,21 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             """, [itemId], name: "last_sent_read_aloud"
         ) { text in
             guard let row = try? decoder.decode(Row.self, from: Data(text.utf8)) else { return }
-            choices[row.margin] = row.choice != 0
+            choices[Interjection.sessionScopedId(sessionId: row.session ?? "", id: row.margin)] = row.choice != 0
         }
         return choices
     }
 
     /// For each Margin of an item whose newest shares wrote a run-up length (#4171), the length its newest such share
-    /// wrote. Same shape and ordering as `loadLastSentReadAloud`: one read that pulls out only the Margin id and the
+    /// wrote, keyed by `Interjection.sessionScopedId`. Same shape and ordering as `loadLastSentReadAloud`: one read that pulls out only the Margin id and the
     /// length. A share that wrote none (the Margin was at 20 s and never shared at another length) is skipped, so it
     /// leaves an earlier length where it was, as a recording leaves the read-aloud choice.
     public func loadLastSentLeadIns(itemId: String) throws -> [String: Int] {
-        struct Row: Decodable { let margin: String; let leadIn: Int }
+        struct Row: Decodable { let session: String?; let margin: String; let leadIn: Int }
         var lengths: [String: Int] = [:]
         try readTexts(
             """
-            SELECT json_object('margin', json_extract(payload, '$.interjectionId'), 'leadIn', json_extract(payload, '$.sentLeadInMs'))
+            SELECT json_object('session', json_extract(payload, '$.sessionId'), 'margin', json_extract(payload, '$.interjectionId'), 'leadIn', json_extract(payload, '$.sentLeadInMs'))
             FROM records WHERE kind = 'interjection_share_revision' AND item_id = ?
               AND CASE WHEN json_valid(payload)
                        THEN json_extract(payload, '$.sentLeadInMs') IS NOT NULL AND json_extract(payload, '$.interjectionId') IS NOT NULL
@@ -779,7 +780,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             """, [itemId], name: "last_sent_lead_ins"
         ) { text in
             guard let row = try? decoder.decode(Row.self, from: Data(text.utf8)) else { return }
-            lengths[row.margin] = row.leadIn
+            lengths[Interjection.sessionScopedId(sessionId: row.session ?? "", id: row.margin)] = row.leadIn
         }
         return lengths
     }

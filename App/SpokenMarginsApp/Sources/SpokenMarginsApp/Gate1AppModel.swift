@@ -176,6 +176,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var exportFormat = UserDefaults.standard.string(forKey: "exportFormat") ?? "markdown"
     @Published var exportScope = UserDefaults.standard.string(forKey: "exportScope") ?? "full_session"
     @Published var exportIncludesSourceText = UserDefaults.standard.object(forKey: "exportIncludesSourceText") as? Bool ?? false
+    @Published var exportIncludesSpokenNoteText = UserDefaults.standard.object(forKey: "exportIncludesSpokenNoteText") as? Bool ?? true
+    @Published var exportSpokenNoteFootnote: String?
     @Published var exportIncludesReference = UserDefaults.standard.object(forKey: "exportIncludesReference") as? Bool ?? true
     @Published var exportIncludesListeningMap = UserDefaults.standard.object(forKey: "exportIncludesListeningMap") as? Bool ?? true
     @Published var exportIncludesInterjections = UserDefaults.standard.object(forKey: "exportIncludesInterjections") as? Bool ?? true
@@ -524,6 +526,7 @@ final class Gate1AppModel: ObservableObject {
     )
     var startupAudioPreparation = StartupAudioPreparationState() // pending, failed and cooling-down items (#2653)
     var pendingHandoffDrainGate = RunAgainGate(), followedSourceRefreshGate = RunAgainGate() // a request during a pass makes it go round again (#2136)
+    let followedSourcePassEnd = PassEndWaiters() // a pull refused by a running pass waits for its end (#4955)
     /// Browser-text payloads one path is importing now; the link open and the drain both suspend, so each skips what the other holds (#2510).
     var browserTextPayloadsInFlight = Set<String>()
     let pendingHandoffNetworkRetry = PendingHandoffNetworkRetry()
@@ -628,10 +631,10 @@ final class Gate1AppModel: ObservableObject {
         } else {
             let transcriptionClient = SystemSpeechTranscriptionClient()
             self.interjectionTranscriptionHandler = { audioPath in
-                try await transcriptionClient.transcribe(audioPath: audioPath)
+                try await transcriptionClient.transcribe(audioPath: audioPath, for: .playerMargin)
             }
             self.alignedInterjectionTranscriptionHandler = alignedInterjectionTranscriptionHandler ?? { audioPath in
-                try await transcriptionClient.transcribeAligned(audioPath: audioPath)
+                try await transcriptionClient.transcribeAligned(audioPath: audioPath, for: .playerMargin)
             }
         }
         self.preparedTextAudioPrewarmHandler = preparedTextAudioPrewarmHandler
@@ -1149,11 +1152,7 @@ final class Gate1AppModel: ObservableObject {
             voiceURL: leveledVoiceURL(voiceURLs, itemId: sequence.itemId, margins: [sequence.target] + sequence.unplayed)
         )
         conductor.voiceRate = Float(recordMarginVoiceRate("moment"))
-        conductor.prepareAudioSession = { [weak self] in try self?.prepareMarginMomentVoice() }
-        conductor.onVoiceUnavailable = { [weak self] (marginId: String, reason: String) in
-            self?.diagnostics["marginMoment.voiceUnavailable"] = "\(marginId):\(reason)"
-            self?.reportWarning("That Margin's recording couldn't play, so listening continues.")
-        }
+        configureMarginMomentCallbacks(conductor, itemId: sequence.itemId)
         conductor.onChange = { [weak self, weak conductor] in
             guard let self, let conductor, self.marginMomentConductor === conductor else { return }
             self.marginMoment = conductor.sequence
@@ -2036,10 +2035,6 @@ final class Gate1AppModel: ObservableObject {
         return selectedItem.title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    var exportSourceTextAvailable: Bool {
-        !selectedItem.isNativeAudio
-    }
-
     func openCurrentPlaybackItem() {
         guard let itemId = snapshot.itemId ?? (selectedItem.id.isEmpty ? nil : selectedItem.id) else { return }
         openItem(id: itemId)
@@ -2470,7 +2465,7 @@ final class Gate1AppModel: ObservableObject {
         let loadedProfile = try loadProfile(id: selectedProfileId)
         let profile = loadedProfile.limitedToOnDeviceAI(foundationModelAvailable: localFoundationModelAvailable)
         let provider: AIProviderClient = AppleFoundationAIProvider()
-        return PublicSourceChecks.attached(to: SessionEngine(
+        return withSpokenNoteLoader(PublicSourceChecks.attached(to: SessionEngine(
             profile: profile,
             repository: store,
             audio: try makeAudioPlaybackClient(),
@@ -2478,7 +2473,7 @@ final class Gate1AppModel: ObservableObject {
             aiProvider: provider,
             linkResolver: sourceLinkResolver ?? PublicPodcastLinkResolver(),
             textAudio: try makeTextAudioPreparationClient()
-        ))
+        )))
     }
 
     private func makeTextAudioPreparationClient() throws -> TextAudioPreparationClient? {
@@ -2685,44 +2680,6 @@ final class Gate1AppModel: ObservableObject {
             throw URLError(.badServerResponse)
         }
         return data
-    }
-
-    private func scheduleFullSourceTranscriptionForListeningMap(for item: Item, localSourceURL: URL? = nil) {
-        guard item.transcriptId == nil,
-              let sourceURLString = item.media?.url,
-              let canonicalURL = URL(string: sourceURLString) else {
-            return
-        }
-        guard importedPodcastPlacement.beginFullSourceTranscription(itemId: item.id) else { return }
-        let sourceURL = localSourceURL
-            ?? podcastDownloadCoordinator?.validatedLocalURL(for: item.id)
-            ?? canonicalURL
-        guard sourceURL.isFileURL else {
-            importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
-            diagnostics["sourceTranscriptionStatus"] = "waiting_for_local_audio"
-            return
-        }
-        diagnostics["sourceTranscriptionStatus"] = "transcribing"
-        if activeItemId == item.id {
-            sourceTranscriptStatus = "transcribing"
-            snapshot.sourceTranscriptStatus = "transcribing"
-            statusMessage = "Transcribing source audio..."
-        }
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let timeline = try await self.sourceTranscriptionClient.transcribeSourceAudio(
-                    url: sourceURL,
-                    itemId: item.id,
-                    durationMs: item.media?.durationMs
-                )
-                await self.finishFullSourceTranscription(timeline, itemId: item.id)
-            } catch {
-                await MainActor.run {
-                    self.failFullSourceTranscription(itemId: item.id, error: error)
-                }
-            }
-        }
     }
 
     func setImportedCommentaryLayerEnabled(_ layerID: String, enabled: Bool) {

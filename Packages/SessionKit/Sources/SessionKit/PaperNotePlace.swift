@@ -7,7 +7,7 @@ import Foundation
 /// `SessionEngine.addWrittenInterjection`. Pure functions over the item, its structured document and its sessions,
 /// so host tests can check every fact without a player.
 public enum PaperNotePlace {
-    public enum Choice: Equatable, Sendable {
+    public enum Choice: Hashable, Sendable {
         /// The place Continue would resume, or the last sentence when the paper was heard to its end.
         case whereYouAre
         /// The first sentence of the paper.

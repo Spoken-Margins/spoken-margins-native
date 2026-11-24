@@ -26,6 +26,8 @@ final class SharedMarginAudioGuardTests: XCTestCase {
         let app = "SpokenMarginsApp/Sources/SpokenMarginsApp/"
         let fromWatch = "a Margin the Watch recorded: the listener's own"
         return [
+            Excuse(file: app + "Gate1AppModel+LiveMarginMove.swift", line: #"if margin.audioPath != nil, margin.transcriptionStatus == "pending" {"#,
+                   reason: "a Margin the listener moved from their own live session onto an item (#4233): their own recording"),
             Excuse(file: app + "ExperienceModels.swift", line: "var canPlayRecording: Bool { !isWritten && interjection.audioPath != nil }",
                    reason: "the row of the listener's own Margin (`MarginRow`)"),
             Excuse(file: app + "ExperienceModels.swift", line: #"var canRetryTranscription: Bool { !isWritten && !["transcribed", "complete"].contains(interjection.transcriptionStatus) && interjection.audioPath != nil }"#,
@@ -75,8 +77,6 @@ final class SharedMarginAudioGuardTests: XCTestCase {
             Excuse(file: app + "LiveSessionSpokenMargins.swift", line: "marginId: marginId, audioPath: recording.audioPath, markedAt: placedAt ?? recording.startedAt,",
                    reason: "the listener's own recording filed into a quick session when nothing ran (#4927)"),
             Excuse(file: app + "LiveSessionSpokenMargins.swift", line: "guard let text = await transcribe(recording.audioPath) else { return }",
-                   reason: "the listener's own live-session recordings"),
-            Excuse(file: app + "LiveSessionSpokenMargins.swift", line: "guard let text = await transcribe(audioPath: margin.audioPath) else { continue }",
                    reason: "the listener's own live-session recordings"),
             Excuse(file: app + "LiveSessionMarginsPane.swift", line: "guard let path = margin.audioPath else { return }",
                    reason: "playing the listener's own live-session recording (`LiveSessionMargin`, never a friend's)"),

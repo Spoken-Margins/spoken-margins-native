@@ -19,12 +19,14 @@ KEEP_OUT = ".miniPlayerKeepOut()"
 # and the Timeline places its own. Keyed by (file, the struct that holds the NavigationStack or link).
 NO_PILL = {
     ("CatalogDrawer.swift", "CatalogDrawerView"): "the catalog drawer is a sheet",
+    ("ApplePodcastsImportGuide.swift", "ApplePodcastsImportRow"): "only in the catalog drawer and the Follow sheet, both sheets (#4290)",
     ("ExperienceAudioPreparationQueueScreen.swift", "*"): "a sheet from the Library",
     ("ExperienceMarginDetailView.swift", "*"): "a sheet from Margins",
     ("ExperiencePlayQueueScreen.swift", "*"): "a sheet from the Library",
     ("ExperienceAddSourceFlow.swift", "*"): "the add-source sheet",
     ("ExperienceReactionsScreen.swift", "*"): "a sheet from the item screen",
     ("LiveSessionMarginDetailView.swift", "*"): "a sheet from the live session",
+    ("LiveMarginMoveSheet.swift", "*"): "Move to an Item, a sheet from the live session (#4233)",
     ("ExperienceMarginsScreen.swift", "SharedMarginDetailView"): "a sheet from Margins",
     ("ExperienceTimelineRailScreen.swift", "*"): "the Timeline places its own mini player",
     ("HelpScreen.swift", "*"): "a sheet",
@@ -37,6 +39,7 @@ NO_PILL = {
     ("ItemCollectionSheet.swift", "*"): "a sheet",
     ("LibraryAddToCollectionSheet.swift", "*"): "Select's Add to Collection sheet from the Library (#4720)",
     ("PaperNoteSection.swift", "PaperNoteChooseMarginSheet"): "Choose a Margin, a sheet from the item screen's Paper note (#4340)",
+    ("PaperNoteAnswerSheet.swift", "*"): "the Write sheet, a sheet from the item screen's Paper note (#4340)",
     ("PlaybackNativeTextPeekView.swift", "*"): "inside Now Playing, which hides the mini player",
     ("PlaybackTimelineSourceView.swift", "*"): "inside Now Playing, which hides the mini player",
     ("PlaybackScreen.swift", "*"): "Now Playing hides the mini player",

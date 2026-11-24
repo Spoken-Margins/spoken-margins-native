@@ -41,6 +41,9 @@ final class VoiceOverAuditUITests: XCTestCase {
         launchPodcast()
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "Library did not open")
         audit("Library")
+        // Leads from the P9 tree read (#5036): the code names both, so these confirm what VoiceOver gets.
+        assertSpokenName(of: app.textFields["library.search.field"])
+        assertSpokenName(of: app.descendants(matching: .any).matching(identifier: "navigation.tab.settings").firstMatch)
 
         let add = app.buttons["home.addSource.button"]
         XCTAssertTrue(add.waitForExistence(timeout: 5), "Add Source control is missing")

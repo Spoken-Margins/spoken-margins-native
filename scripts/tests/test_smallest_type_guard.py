@@ -47,7 +47,8 @@ PINNED_FOOTNOTE = {
     'ExportScreen.swift': ['Native audio exports include only bounded listening context'],
     'SettingsScreen.swift': [
         'Send transcripts of public episodes to the Spoken Margins server',
-        'App state and recent playback events, as a file for a bug report.',
+        # The Share Diagnostics footer reads the shared text from SessionKit (#5126).
+        '\\(DiagnosticsExportFile.contentsDescription) It stays on this device',
         'A private log of listening time, Margins, shares and finishes',
     ],
 }

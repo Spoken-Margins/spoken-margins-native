@@ -13,6 +13,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import yaml
 
@@ -248,6 +249,22 @@ class ScenarioTests(unittest.TestCase):
         result = outcome('b4-lane-armed-before-checks')
         if not result['merged']:
             self.assertTrue(logged(result, 'not audited (checks failed)'), ci_model.summary(result))
+
+    def test_b5_a_cancelled_lane_conflicts_check_no_longer_stops_the_audit(self):
+        result = outcome('b5-lane-conflicts-cancelled')
+        self.assertTrue(logged(result, 'lane-conflicts.yml (pull_request): check=cancelled'), ci_model.summary(result))
+        self.assertFalse(logged(result, 'not audited (checks failed)'), ci_model.summary(result))
+        self.assertTrue(result['merged'], ci_model.summary(result))
+
+    def test_b5_read_as_failed_the_cancelled_check_holds_the_pr(self):
+        """The defect before #5249, rebuilt by emptying the superseded list: the audit never runs and merge policy holds."""
+        scenario = next(s for s in ci_model.scenarios() if s.name == 'b5-lane-conflicts-cancelled')
+        tree = ci_model.Tree(ROOT)
+        alert = tree.module('audit', 'ops/codex/sm_codex_audit.py').owner_tap_alert
+        with mock.patch.object(alert, 'CANCEL_SUPERSEDED_CHECKS', set()):
+            result = ci_model.simulate(scenario, tree)
+        self.assertTrue(logged(result, 'not audited (checks failed)'), ci_model.summary(result))
+        self.assertFalse(result['merged'], ci_model.summary(result))
 
     def test_c_a_token_label_still_merges_and_the_label_event_starts_nothing(self):
         for name in ('c-token-label', 'c2-token-label-nominal'):

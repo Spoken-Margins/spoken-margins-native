@@ -141,6 +141,22 @@ public enum PlayerItemMargin {
         return text
     }
 
+    /// Whether a Margin moved onto `itemId` from a live session can have a place there (#4233 Design 2.9.2): the item is in
+    /// the Library, has a session to write on, and that session keeps a media clock (an episode, an audio file, a narrated
+    /// article with a transcript). An article read aloud has no media time to put a stored position on, so it never can,
+    /// and neither can an item with no known length, where "inside the item" can't be checked.
+    public static func canPlace(itemId: String, repository: SessionRepository & StructuredDocumentRepository) -> Bool {
+        guard let item = try? repository.loadItem(id: itemId), item.deletedAt == nil,
+              let durationMs = item.media?.durationMs, durationMs > 0,
+              let session = StoredSessionMargin.targetSession(in: (try? repository.loadSessions(itemId: itemId)) ?? []) else { return false }
+        return hasMediaClock(session)
+    }
+
+    /// The session types whose place is a media time (`Target`'s first case).
+    static func hasMediaClock(_ session: Session) -> Bool {
+        session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia
+    }
+
     /// Whether `session` can hold a Margin placed by media time: an item with a media clock, or an article (whose
     /// publisher recording may have been playing). `withdraw` looks only in these.
     static func takesPlacedMargins(_ session: Session) -> Bool {

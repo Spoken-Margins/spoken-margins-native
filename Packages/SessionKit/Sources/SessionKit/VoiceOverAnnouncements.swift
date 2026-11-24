@@ -49,6 +49,17 @@ public enum VoiceOverAnnouncements {
         }
     }
 
+    /// What VoiceOver says when the first-Margin prompt appears on Now (#5036). The card arrives mid-playback above the
+    /// header while focus is usually on the play controls, so without this a VoiceOver listener is never told it is there.
+    /// Focus is not moved. The words are said once per showing: when the card is in view and has not been announced yet,
+    /// including a screen that opens with it already there. Going to another pane and back does not repeat it, so the view
+    /// keeps `alreadyAnnounced` and passes it in. The card never comes back after a tap, a dismiss or a first Margin.
+    public static let firstMarginPromptText = "Add a Margin: say what you're thinking."
+
+    public static func firstMarginPrompt(alreadyAnnounced: Bool, isInView: Bool) -> String? {
+        !alreadyAnnounced && isInView ? firstMarginPromptText : nil
+    }
+
     /// The sender's sharing sheet swaps its stage in place (choose, review, recipient preview, share) while focus can stay
     /// on the bottom button, whose meaning changes with the stage (#3728). The stages are named here, not by the app's own
     /// enum, so the words can be tested on the host; the view shows the same `title` as the stage's heading.

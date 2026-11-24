@@ -121,7 +121,8 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertEqual(scenes.map(\.title), (1...24).map { "Scene \($0)" })
         XCTAssertEqual(Set(entries.map(\.id)).count, entries.count)
         XCTAssertEqual(entries.filter { $0.provenance == .source }.map(\.title), ["Publisher opening"])
-        XCTAssertTrue(try XCTUnwrap(scenes.first).detail.contains("Generated scene · 0:00"))
+        XCTAssertTrue(try XCTUnwrap(scenes.first).detail.contains("Generated scene"))
+        XCTAssertFalse(try XCTUnwrap(scenes.first).detail.contains("0:00"), "the time is in the corner, once (#4778)")
         XCTAssertTrue(try XCTUnwrap(scenes.last).detail.contains("Summary for scene 24"))
         for (index, entry) in scenes.enumerated() {
             guard case .listeningMapScene(let scene) = entry.action else {

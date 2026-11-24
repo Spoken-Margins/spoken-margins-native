@@ -196,7 +196,7 @@ final class MovedCodeWiringTests: XCTestCase {
 }
 
 private struct UnavailableSourceTranscriptionClient: SourceTranscriptionClient {
-    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription) async throws -> TranscriptTimeline {
         throw SessionKitError.persistenceFailed("source_transcription_disabled_for_test")
     }
 }
