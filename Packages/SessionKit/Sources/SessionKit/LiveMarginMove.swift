@@ -124,16 +124,20 @@ public enum LiveMarginMove {
         }
         let canPlace = PlayerItemMargin.canPlace(itemId: itemId, repository: repository)
         let durationMs = item.media?.durationMs
+        // A player position is on the clock of the file that played. A spoken note's Margins are saved on the recording's
+        // clock (#4779), so a place taken while its Shorter pauses version is attached is moved onto the recording's, and
+        // the length the percent is worked out on is the recording's too. Read here, off the main thread.
+        let noteClock = SpokenNoteItem.isSpokenNote(mediaType: item.mediaType) ? SpokenNoteCleanClock.map(forMediaURL: item.media?.url) : nil
         let planned = chosen.map { margin -> PlannedMargin in
             guard canPlace, let durationMs, let (position, source) = savedPlace(of: margin, on: itemId, runs: runs),
                   position >= 0, position < durationMs else {
                 return PlannedMargin(margin: margin, positionMs: nil, placeSource: nil)
             }
-            return PlannedMargin(margin: margin, positionMs: position, placeSource: source)
+            return PlannedMargin(margin: margin, positionMs: noteClock?.recordedMs(fromCleanMs: position) ?? position, placeSource: source)
         }
         return Plan(
             session: session, itemId: itemId, itemTitle: item.title, targetSessionId: target.id,
-            itemHasMediaClock: PlayerItemMargin.hasMediaClock(target), itemDurationMs: durationMs, margins: planned,
+            itemHasMediaClock: PlayerItemMargin.hasMediaClock(target), itemDurationMs: noteClock?.recordedDurationMs ?? durationMs, margins: planned,
             removesSession: removesSession(session, movingIds: Set(chosen.map(\.id)))
         )
     }

@@ -64,6 +64,42 @@ final class LiveMarginMoveItemSideTests: XCTestCase {
         try LiveMarginMove.plan(margins: margins, session: quick(margins), itemId: itemId, repository: store)
     }
 
+    /// #4779: a note playing its Shorter pauses version. One 4 s take; the version keeps 0–1 s and 2.5–4 s (2.5 s long).
+    private func noteOnShorterPauses() throws -> Item {
+        let folder = directory.appending(path: "note", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let take = SpokenNoteWholeAudioLayout.Requested(id: "a", audioFileName: "take-a.m4a", durationMs: 4_000)
+        let recorded = SpokenNoteWholeAudioLayout(requested: [take], placed: [.init(takeId: "a", startMs: 0, durationMs: 4_000)], durationMs: 4_000)
+        try JSONEncoder().encode(recorded).write(to: folder.appendingPathComponent(SpokenNoteWholePlayback.layoutFileName))
+        try SpokenNoteCleanFiles.write(SpokenNoteCleanLayout(
+            requested: [take], cutFingerprints: ["a": "x"],
+            placements: [
+                .init(takeId: "a", takeStartMs: 0, takeEndMs: 1_000, outputStartMs: 0),
+                .init(takeId: "a", takeStartMs: 2_500, takeEndMs: 4_000, outputStartMs: 1_000),
+            ],
+            durationMs: 2_500, result: .made(savedMs: 1_500)
+        ), to: SpokenNoteCleanFiles.layoutURL(inNoteFolder: folder))
+        try Data([0]).write(to: SpokenNoteCleanFiles.audioURL(inNoteFolder: folder))
+        return Item(
+            id: "note", title: "A note", mediaType: SpokenNoteItem.mediaType, text: nil, externalReference: "note://n",
+            status: "ready", externalReferenceType: SpokenNoteItem.referenceType,
+            media: ItemMedia(sourceType: .nativeMediaFile, url: SpokenNoteCleanFiles.audioURL(inNoteFolder: folder).absoluteString,
+                             durationMs: 2_500, nativeMediaId: "note-audio"))
+    }
+
+    func testAMarginMovedOntoANotePlayingShorterPausesIsSavedOnTheRecordingsClock() throws {
+        try seed(try noteOnShorterPauses(), session(for: "note", resumeMs: 1_000))
+        // Marked at 1.5 s on the shorter file: 3 s into the recording.
+        let margin = spoken("p", at: 1, hint: .init(itemId: "note", positionMs: 1_500, source: .playerRun))
+        let planned = try plan([margin], itemId: "note")
+        XCTAssertEqual(planned.margins.first?.positionMs, 3_000, "the player's time would name earlier words")
+        XCTAssertEqual(planned.itemDurationMs, 4_000)
+        _ = try LiveMarginMove.execute(plan: planned, repository: store, movedAt: at(500))
+        let saved = try XCTUnwrap(try store.loadInterjections(sessionId: "s-note").first { $0.id == "ij-moved-p" })
+        XCTAssertEqual(saved.anchor.mediaTimeMs, 3_000)
+        XCTAssertEqual(saved.roughPercent, 75)
+    }
+
     // MARK: What is kept
 
     func testAMovedMarginKeepsItsWordsRecordingAndCaptureTime() throws {
