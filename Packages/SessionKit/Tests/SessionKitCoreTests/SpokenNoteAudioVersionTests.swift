@@ -92,25 +92,28 @@ final class SpokenNoteAudioVersionTests: XCTestCase {
 
     func testAChangeStartsAtTheSameMomentOfTheRecording() throws {
         try writeNote()
-        XCTAssertEqual(SpokenNoteVersionPlan.switchStartMs(playingMs: 3_000, previousMediaURL: recordedURL, newMediaURL: cleanURL), 1_500)
-        XCTAssertEqual(SpokenNoteVersionPlan.switchStartMs(playingMs: 1_500, previousMediaURL: cleanURL, newMediaURL: recordedURL), 3_000)
-        XCTAssertNil(SpokenNoteVersionPlan.switchStartMs(playingMs: 1_500, previousMediaURL: cleanURL, newMediaURL: cleanURL))
-        XCTAssertNil(SpokenNoteVersionPlan.switchStartMs(playingMs: 1_500, previousMediaURL: recordedURL, newMediaURL: recordedURL))
-        XCTAssertEqual(SpokenNoteVersionPlan.switchStartMs(playingMs: 0, previousMediaURL: nil, newMediaURL: cleanURL), 0)
+        XCTAssertEqual(SpokenNoteVersionSwitch.plan(previousMediaURL: recordedURL, newMediaURL: cleanURL)?.startMs(playingMs: 3_000), 1_500)
+        XCTAssertEqual(SpokenNoteVersionSwitch.plan(previousMediaURL: cleanURL, newMediaURL: recordedURL)?.startMs(playingMs: 1_500), 3_000)
+        XCTAssertNil(SpokenNoteVersionSwitch.plan(previousMediaURL: cleanURL, newMediaURL: cleanURL))
+        XCTAssertNil(SpokenNoteVersionSwitch.plan(previousMediaURL: recordedURL, newMediaURL: recordedURL))
+        XCTAssertEqual(SpokenNoteVersionSwitch.plan(previousMediaURL: nil, newMediaURL: cleanURL)?.startMs(playingMs: 0), 0)
     }
 
-    func testAStartFromElsewhereAttachesTheChosenVersionOnlyWhenItCanPlay() throws {
+    func testThePlanHoldsBothClocksSoTheRestartReadsNoFile() throws {
+        try writeNote()
+        let plan = try XCTUnwrap(SpokenNoteVersionSwitch.plan(previousMediaURL: recordedURL, newMediaURL: cleanURL))
+        // The main actor uses the plan after the read; the files may change by then, and it must not look at them again.
+        try FileManager.default.removeItem(at: folder)
+        XCTAssertEqual(plan.startMs(playingMs: 3_000), 1_500)
+        XCTAssertEqual(plan.startMs(playingMs: 1_800), 1_000, "a place in a cut pause starts at the next kept moment")
+        XCTAssertEqual(plan.previousMediaURL, recordedURL)
+        XCTAssertEqual(plan.newMediaURL, cleanURL)
+    }
+
+    func testTheAttachedVersionIsReadFromTheURLAlone() {
         XCTAssertEqual(SpokenNoteVersionPlan.attachedVersion(mediaURL: cleanURL), .shorterPauses)
         XCTAssertEqual(SpokenNoteVersionPlan.attachedVersion(mediaURL: recordedURL), .asRecorded)
         XCTAssertEqual(SpokenNoteVersionPlan.attachedVersion(mediaURL: nil), .asRecorded)
-        XCTAssertFalse(SpokenNoteVersionPlan.startNeedsAttach(chosen: .shorterPauses, mediaURL: recordedURL, noteFolder: folder), "no version made yet")
-        try writeNote()
-        XCTAssertTrue(SpokenNoteVersionPlan.startNeedsAttach(chosen: .shorterPauses, mediaURL: recordedURL, noteFolder: folder))
-        XCTAssertFalse(SpokenNoteVersionPlan.startNeedsAttach(chosen: .shorterPauses, mediaURL: cleanURL, noteFolder: folder))
-        XCTAssertTrue(SpokenNoteVersionPlan.startNeedsAttach(chosen: .asRecorded, mediaURL: cleanURL, noteFolder: folder))
-        XCTAssertFalse(SpokenNoteVersionPlan.startNeedsAttach(chosen: .asRecorded, mediaURL: recordedURL, noteFolder: folder))
-        try FileManager.default.removeItem(at: SpokenNoteCleanFiles.audioURL(inNoteFolder: folder))
-        XCTAssertFalse(SpokenNoteVersionPlan.startNeedsAttach(chosen: .shorterPauses, mediaURL: recordedURL, noteFolder: folder), "the version's file is gone")
     }
 
     // MARK: Words

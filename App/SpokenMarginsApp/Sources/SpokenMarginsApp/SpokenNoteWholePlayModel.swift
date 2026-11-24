@@ -30,9 +30,12 @@ final class SpokenNoteWholePlayModel: ObservableObject {
     ///   - beforeStart: work to finish before the note takes the audio session (a sentence handing it back).
     ///   - shouldStart: asked once the note is ready, so a screen that has since begun recording (which the join's seconds
     ///     allow) is not played over: when it says no, nothing starts.
+    ///   - ifNotReady: for a start routed here from elsewhere (the Library's Continue, a relaunch), what to do instead of
+    ///     showing a message when the note can't be got ready: that start goes on with the file the item names.
     func play(
         noteId: String, app: Gate1AppModel,
-        beforeStart: (@MainActor () async -> Void)? = nil, shouldStart: (@MainActor () -> Bool)? = nil
+        beforeStart: (@MainActor () async -> Void)? = nil, shouldStart: (@MainActor () -> Bool)? = nil,
+        ifNotReady: (@MainActor () -> Void)? = nil
     ) {
         let itemId = SpokenNoteItem.itemId(forNoteId: noteId)
         let isOpenSession = app.hasActiveSession && app.snapshot.itemId == itemId && app.snapshot.phase != .finished
@@ -52,35 +55,68 @@ final class SpokenNoteWholePlayModel: ObservableObject {
         isAbandoned = false
         message = nil
         let version = app.spokenNoteClean.version
+        // The open session's file, read from memory now: a version change under it restarts from this file's clock.
+        let openMediaURL = isOpenSession ? app.openSessionMediaURL : nil
         Task {
             await beforeStart?()
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<(SpokenNoteWholePlayback.Prepared, String?), Error> in
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<Ready, Error> in
                 do {
                     // The file attached before, so a note whose version changed since its last play starts at the same
-                    // moment on the new one instead of carrying on with a place on the other clock (#4779).
-                    let previous = (try? store.loadItemSummary(id: itemId))?.media?.url
-                    return .success((try await SpokenNoteWholePlayback.prepare(
-                        store: noteStore, joiner: SpokenNoteAudioJoiner(), writer: store, version: version, attach: false), previous))
+                    // moment on the new one instead of carrying on with a place on the other clock (#4779). Both clocks
+                    // and the saved sessions are read here, off the main thread.
+                    let previous = isOpenSession ? openMediaURL : (try? store.loadItemSummary(id: itemId))?.media?.url
+                    let prepared = try await SpokenNoteWholePlayback.prepare(
+                        store: noteStore, joiner: SpokenNoteAudioJoiner(), writer: store, version: version, attach: false)
+                    let plan = SpokenNoteVersionSwitch.plan(previousMediaURL: previous, newMediaURL: prepared.audioURL.absoluteString)
+                    let sessions = plan != nil && !isOpenSession ? ((try? store.loadSessions(itemId: itemId)) ?? []) : []
+                    return .success(Ready(prepared: prepared, plan: plan, savedSessions: sessions))
                 } catch {
                     return .failure(error)
                 }
             }.value
             isPreparing = false
             switch result {
-            case .success(let (prepared, previousMediaURL)):
+            case .success(let ready):
+                let prepared = ready.prepared
                 timelineRequests += 1
                 timeline = prepared.timeline
                 guard !isAbandoned, shouldStart?() ?? true else { return }
                 // Chosen again while the file was read: get the newly chosen one ready instead (#4779).
                 guard app.spokenNoteClean.version == version else {
-                    play(noteId: noteId, app: app, shouldStart: shouldStart)
+                    play(noteId: noteId, app: app, shouldStart: shouldStart, ifNotReady: ifNotReady)
+                    return
+                }
+                // The open note was moved to the other file while this one was read: the plan is for a file no longer
+                // playing, so read again from where it is now.
+                guard !isOpenSession || app.openSessionMediaURL == openMediaURL else {
+                    play(noteId: noteId, app: app, shouldStart: shouldStart, ifNotReady: ifNotReady)
                     return
                 }
                 let labels = MainThreadOperationLabels.shared // so a slow start names its step (#2256)
+                // A note not open now whose saved place is on the other version's clock: its sessions are set aside off
+                // the main thread first, and the file is attached only after that, right before the start (below).
+                if !isOpenSession, let startMs = Self.savedPlaceOnNewVersion(ready, addedAgainAt: app.addedAgainAt(forItem: itemId)) {
+                    let sessionBefore = app.snapshot.sessionId
+                    await app.setAsideSpokenNoteSessions(itemId: itemId)
+                    // The listener may have closed the screen, started something else or chosen again meanwhile.
+                    guard !isAbandoned, shouldStart?() ?? true, app.spokenNoteClean.version == version,
+                          app.snapshot.sessionId == sessionBefore else { return }
+                    labels.scoped("spokenNote.playOnNewVersion") {
+                        do {
+                            try SpokenNoteWholePlayback.attach(prepared, writer: store)
+                        } catch {
+                            message = Self.failureMessage(error)
+                            return
+                        }
+                        app.startSpokenNoteSession(itemId: itemId, atMs: startMs)
+                    }
+                    app.spokenNoteClean.notePlaybackStarted(noteId: noteId)
+                    return
+                }
                 labels.scoped("spokenNote.play") {
                     // A version change under the open session attaches its file itself, right before the restart.
                     if isOpenSession, !prepared.rebuilt,
-                       app.restartSpokenNoteIfVersionChanged(prepared: prepared, playing: true) { return }
+                       app.restartSpokenNote(prepared: prepared, plan: ready.plan, playing: true) { return }
                     do {
                         try SpokenNoteWholePlayback.attach(prepared, writer: store)
                     } catch {
@@ -92,8 +128,6 @@ final class SpokenNoteWholePlayModel: ObservableObject {
                         app.startNewSession(id: itemId)
                     } else if isOpenSession {
                         app.playPause()
-                    } else if let startMs = app.spokenNoteSavedPlaceOnNewVersion(itemId: itemId, previousMediaURL: previousMediaURL, prepared: prepared) {
-                        app.startSpokenNoteSession(itemId: itemId, atMs: startMs)
                     } else {
                         app.spokenNoteClean.routingItemId = itemId // this start already has the chosen version
                         app.startItem(id: itemId)
@@ -101,9 +135,29 @@ final class SpokenNoteWholePlayModel: ObservableObject {
                 }
                 app.spokenNoteClean.notePlaybackStarted(noteId: noteId)
             case .failure(let error):
-                message = Self.failureMessage(error)
+                if let ifNotReady, !isAbandoned {
+                    ifNotReady()
+                } else {
+                    message = Self.failureMessage(error)
+                }
             }
         }
+    }
+
+    /// What the off-main read hands back: the prepared file, the move onto it when it is the other version, and, for a
+    /// note not open now, its saved sessions when that move happens.
+    private struct Ready: Sendable {
+        let prepared: SpokenNoteWholePlayback.Prepared
+        let plan: SpokenNoteVersionSwitch?
+        let savedSessions: [Session]
+    }
+
+    /// For a note with a saved session (not open now) whose place was kept on the other version's clock: the place on
+    /// the prepared file, or nil when the file is the same version or there is no session to carry on.
+    private static func savedPlaceOnNewVersion(_ ready: Ready, addedAgainAt: Date?) -> Int? {
+        guard let plan = ready.plan,
+              case .resume(let session) = PlayRule.startAction(sessions: ready.savedSessions, addedAgainAt: addedAgainAt) else { return nil }
+        return plan.startMs(playingMs: session.position.mediaTimeMs ?? 0)
     }
 
     /// Reads where the note's takes sit in the joined file, for a note whose audio was joined before (it may be playing

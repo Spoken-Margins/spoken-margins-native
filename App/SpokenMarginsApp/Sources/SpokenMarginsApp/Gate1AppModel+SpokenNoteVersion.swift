@@ -28,34 +28,45 @@ extension Gate1AppModel {
         case blocked
     }
 
+    /// The file the open session plays now, as the item named it when the session started. Read from memory.
+    var openSessionMediaURL: String? { engine?.currentItem?.media?.url }
+
     /// Prepares `version` for the note and, when the note is the open session on the other version, attaches it and
     /// starts the note again on it at the same moment, playing or paused as it was. Nothing is attached unless the
-    /// restart follows, so the item never names one file while the session plays the other.
+    /// restart follows, so the item never names one file while the session plays the other. The file and both clocks
+    /// are read off the main thread; the restart itself is one engine transition, as any Play is.
     func switchSpokenNoteVersion(noteId: String, to version: SpokenNoteAudioVersion) async -> SpokenNoteSwitchOutcome {
         guard spokenNoteIsOpenSession(noteId: noteId) else { return .settled }
         guard !spokenNoteVersionChangeIsBlocked else { return .blocked }
         guard let store, let support = try? applicationSupportDirectory(),
               let noteStore = SpokenNoteStarter.store(noteId: noteId, in: support) else { return .settled }
-        let prepared = await Task.detached(priority: .userInitiated) {
-            try? await SpokenNoteWholePlayback.prepare(
-                store: noteStore, joiner: SpokenNoteAudioJoiner(), writer: store, version: version, attach: false)
+        let previousMediaURL = openSessionMediaURL
+        let ready = await Task.detached(priority: .userInitiated) { () -> (SpokenNoteWholePlayback.Prepared, SpokenNoteVersionSwitch?)? in
+            guard let prepared = try? await SpokenNoteWholePlayback.prepare(
+                store: noteStore, joiner: SpokenNoteAudioJoiner(), writer: store, version: version, attach: false) else { return nil }
+            return (prepared, SpokenNoteVersionSwitch.plan(previousMediaURL: previousMediaURL, newMediaURL: prepared.audioURL.absoluteString))
         }.value
         // The listener may have moved on, begun a recording, or chosen again while the file was read.
-        guard let prepared, spokenNoteClean.version == version, spokenNoteIsOpenSession(noteId: noteId) else { return .settled }
+        guard let ready, spokenNoteClean.version == version, spokenNoteIsOpenSession(noteId: noteId) else { return .settled }
+        let (prepared, plan) = ready
         guard !spokenNoteVersionChangeIsBlocked else { return .blocked }
-        restartSpokenNoteIfVersionChanged(prepared: prepared, playing: snapshot.status.isPlaybackActive)
+        // Another restart moved the session while the file was read: the plan is for a file no longer playing. Read again.
+        guard openSessionMediaURL == previousMediaURL else { return .blocked }
+        hangTelemetry.labels.scoped("spokenNote.switchVersion") {
+            _ = restartSpokenNote(prepared: prepared, plan: plan, playing: snapshot.status.isPlaybackActive)
+        }
         return .settled
     }
 
-    /// For the open session's note: when `prepared` is the other version, attaches it and restarts the note on it at
-    /// the same moment. Returns false when it is the version already playing (nothing is attached or restarted).
+    /// For the open session's note: when `plan` moves it to the other version (it is nil when `prepared` is the version
+    /// already playing), attaches `prepared` and restarts the note on it at the same moment. Returns false when there
+    /// was nothing to move (nothing is attached or restarted). Returns true, with nothing attached, when the session
+    /// moved off the plan's file while it was read: the caller must not attach `prepared` under it either.
     @discardableResult
-    func restartSpokenNoteIfVersionChanged(prepared: SpokenNoteWholePlayback.Prepared, playing: Bool) -> Bool {
-        guard let startMs = SpokenNoteVersionPlan.switchStartMs(
-            playingMs: snapshot.currentMediaTimeMs ?? 0,
-            previousMediaURL: engine?.currentItem?.media?.url,
-            newMediaURL: prepared.audioURL.absoluteString
-        ), let store else { return false }
+    func restartSpokenNote(prepared: SpokenNoteWholePlayback.Prepared, plan: SpokenNoteVersionSwitch?, playing: Bool) -> Bool {
+        guard let plan else { return false }
+        guard plan.previousMediaURL == openSessionMediaURL, let store else { return true }
+        let startMs = plan.startMs(playingMs: snapshot.currentMediaTimeMs ?? 0)
         do {
             try SpokenNoteWholePlayback.attach(prepared, writer: store)
         } catch {
@@ -72,45 +83,38 @@ extension Gate1AppModel {
         return true
     }
 
-    /// For a note with a saved session (not open now) whose place was kept on the other version's clock: the place on
-    /// the prepared file, or nil when the saved session is on the same version or there is none to carry on.
-    func spokenNoteSavedPlaceOnNewVersion(itemId: String, previousMediaURL: String?, prepared: SpokenNoteWholePlayback.Prepared) -> Int? {
-        guard let store, let sessions = try? store.loadSessions(itemId: itemId),
-              case .resume(let session) = PlayRule.startAction(sessions: sessions, addedAgainAt: addedAgainAt(forItem: itemId)) else { return nil }
-        return SpokenNoteVersionPlan.switchStartMs(
-            playingMs: session.position.mediaTimeMs ?? 0,
-            previousMediaURL: previousMediaURL,
-            newMediaURL: prepared.audioURL.absoluteString
-        )
-    }
-
-    /// The note's saved sessions are set aside (their places are on the other version's clock) and the note starts at
-    /// `atMs` on the file now attached, through the normal start, so the screen moves to Now as any Play does.
-    func startSpokenNoteSession(itemId: String, atMs: Int) {
-        if let store, let sessions = try? store.loadSessions(itemId: itemId) {
-            for var session in sessions where SessionContinuation.isResumableSession(session) {
+    /// The note's saved sessions are set aside, off the main thread: their places are on the other version's clock, so
+    /// none of them may be continued once the other file is attached.
+    func setAsideSpokenNoteSessions(itemId: String) async {
+        guard let store else { return }
+        _ = try? await Self.offMain {
+            for var session in try store.loadSessions(itemId: itemId) where SessionContinuation.isResumableSession(session) {
                 session.phase = .abandoned
-                try? store.saveSession(session)
+                try store.saveSession(session)
             }
         }
+    }
+
+    /// Starts the note at `atMs` on the file now attached, through the normal start, so the screen moves to Now as any
+    /// Play does. Call it after `setAsideSpokenNoteSessions`.
+    func startSpokenNoteSession(itemId: String, atMs: Int) {
         spokenNoteClean.setPendingStart(itemId: itemId, ms: atMs)
         startNewSession(id: itemId)
         _ = spokenNoteClean.takePendingStartMs(itemId: itemId) // a start that was refused leaves nothing for a later one
     }
 
     /// A start of a spoken note from anywhere but its Play control (the Library's Continue, a relaunch) whose item names
-    /// the version the listener didn't choose: it goes through the Play control's path, which attaches the chosen one.
-    /// Returns true when it took the start over.
+    /// the version the listener didn't choose: it goes through the Play control's path, which prepares the chosen one
+    /// off the main thread and attaches it when it can play (a Shorter pauses version not made yet leaves the recording
+    /// attached, and the start goes on as before). Returns true when it took the start over. The open session's note
+    /// is never routed: moving it between versions is the coordinator's (`switchSpokenNoteVersion`).
     func startSpokenNoteThroughChosenVersion(itemId: String) -> Bool {
         if spokenNoteClean.routingItemId == itemId { spokenNoteClean.routingItemId = nil; return false } // the routed start itself
         guard itemId.hasPrefix(SpokenNoteItem.itemId(forNoteId: "")), let store, // only a note's item reads the row
               let summary = try? store.loadItemSummary(id: itemId), SpokenNoteItem.isSpokenNote(mediaType: summary.mediaType),
-              let noteId = SpokenNoteItem.noteId(fromReference: summary.externalReference),
-              let support = try? applicationSupportDirectory(),
-              let noteStore = SpokenNoteStarter.store(noteId: noteId, in: support) else { return false }
-        guard SpokenNoteVersionPlan.startNeedsAttach(
-            chosen: spokenNoteClean.version, mediaURL: summary.media?.url, noteFolder: noteStore.folderURL
-        ) else {
+              let noteId = SpokenNoteItem.noteId(fromReference: summary.externalReference) else { return false }
+        guard !spokenNoteIsOpenSession(noteId: noteId),
+              SpokenNoteVersionPlan.attachedVersion(mediaURL: summary.media?.url) != spokenNoteClean.version else {
             spokenNoteClean.notePlaybackStarted(noteId: noteId)
             return false
         }

@@ -96,16 +96,30 @@ public enum SpokenNoteVersionPlan {
     }
 }
 
-extension SpokenNoteVersionPlan {
-    /// Where a note starts after Play attached `newMediaURL` in place of `previousMediaURL`: the same moment of the
-    /// recording on the new file's clock, or nil when both name the same version (the session simply carries on).
-    public static func switchStartMs(playingMs: Int, previousMediaURL: String?, newMediaURL: String?) -> Int? {
+/// A move from one of a note's files to the other with both clocks already read (#4779). `plan` reads the note's layout
+/// files, so it is made off the main thread; `startMs` is only arithmetic, so the main actor calls it at the moment of
+/// the restart with the place playing then.
+public struct SpokenNoteVersionSwitch: Equatable, Sendable {
+    public let previousMediaURL: String?
+    public let newMediaURL: String?
+    let fromMap: SpokenNoteCleanMap?
+    let toMap: SpokenNoteCleanMap?
+
+    /// The move from `previousMediaURL` (the file attached before) to `newMediaURL` (the file Play just prepared), or nil
+    /// when both name the same version (the session simply carries on). Reads files: never call it on the main thread.
+    public static func plan(previousMediaURL: String?, newMediaURL: String?) -> SpokenNoteVersionSwitch? {
         guard SpokenNoteCleanFiles.namesCleanAudio(previousMediaURL) != SpokenNoteCleanFiles.namesCleanAudio(newMediaURL) else { return nil }
-        return startMs(
-            playingMs: playingMs,
+        return SpokenNoteVersionSwitch(
+            previousMediaURL: previousMediaURL,
+            newMediaURL: newMediaURL,
             fromMap: SpokenNoteCleanClock.map(forMediaURL: previousMediaURL),
             toMap: SpokenNoteCleanClock.map(forMediaURL: newMediaURL)
         )
+    }
+
+    /// Where the note starts on the new file for `playingMs` on the old one: the same moment of the recording.
+    public func startMs(playingMs: Int) -> Int {
+        SpokenNoteVersionPlan.startMs(playingMs: playingMs, fromMap: fromMap, toMap: toMap)
     }
 }
 
@@ -113,19 +127,5 @@ extension SpokenNoteVersionPlan {
     /// The version an item's media URL plays.
     public static func attachedVersion(mediaURL: String?) -> SpokenNoteAudioVersion {
         SpokenNoteCleanFiles.namesCleanAudio(mediaURL) ? .shorterPauses : .asRecorded
-    }
-
-    /// Whether a start of the note from anywhere (the Library, Continue, a relaunch) must first attach the chosen
-    /// version: the item names the other one, and the chosen one can play (As recorded always can; Shorter pauses
-    /// only once made from the takes of the recording's join).
-    public static func startNeedsAttach(chosen: SpokenNoteAudioVersion, mediaURL: String?, noteFolder: URL) -> Bool {
-        guard attachedVersion(mediaURL: mediaURL) != chosen else { return false }
-        switch chosen {
-        case .asRecorded:
-            return true
-        case .shorterPauses:
-            guard let recorded = SpokenNoteWholePlayback.recordedLayout(inFolder: noteFolder) else { return false }
-            return SpokenNoteCleanClock.map(inNoteFolder: noteFolder, recorded: recorded) != nil
-        }
     }
 }

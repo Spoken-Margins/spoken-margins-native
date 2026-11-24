@@ -28,6 +28,8 @@ final class SpokenNoteCleanCoordinator: ObservableObject {
     private var moveRetry: Task<Void, Never>?
     private var observers: [NSObjectProtocol] = []
     private weak var app: Gate1AppModel?
+    /// Names the step for the hang probe when one of this coordinator's tasks holds the main thread (#2255).
+    private static let labels = MainThreadOperationLabels.shared
     /// Starts routed from `startItem` through the Play path (the Library's Continue, a relaunch).
     private let routedPlay = SpokenNoteWholePlayModel()
 
@@ -40,13 +42,16 @@ final class SpokenNoteCleanCoordinator: ObservableObject {
         guard self.app == nil else { return }
         self.app = app
         let center = NotificationCenter.default
+        let labels = Self.labels
         observers.append(center.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.resumeWaiting() }
+            Task { @MainActor in labels.scoped("spokenNoteClean.thermalChanged") { self?.resumeWaiting() } }
         })
         observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
-                self?.resumeWaiting()
-                self?.tryPendingMove()
+                labels.scoped("spokenNoteClean.becameActive") {
+                    self?.resumeWaiting()
+                    self?.tryPendingMove()
+                }
             }
         })
     }
@@ -98,7 +103,12 @@ final class SpokenNoteCleanCoordinator: ObservableObject {
 
     /// A start from `startItem` for a note whose item names the version not chosen: played through the Play path.
     func routeStart(noteId: String, itemId: String, app: Gate1AppModel) {
-        routedPlay.play(noteId: noteId, app: app)
+        // A note that can't be got ready goes on with the file its item names, as the start did before it was routed.
+        routedPlay.play(noteId: noteId, app: app, ifNotReady: { [weak app] in
+            guard let app else { return }
+            app.spokenNoteClean.routingItemId = itemId
+            app.startItem(id: itemId)
+        })
     }
 
     // MARK: Moving the open note
@@ -120,13 +130,15 @@ final class SpokenNoteCleanCoordinator: ObservableObject {
         Task {
             let outcome = await app.switchSpokenNoteVersion(noteId: noteId, to: target)
             guard pendingMoveNoteId == noteId else { return }
-            switch outcome {
-            case .settled:
-                pendingMoveNoteId = nil
-                moveRetry?.cancel()
-                moveRetry = nil
-            case .blocked:
-                scheduleMoveRetry()
+            Self.labels.scoped("spokenNoteClean.moveOutcome") {
+                switch outcome {
+                case .settled:
+                    pendingMoveNoteId = nil
+                    moveRetry?.cancel()
+                    moveRetry = nil
+                case .blocked:
+                    scheduleMoveRetry()
+                }
             }
         }
     }
@@ -139,7 +151,7 @@ final class SpokenNoteCleanCoordinator: ObservableObject {
             try? await Task.sleep(for: .seconds(1))
             guard let self, !Task.isCancelled else { return }
             self.moveRetry = nil
-            self.tryPendingMove()
+            Self.labels.scoped("spokenNoteClean.moveRetry") { self.tryPendingMove() }
         }
     }
 
@@ -199,7 +211,7 @@ final class SpokenNoteCleanCoordinator: ObservableObject {
         // The coordinator lives as long as the app model, and is main-actor isolated, so the wait holds it plainly.
         Task {
             let outcome = await work.value
-            self.finished(jobId: id, noteId: noteId, outcome: outcome)
+            Self.labels.scoped("spokenNoteClean.finished") { self.finished(jobId: id, noteId: noteId, outcome: outcome) }
         }
     }
 
