@@ -380,7 +380,7 @@ function useFollowFeed(onFollowed?: () => void) {
       setBusy(true);
       setProblem(undefined);
       try {
-        const read = await relay((relayAllowed) => services.sources.readFeed(feedUrl, { relayAllowed }));
+        const read = await relay((relayAllowed) => services.sources.readFeed(feedUrl, { relayAllowed }), { link: feedUrl });
         // Just read, so the next automatic refresh leaves it for 30 minutes.
         await data.follow({ ...read.show, refreshedAt: new Date().toISOString() }, newestFirst(read.episodes));
         toast(`Following ${read.show.title}. Open it to pick episodes for your Library.`);
@@ -551,6 +551,10 @@ function FollowSheet({ onClose, initialQuery }: { onClose: () => void; initialQu
           </button>
         </div>
       </form>
+      {/* The app's Follow sheet footer, word for word (#4176): where a paid show's private RSS link comes from. */}
+      <p className="muted" data-testid="follow-private-feed-hint">
+        Or type a show’s feed link. For a paid show, such as one on Patreon, copy your private RSS link from the creator’s page.
+      </p>
       {problem && <ProblemLine problem={problem} />}
       {!results?.length && (
         <SuggestedShows inSheet busy={busy} followedFeedUrls={data.shows.map((s) => s.feedUrl)} onFollow={(feedUrl) => void followFeed(feedUrl)} />

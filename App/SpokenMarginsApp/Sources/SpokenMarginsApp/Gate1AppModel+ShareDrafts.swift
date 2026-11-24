@@ -51,7 +51,8 @@ extension Gate1AppModel {
 
     /// "Share this Margin" on Margin details (#3211): the friend sheet with only that Margin, starting on the review.
     /// Share always means another listener, so this makes a packet and never a Markdown file. Like the Margins tab's
-    /// Share it leaves the playing session and the current screen alone; only `selectedItem` follows the Margin's item.
+    /// Share it keeps the session and the current screen; only `selectedItem` follows the Margin's item, and playback
+    /// pauses as it does for every share (#5050).
     func openMarginShare(_ margin: Interjection) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_margin_share") else { return }
         guard ShareableMargins.canShare(margin) else { return reportFailure(ShareableMargins.singleMarginRefusal) }
@@ -91,6 +92,7 @@ extension Gate1AppModel {
             isReplyBack: replyBack != nil, isSingleMargin: isSingleMargin, hasStarredCandidates: hasStarredCandidates)
         sharingState.draftFilter = hasStarredCandidates ? .starred : .all
         isSharingInterjectionsPresented = true
+        pauseForShareFlow()
         // The summary: the sheet needs the address, the type and whether there is text, not the article (#2506).
         if let item = try? requireStore().loadItemSummary(id: selectedItem.id) {
             let reference = secureSharedItemURL(for: item)
@@ -128,6 +130,24 @@ extension Gate1AppModel {
             }
         }
         sharingState.isPreparing = false
+    }
+
+    /// Opening the share sheet pauses whatever is sounding, and closing it leaves it paused (#5050, `ShareFlowPlayback`).
+    /// Every way into Share with a Friend (the playback screen, the Margins tab, Margin details, a reply back) opens the
+    /// sheet here, so this is the one place the rule is applied. `activePlaybackIsPlaying` and `pause()` read the same
+    /// layers in the same order: a Margin voice first, then a Skim bridge, then the source.
+    private func pauseForShareFlow() {
+        guard ShareFlowPlayback.onOpen(isPlaying: activePlaybackIsPlaying) == .pause else { return }
+        pauseKeepingShareSheetItem()
+    }
+
+    /// A pause from inside the share sheet. Pausing the source reloads the playing item into `selectedItem` in the
+    /// background. When the sheet is for another item (a Margin from the Margins tab, Margin details or a reply back),
+    /// that reload would swap the sheet's item for the playing one before Send, and the packet would name the wrong
+    /// source, so the reload is dropped. The sheet's own pauses (opening it, the sender lead-in preview) come here.
+    func pauseKeepingShareSheetItem() {
+        pause()
+        if selectedItem.id != activeItemId { _ = backgroundRefresh.beginItem() }
     }
 
     /// Where the sharing star's counts are kept (#4173): on this phone, as four numbers.

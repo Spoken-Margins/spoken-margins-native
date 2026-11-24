@@ -3,17 +3,19 @@ import SwiftUI
 
 /// The Paper note on a PDF's item screen (#4340): the citation, then Purpose, Key findings and three Evidence, each filled
 /// by one of the listener's own Margins carrying that role. What it shows comes from `PaperNoteSlots` (SessionKit); this
-/// view draws it and hands taps to the model. "Write it" comes in the next PR; until then an empty slot offers "Choose a
-/// Margin" when the paper has Margins of the listener's own, and its question alone when it has none.
+/// view draws it and hands taps to the model. An empty slot's Add offers "Write it" (the Write sheet, off until the listener
+/// has started the paper) and "Choose a Margin" (only when the paper has Margins of the listener's own).
 struct PaperNoteSection: View {
     @EnvironmentObject private var model: Gate1AppModel
     /// The paper's structure, for the answers' pages; read off the main thread when the item opens.
     @State private var document: StructuredDocument?
     @State private var choosing: PaperNoteChooseMarginSheet.Request?
+    @State private var writing: PaperNoteAnswerSheet.Request?
     @State private var detailRow: MarginRow?
 
     var body: some View {
         let slots = model.paperNoteSlots(document: document)
+        let canWrite = model.canWritePaperAnswer
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(PaperNoteSlots.heading).font(.system(.title3, design: .serif).weight(.bold)).accessibilityAddTraits(.isHeader)
@@ -30,24 +32,23 @@ struct PaperNoteSection: View {
                         .accessibilityIdentifier("paperNote.citation")
                     ForEach(slots.rows) { row in
                         Divider()
-                        rowView(row, slots: slots)
+                        rowView(row, slots: slots, canWrite: canWrite)
                     }
                     if slots.offersMoreEvidence {
                         Divider()
-                        Button {
-                            choosing = .init(role: .evidence, replacing: nil)
+                        Menu {
+                            addActions(role: .evidence, index: PaperNoteSlots.evidenceRows, slots: slots, canWrite: canWrite)
                         } label: {
                             Label(PaperNoteSlots.addMoreEvidence, systemImage: "plus.circle")
                                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                         }
-                        .buttonStyle(.plain)
                         .foregroundStyle(AppColors.evergreen)
                         .accessibilityIdentifier("paperNote.addMoreEvidence.button")
                     }
                 }
             }
-            if slots.hasNoMargins {
-                Text(PaperNoteSlots.noMarginsFootnote)
+            if let footnote = PaperNoteSlots.footnote(canWrite: canWrite) {
+                Text(footnote)
                     .font(.footnote)
                     .foregroundStyle(AppColors.secondaryText)
                     .accessibilityIdentifier("paperNote.footnote")
@@ -71,13 +72,16 @@ struct PaperNoteSection: View {
                 }
             }
         }
+        .trackedSheet(item: $writing) { request in
+            PaperNoteAnswerSheet(request: request, slots: slots, document: document).environmentObject(model)
+        }
         .trackedSheet(item: $detailRow) { row in
             ExperienceMarginDetailView(row: row).environmentObject(model)
         }
     }
 
     @ViewBuilder
-    private func rowView(_ row: PaperNoteSlots.Row, slots: PaperNoteSlots) -> some View {
+    private func rowView(_ row: PaperNoteSlots.Row, slots: PaperNoteSlots, canWrite: Bool) -> some View {
         switch row {
         case .empty(let role, let index):
             HStack(alignment: .firstTextBaseline, spacing: 12) {
@@ -89,20 +93,15 @@ struct PaperNoteSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
-                if !slots.hasNoMargins {
-                    Menu {
-                        Button("Choose a Margin", systemImage: "quote.bubble") {
-                            choosing = .init(role: role, replacing: nil)
-                        }
-                        .accessibilityIdentifier("paperNote.choose.\(role.rawValue).\(index)")
-                    } label: {
-                        Text("Add").frame(minWidth: 44, minHeight: 44)
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(AppColors.evergreen)
-                    .accessibilityLabel("Add \(PaperNoteSlots.slotName(role))")
-                    .accessibilityIdentifier("paperNote.add.\(role.rawValue).\(index)")
+                Menu {
+                    addActions(role: role, index: index, slots: slots, canWrite: canWrite)
+                } label: {
+                    Text("Add").frame(minWidth: 44, minHeight: 44)
                 }
+                .buttonStyle(.bordered)
+                .tint(AppColors.evergreen)
+                .accessibilityLabel("Add \(PaperNoteSlots.slotName(role))")
+                .accessibilityIdentifier("paperNote.add.\(role.rawValue).\(index)")
             }
             .padding(.vertical, 10)
         case .filled(let answer):
@@ -141,12 +140,33 @@ struct PaperNoteSection: View {
         }
     }
 
+    /// The Add menu: "Write it", off until the paper has been started, and "Choose a Margin" while it has Margins.
+    @ViewBuilder
+    private func addActions(role: PaperNoteRole, index: Int, slots: PaperNoteSlots, canWrite: Bool) -> some View {
+        Button("Write it", systemImage: "square.and.pencil") { writing = .init(role: role) }
+            .disabled(!canWrite)
+            .accessibilityIdentifier("paperNote.write.\(role.rawValue).\(index)")
+        if !slots.hasNoMargins {
+            Button("Choose a Margin", systemImage: "quote.bubble") {
+                choosing = .init(role: role, replacing: nil)
+            }
+            .accessibilityIdentifier("paperNote.choose.\(role.rawValue).\(index)")
+        }
+    }
+
     @ViewBuilder
     private func answerActions(_ answer: PaperNoteSlots.Answer, role: PaperNoteRole, marginRow: MarginRow) -> some View {
-        Button("Change answer", systemImage: "arrow.triangle.2.circlepath") {
-            choosing = .init(role: role, replacing: answer.margin)
+        // The same choices as Add; the new answer takes the role and the old Margin stays, without it.
+        Menu("Change answer", systemImage: "arrow.triangle.2.circlepath") {
+            Button("Write it", systemImage: "square.and.pencil") { writing = .init(role: role, replacing: answer.margin) }
+                .disabled(!model.canWritePaperAnswer)
+                .accessibilityIdentifier("paperNote.changeWrite.\(answer.margin.id)")
+            Button("Choose a Margin", systemImage: "quote.bubble") {
+                choosing = .init(role: role, replacing: answer.margin)
+            }
+            .accessibilityIdentifier("paperNote.change.\(answer.margin.id)")
         }
-        .accessibilityIdentifier("paperNote.change.\(answer.margin.id)")
+        .accessibilityIdentifier("paperNote.changeMenu.\(answer.margin.id)")
         Button("Open Margin", systemImage: "quote.bubble") { detailRow = marginRow }
             .accessibilityIdentifier("paperNote.open.\(answer.margin.id)")
         Button("Remove from paper note", systemImage: "minus.circle") {

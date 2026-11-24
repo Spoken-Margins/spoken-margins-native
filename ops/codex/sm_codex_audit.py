@@ -140,7 +140,12 @@ HEAD_TOTAL_CAP = 10_000_000  # bytes copied out per PR
 SOLO_OVER_LINES = 400  # a PR with more changed lines than this is audited alone
 BATCH_MAX_PRS = 5
 BATCH_MAX_LINES = 600
-BODY_CHARS = 6000  # cap on each PR body / issue section passed to the model
+BODY_CHARS = 6000  # cap on each issue section and audit comment passed to the model
+# The PR description gets its own, larger cap. At 6,000 the model was shown about two thirds of a long description
+# and blocked on the "Cost and catch" section it never saw, which sits near the end (#5274's ran 9,324 characters;
+# about ten PRs since 2026-11-10 drew a "cut off" finding). A description past this cap ends in a marker, so the model
+# knows text is missing rather than taking the cut for the end.
+PR_BODY_CHARS = 20_000
 HISTORY_AUDITS = 3
 
 INSTRUCTION = (
@@ -307,12 +312,12 @@ def head_audit_comments(comments: list[dict], head_sha: str) -> list[dict]:
 def audit_input_hash(title: str | None, body: str | None) -> str:
     """A fingerprint of the PR's title and description, which the model reads but GitHub's events never record.
 
-    Only the first BODY_CHARS of the description count: that is all the model is shown, so an edit past it
+    Only the first PR_BODY_CHARS of the description count: that is all the model is shown, so an edit past it
     would pay for an audit that reads the same input.
     """
     def norm(text):
         return (text or "").replace("\r\n", "\n").strip()
-    return hashlib.sha256(json.dumps([norm(title), norm(body)[:BODY_CHARS]], ensure_ascii=False).encode("utf-8")).hexdigest()
+    return hashlib.sha256(json.dumps([norm(title), norm(body)[:PR_BODY_CHARS]], ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def audit_input_marker(c: dict) -> str | None:
@@ -703,9 +708,22 @@ def log(msg: str, echo: bool = True) -> None:
         print(line, flush=True)
 
 
+def is_gh_write(cmd: list[str]) -> bool:
+    """A `gh` call that changes something: a comment, a label, a workflow dispatch or re-run, or an api POST/DELETE."""
+    if cmd[:1] != ["gh"]:
+        return False
+    return (cmd[1:3] in (["pr", "comment"], ["pr", "edit"], ["workflow", "run"], ["run", "rerun"])
+            or (cmd[1:2] == ["api"] and any(arg in ("-X", "--method") for arg in cmd)))
+
+
 def run(cmd: list[str], *, cwd: Path | None = None, check: bool = True,
         timeout: float | None = 300, stdin=subprocess.DEVNULL) -> subprocess.CompletedProcess:
-    res = subprocess.run(cmd, cwd=cwd, stdin=stdin, capture_output=True, text=True, timeout=timeout)
+    # #5217: reads use GH_TOKEN, the GitHub App's token with its own API budget. Writes use SM_WRITE_TOKEN (the
+    # workflow's GITHUB_TOKEN) when set, so they stay authored by the workflow bot and a label change still starts
+    # no run, which the re-arm and tap check rely on.
+    write_token = os.environ.get("SM_WRITE_TOKEN")
+    env = {**os.environ, "GH_TOKEN": write_token} if write_token and is_gh_write(cmd) else None
+    res = subprocess.run(cmd, cwd=cwd, stdin=stdin, capture_output=True, text=True, timeout=timeout, env=env)
     if check and res.returncode != 0:
         raise RuntimeError(f"{cmd[0]} {' '.join(cmd[1:4])}… failed: {res.stderr.strip()[:300]}")
     return res
@@ -1124,6 +1142,17 @@ def incremental_diffs(worktree: Path, number: int, head: str, comments: list[dic
     return '\n'.join(parts) if parts else 'No earlier audited head or accepted finding code to compare.'
 
 
+def pr_description_text(body: str | None) -> str:
+    """The PR description as the model reads it: whole up to PR_BODY_CHARS, then a marker saying the rest is missing."""
+    text = (body or "").strip()
+    if not text:
+        return "(none)"
+    if len(text) <= PR_BODY_CHARS:
+        return text
+    return (text[:PR_BODY_CHARS] + f"\n[Description truncated at {PR_BODY_CHARS} of {len(text)} characters. A section "
+            "may be in the part not shown: say so rather than calling it missing.]")
+
+
 def pr_context_block(c: dict, issue_texts: dict[int, dict[str, str]], diff_rel: str,
                      base_sha: str, merge_base: str, delta_context: str = '', inherited_context: str = '') -> str:
     plan = c.get('plan')
@@ -1141,7 +1170,7 @@ def pr_context_block(c: dict, issue_texts: dict[int, dict[str, str]], diff_rel: 
     parts += [
         "",
         "PR description:",
-        (c.get("body") or "(none)").strip()[:BODY_CHARS],
+        pr_description_text(c.get("body")),
     ]
     for inum in c["issues"]:
         secs = issue_texts.get(inum) or {}
@@ -1347,7 +1376,7 @@ def run_claude(worktree: Path, out_file: Path, prompt: str, transcript: Path) ->
            "--strict-mcp-config", "--setting-sources", "project", "--no-session-persistence",
            "--max-budget-usd", CLAUDE_BUDGET_USD]
     # Claude gets no GitHub token: it only reads, and anything it can see could reach a public comment (#2170).
-    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN")}
+    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "SM_WRITE_TOKEN")}
     env["CLAUDE_CODE_OAUTH_TOKEN"] = token
     with open(transcript, "wb") as tfh:
         proc = subprocess.Popen(cmd, cwd=worktree, env=env, stdin=subprocess.PIPE, stdout=tfh,

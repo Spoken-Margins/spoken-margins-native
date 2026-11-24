@@ -33,7 +33,7 @@ import lane_sim_pool
 import node_modules_drift
 import third_party_notices
 import xcodebuild_finish
-from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
+from lane_slots import (acquire_simulator_slot, acquire_test_runner, build_slot, host_test_slot, release_handle,
                         state_dir, SIMULATOR_SLOTS)
 
 from test_inventory import ROOT, plan_tests, swift_tests, target_tests, validate
@@ -375,8 +375,8 @@ def capture(command):
 def inherited_simulator_slot(fd):
     """Borrow a parent's real locked simulator-slot descriptor; never trust an env flag.
 
-    The parent keeps the decision lock too, excluding a second simulator job for
-    an unattended integration run. Closing this duplicate preserves its lock.
+    The parent keeps the slot for the whole job; closing this duplicate preserves its lock. The shared Test Runner is
+    guarded by its own lock, which xcode() takes for every run without --device (#4736).
     """
     try:
         info = os.fstat(fd)
@@ -880,7 +880,9 @@ PORTABLE_RUNNER_TESTS_LEFT_OUT = {
 # --plan fast-portable --pr-quick (2026-11-20): a PR's first signal. In the merge queue (MERGE_QUEUE_MAC=queue-only)
 # the long suites run once per merge group, where batching shares their cost; on a PR push the portable job ran
 # them too, and its runner-tests took 1,180 s of the job's 28 minutes. With --pr-quick the plan leaves runner-tests to
-# the merge group and runs every other portable step (about 90 s together). hosted-portable.yml passes it on PRs only.
+# the merge group and runs every other portable step (about 90 s together). Since 2026-11-24 (#5281) no workflow passes
+# it: PRs run the whole plan again, because the queue was the first place runner-tests ran and dropped PRs for it. It
+# stays for a quick hand run.
 PR_QUICK_LEFT_OUT = {
     'runner-tests': 'the PR quick tier leaves it to the merge group, which runs the whole fast-portable plan '
                     '(hosted-portable.yml; for an early run, dispatch it on the branch)',
@@ -1218,7 +1220,8 @@ RUNNER_TESTS_TIMEOUT = 600
 # stream of passing dots, so two runs of #2409 failed with "executed zero tests". It gets #1767's rule: a run still
 # printing at its budget goes on until the ceiling; one silent for the stall time is a hang and stops.
 # #4763 set 1800 by hand on 2026-11-20 after passing hosted runs took up to 1180 s and two PRs were killed at 1200 s;
-# the table now derives the same 1800 from the last 30 passing runs (1.5 x p95, ci_step_budgets.json).
+# the table derived the same 1800 from the last 30 passing runs (1.5 x p95, ci_step_budgets.json). Since the slow tier
+# left PR runs (#5145) the samples give 900 s, but the table never lowers a limit (#5009), so 1800 stays.
 RUNNER_TESTS_CEILING = STEP_BUDGETS['RUNNER_TESTS_CEILING']['seconds']
 RUNNER_TESTS_STALL_SECONDS = PACKAGE_STALL_SECONDS  # one test compiles Swift, silent for minutes at high load
 RUNNER_TESTS_LIMITS = {'timeout': RUNNER_TESTS_TIMEOUT, 'ceiling': RUNNER_TESTS_CEILING,
@@ -2402,22 +2405,35 @@ class Run:
         if any(test.endswith(SUPERTONIC_APP_MODEL_TEST)
                for test in planned if not selectors or any(selected(test, s) for s in selectors)):
             self.provide_supertonic_model()
-        chosen, created = self.simulator(device, ios)
-        refuse_unsafe(chosen, lane_sim.unsafe_devices())
-        refuse_borrowed(chosen, device, simulator_slot_fd)
-        self.manifest['destination'] = chosen
-        derived, identity = self.xcode_build(plan, chosen['runtime'], rebuild, require_build)
-        base = ['xcodebuild', '-configuration', 'Debug', '-project', 'SpokenMarginsNative.xcodeproj', '-scheme', scheme,
-                '-testPlan', name, '-destination', f'id={chosen["udid"]}', '-derivedDataPath', str(derived)
-                ] + package_cache_settings()  # the build's package folder: xcodebuild resolves packages again here (#4664)
-        booted_here = chosen['state'] != 'Booted'
-        # A run that boots its own simulator holds a Mac-wide simulator slot until it shuts it down
-        # (16 GB Mac: a second simulator job only while memory pressure is normal, #184). A device
-        # someone else booted is theirs, and so is the slot.
-        slot = inherited_simulator_slot(simulator_slot_fd) if simulator_slot_fd is not None else (
-            acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS)
-            if booted_here else None)
+        # Our own Test Runner is shared by every checkout's run without --device, so such a run locks it Mac-wide
+        # (#4736): from before it chooses, replaces or creates the device until it has shut it down. The integration
+        # job used to guard it by keeping the simulator decision lock for its whole run, which made every Test Desk
+        # boot wait out the job. The slot always comes first and a holder of the lock waits for no slot, so the two
+        # can't deadlock. A device given with --device is the caller's own and never takes the lock.
+        chosen, booted_here, slot, runner_lock, reached_device = None, False, None, None, False
         try:
+            if device is None:
+                slot = inherited_simulator_slot(simulator_slot_fd) if simulator_slot_fd is not None else \
+                    acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS)
+                runner_lock = acquire_test_runner(f'verify-tests {plan}', out=sys.stdout,
+                                                  max_wait=max(BUILD_SLOT_WAIT_SECONDS, timeout))
+            chosen, created = self.simulator(device, ios)
+            refuse_unsafe(chosen, lane_sim.unsafe_devices())
+            refuse_borrowed(chosen, device, simulator_slot_fd)
+            self.manifest['destination'] = chosen
+            derived, identity = self.xcode_build(plan, chosen['runtime'], rebuild, require_build)
+            base = ['xcodebuild', '-configuration', 'Debug', '-project', 'SpokenMarginsNative.xcodeproj', '-scheme',
+                    scheme, '-testPlan', name, '-destination', f'id={chosen["udid"]}', '-derivedDataPath', str(derived)
+                    ] + package_cache_settings()  # the build's package folder: xcodebuild resolves packages again (#4664)
+            # A run that boots its own simulator holds a Mac-wide simulator slot until it shuts it down
+            # (16 GB Mac: a second simulator job only while memory pressure is normal, #184). A given device
+            # someone else booted is theirs, and so is the slot.
+            if device is not None:
+                slot = inherited_simulator_slot(simulator_slot_fd) if simulator_slot_fd is not None else (
+                    acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS)
+                    if chosen['state'] != 'Booted' else None)
+            booted_here = chosen['state'] != 'Booted'  # set only now: the finally shuts down only what this run boots
+            reached_device = True
             if booted_here:
                 # Lane boot rules (scripts/lane_sim.py): one boot at a time, no builds meanwhile, no retry
                 # after a failed boot, stop at the first crash. Two crash floods followed boots (#184).
@@ -2541,17 +2557,19 @@ class Run:
                     if lane_audio_window.record_not_run(self.manifest['steps']):
                         self.save()
         finally:
-            if scheme == 'SpokenMarginsAppBehavior':
+            if reached_device and scheme == 'SpokenMarginsAppBehavior':
                 lane_sim.mark_quiet(chosen['udid'])
             if booted_here:
                 # Don't leave an idle simulator holding memory after the run.
                 shut_down_without_hiding_the_error(chosen['udid'])
+            if runner_lock:
+                release_handle(runner_lock)
             if slot:
                 if simulator_slot_fd is not None:
                     slot.close()
                 else:
                     release_handle(slot)
-            if plan in SCREENSHOT_PLANS:
+            if reached_device and plan in SCREENSHOT_PLANS:
                 # A tour test that stops partway still hands over what the run took (#3237): from 11-02 the tour failed
                 # at one moved control on every run, and exported nothing at all. The tests' own failure stays the error.
                 self.export_screenshots(tests_failed=sys.exc_info()[1] is not None)

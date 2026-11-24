@@ -190,6 +190,31 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(LibraryQueryEngine.completedHiddenCount(rows, query: LibraryQuery(query: "nobody", listeningState: .unfinished)), 0)
     }
 
+    func testTheFinishedFooterTapKeepsTheSearchAndListsTheFinishedMatches() {
+        let rows = [
+            Row(id: "done-pill", title: "Pill", isCompleted: true),
+            Row(id: "open-other", title: "Other")
+        ]
+        let table: [(query: String, listening: LibraryListeningStateFilter, includes: Bool, after: LibraryListeningStateFilter, visible: [String])] = [
+            ("pill", .unfinished, true, .all, ["done-pill"]),
+            ("pill", .unplayed, true, .all, ["done-pill"]),
+            ("pill", .inProgress, true, .all, ["done-pill"]),
+            ("  PILL ", .unfinished, true, .all, ["done-pill"]),
+            ("", .unfinished, false, .completed, ["done-pill"]),
+            ("   ", .unfinished, false, .completed, ["done-pill"]),
+            ("\n", .unplayed, false, .completed, ["done-pill"])
+        ]
+        for row in table {
+            let query = LibraryQuery(query: row.query, listeningState: row.listening)
+            XCTAssertEqual(LibraryQueryEngine.revealsFinishedWithinSearch(query: query), row.includes, "label for '\(row.query)'")
+            let revealed = LibraryQueryEngine.queryRevealingFinished(query)
+            XCTAssertEqual(revealed.listeningState, row.after, "listening for '\(row.query)'")
+            XCTAssertEqual(revealed.query, row.query, "the tap keeps the search text")
+            XCTAssertEqual(LibraryQueryEngine.visibleLibraryItems(rows, query: revealed, includingSenders: true).map(\.id), row.visible, "list for '\(row.query)'")
+            XCTAssertEqual(LibraryQueryEngine.completedHiddenCount(rows, query: revealed), 0, "nothing left hidden for '\(row.query)'")
+        }
+    }
+
     func testAFinishedItemWithNewSharedMarginsIsNotCaughtUp() {
         let new = Row(id: "done-new", isCompleted: true, sharedMargins: SharedMarginTally(total: 1, new: 1))
         let heard = Row(id: "done-heard", isCompleted: true, sharedMargins: SharedMarginTally(total: 1, new: 0))

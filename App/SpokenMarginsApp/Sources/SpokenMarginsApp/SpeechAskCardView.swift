@@ -13,7 +13,13 @@ struct SpeechAskCardSlot: View {
         let _ = playbackTick
         Group {
             if controller.isCardShowing(slotIsFree: slotIsFree) {
+                // Laid out like the friend's-card and footnote slots: the card's own fill is see-through, so an opaque
+                // listening background behind it keeps the passage from scrolling through its words (#5016).
                 SpeechAskCard(controller: controller)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: 620)
+                    .frame(maxWidth: .infinity)
+                    .background(AppColors.listeningBackground)
             }
         }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)

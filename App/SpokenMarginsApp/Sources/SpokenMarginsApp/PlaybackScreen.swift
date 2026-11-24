@@ -51,6 +51,7 @@ struct PlaybackScreen: View {
     @State private var mediaScrubState = PlaybackScrubState()
     @State private var textScrubState = PlaybackScrubState()
     @State private var isSleepTimerPresented = false
+    @State private var isFindInTextPresented = false
     @State private var sourceTextTarget: PlaybackTextReaderTarget?
     @State private var isPlaybackOptionsPresented = false
     @State private var pendingOptionsDestination: OptionsDestination?
@@ -60,6 +61,7 @@ struct PlaybackScreen: View {
     @State private var timelinePull = TimelinePullHolder()
     @State private var playbackTick = 0 // bumped by each progress tick, so this screen follows the clock (#2074)
     @StateObject private var nowScene = NowSceneController()
+    @State private var firstMarginPromptAnnounced = false // said once per showing (#5036)
 
     /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
     /// looks first. On Now it sits in line with the title, so the screen gets no taller (#2262).
@@ -69,9 +71,16 @@ struct PlaybackScreen: View {
         }
         // On the always-dark plate the default tint is too dark in light mode (#3733); the tint is set on the button, never a container.
         .tint(AppColors.listeningAccent)
-        .accessibilityLabel("Library")
+        // "Back to Library", not "Library": the bottom row's Library button is on screen too, and a swipe-through heard
+        // "Library" twice (#5036). The bottom button keeps its visible word as its name.
+        .accessibilityLabel("Back to Library")
         .accessibilityHint("Leaves this screen. Playback keeps going.")
         .accessibilityIdentifier("playback.exit.button")
+    }
+
+    /// The first-Margin prompt is on screen: it is due and the Now pane, the only one that draws it, is showing (#5036).
+    private var firstMarginPromptIsInView: Bool {
+        model.isFirstMarginPromptShowing && selectedPane == .now
     }
 
     private var leadingControlPane: PlaybackLeadingControl.Pane {
@@ -209,6 +218,9 @@ struct PlaybackScreen: View {
                                     .background(AppColors.listeningBackground)
                             }
                         }
+                        // The whole pinned stack is opaque, so nothing added to it later can let the scrolling passage
+                        // show through its words (#5016: the speech card was see-through).
+                        .background(AppColors.listeningBackground)
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if !timelineDock.hidesDock { playbackControls }
@@ -258,6 +270,18 @@ struct PlaybackScreen: View {
                     nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio,
                     returnToNow: { selectedPane = .now }
                 ) { libraryExitButton }
+                if selectedPane == .timeline,
+                   FindInTextPresentation.buttonState(isRecordedAudio: model.selectedItem.isNativeAudio, text: model.selectedItem.text) != .hidden {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { isFindInTextPresented = true } label: {
+                            Label(FindInTextPresentation.buttonLabel, systemImage: "magnifyingglass")
+                        }
+                        .accessibilityIdentifier("playback.findInText.button")
+                    }
+                }
+            }
+            .trackedSheet(isPresented: $isFindInTextPresented) {
+                FindInTextSheet().environmentObject(model)
             }
             .scrollDismissesKeyboard(.interactively)
             .trackedSheet(item: $selectedInterjection) { interjection in
@@ -310,6 +334,16 @@ struct PlaybackScreen: View {
         // (#3790). The card lives on that pane, so another pane showing never marks it.
         .onChange(of: model.friendListenState, initial: true) { _, _ in
             if selectedPane == .now { model.noteFriendListen() }
+        }
+        // The first-Margin prompt appears above the header while VoiceOver's focus is usually on the play controls: say so
+        // once when it comes into view, without moving focus (#5036). It is drawn only on the Now pane, so "in view" is "due
+        // and Now showing"; `initial` covers a screen that opens with it already there, and the flag keeps a trip to the
+        // Timeline and back from repeating it. `VoiceOverAnnouncements` decides; VoiceOver off makes the post silent.
+        .onChange(of: firstMarginPromptIsInView, initial: true) { _, isInView in
+            if let text = VoiceOverAnnouncements.firstMarginPrompt(alreadyAnnounced: firstMarginPromptAnnounced, isInView: isInView) {
+                AccessibilityNotification.Announcement(text).post()
+                firstMarginPromptAnnounced = true
+            }
         }
         .onChange(of: selectedPane) { _, pane in
             // Now's scroll view is built fresh each time, so a drag or overscroll from the last one is stale (#4816).
