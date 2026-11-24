@@ -342,6 +342,7 @@ final class AppColorUsageGuardTests: XCTestCase {
             XCTAssertTrue(names.contains { $0.contains(marker) }, "\(key) is listed as audited but no pair measures text on it")
         }
     }
+
     // MARK: Tint tokens (#4953)
 
     /// Every `AppColors` token the app passes to `.tint(`, and why it is safe there. A `.bordered` control draws its words
@@ -461,7 +462,6 @@ final class AppColorUsageGuardTests: XCTestCase {
             XCTAssertLessThan(ratio, 4.5, name)
         }
     }
-
 
     // MARK: Destructive buttons on the dark live-session cards (#4443)
 
