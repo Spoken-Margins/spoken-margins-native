@@ -304,3 +304,49 @@ public enum FootnoteAnchors {
         return text
     }
 }
+
+extension FootnoteAnchors {
+    /// What a reader on screen shows in place of each footnote marker (#5109), in text order, never overlapping.
+    ///
+    /// Shown text is not heard text, so this is looser than `find`, which pairs a note only when it is certain:
+    /// - every definition line's `[^label]:` reads "Footnote label:", the words the Timeline's row uses;
+    /// - a `[^label]` elsewhere (a definition's own words included) reads as a small marker, but only when some line
+    ///   defines that label. One with no definition is left as it is: it may not be a footnote at all.
+    /// Markers inside fenced code blocks are left as they are. Offsets count characters in `text`.
+    static func displayEdits(in text: String) -> [FootnoteDisplayText.Edit] {
+        guard text.contains("[^") else { return [] }
+        let characters = Array(text)
+        let lines = splitLines(characters)
+        let definitions = findDefinitions(lines, in: characters)
+        guard !definitions.isEmpty else { return [] }
+        let defined = Set(definitions.map(\.label))
+        var definitionAt: [Int: Definition] = [:]
+        for definition in definitions { definitionAt[definition.lineIndex] = definition }
+
+        var edits: [FootnoteDisplayText.Edit] = []
+        var inFence = false
+        for (lineIndex, line) in lines.enumerated() {
+            if isFence(line, in: characters) {
+                inFence.toggle()
+                continue
+            }
+            if inFence { continue }
+            var index = line.start
+            if let definition = definitionAt[lineIndex] {
+                edits.append(.init(range: line.start..<definition.textStart, replacement: "Footnote \(definition.label):"))
+                index = definition.textStart
+            }
+            while index < line.end {
+                if characters[index] == "[", let found = marker(at: index, upTo: line.end, in: characters) {
+                    if defined.contains(found.label) {
+                        edits.append(.init(range: index..<found.end, replacement: FootnoteDisplayText.citationMark(found.label)))
+                    }
+                    index = found.end
+                } else {
+                    index += 1
+                }
+            }
+        }
+        return edits
+    }
+}

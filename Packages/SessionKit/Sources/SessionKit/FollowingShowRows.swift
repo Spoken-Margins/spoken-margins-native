@@ -41,6 +41,13 @@ public struct FollowingShowRow: Equatable, Identifiable, Sendable {
 
     /// "1 pick", "2 picks", nil when none.
     public var pickLabel: String? { pickCount > 0 ? "\(pickCount) \(pickCount == 1 ? "pick" : "picks")" : nil }
+
+    /// The row's badge: "3 new", or "3 new · 1 pick" when a pick rule matched some of them (#4046). Nil when nothing is new.
+    /// Picks are counted among the new episodes only, so there is never a pick without a new count.
+    public var countLabel: String? {
+        guard let newLabel else { return nil }
+        return pickLabel.map { "\(newLabel) · \($0)" } ?? newLabel
+    }
 }
 
 public struct FollowingShowList: Equatable, Sendable {
@@ -69,6 +76,9 @@ public struct FollowingShowEpisode: Equatable, Identifiable, Sendable {
     public var isSetAside: Bool = false
     /// A pick rule matched it.
     public var isPick: Bool = false
+    /// The rule word that skipped it, as its author wrote it, for the Show screen's "Skipped by your rules" group and its
+    /// "Skipped: about “word”" line. Nil when no rule skipped it (an episode marked Show less is set aside with no word).
+    public var skippedWord: String? = nil
     public var id: String { entry.id }
 }
 
@@ -170,7 +180,8 @@ public enum FollowingShowRows {
                     isNew: !isSetAside && isNew(entry, of: subscription, lookedAt: lookedAt),
                     isInLibrary: entry.state == .imported,
                     isSetAside: isSetAside,
-                    isPick: outcome.picks.contains(entry.id)
+                    isPick: outcome.picks.contains(entry.id),
+                    skippedWord: outcome.skippedByWord[entry.id]
                 )
             }
     }

@@ -73,6 +73,7 @@ extension Gate1AppModel {
                 reportConfirmation(Self.chooseFeedMessage, fileID: fileID, line: line)
                 return .needsChoice
             }
+            await loadNotForMe() // a refollow must see the marks (#4285)
             let subscription = try await coordinator.follow(candidate: candidate)
             await publishFeedSubscriptionsAfterChange()
             followedSourceCandidates = []
