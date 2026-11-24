@@ -207,6 +207,9 @@ final class ShareLinkFaultTableTests: XCTestCase {
         for (fallback, rule) in rules {
             XCTAssertEqual(fallback.shareLinkAfterwards, rule, "\(fallback)")
             XCTAssertEqual(rule.allowsShareLink, rule == .enabled)
+            // Every Share button picks the link only when it may; otherwise it sends the file, never nothing.
+            XCTAssertEqual(rule.makesLink(offered: true), rule == .enabled, "\(fallback)")
+            XCTAssertFalse(rule.makesLink(offered: false), "\(fallback): links not offered")
             if !rule.allowsShareLink {
                 XCTAssertFalse(fallback.message.lowercased().contains("try again"), "\(fallback) offers no retry it can't keep")
             }

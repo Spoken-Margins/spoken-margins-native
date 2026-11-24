@@ -259,6 +259,11 @@ public enum ShareLinkButtonAfterFallback: Equatable, Sendable {
 
     /// Whether the sender can tap "Share link" while this is on show.
     public var allowsShareLink: Bool { self == .enabled }
+
+    /// Whether any Share tap may make a link now, with links `offered` by the server and this build. Every Share button
+    /// on the sender screen picks the link through this, or sends the file (#4134 audit: "Share without episode
+    /// matching" went on asking for a link after a refusal had disabled "Share link", and did nothing).
+    public func makesLink(offered: Bool) -> Bool { offered && allowsShareLink }
 }
 
 /// Refuse mode (#4134): what a sender check with no standing does to the link. Off, a fault makes the link with no

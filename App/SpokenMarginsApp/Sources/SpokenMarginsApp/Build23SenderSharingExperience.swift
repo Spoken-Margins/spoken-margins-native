@@ -943,9 +943,20 @@ struct Build23SenderSharingExperience: View {
         isSystemSharePresented = true
     }
 
-    /// Share the way the main button does: a link when this build makes them and the server allows it, else the file.
+    /// Share the way the main button does: a link when this build makes them, the server allows it and no refusal on
+    /// show has taken "Share link" away (#4134), else the file.
     private func shareVerifiedPackage() {
-        share(sharesLink ? .link : .file)
+        share(linkAllowedNow ? .link : .file)
+    }
+
+    /// Whether a share asked for now may make a link. Every path that picks the link reads this, so a refusal that
+    /// disabled "Share link" can't leave another Share button doing nothing (#4134 audit).
+    private var linkAllowedNow: Bool {
+        #if SM_SHARE_LINK_CREATION
+        linkSender.shareLinkAfterwards.makesLink(offered: sharesLink)
+        #else
+        false
+        #endif
     }
 
     /// Makes the packet if it isn't ready, then sends it the way the listener asked.
@@ -999,6 +1010,11 @@ struct Build23SenderSharingExperience: View {
             presentVerifiedSystemShare()
         case .link:
             #if SM_SHARE_LINK_CREATION
+            // A refusal that arrived while the packet was being made took "Share link" away: send the file, never nothing.
+            guard linkAllowedNow else {
+                presentVerifiedSystemShare()
+                return
+            }
             guard let packageURL = coordinator.verifiedShareFileURL else { return }
             linkSender.makeLink(packageURL: packageURL)
             #else
