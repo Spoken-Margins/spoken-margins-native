@@ -116,17 +116,18 @@ class PortableStepTable(unittest.TestCase):
         self.assertNotIn('fast-portable runner-tests left out', printed)
         self.assertEqual(slots, [])
 
-    def test_the_workflow_runs_the_quick_tier_on_prs_only(self):
+    def test_prs_run_the_whole_plan_before_they_reach_the_queue(self):
+        # #5281: with the quick tier, runner-tests and the Linux core tests first ran in the merge group, and the PRs
+        # that broke them were dropped there, each costing a queue cycle for every PR behind it.
         workflow = (ROOT / '.github/workflows/hosted-portable.yml').read_text()
         portable = workflow[workflow.index('\n  portable:'):workflow.index('\n  scope:')]
-        self.assertIn("PR_QUICK: ${{ github.event_name == 'pull_request' && '--pr-quick' || '' }}", portable)
-        self.assertIn('verify-tests.py --plan fast-portable $PR_QUICK', portable)
-        core = portable[portable.index('- name: SessionKitCoreTests on Linux'):]
-        core = core[:core.index('\n      - ')]
-        self.assertIn("if: github.event_name != 'pull_request'", core)
-        # A quick PR pass must not be recorded as the whole plan.
-        self.assertIn('plan=fast-portable-pr-quick tree=', portable)
-        self.assertIn('if [ "$EVENT" = pull_request ]; then', portable)
+        self.assertNotIn('--pr-quick', portable)
+        self.assertIn('verify-tests.py --plan fast-portable --leave-out-slow', portable)
+        steps = portable[portable.index('\n    steps:'):]
+        self.assertNotIn("github.event_name != 'pull_request'", steps)
+        self.assertNotIn("github.event_name == 'pull_request' &&", steps)
+        self.assertIn('plan=fast-portable tree=', portable)
+        self.assertNotIn('plan=fast-portable-pr-quick', portable)
 
     def test_pr_quick_is_refused_with_any_other_plan(self):
         done = subprocess.run([sys.executable, str(SCRIPTS / 'verify-tests.py'), '--plan', 'fast', '--pr-quick', '--list'],
@@ -191,6 +192,22 @@ class PortableStepTable(unittest.TestCase):
         self.assertNotIn('--allow-lfs-pointers', by_name['contracts'])
         self.assertEqual(by_name['runner-tests'], verification.PARALLEL_RUNNER)  # every runner test, nothing left out
         self.assertIn('package-steps', by_name)
+
+
+class QueueGuardsRunInPortableToo(unittest.TestCase):
+    """hosted-portable.yml's `guards` job runs scripts/queue_guards.py first in a merge group, and a red there skips the
+    Mac jobs, which then report success. So `portable` must run every guard itself, or a guard could fail alone and
+    leave the group green."""
+
+    def test_portable_runs_every_guard_whole(self):
+        import queue_guards
+        import slow_tier
+        self.assertTrue(queue_guards.GUARDS)
+        for module in queue_guards.GUARDS:
+            with self.subTest(module=module):
+                self.assertFalse([prefix for prefix in verification.PORTABLE_RUNNER_TESTS_LEFT_OUT
+                                  if prefix.split('.')[0] == module], 'left out of portable, in whole or in part')
+                self.assertNotIn(module, slow_tier.SLOW_RUNNER_MODULES, 'moved to the nightly slow tier')
 
 
 class SupertonicModelSkips(unittest.TestCase):

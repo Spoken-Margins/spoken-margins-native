@@ -166,6 +166,48 @@ class NeedsFixTests(unittest.TestCase):
         self.assertIn('--pr "$PR" --action edited', text)
 
 
+class HeldCommitTests(unittest.TestCase):
+    """#5281: a commit that failed two merge groups of only main and itself is not queued again until a new push."""
+    HEAD, OTHER = 'e' * 40, 'f' * 40
+
+    def failed(self, *heads):
+        return '\n'.join(f'<!-- merge-queue-dequeued own-failure head={h} -->' for h in heads)
+
+    def needs_fix(self):
+        p = pr(7, auto=False, extra=['needs-fix'])
+        p['headRefOid'] = self.HEAD
+        return {7: p}
+
+    def test_a_re_arm_of_a_commit_that_failed_alone_twice_is_held(self):
+        github = FakeGitHub(self.needs_fix(), comments=self.failed(self.HEAD, self.HEAD))
+        code, out = run(github, '--pr', '7', '--action', 'labeled')
+        self.assertEqual((code, github.merged), (0, []))
+        self.assertEqual(github.removed, [(7, 'automerge')])  # needs-fix stays; a re-add after a push is a fresh re-arm
+        self.assertIn(bridge.HELD_MARKER.format(head=self.HEAD), github.posted[0][1])
+        self.assertIn('held until a new push', out)
+
+    def test_one_failure_alone_or_failures_of_an_older_commit_still_re_arm(self):
+        for comments in (self.failed(self.HEAD), self.failed(self.OTHER, self.OTHER), ''):
+            with self.subTest(comments=comments):
+                github = FakeGitHub(self.needs_fix(), comments=comments)
+                code, _ = run(github, '--pr', '7', '--action', 'labeled')
+                self.assertEqual((code, github.removed, github.merged), (0, [(7, 'needs-fix')], [7]))
+
+    def test_the_hold_comments_once_per_commit(self):
+        comments = self.failed(self.HEAD, self.HEAD) + bridge.HELD_MARKER.format(head=self.HEAD)
+        github = FakeGitHub(self.needs_fix(), comments=comments)
+        run(github, '--pr', '7', '--action', 'labeled')
+        self.assertEqual(github.posted, [])
+
+    def test_the_sweep_reads_no_comments_for_a_pr_carrying_needs_fix(self):
+        github = FakeGitHub(self.needs_fix(), comments=self.failed(self.HEAD, self.HEAD))
+        github.comments = lambda number: self.fail('the sweep read comments')
+        self.assertEqual(run(github, '--sweep')[0], 0)
+
+    def test_the_pr_query_reads_the_head_commit(self):
+        self.assertIn('headRefOid', bridge.PR_FIELDS)
+
+
 class RetitleTests(unittest.TestCase):
     """Finding 2: retitling or drafting an armed, queued PR takes it out."""
 

@@ -5,6 +5,7 @@ import XCTest
 import SessionKitAudio
 import SessionKitFeeds
 import SessionKitPersistence
+import SessionKitSupertonic
 @testable import SpokenMarginsApp
 import SQLite3
 import SwiftUI

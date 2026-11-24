@@ -68,6 +68,11 @@ Gates (hourly coalescing, #1329; bugs are fine, crashes the runners would catch 
   below compiles it again (the lane builds no app per PR since 2026-10-09). Any other commit (a
   merge by hand) gets `verify-tests.py --plan fast` and a simulator build-for-testing here first.
 - A commit that failed once isn't retried by --if-changed; a newer tip is.
+- main-t3 (#4575): a commit goes on the phone only if main's scheduled app tests (main-t3, every app test on a
+  hosted Mac) passed on that exact SHA (scripts/main_t3_gate.py). A trunk build takes the newest commit in the tip's
+  history that main-t3 passed and says so when that is not the tip; with none in reach it builds nothing. A named
+  commit (--commit), or a hosted build, without a green main-t3 is refused with a line naming the SHA, and a main-t3
+  run is started on a named one so a build can follow.
 - The test plan has one record for the exact commit: app tests, Release device build, scripted journeys,
   attended journeys, upgrade and phone checks, each pass, fail or not run, plus every failure and
   exclusion the reports on #184 name (#1465).
@@ -114,6 +119,7 @@ ROOT = Path(os.environ.get('SM_PHONE_REPO') or PUBLIC)  # the repo it builds fro
 sys.path.insert(0, str(PUBLIC / 'scripts'))
 import comment_trust  # noqa: E402  (#1822: whose comments the plan believes)
 import lane_slots  # noqa: E402
+import main_t3_gate  # noqa: E402  (#4575: no phone build without a green main-t3 on its commit)
 import ops_checkout  # noqa: E402  (#2372: scheduled jobs run from a checkout pinned to main)
 import phone_build_settings  # noqa: E402  (#3354: the settings both phone builds share)
 from trunk import trunk_branch  # noqa: E402  (#1492: the branch it builds)
@@ -2098,6 +2104,8 @@ def fetch_hosted(hosted: dict) -> int:
                   f'was found for this commit: {why}')
         if hosted.get('slow_note'):
             checks += f'; {hosted["slow_note"]}'
+        if hosted.get('t3_note'):
+            checks += f'; {hosted["t3_note"]}'
         deliver(app, info, sha, stamp, log, int(hosted_info.get('build_seconds') or 0), checks,
                 built_at=local_time(hosted.get('built_at')) or local_time(hosted_info.get('built_at')),
                 extra={'built_on': 'github-hosted', 'run_url': hosted.get('run_url')},
@@ -2197,6 +2205,7 @@ def build(sha: str) -> int:
             checks += '; the slow tier (--plan slow) ran on this exact commit before the build and passed'
         else:
             checks += '; main-slow passed on this exact commit'
+        checks += '; main-t3 (every app test) passed on this exact commit'  # take_or_build builds nothing else (#4575)
         say(f'checks: {checks}')
         # The phone-only settings are the commit's own list, the same file the hosted build passes (#3354). A
         # commit from before the file gets this checkout's list, and its app isn't checked for keys it predates.
@@ -2263,6 +2272,15 @@ def take_hosted(commit: str | None, if_changed: bool, tip: str = '') -> int:
         else:
             clear_misses()
     sha = hosted['sha']
+    # #4575: a hosted build goes on the phone only when main-t3 passed on its exact commit.
+    state, _, read = main_t3_gate.state_of(gh, REPO, sha)
+    if state != 'success':
+        line = f'refused the hosted build: {main_t3_gate.refusal(sha, state, read)}'
+        if commit:
+            line += t3_run_note(sha, state, read, tip)
+        say(line)
+        return 0 if if_changed else 1
+    hosted = {**hosted, 't3_note': 'main-t3 (every app test) passed on this exact commit'}
     # #5145: PRs leave the slow tier out and nothing here can run it. The build's commit rarely has a main-slow result
     # of its own, so the nearest one in its history decides: a red one means the break may be in this commit too.
     slow, where = slow_tier_nearest(sha)
@@ -2335,6 +2353,50 @@ def main(argv) -> int:
             note_trunk(tip, (args.source or source()) == 'hosted')
 
 
+def is_ancestor(older: str, newer: str) -> bool:
+    """True when `older` is `newer` or in its history, in this checkout."""
+    return subprocess.run(['git', 'merge-base', '--is-ancestor', older, newer], cwd=str(ROOT),
+                          capture_output=True).returncode == 0
+
+
+def t3_run_note(sha: str, state, read: bool, tip: str) -> str:
+    """#4575: starts a main-t3 run on a refused commit when one could turn it green, and says what it did.
+
+    None while one is going or GitHub can't be read; none for a real failure (main_t3.py already retried it, so another
+    run would fail the same way); none for a commit off the trunk, which main-t3.yml ends at once without testing."""
+    if not read or state == 'pending':
+        return ''
+    if state not in main_t3_gate.WORTH_A_RUN:
+        return '; started no new run, since it would fail the same way'
+    if not (tip and is_ancestor(sha, tip)):
+        return f'; started no main-t3 run, since main-t3 tests only commits on {BRANCH}'
+    return ('; started a main-t3 run on it, so a build can follow once it passes'
+            if main_t3_gate.request(gh, REPO, sha) else '; could not start a main-t3 run on it')
+
+
+def t3_pick(sha: str, explicit: bool, tip: str = '') -> tuple[str | None, str]:
+    """The commit to build under the main-t3 gate (#4575), and a line to say: (None, why) when there is none.
+
+    A named commit (--commit) is built only if main-t3 passed on it; otherwise it is refused, and a main-t3 run is
+    started on it when one could turn it green (t3_run_note), so a build can follow once it passes. The trunk's tip often has no result yet:
+    main-t3 runs every 3 hours and on a push with a 3-hour floor. So a trunk build takes the newest commit in the tip's
+    history that main-t3 passed, and says so when that is not the tip."""
+    if explicit:
+        state, _, read = main_t3_gate.state_of(gh, REPO, sha)
+        if state == 'success':
+            return sha, ''
+        return None, main_t3_gate.refusal(sha, state, read) + t3_run_note(sha, state, read, tip)
+    green, read = main_t3_gate.green_in_history(gh, REPO, sha)
+    if not read:
+        return None, main_t3_gate.refusal(sha, None, read=False)
+    if not green:
+        return None, (f'nothing to build: none of the last {main_t3_gate.HISTORY_DEPTH} commits on {BRANCH} up to '
+                      f'{sha[:7]} has a green main-t3 (#4575)')
+    if green != sha:
+        return green, f'building {green[:7]}, the newest commit main-t3 passed; the tip {sha[:7]} has no green main-t3 yet (#4575)'
+    return sha, ''
+
+
 def take_or_build(args, sha: str, tip: str) -> int:
     """Under the lock: take the hosted build, or build `sha` here."""
     if (args.source or source()) == 'hosted':
@@ -2355,6 +2417,26 @@ def take_or_build(args, sha: str, tip: str) -> int:
     if reason:
         say(f'skipped: {reason}')
         return EXIT_SKIPPED
+    # After the cheap checks, so a skipped run asks GitHub nothing (#4575).
+    picked, line = t3_pick(sha, explicit=bool(args.commit), tip=tip)
+    if not picked:
+        say(line)
+        return 0 if args.if_changed else 1
+    if picked != sha and args.if_changed:
+        # The tip has no green main-t3 yet. The commit it falls back to may be the one already built or already failed,
+        # or older than the latest build (one made before this gate): never step the phone back to it.
+        latest = latest_build().get('sha')
+        if latest and (latest == picked or is_ancestor(picked, latest)):
+            say(f'the newest commit main-t3 passed, {picked[:7]}, is not newer than latest ({latest[:7]}); '
+                f'nothing to do until main-t3 passes a newer commit (#4575)')
+            return 0
+        attempt = read_json(phone_dir() / 'last-attempt.json')
+        if attempt.get('sha') == picked and str(attempt.get('result', '')).startswith('failed'):
+            say(f'{picked[:7]} already failed ({attempt["result"]}); waiting for main-t3 to pass a newer commit')
+            return 0
+    if line:
+        say(line)
+    sha = picked
     clear_work()
     (phone_dir() / 'last-start.json').write_text(json.dumps({
         'sha': sha, 'at': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}) + '\n')

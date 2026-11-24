@@ -113,4 +113,43 @@ final class EpisodeLinkPasteTests: XCTestCase {
         untitled.claimedTitle = nil
         XCTAssertEqual(EpisodeLinkPaste.verdict(for: untitled, result: result(.playable, title: "Anything")), .unchecked)
     }
+    // MARK: Shared fixtures (#5270)
+
+    /// `Contracts/fixtures/find-something/`, which the quiz page's `parsePaste` and `titlesMatch` (Site/quiz/quiz.js)
+    /// also run, so the two ports can't drift.
+    private var sharedFixtures: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Contracts/fixtures/find-something")
+    }
+
+    private struct PasteFixture: Decodable {
+        var text: String
+        var expected: [EpisodeLinkPaste.Entry]
+    }
+
+    private struct TitleMatchFixture: Decodable {
+        struct Case: Decodable { var a: String; var b: String; var match: Bool }
+        var cases: [Case]
+    }
+
+    func testEveryPasteFixtureReadsToItsExpectedEntries() throws {
+        let names = try FileManager.default.contentsOfDirectory(atPath: sharedFixtures.path)
+            .filter { $0.hasPrefix("paste-") && $0.hasSuffix(".json") }.sorted()
+        XCTAssertGreaterThanOrEqual(names.count, 5, "the paste fixtures are missing")
+        for name in names {
+            let fixture = try JSONDecoder().decode(PasteFixture.self, from: Data(contentsOf: sharedFixtures.appendingPathComponent(name)))
+            XCTAssertEqual(EpisodeLinkPaste.entries(in: fixture.text), fixture.expected, name)
+        }
+    }
+
+    func testEveryTitlePairInTheSharedTable() throws {
+        let table = try JSONDecoder().decode(TitleMatchFixture.self, from: Data(contentsOf: sharedFixtures.appendingPathComponent("title-match.json")))
+        XCTAssertGreaterThanOrEqual(table.cases.count, 20)
+        for pair in table.cases {
+            XCTAssertEqual(EpisodeLinkPaste.titlesMatch(pair.a, pair.b), pair.match, "\(pair.a) / \(pair.b)")
+            XCTAssertEqual(EpisodeLinkPaste.titlesMatch(pair.b, pair.a), pair.match, "reversed: \(pair.a) / \(pair.b)")
+        }
+    }
 }
