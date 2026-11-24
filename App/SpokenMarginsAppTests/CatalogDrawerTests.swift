@@ -85,6 +85,42 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertEqual(started.count, 1, "plays once")
     }
 
+    /// #4290: Done on the preview a Shortcut opened closes the whole drawer and plays nothing, on the first-run opening
+    /// too (bringing shows in from Apple Podcasts is not a first pick). Cancel only pops back to the drawer's list.
+    func testDoneAfterAShortcutImportClosesTheDrawerAndPlaysNothing() async throws {
+        var started: [[String]] = []
+        let defaults = try freshDefaults()
+        let drawer = CatalogDrawerModel(
+            store: nil, defaults: defaults, subscriptions: { [] }, follow: { _ in "" },
+            makeOPMLImport: { OPMLImportModel(subscriptions: { [] }, follow: { _ in }, didFollow: {}) },
+            startFirstListen: { ids, _ in started.append(ids) }
+        )
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        XCTAssertTrue(drawer.isPresented)
+
+        // Cancel on the preview: the list closes, the drawer stays.
+        XCTAssertTrue(drawer.openShortcutImport(feedLinks: ["Pod One https://feeds.example.com/pod1.xml"]))
+        drawer.shortcutImport = nil
+        XCTAssertTrue(drawer.isPresented)
+
+        XCTAssertTrue(drawer.openShortcutImport(feedLinks: ["Pod One https://feeds.example.com/pod1.xml"]))
+        XCTAssertEqual(drawer.shortcutImport?.origin, .shortcut)
+        drawer.finishAfterShortcutImport()
+        XCTAssertFalse(drawer.isPresented, "Done closes the whole drawer")
+        drawer.didDismiss()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started, [], "nothing plays: a Shortcut import is not a pick")
+        XCTAssertNil(drawer.shortcutImport)
+        XCTAssertTrue(defaults.bool(forKey: CatalogDrawerModel.seenKey), "the first-run opening is spent")
+    }
+
+    #if !SPOKEN_MARGINS_LEGACY
+    /// #4290: the action's no-links error speaks to a listener who added our Shortcut, in the words the guide's tests pin.
+    func testTheShortcutsNoLinksErrorIsTheGuidesWording() {
+        XCTAssertEqual(FollowPodcastsShortcutError.noLinks.errorDescription, ApplePodcastsImportShortcut.noLinksMessage)
+    }
+    #endif
+
     func testDoneWithNothingFollowedStartsTheFirstListenWithNoPicksSoTheWelcomeSamplePlays() async throws {
         var started: [[String]] = []
         let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog()) { ids, _ in started.append(ids) }
