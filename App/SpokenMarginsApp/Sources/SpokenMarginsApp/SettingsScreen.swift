@@ -5,7 +5,8 @@ import UniformTypeIdentifiers
 import UIKit
 #endif
 
-/// Settings: voice, controls, storage, import and export, help, and the developer tools in a debug build.
+/// Settings: help and diagnostics first, then voice, controls, storage, import and export, privacy and legal, and the
+/// developer tools in a debug build. Share Diagnostics is the first row, so it is reached without a scroll (#4781).
 ///
 /// It does not watch `Gate1AppModel`: it reads what it shows through a `ScreenInputsFeed`, so a model publish that
 /// leaves its rows as they were does not rebuild the form while the listener scrolls (#4028). The tab bar redraws on every
@@ -17,7 +18,6 @@ struct SettingsScreen: View, Equatable {
     private let supertonicNoticeID: ObjectIdentifier
     @StateObject private var feed: ScreenInputsFeed<Inputs>
     @Environment(\.isEdgeSwipePreview) private var isEdgeSwipePreview
-    @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @AppStorage(HeadphoneDoublePressAction.storageKey) private var headphoneDoublePress = HeadphoneDoublePressAction.default.rawValue
     /// End a Margin by saying "stop margin" (#3940). On until the listener turns it off.
     @AppStorage(MarginEndPhraseAvailability.storageKey) private var endsMarginByPhrase = true
@@ -27,10 +27,8 @@ struct SettingsScreen: View, Equatable {
     #if DEBUG
     @FocusState private var editingMapJSON: Bool
     #endif
-    @State private var showsImportInbox = false
     @State private var showsAboutAndLegal = false
     @State private var pendingPermanentDeletion: LibraryItemRow?
-    @State private var pendingInboxDeletion: ImportInboxEntry?
     @State private var isEmptyRecentlyDeletedConfirmationPresented = false
     @State private var showsAllRecentlyDeleted = false
     @State private var isResetConfirmationPresented = false
@@ -39,9 +37,10 @@ struct SettingsScreen: View, Equatable {
     @AppStorage(CommunityMapFetchService.optInKey) private var looksUpCommunityMaps = false
     /// The Supertonic download card's "Open Voices" lands here and opens Voices (#1820).
     @ObservedObject private var supertonicNotice: SupertonicDownloadNotice
-    @State private var showsVoices = false
+    /// The pages opened by value: Download Voices and the Import Inbox. "See why" and the Supertonic card set it (#4781).
+    @State private var path: [SettingsPage] = []
     @State private var showsControls = false
-    /// The Watch card's row in Help & Privacy shows only with a paired Watch that has the app (#4563). Not passed
+    /// The Watch card's row in Help & Diagnostics shows only with a paired Watch that has the app (#4563). Not passed
     /// through `init` and out of `==`: a view's own observed object still redraws it.
     @ObservedObject private var watchTip = WatchReturnToAppTipNotice.shared
 
@@ -77,9 +76,9 @@ struct SettingsScreen: View, Equatable {
         var automaticAudioPreparationPolicy: AutomaticAudioPreparationPolicy
         var automaticEpisodeMapPreparationPolicy: AutomaticEpisodeMapPreparationPolicy
         var recentlyDeletedItems: [LibraryItemRow]
-        var quickFolderFeedsQueue: Bool
         var sourceLinksWaitingForNetwork: Int
         var importInbox: [ImportInboxEntry]
+        var requestedSettingsPage: SettingsPage?
         var localFoundationModelAvailabilityDescription: String
         var hasAcceptedCurrentTerms: Bool
         var termsAcceptanceDescription: String
@@ -109,9 +108,9 @@ struct SettingsScreen: View, Equatable {
             automaticAudioPreparationPolicy = model.automaticAudioPreparationPolicy
             automaticEpisodeMapPreparationPolicy = model.automaticEpisodeMapPreparationPolicy
             recentlyDeletedItems = model.recentlyDeletedItems
-            quickFolderFeedsQueue = model.quickAccess.inboxFeedsQueue
             sourceLinksWaitingForNetwork = model.sourceLinksWaitingForNetwork
             importInbox = model.importInbox
+            requestedSettingsPage = model.requestedSettingsPage
             localFoundationModelAvailabilityDescription = model.localFoundationModelAvailabilityDescription
             hasAcceptedCurrentTerms = model.hasAcceptedCurrentTerms
             termsAcceptanceDescription = model.termsAcceptanceDescription
@@ -132,8 +131,9 @@ struct SettingsScreen: View, Equatable {
         let _ = ScreenRedrawProbe.record("settings")
         #endif
         let inputs = feed.inputs
-        NavigationStack {
+        NavigationStack(path: $path) {
             Form {
+                helpAndDiagnosticsSection
                 Section("Voice") {
                     AppVoicePicker(selection: model.screenBinding(\.ttsVoiceSelection), voices: model.requireVoiceDownloads())
                     .onCompatibleChange(of: inputs.ttsVoiceSelection) { _ in
@@ -224,21 +224,11 @@ struct SettingsScreen: View, Equatable {
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("settings.preview.assistiveTech.button")
                     }
-                    NavigationLink {
-                        VoicesSettingsScreen(voices: model.requireVoiceDownloads()).miniPlayerKeepOut()
-                    } label: {
+                    NavigationLink(value: SettingsPage.voices) {
                         Label("Download Voices", systemImage: "waveform")
                     }
                     .accessibilityIdentifier("settings.voices.link")
                     DisclosureGroup("Controls", isExpanded: $showsControls) {
-                        Picker("Playback Controls", selection: $usesVerbosePlaybackActions) {
-                            Text("Labeled").tag(true)
-                            Text("Compact").tag(false)
-                        }
-                        .accessibilityIdentifier("settings.playbackControlStyle.picker")
-                        Text("Choose labels or icons in listening options.")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
                         Toggle(
                             "Show “Mix with Other Audio”",
                             isOn: Binding(
@@ -416,7 +406,11 @@ struct SettingsScreen: View, Equatable {
                 HiddenSendersSettingsSection(hidden: model.hiddenSenders, showAgain: { model.showSender($0) }, showMarginAgain: { model.showMargin($0) })
                 Section {
                     // Which folder files come in from (#3770): first in the section, drawn from the folder's own state.
+                    // The Import Inbox row follows it (#4781).
                     QuickFolderSettingsRow(model: model)
+                    // One row that says what is waiting; the list is its own page and never opens by itself (#4781).
+                    ImportInboxRow(summary: ImportInboxSummary(
+                        failedCount: inputs.importInbox.count, waitingCount: inputs.sourceLinksWaitingForNetwork))
                     NavigationLink {
                         YourAISettingsScreen(model: model).miniPlayerKeepOut()
                     } label: {
@@ -430,84 +424,12 @@ struct SettingsScreen: View, Equatable {
                     .accessibilityIdentifier("settings.yourAI.row")
                     NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
                     NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
-                    Toggle(isOn: Binding(
-                        get: { model.quickAccess.inboxFeedsQueue },
-                        set: { model.quickAccess.inboxFeedsQueue = $0 }
-                    )) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Queue New Quick Folder Files")
-                            Text("Files that appear in your Quick Folder are imported and added to the end of your play queue, in filename order. Choose the folder under Add to Library.")
-                                .font(.caption)
-                                .foregroundStyle(AppColors.secondaryText)
-                        }
-                    }
-                    .accessibilityIdentifier("settings.quickFolderQueue.toggle")
-                    DisclosureGroup("Import Inbox", isExpanded: $showsImportInbox) {
-                        PendingLinksWaitingLine(count: inputs.sourceLinksWaitingForNetwork)
-                        if inputs.importInbox.isEmpty {
-                            Text("No failed shares.")
-                                .foregroundStyle(AppColors.secondaryText)
-                        } else {
-                            ForEach(inputs.importInbox) { entry in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text(entry.title)
-                                        .font(.headline)
-                                    Text(entry.source)
-                                        .font(.caption)
-                                        .foregroundStyle(AppColors.secondaryText)
-                                        .lineLimit(2)
-                                    FailureMessageLabel(entry.reason)
-                                        .font(.caption)
-                                    HStack {
-                                        Button("Retry") {
-                                            model.retryImportInboxEntry(entry)
-                                        }
-                                        .buttonStyle(.borderless)
-                                        .accessibilityIdentifier("importInbox.retry.\(entry.id)")
-                                        Button("Delete", role: .destructive) {
-                                            pendingInboxDeletion = entry
-                                        }
-                                        .buttonStyle(.borderless)
-                                        .accessibilityIdentifier("importInbox.delete.\(entry.id)")
-                                    }
-                                }
-                            }
-                        }
-                    }
                 } header: {
                     Text("Import & Export")
                 } footer: {
                     Text(QuickFolderStatus.sectionFooter)
                 }
-                Section("Help & Privacy") {
-                    if watchTip.pairing.hasWatchApp {
-                        Button(action: watchTip.openFromSettings) {
-                            Label("Keep Spoken Margins on Your Watch", systemImage: "applewatch")
-                        }
-                        .accessibilityIdentifier("settings.watchTip.button")
-                    }
-                    Button(action: model.openHelp) {
-                        Label("How Spoken Margins Works", systemImage: "questionmark.circle")
-                    }
-                    .accessibilityIdentifier("settings.help.button")
-                    // Shown in every build while the app is distributed through TestFlight; removed before the first
-                    // App Store build (#1770). The whole message is a constant, so nothing from the Library goes with it.
-                    ShareLink(item: BetaInviteShare.text) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Label("Share beta instructions", systemImage: "square.and.arrow.up")
-                            Text("A short message with the link spokenmargins.com/join. Nothing from your Library goes with it.")
-                                .font(.footnote)
-                                .foregroundStyle(AppColors.secondaryText)
-                        }
-                        .fullRowTapTarget()
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityHint("Opens the share sheet with a short message and a link to join the beta.")
-                    .accessibilityIdentifier("settings.shareBeta.button")
-                    Link("Privacy Policy", destination: AppLinks.privacy)
-                    Link("Support", destination: AppLinks.support)
-                    Link("Copyright and DMCA", destination: AppLinks.copyright)
-                    Link("Content Policy", destination: AppLinks.contentPolicy)
+                Section("Privacy & Legal") {
                     Toggle(isOn: $helpsMakeListeningMaps) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Help make listening maps")
@@ -527,33 +449,6 @@ struct SettingsScreen: View, Equatable {
                     }
                     .accessibilityIdentifier("settings.communityMapLookup.toggle")
                     #if canImport(UIKit)
-                    Button {
-                        isPreparingDiagnostics = true
-                        Task {
-                            defer { isPreparingDiagnostics = false }
-                            if let url = await model.prepareDiagnosticsExportFileURL() {
-                                ShareFilePresenter.present(fileURL: url)
-                            }
-                        }
-                    } label: {
-                        Group {
-                            if isPreparingDiagnostics {
-                                HStack(spacing: 8) {
-                                    ProgressView()
-                                    Text("Preparing diagnostics…")
-                                }
-                            } else {
-                                Label("Share Diagnostics", systemImage: "square.and.arrow.up")
-                            }
-                        }
-                        .fullRowTapTarget()
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(isPreparingDiagnostics)
-                    .accessibilityIdentifier("settings.shareDiagnostics.button")
-                    Text("\(DiagnosticsExportFile.contentsDescription) It stays on this device unless you share it. The Export Diagnostics action in the Shortcuts app makes the same file.")
-                        .font(.footnote)
-                        .foregroundStyle(AppColors.secondaryText)
                     ExportListeningSignalsButton(
                         exportFileURL: { [model] in await model.listeningSignals.exportFileURL() },
                         accessibilityIdentifier: "settings.exportListeningSignals.button"
@@ -562,8 +457,9 @@ struct SettingsScreen: View, Equatable {
                         .font(.footnote)
                         .foregroundStyle(AppColors.secondaryText)
                     #endif
-                }
-                Section {
+                    Link("Privacy Policy", destination: AppLinks.privacy)
+                    Link("Content Policy", destination: AppLinks.contentPolicy)
+                    Link("Copyright and DMCA", destination: AppLinks.copyright)
                     DisclosureGroup("About & Legal", isExpanded: $showsAboutAndLegal) {
                         LabeledContent("Processing", value: "On device")
                             .accessibilityIdentifier("settings.ai.processing")
@@ -655,16 +551,26 @@ struct SettingsScreen: View, Equatable {
                 guard !isEdgeSwipePreview else { return }  // a swipe's preview starts no refresh (#106)
                 model.refreshSpeechVoiceOptions()
                 model.refreshImportInbox()
-                // A failed share must be seen, so the Inbox opens itself when it has something in it.
-                if !model.importInbox.isEmpty || model.sourceLinksWaitingForNetwork > 0 { showsImportInbox = true }
-                if supertonicNotice.takeVoicesRequest() { showsVoices = true }
+                // The Inbox no longer opens itself (#4781): "See why" asks for its page, and the row shows the count.
+                takeSettingsPageRequest()
+                if supertonicNotice.takeVoicesRequest() { path = SettingsNavigation.path(current: path, request: .voices) }
+            }
+            // "See why" can land while Settings is already showing; it arrives through the feed (#1254, #4781).
+            .onCompatibleChange(of: inputs.requestedSettingsPage) { requested in
+                guard requested != nil, !isEdgeSwipePreview else { return }  // a swipe's preview must not use it up
+                takeSettingsPageRequest()
             }
             // Settings is a tab now, so the card's button can land while it is already showing (#1254).
             .onCompatibleChange(of: supertonicNotice.opensVoices) { requested in
-                if requested, supertonicNotice.takeVoicesRequest() { showsVoices = true }
+                if requested, supertonicNotice.takeVoicesRequest() { path = SettingsNavigation.path(current: path, request: .voices) }
             }
-            .navigationDestination(isPresented: $showsVoices) {
-                VoicesSettingsScreen(voices: model.requireVoiceDownloads()).miniPlayerKeepOut()
+            .navigationDestination(for: SettingsPage.self) { page in
+                switch page {
+                case .voices:
+                    VoicesSettingsScreen(voices: model.requireVoiceDownloads()).miniPlayerKeepOut()
+                case .importInbox:
+                    ImportInboxScreen(model: model).equatable().miniPlayerKeepOut()
+                }
             }
             .alert(
                 "Delete Permanently?",
@@ -682,23 +588,6 @@ struct SettingsScreen: View, Equatable {
             } message: { item in
                 Text("\(item.title) and all of its sessions, notes, and transcripts will be deleted. This cannot be undone.")
             }
-            .confirmationDialog(
-                "Delete this?",
-                isPresented: Binding(
-                    get: { pendingInboxDeletion != nil },
-                    set: { if !$0 { pendingInboxDeletion = nil } }
-                ),
-                presenting: pendingInboxDeletion
-            ) { entry in
-                Button("Cancel", role: .cancel) {}
-                Button("Delete", role: .destructive) {
-                    model.deleteImportInboxEntry(entry)
-                    pendingInboxDeletion = nil
-                }
-                .accessibilityIdentifier("importInbox.delete.confirm")
-            } message: { entry in
-                Text("\(entry.title) will be removed. You would have to share it again to add it.")
-            }
             .alert("Empty Recently Deleted?", isPresented: $isEmptyRecentlyDeletedConfirmationPresented) {
                 Button("Cancel", role: .cancel) {}
                 Button("Delete All Permanently", role: .destructive) {
@@ -714,6 +603,72 @@ struct SettingsScreen: View, Equatable {
                 Text("This permanently deletes everything in your Library and its related records, then loads the sample.")
             }
             .miniPlayerKeepOut()
+        }
+    }
+
+    /// Shows the page "See why" asked for, once. The request is cleared as it is read.
+    private func takeSettingsPageRequest() {
+        path = SettingsNavigation.path(current: path, request: model.takeSettingsPageRequest())
+    }
+
+    /// First, so Share Diagnostics is reached with no scroll at any text size (#4781).
+    @ViewBuilder
+    private var helpAndDiagnosticsSection: some View {
+        Section("Help & Diagnostics") {
+            #if canImport(UIKit)
+            Button {
+                isPreparingDiagnostics = true
+                Task {
+                    defer { isPreparingDiagnostics = false }
+                    if let url = await model.prepareDiagnosticsExportFileURL() {
+                        ShareFilePresenter.present(fileURL: url)
+                    }
+                }
+            } label: {
+                Group {
+                    if isPreparingDiagnostics {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Preparing diagnostics…")
+                        }
+                    } else {
+                        Label("Share Diagnostics", systemImage: "square.and.arrow.up")
+                    }
+                }
+                .fullRowTapTarget()
+            }
+            .buttonStyle(.borderless)
+            .disabled(isPreparingDiagnostics)
+            .accessibilityIdentifier("settings.shareDiagnostics.button")
+            Text("\(DiagnosticsExportFile.contentsDescription) It stays on this device unless you share it. The Export Diagnostics action in the Shortcuts app makes the same file.")
+                .font(.footnote)
+                .foregroundStyle(AppColors.secondaryText)
+            #endif
+            Button(action: model.openHelp) {
+                Label("How Spoken Margins Works", systemImage: "questionmark.circle")
+            }
+            .accessibilityIdentifier("settings.help.button")
+            Link("Support", destination: AppLinks.support)
+            if watchTip.pairing.hasWatchApp {
+                Button(action: watchTip.openFromSettings) {
+                    Label("Keep Spoken Margins on Your Watch", systemImage: "applewatch")
+                }
+                .accessibilityIdentifier("settings.watchTip.button")
+            }
+            // Shown in every build while the app is distributed through TestFlight; removed before the first
+            // App Store build (#1770). The whole message is a constant, so nothing from the Library goes with it.
+            ShareLink(item: BetaInviteShare.text) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Label("Share beta instructions", systemImage: "square.and.arrow.up")
+                    Text("A short message with the link spokenmargins.com/join. Nothing from your Library goes with it.")
+                        .font(.footnote)
+                        .foregroundStyle(AppColors.secondaryText)
+                }
+                .fullRowTapTarget()
+            }
+            .buttonStyle(.borderless)
+            .accessibilityHint("Opens the share sheet with a short message and a link to join the beta.")
+            .accessibilityIdentifier("settings.shareBeta.button")
         }
     }
 }
