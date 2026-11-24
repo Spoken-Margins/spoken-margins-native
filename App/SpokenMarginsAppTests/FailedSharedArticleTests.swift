@@ -35,6 +35,8 @@ final class FailedSharedArticleTests: XCTestCase {
         try await waitFor("the failure banner") { model.feedbackEvent?.message.contains("shared article") == true }
 
         try XCTUnwrap(model.feedbackEvent?.action).perform()
+        // Read before any await: the host root's live Settings may take the request on the next main-queue turn (#4781).
+        XCTAssertEqual(model.requestedSettingsPage, .importInbox, "See why asks Settings for the Inbox page")
         model.refreshImportInbox()
 
         XCTAssertEqual(model.requestedExperienceRoot, .settings)
@@ -71,6 +73,34 @@ final class FailedSharedArticleTests: XCTestCase {
             "An unreadable payload is dropped without a shared-article banner"
         )
         XCTAssertEqual(try store.failedHandoffs().count, 0)
+    }
+
+    /// #4781: the Inbox no longer opens itself, so "See why" names the page it wants, and Settings reads it once.
+    func testOpenImportInboxAsksForThePageOnce() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+
+        model.openImportInbox()
+
+        XCTAssertEqual(model.requestedExperienceRoot, .settings)
+        XCTAssertEqual(model.takeSettingsPageRequest(), .importInbox)
+        XCTAssertNil(model.takeSettingsPageRequest(), "a request is used once, so a later visit doesn't jump to the Inbox")
+        XCTAssertNil(model.requestedSettingsPage)
+    }
+
+    /// #4781: while a Margin is being written, "See why" leaves the listening position alone and no request behind.
+    func testOpenImportInboxLeavesNoRequestWhileAMarginIsBeingWritten() async {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        await model.settleLibraryReload()
+        model.beginWrittenMargin()
+        XCTAssertTrue(model.recordingNavigationIsLocked, "the written-Margin draft locks navigation")
+
+        model.openImportInbox()
+
+        XCTAssertNil(model.requestedSettingsPage)
+        XCTAssertEqual(model.diagnostics["recordingNavigationGuard"], "blocked_open_import_inbox")
     }
 
     func testTheMessageCountsOneAndMany() {

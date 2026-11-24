@@ -1,6 +1,7 @@
 #if !SPOKEN_MARGINS_LEGACY
 import AppIntents
 import Foundation
+import SessionKitFeeds
 
 enum FollowPodcastsShortcutError: Error, Equatable, LocalizedError {
     case noLinks
@@ -11,7 +12,7 @@ enum FollowPodcastsShortcutError: Error, Equatable, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noLinks:
-            return "No podcast links were passed in. In Shortcuts, use Get Podcasts from Library, then pass each podcast's Feed URL detail."
+            return ApplePodcastsImportShortcut.noLinksMessage
         case .sheetOpen:
             return "Close the sheet that's open in Spoken Margins, then run the Shortcut again."
         case .stillFollowing:
