@@ -34,7 +34,7 @@ struct SpokenNoteAudioVersionControl: View {
                     Text(SpokenNoteCleanWords.segment(version)).tag(version)
                 }
             }
-            .pickerStyle(.segmented)
+            .segmentedUnlessLargeText()
             .disabled(blocked)
             .accessibilityLabel(SpokenNoteCleanWords.controlLabel)
             .accessibilityIdentifier(placement.identifier)
