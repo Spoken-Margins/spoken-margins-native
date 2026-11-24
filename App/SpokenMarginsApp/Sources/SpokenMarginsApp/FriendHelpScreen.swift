@@ -78,13 +78,14 @@ struct FriendHelpScreen: View {
 }
 
 /// "Get Help" under a stuck screen's own buttons: plain, in the accent colour, the shape of the failure sheet's
-/// "Report this link".
+/// "Report this link". The label takes the tint itself, so a card's text colour (`ExperienceSurface`) can't turn it into
+/// what reads as a plain line of text (#5268).
 struct FriendHelpButton: View {
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text("Get Help").frame(maxWidth: .infinity).minimumTapTarget()
+            Text("Get Help").foregroundStyle(.tint).frame(maxWidth: .infinity).minimumTapTarget()
         }
     }
 }
