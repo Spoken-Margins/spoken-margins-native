@@ -734,17 +734,23 @@ struct FollowingShowRowView: View {
 struct FollowingShowStatusView: View {
     let status: FollowingRowStatus
     let showID: String
+    /// The gap the spinner sits in, grown with the caption so it never covers the words.
+    @ScaledMetric(relativeTo: .caption) private var spinnerSlot: CGFloat = 12
 
     var body: some View {
         switch status {
         case .adding:
-            HStack(spacing: 4) {
-                ProgressView().controlSize(.mini)
-                Text("Adding…")
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
-            }
-            .accessibilityElement(children: .combine)
+            // The words size the slot and carry its baseline; the spinner sits in a gap before them and takes no
+            // height. A spinner laid out beside the words has no text baseline, so first-baseline alignment stood it
+            // on the date's baseline and the row grew 11 pt while adding (#5257).
+            Text("Adding…")
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
+                .padding(.leading, spinnerSlot + 4)
+                .overlay(alignment: .leading) {
+                    ProgressView().controlSize(.mini).frame(width: spinnerSlot, height: spinnerSlot)
+                }
+                .accessibilityElement(children: .combine)
             .accessibilityIdentifier("sources.show.\(showID).adding")
         case .inLibrary:
             Text("\(Image(systemName: "checkmark.circle")) In Library")
