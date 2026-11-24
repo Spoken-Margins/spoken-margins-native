@@ -880,7 +880,9 @@ PORTABLE_RUNNER_TESTS_LEFT_OUT = {
 # --plan fast-portable --pr-quick (2026-11-20): a PR's first signal. In the merge queue (MERGE_QUEUE_MAC=queue-only)
 # the long suites run once per merge group, where batching shares their cost; on a PR push the portable job ran
 # them too, and its runner-tests took 1,180 s of the job's 28 minutes. With --pr-quick the plan leaves runner-tests to
-# the merge group and runs every other portable step (about 90 s together). hosted-portable.yml passes it on PRs only.
+# the merge group and runs every other portable step (about 90 s together). Since 2026-11-24 (#5281) no workflow passes
+# it: PRs run the whole plan again, because the queue was the first place runner-tests ran and dropped PRs for it. It
+# stays for a quick hand run.
 PR_QUICK_LEFT_OUT = {
     'runner-tests': 'the PR quick tier leaves it to the merge group, which runs the whole fast-portable plan '
                     '(hosted-portable.yml; for an early run, dispatch it on the branch)',

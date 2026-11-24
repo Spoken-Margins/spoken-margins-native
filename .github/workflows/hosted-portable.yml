@@ -4,8 +4,8 @@
 # validators, the test inventory, the browser-extraction and share-link suites, and the research suites. It
 # prints each step it leaves out and a host test fails if a fast-plan step is in neither list. The same job builds
 # SessionKit's Linux targets and runs SessionKitCoreTests in the swift image (#3529), so a red test frees the Mac early.
-# On a PR push (2026-11-20) the job runs a quick tier instead: the plan with --pr-quick (no runner-tests) and no Linux
-# SessionKitCoreTests; the merge group and dispatches run everything (see the "Portable fast plan" step).
+# A PR push runs the same whole plan and the Linux SessionKitCoreTests as the merge group (#5281, 2026-11-24, ending
+# the 2026-11-20 quick tier; see the "Portable fast plan" step), so a PR reaches the queue having passed them.
 # The second job, `sessionkit`, runs `--plan fast-hosted-sessionkit` on a GitHub-hosted Mac: SessionKit's build and
 # SessionKitCoreTests. The third, `mac-rest` (#2459), runs `--plan fast-mac-rest` on another GitHub-hosted Mac with
 # the BlackHole virtual audio output installed: what neither of the others runs (SessionKitTests and
@@ -163,21 +163,21 @@ jobs:
         run: |
           bash scripts/bootstrap-python-tools.sh
           npm ci
-      # PR quick tier (2026-11-20): on a PR push this job is the first signal, so it runs only the cheap portable steps
-      # (--pr-quick leaves runner-tests out) and skips the Linux SessionKitCoreTests below. The merge group, which
-      # every PR must pass to merge, runs the whole plan and the Linux tests, as do dispatches. Measured from 17 PR runs
-      # and 14 merge groups after MERGE_QUEUE_MAC went queue-only (scripts/ci_step_budgets.py profile): on a PR this
-      # job took 28 minutes at p50, runner-tests 1,180 s at p95 and the Linux core tests 512 s at p50, and the other
-      # portable steps about 90 s together.
-      # Cost and catch: saves about 25 hosted Linux minutes per PR push, and the PR's first test result comes in about
-      # 4 minutes instead of 28. What it can cost: a PR that breaks runner-tests or a Linux-only SessionKit test now
-      # learns it in the merge group, which drops it and retests the PRs behind it (about 58 job-minutes a group).
-      # Waste signal: in a month, merge groups that failed on runner-tests or the Linux core tests, times 58 minutes,
-      # outweigh 25 minutes times the PR pushes; then run the whole plan on PRs again.
+      # The whole plan on PRs too (#5281, 2026-11-24). From 2026-11-20 a PR push ran a quick tier (no runner-tests, no
+      # Linux SessionKitCoreTests) and left both to the merge group. That made the queue the first place they ran: of
+      # the 58 PRs that left the queue from 2026-11-23 12:30Z to 2026-11-24 12:30Z, 18 failed "hosted fast: portable",
+      # and every portable failure read on 2026-11-24 was in one of those two parts. Each one is dropped only after the
+      # groups ahead of it finish, and the queue then rebuilds every group behind it, so 3 PRs merged in 3 h 20 min
+      # with about 30 armed. The quick tier's own waste signal (queue failures on these parts outweigh the PR minutes
+      # it saved) had fired, and its main saving is gone: runner-tests runs in about 4 minutes in parallel (#4769),
+      # not the 20 it took when the tier was set.
+      # Cost and catch: about 12 more free hosted Linux minutes per PR push (public repository), and a PR's own
+      # result arrives in about 15 minutes instead of 3. It catches a PR that breaks a source scan in runner-tests or
+      # a Linux SessionKit test before it enters the queue, where each such failure costs a queue cycle of about
+      # 20 minutes for every PR behind it. Waste signal: two weeks in which merge groups still fail "hosted fast:
+      # portable" as often per merged PR as in the week before this change.
       - name: Portable fast plan
-        env:
-          PR_QUICK: ${{ github.event_name == 'pull_request' && '--pr-quick' || '' }}
-        run: .venv/bin/python scripts/verify-tests.py --plan fast-portable $PR_QUICK --leave-out-slow
+        run: .venv/bin/python scripts/verify-tests.py --plan fast-portable --leave-out-slow
       # #4937: the pipeline harness. It runs this tree's workflows, queue scripts, merge policy and VPS backstop through
       # about 400 timed combinations (black-box Mac jobs that pass, fail, hang or never start; same-second label bursts in
       # both orders; download outages; token refusals; dropped schedules) and fails on a stuck, silent, looping or
@@ -204,20 +204,17 @@ jobs:
       # What it can cost: a test that fails only on Linux now blocks a merge. Waste signal: three months in which no
       # PR's first red is here, or the tests pass 5 minutes.
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        if: github.event_name != 'pull_request'
         with:
           path: .build-linux
           key: sessionkit-linux-swift6.2.4-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
           restore-keys: sessionkit-linux-swift6.2.4-
       - name: SessionKitCoreTests on Linux
         id: core
-        # The merge group runs them; a PR's quick tier does not (above).
-        if: github.event_name != 'pull_request'
         run: .venv/bin/python scripts/linux_core_tests.py run
       # What this job ran, by name, to set beside the Mac's list: scripts/linux_core_tests.py compare (#3529). The
       # Mac's run keeps its result file the same way, because its parallel run prints no line for a passing test.
       - name: Keep the Linux test list
-        if: always() && github.event_name != 'pull_request'
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-core-tests
@@ -235,17 +232,10 @@ jobs:
           retention-days: 7
       - name: Record what was tested, for the lane runner
         if: success() && (github.event_name == 'pull_request' || inputs.base != '')
-        env:
-          EVENT: ${{ github.event_name }}
         run: |
           # GitHub's merge commit: parent 1 is the base, parent 2 the PR's head. The runner matches the tree.
           parents=$(git cat-file -p HEAD | awk '/^parent /{print $2}' | tr '\n' ' ')
-          # A PR's quick tier is not the whole plan, so it must not be read as one.
-          if [ "$EVENT" = pull_request ]; then
-            echo "::notice title=lane-hosted-tested::plan=fast-portable-pr-quick tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
-          else
-            echo "::notice title=lane-hosted-tested::plan=fast-portable tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
-          fi
+          echo "::notice title=lane-hosted-tested::plan=fast-portable tree=$(git rev-parse 'HEAD^{tree}') parents=$parents"
       - name: Report time
         if: always()
         run: |
