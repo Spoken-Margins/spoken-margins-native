@@ -67,6 +67,11 @@ jobs:
       group: claude-audit
       cancel-in-progress: false
     runs-on: ubuntu-latest
+    # Reads use the GitHub App's token, which has its own API budget; GITHUB_TOKEN's 1,000 requests an hour for the
+    # repository ran out on 2026-11-23 and claude-audit made the most calls of any workflow (86 runs in 2 hours, #5217).
+    # SM_APP_ID and SM_APP_PRIVATE_KEY are in this environment. Writes stay on GITHUB_TOKEN (SM_WRITE_TOKEN): the
+    # re-arm and tap check rely on a label change made with it starting no run, and the comments stay authored by
+    # github-actions[bot]. The script drops both tokens from Claude's environment, and no step runs PR code.
     environment: claude-audit
     # CLAUDE_TIMEOUT_S is 30 minutes per batch, and a run can hold several batches.
     timeout-minutes: 120
@@ -92,9 +97,24 @@ jobs:
         run: |
           npm install --global --no-fund --no-audit @anthropic-ai/claude-code@2.1.295
           echo "SM_CLAUDE_CLI=$(npm prefix --global)/bin/claude" >> "$GITHUB_ENV"
+      - id: app-token
+        # A failed mint falls back to GITHUB_TOKEN instead of failing the run.
+        continue-on-error: true
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.SM_APP_ID }}
+          private-key: ${{ secrets.SM_APP_PRIVATE_KEY }}
+          # Reads only; no owner or repositories, so the token is scoped to this repository alone.
+          permission-contents: read
+          permission-pull-requests: read
+          permission-issues: read
+          permission-checks: read
+          permission-statuses: read
+          permission-actions: read
       - name: Audit
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          SM_WRITE_TOKEN: ${{ github.token }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ONLY_PR: ${{ inputs.pr }}
           # #4990: the commit whose checks finished. The script then reads only that PR, and every open PR once the
