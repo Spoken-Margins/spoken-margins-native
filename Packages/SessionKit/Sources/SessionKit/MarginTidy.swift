@@ -294,6 +294,20 @@ public enum MarginTidyGuard {
         for phrase in numberPhrases(in: originalWords) where !proposalValues.contains(phrase.value) {
             return .numberMissing(phrase.text)
         }
+        // A number inside a longer token ("1990s", "5-year", "COVID-19", "4:30", "3pm", "21st", "10x") keeps its digits.
+        let proposalDigitRuns = Set(digitRuns(in: proposal))
+        for word in originalWords where word.contains(where: \.isNumber) && numberValue(word) == nil {
+            for run in digitRuns(in: word) where !proposalDigitRuns.contains(run) { return .numberMissing(word) }
+        }
+        // A number word inside a longer token ("one-third", "three-quarters") is kept as said, hyphen or space.
+        let proposalLower = " " + proposalWords.map { $0.lowercased() }.joined(separator: " ") + " "
+        for word in originalWords {
+            let parts = word.lowercased().split(separator: "-").map(String.init)
+            guard parts.count > 1, parts.contains(where: { numberWordValues[$0] != nil }),
+                  !parts.allSatisfy({ numberWordValues[$0] != nil }) else { continue }
+            if !proposalLower.contains(" " + parts.joined(separator: "-") + " "),
+               !proposalLower.contains(" " + parts.joined(separator: " ") + " ") { return .numberMissing(word) }
+        }
         let saysPercent: ([String]) -> Bool = { $0.contains { $0.lowercased() == "percent" } }
         if saysPercent(originalWords) || original.contains("%"), !saysPercent(proposalWords), !proposal.contains("%") {
             return .numberMissing("percent")
@@ -389,6 +403,9 @@ public enum MarginTidyGuard {
         return Set((0...(words.count - copiedRunLength)).map { words[$0..<$0 + copiedRunLength].joined(separator: " ") })
     }
 
+    /// Titles whose full stop does not end a sentence.
+    private static let abbreviatedTitles: Set<String> = ["dr", "mr", "mrs", "ms", "prof", "st"]
+
     private static func capitalisedMidSentenceWords(in text: String) -> [String] {
         var names: [String] = [], startOfSentence = true
         for piece in text.split(whereSeparator: \.isWhitespace) {
@@ -397,7 +414,8 @@ public enum MarginTidyGuard {
                 names.append(word)
             }
             if !word.isEmpty { startOfSentence = false }
-            if let last = piece.last(where: { !"\"'”’)]”".contains($0) }), ".!?".contains(last) { startOfSentence = true }
+            if let last = piece.last(where: { !"\"'”’)]”".contains($0) }), ".!?".contains(last),
+               !abbreviatedTitles.contains(word.lowercased()) { startOfSentence = true }
         }
         return names
     }
@@ -429,6 +447,29 @@ public enum MarginTidyGuard {
     /// Words before a "one" that make it a pronoun rather than a number.
     private static let pronounOneLeaders: Set<String> = ["the", "this", "that", "which", "each", "every", "any", "no", "another"]
 
+    /// Every run of digits in `text`, with thousands commas removed ("3,400" is "3400").
+    static func digitRuns(in text: String) -> [String] {
+        var runs: [String] = [], current = ""
+        let characters = Array(text)
+        for (index, character) in characters.enumerated() {
+            if character.isNumber { current.append(character); continue }
+            if character == ",", !current.isEmpty, index + 1 < characters.count, characters[index + 1].isNumber { continue }
+            if !current.isEmpty { runs.append(current); current = "" }
+        }
+        if !current.isEmpty { runs.append(current) }
+        return runs
+    }
+
+    /// The value of a token that is wholly a number written in digits ("3,400", "9.5"), else nil.
+    private static func numberValue(_ word: String) -> Double? {
+        let lowered = word.lowercased()
+        guard lowered.first?.isNumber == true else { return nil }
+        return Double(lowered.replacingOccurrences(of: ",", with: ""))
+    }
+
+    /// Words after a "one" that make it a count even after "the" ("the one percent", "the one in five").
+    private static let countAfterOne: Set<String> = ["percent", "in", "of", "out", "per"]
+
     /// The numbers said in `words`, each with its value and how it was written: digit runs ("3,400", "9.5") and runs of
     /// number words ("forty two", "twenty-five", "two hundred and five", "two thousand").
     static func numberPhrases(in words: [String]) -> [(text: String, value: Double)] {
@@ -440,14 +481,16 @@ public enum MarginTidyGuard {
         }
         for (index, raw) in words.enumerated() {
             let lowered = raw.lowercased()
-            if let value = Double(lowered.replacingOccurrences(of: ",", with: "")), lowered.first?.isNumber == true {
+            if let value = numberValue(lowered) {
                 finish()
                 result.append((raw, value))
                 continue
             }
             let parts = lowered.split(separator: "-").map(String.init)
             if parts.allSatisfy({ numberWordValues[$0] != nil }) {
-                if parts == ["one"], !inPhrase, index > 0, pronounOneLeaders.contains(words[index - 1].lowercased()) { continue }
+                let next = index + 1 < words.count ? words[index + 1].lowercased() : ""
+                if parts == ["one"], !inPhrase, index > 0, pronounOneLeaders.contains(words[index - 1].lowercased()),
+                   numberWordValues[next] == nil, numberValue(next) == nil, !countAfterOne.contains(next) { continue }
                 for part in parts {
                     let value = numberWordValues[part]!
                     if value == 100 {
@@ -480,16 +523,17 @@ public enum MarginTidyGuard {
         "hundred": 100, "thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000,
     ]
 
-    /// Negations in `words`. With `collapsingRepeats`, the same negation said again within the next three words (fillers
-    /// aside) counts once: a false start ("I'm not, I'm not sure", "it isn't, it isn't", "no no no") is said twice and
-    /// meant once.
+    /// Negations in `words`. With `collapsingRepeats`, a negation counts once when it is part of a stretch said twice in a
+    /// row (fillers aside): a false start ("I'm not, I'm not sure", "it's not, it's not") is said twice and meant once.
+    /// "no no no" counts once too. A double negative ("not not true", "I'm not saying it's not") counts twice.
     private static func negationCount(in words: [String], collapsingRepeats: Bool) -> Int {
         guard collapsingRepeats else { return negationCount(in: words) }
         let spoken = words.map { $0.lowercased().replacingOccurrences(of: "’", with: "'") }
             .filter { !DeterministicInterjectionCleanup.unambiguousFillers.contains($0) }
         var count = 0, lastNegation: (word: String, index: Int)?
         for (index, word) in spoken.enumerated() where negations.contains(word) || word.hasSuffix("n't") {
-            if let last = lastNegation, last.word == word, index - last.index <= 3 {
+            if let last = lastNegation, last.word == word, index - last.index <= 3,
+               repeatsStretch(spoken, previous: last.index, current: index) {
                 lastNegation = (word, index)
                 continue
             }
@@ -497,6 +541,15 @@ public enum MarginTidyGuard {
             lastNegation = (word, index)
         }
         return count
+    }
+
+    /// Whether the words ending at `current` repeat the same number of words ending at `previous` ("it's not, it's not").
+    /// Two negations side by side repeat only for "no" ("no no"): "not not" is a double negative.
+    private static func repeatsStretch(_ spoken: [String], previous: Int, current: Int) -> Bool {
+        let length = current - previous
+        if length == 1 { return spoken[current] == "no" }
+        guard previous - length + 1 >= 0 else { return false }
+        return Array(spoken[(previous + 1)...current]) == Array(spoken[(previous - length + 1)...previous])
     }
 
     private static func negationCount(in words: [String]) -> Int {

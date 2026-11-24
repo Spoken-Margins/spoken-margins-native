@@ -200,12 +200,14 @@ public actor MarginTidyProposer {
                 // Each piece in its own request; a piece whose rewrite fails the guard keeps its filler-only tidy.
                 var parts: [String] = []
                 var rewritten = false
+                var modelFailed = false
                 for piece in pieces {
                     let reply: String?
                     do {
                         reply = try await model(piece, context.before, context.after)
                     } catch {
                         reply = nil
+                        modelFailed = true
                     }
                     if Task.isCancelled { return nil }
                     if let reply {
@@ -222,7 +224,8 @@ public actor MarginTidyProposer {
                 if rewritten, !Self.sameWords(text, transcript),
                    MarginTidyGuard.accepts(original: transcript, proposal: text, passage: passage) {
                     let proposal = MarginTidyProposal(text: text, source: .onDeviceAI)
-                    remembered[key] = proposal
+                    // A piece the model could not answer (the phone hot, a refusal) is tried again next time.
+                    if !modelFailed { remembered[key] = proposal }
                     return proposal
                 }
             }

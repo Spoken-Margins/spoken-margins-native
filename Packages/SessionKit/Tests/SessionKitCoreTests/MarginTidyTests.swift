@@ -220,4 +220,32 @@ final class MarginTidyTests: XCTestCase {
         XCTAssertEqual(MarginTidyGuard.rejection(original: "it's not, it's not, it's not the whole story", proposal: "It's the whole story."), .negationDropped)
         XCTAssertEqual(MarginTidyGuard.rejection(original: "the doctor said it was fine to stop", proposal: "The Dr Smith said it was fine to stop."), .nameAdded("Smith"))
     }
+
+    func testReviewedLossesAreRejected() {
+        // Found by a fresh review of the 2026-11-24 guard; each passed before the fix.
+        let rows: [(original: String, proposal: String)] = [
+            ("they were popular in the 1990s here", "They were popular in the 1980s here."),
+            ("it was a 5-year study of commuters", "It was a 10-year study of commuters."),
+            ("this was before COVID-19 hit the city", "This was before COVID-20 hit the city."),
+            ("the meeting was at 4:30 on the day", "The meeting was at 5:45 on the day."),
+            ("the train left at 3pm that day", "The train left at 4pm that day."),
+            ("it was the 21st time they tried it", "It was the 22nd time they tried it."),
+            ("they say it is 10x faster than before", "They say it is 2x faster than before."),
+            ("about one-third of them never came back", "About two-thirds of them never came back."),
+            ("it's not not true what they said", "It's not true what they said."),
+            ("I'm not saying it's not true at all", "I'm saying it's not true at all."),
+            ("I never said he never did it at all", "I never said he did it at all."),
+            ("nobody said nobody came to the event", "Nobody said anybody came to the event."),
+            ("it was not this and not that one at all", "It was not this and that one at all."),
+            ("the one percent own most of it now", "The ten percent own most of it now."),
+            ("the one in five patients got worse", "The five patients got worse."),
+            ("um so the doctor said it was fine to stop taking it", "The Dr. Smith said it was fine to stop taking it."),
+        ]
+        for row in rows {
+            XCTAssertNotNil(MarginTidyGuard.rejection(original: row.original, proposal: row.proposal), row.proposal)
+        }
+        XCTAssertNil(MarginTidyGuard.rejection(original: "they were popular in the 1990s here", proposal: "They were popular in the 1990s here."))
+        XCTAssertNil(MarginTidyGuard.rejection(original: "no no no, the effect is real", proposal: "No, the effect is real."))
+        XCTAssertNil(MarginTidyGuard.rejection(original: "um I think Dr. Okafor was right", proposal: "I think Dr. Okafor was right."))
+    }
 }

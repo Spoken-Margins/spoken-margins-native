@@ -368,6 +368,22 @@ final class MarginTidyProposerTests: XCTestCase {
             + pieces[1].replacingOccurrences(of: "uh the second", with: "The second"))
     }
 
+    func testAMixedTidyWithAPieceTheModelCouldNotAnswerIsNotRemembered() async {
+        let first = Array(repeating: "um the first part had 12 trains in it.", count: 20).joined(separator: " ")
+        let second = Array(repeating: "uh the second part had none at all.", count: 25).joined(separator: " ")
+        let transcript = first + " " + second
+        let calls = Counter()
+        let proposer = MarginTidyProposer(model: { piece, _, _ in
+            calls.increment()
+            if piece.contains("12") { throw ScriptError.failed }
+            return piece.replacingOccurrences(of: "uh the second", with: "The second")
+        })
+        let proposal = await proposer.proposal(marginId: "mixed", transcript: transcript)
+        XCTAssertEqual(proposal?.source, .onDeviceAI)
+        _ = await proposer.proposal(marginId: "mixed", transcript: transcript)
+        XCTAssertEqual(calls.value, 4, "asked again: the failed piece may answer next time")
+    }
+
     func testAMarginPastTheLastPieceIsNotSentToTheModel() async {
         let transcript = Array(repeating: "um this part is about trains.", count: MarginTidyChunks.maximumWords * MarginTidyChunks.maximumPieces / 6 + 50).joined(separator: " ")
         let model = ScriptedModel(.text("Word."))
