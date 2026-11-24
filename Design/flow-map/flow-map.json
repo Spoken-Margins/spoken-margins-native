@@ -891,7 +891,6 @@
     "r02",
     "r10",
     "r12",
-    "r20",
     "r26"
    ]
   },
@@ -915,8 +914,7 @@
     "taken": "2026-11-24"
    },
    "rulings": [
-    "r10",
-    "r20"
+    "r10"
    ]
   },
   {
@@ -4387,10 +4385,7 @@
    "present_line": null,
    "condition": "",
    "notes": "https://spokenmargins.com/join (logic/arrival.ts:173-175). Footer link, below the Margin list.",
-   "sharing": true,
-   "rulings": [
-    "r20"
-   ]
+   "sharing": true
   },
   {
    "id": "s039",
@@ -4480,10 +4475,7 @@
    "present_line": null,
    "condition": "",
    "notes": "",
-   "sharing": true,
-   "rulings": [
-    "r20"
-   ]
+   "sharing": true
   },
   {
    "id": "s045",
@@ -4684,10 +4676,7 @@
    "present_line": null,
    "condition": "",
    "notes": "",
-   "sharing": true,
-   "rulings": [
-    "r20"
-   ]
+   "sharing": true
   },
   {
    "id": "s058",
@@ -4957,7 +4946,7 @@
    "id": "s075",
    "from": "ExperienceLibraryScreen",
    "to": "MSG_LINK_BUBBLE",
-   "control": "Switch to Messages and tap the link again",
+   "control": "Switch to Messages",
    "control_kind": "button",
    "presentation": "system",
    "file": null,
@@ -5274,8 +5263,16 @@
       "TESTFLIGHT_INVITE",
       "TESTFLIGHT_INSTALL",
       "ExperienceLibraryScreen",
-      "MSG_LINK_BUBBLE",
-      "ExperienceItemDetailScreen"
+      "MSG_LINK_BUBBLE"
+     ],
+     "target": "ExperienceItemDetailScreen",
+     "final_cost": 0
+    },
+    {
+     "person": "friend",
+     "start": "ExperienceItemDetailScreen",
+     "via_edges": [
+      "s012"
      ],
      "target": "PlaybackScreen",
      "final_cost": 0,
@@ -5588,11 +5585,11 @@
    "id": "r24",
    "date": "2026-11-08",
    "summary": "The join page's invite and the link page's invite are the same one, for the external friends beta.",
-   "quote": " And on the build: ",
+   "quote": "The invite on spokenmargins.com/join is the same one the share-link pa",
    "protects": "behaviour",
    "file": "docs/decisions.md",
-   "line": 485,
-   "anchor": "Build 36 is on the external friends beta, and he has tested share link"
+   "line": 486,
+   "anchor": "The invite on spokenmargins.com/join is the same one the share-link pa"
   },
   {
    "id": "r25",

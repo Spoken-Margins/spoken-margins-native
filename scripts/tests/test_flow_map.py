@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import json
 import pathlib
+import subprocess
 import tempfile
 import unittest
 
@@ -56,6 +57,35 @@ class SharingAnchorCheckTests(unittest.TestCase):
         screen = next(s for s in flow["screens"] if s.get("capture", {}).get("status") == "pass")
         screen["capture"]["status"] = "broken"
         self.assertTrue(any("what was seen" in p for p in check.check(flow, only_sharing=True)[3]))
+
+
+class ChangedPathsTests(unittest.TestCase):
+    def git(self, cwd, *args):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args], cwd=cwd, check=True,
+                       capture_output=True)
+
+    def test_a_depth_one_ci_checkout_of_a_merge_commit_still_finds_the_prs_files(self):
+        # hosted-portable.yml checks out GitHub's merge commit at depth 1, where HEAD^1 does not exist (review of #5280).
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, clone = pathlib.Path(tmp, "origin"), pathlib.Path(tmp, "clone")
+            origin.mkdir()
+            self.git(origin, "init", "-q", "-b", "main")
+            self.git(origin, "config", "uploadpack.allowAnySHA1InWant", "true")
+            (origin / "base.txt").write_text("base")
+            self.git(origin, "add", ".")
+            self.git(origin, "commit", "-q", "-m", "base")
+            self.git(origin, "checkout", "-q", "-b", "pr")
+            (origin / "Web").mkdir()
+            (origin / "Web" / "arrival.tsx").write_text("pr")
+            self.git(origin, "add", ".")
+            self.git(origin, "commit", "-q", "-m", "pr")
+            self.git(origin, "checkout", "-q", "main")
+            (origin / "other.txt").write_text("main moved on")
+            self.git(origin, "add", ".")
+            self.git(origin, "commit", "-q", "-m", "main")
+            self.git(origin, "merge", "-q", "--no-ff", "-m", "merge pr", "pr")
+            self.git(tmp, "clone", "-q", "--depth=1", f"file://{origin}", str(clone))
+            self.assertEqual(check.changed_paths(clone, {"GITHUB_ACTIONS": "true"}), ["Web/arrival.tsx"])
 
 
 class TouchedLookupTests(unittest.TestCase):

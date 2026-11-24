@@ -209,6 +209,7 @@ function load(data) {
   render();
 }
 
+window.addEventListener("hashchange", () => { if (map && view === "loop") render(); });
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => { view = b.dataset.view; if (map) render(); });
 fetch("flow-map.json").then(r => r.json()).then(load).catch(() => {
   const err = document.getElementById("error"), pick = document.getElementById("pick");

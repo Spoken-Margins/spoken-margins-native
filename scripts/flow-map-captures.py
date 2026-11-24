@@ -54,6 +54,7 @@ def shrink(src, dst):
         from PIL import Image
     except ImportError:
         kept = dst.with_suffix(src.suffix.lower())
+        dst.unlink(missing_ok=True)  # an older JPEG of this screen would otherwise sit beside the new picture
         shutil.copyfile(src, kept)
         return kept
     with Image.open(src) as image:
@@ -88,6 +89,8 @@ def apply(flow, found, commit, run, broken, today, write_file):
     for sid, seen in broken.items():
         if sid in screens:
             capture = screens[sid].setdefault("capture", {})
+            if not any(key == (sid, None) for key in found):
+                capture.pop("file", None)  # an older picture was not taken at this commit
             capture.update({"status": "broken", "seen": seen, "commit": commit, "run": run, "taken": today})
             capture.pop("why", None)
             recorded.append(f"{sid} (broken)")
@@ -103,6 +106,8 @@ def main(argv=None):
     parser.add_argument("--map", type=Path, default=MAP, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
+    if bad := [item for item in args.broken if "=" not in item]:
+        parser.error(f"--broken takes SCREEN=WHAT WAS SEEN, not {bad[0]!r}")
     broken = dict(item.split("=", 1) for item in args.broken)
     flow = json.loads(args.map.read_text(encoding="utf-8"))
     found = find(args.source)

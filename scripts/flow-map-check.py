@@ -18,6 +18,7 @@ captures it names, and lists navigation calls in the app that no arrow covers.
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -151,7 +152,7 @@ def uncovered_calls(covered):
 
 def touched(flow, paths):
     """Lines describing the sharing screens the changed paths touch, with each one's neighbours and rulings."""
-    paths = {p.strip().lstrip("./") for p in paths if p.strip()}
+    paths = {p.strip().removeprefix("./") for p in paths if p.strip()}
     share_ids, _ = sharing_sets(flow)
     screens = {s["id"]: s for s in flow["screens"]}
     rulings = {r["id"]: r for r in flow.get("rulings", [])}
@@ -201,13 +202,22 @@ def job_screens(job):
     return [s for s in found if s]
 
 
-def changed_paths():
-    """The PR's changed paths: GitHub's merge commit against its first parent, else this branch against origin/main."""
+def changed_paths(root=ROOT, environ=None):
+    """The PR's changed paths. In CI, the merge commit GitHub checked out against its first parent (a depth-1 checkout
+    fetches that parent first); on a developer's machine, this branch against origin/main. None when neither works."""
+    environ = os.environ if environ is None else environ
+
     def git(*args):
-        result = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True)
+        result = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
         return result.stdout.split() if result.returncode == 0 else None
 
-    if git("rev-parse", "--verify", "--quiet", "HEAD^2") is not None:
+    if environ.get("GITHUB_ACTIONS") == "true":
+        if git("rev-parse", "--verify", "--quiet", "HEAD^1") is None:
+            head = git("rev-parse", "HEAD")
+            if head:
+                git("fetch", "--no-tags", "--quiet", "--depth=2", "origin", head[0])
+        if git("rev-parse", "--verify", "--quiet", "HEAD^1") is None:
+            return None
         return git("diff", "--name-only", "HEAD^1", "HEAD")
     base = git("merge-base", "HEAD", "origin/main")
     return git("diff", "--name-only", base[0], "HEAD") if base else None
