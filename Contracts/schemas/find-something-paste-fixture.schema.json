@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Find-something paste fixture (#5270)",
+  "description": "One assistant answer pasted back on the quiz page, and the suggestion lines that must be read from it. EpisodeLinkPaste.entries(in:) in SessionKit and parsePaste in Site/quiz/quiz.js both read every fixture, so the two ports cannot drift. expected is typed by hand from the rule, never generated.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "description",
+    "text",
+    "expected"
+  ],
+  "properties": {
+    "description": {
+      "type": "string"
+    },
+    "text": {
+      "type": "string"
+    },
+    "expected": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "url",
+          "kind",
+          "claimedShow",
+          "claimedTitle",
+          "markedShowLink",
+          "line"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "apple_episode",
+              "apple_show",
+              "spotify",
+              "youtube",
+              "substack",
+              "other"
+            ]
+          },
+          "claimedShow": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "claimedTitle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "markedShowLink": {
+            "type": "boolean"
+          },
+          "line": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
