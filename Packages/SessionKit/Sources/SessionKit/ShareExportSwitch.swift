@@ -22,12 +22,9 @@ public enum ShareExportSwitch {
 
     /// The listening session Export starts on, when the listener came from the Share Margins sheet: the session the
     /// sheet was sharing from, if it is one of the item's own, otherwise the item's newest. Nil when the item has no
-    /// session, and then there is nothing to export.
+    /// session: there is nothing to export, and the sheet's Export is off.
     public static func exportSessionId(sharingSessionId: String?, itemSessionIdsNewestFirst: [String]) -> String? {
         if let sharingSessionId, itemSessionIdsNewestFirst.contains(sharingSessionId) { return sharingSessionId }
         return itemSessionIdsNewestFirst.first
     }
-
-    /// Said when Export is tapped on an item with no listening session to export.
-    public static let nothingToExportMessage = "There is no listening session here to export yet."
 }

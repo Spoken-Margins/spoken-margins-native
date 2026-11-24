@@ -12,6 +12,9 @@ struct ExportScreen: View {
     /// Why the toolbar's Share has nothing to send here (#5306), as the item screen's Share says it (#4229).
     @State private var shareExplanation: ItemShareStart.Explanation?
     @State private var checksShare = false
+    /// The session this screen showed when its Share opened the sheet. Opening the sheet moves `exportSessionId` to the
+    /// newest pass with a sendable Margin, so it is put back when the sheet closes, with a fresh preview (#5306).
+    @State private var sessionBeforeShare: String?
 
     var body: some View {
         NavigationStack {
@@ -185,6 +188,11 @@ struct ExportScreen: View {
                         .accessibilityIdentifier("export.share.button")
                 }
             }
+            .onChange(of: model.isSharingInterjectionsPresented) { _, isPresented in
+                guard !isPresented, let sessionId = sessionBeforeShare else { return }
+                sessionBeforeShare = nil
+                model.openExport(sessionId: sessionId)
+            }
             .alert(
                 shareExplanation?.title ?? "",
                 isPresented: Binding(get: { shareExplanation != nil }, set: { if !$0 { shareExplanation = nil } }),
@@ -209,7 +217,10 @@ struct ExportScreen: View {
             let start = await model.itemShareStart()
             guard model.selectedItem.id == itemId else { return }
             switch start {
-            case .share: model.hangTelemetry.labels.scoped("exportShare") { model.openItemShareSheet() }
+            case .share:
+                let sessionId = model.exportSessionId
+                model.hangTelemetry.labels.scoped("exportShare") { model.openItemShareSheet() }
+                if model.isSharingInterjectionsPresented { sessionBeforeShare = sessionId }
             case .nothingYet(let explanation): shareExplanation = explanation
             }
         }

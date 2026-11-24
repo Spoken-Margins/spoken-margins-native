@@ -50,8 +50,9 @@ struct Build23SenderSharingExperience: View {
 
     /// The header's Export (#5306): close this sheet the way Cancel does, then open the Export screen on the same item.
     /// The session is read first, while the sheet still names the one it was sharing from.
+    /// Nothing closes when Export could not open: no session to export, or a Margin being recorded.
     private func switchToExport() {
-        let sessionId = model.exportSessionForShareSwitch()
+        guard let sessionId = model.exportSessionForShareSwitch(), !model.recordingNavigationIsLocked else { return }
         coordinator.send(.cancel)
         model.openExportFromShareSheet(sessionId: sessionId)
     }
@@ -91,6 +92,7 @@ struct Build23SenderSharingExperience: View {
                             switchToExport()
                         }
                         .labelStyle(.titleAndIcon)
+                        .disabled(model.exportSessionForShareSwitch() == nil)
                         .accessibilityHint(ShareExportSwitch.exportButtonHint)
                         .accessibilityIdentifier("build23.sender.export")
                     }

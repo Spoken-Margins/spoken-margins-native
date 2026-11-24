@@ -13,8 +13,7 @@ extension Gate1AppModel {
     }
 
     /// The Share Margins sheet's Export, after the sheet has been closed: the Export screen on the same item.
-    func openExportFromShareSheet(sessionId: String?) {
-        guard let sessionId else { return reportFailure(ShareExportSwitch.nothingToExportMessage) }
+    func openExportFromShareSheet(sessionId: String) {
         openExport(sessionId: sessionId)
     }
 }

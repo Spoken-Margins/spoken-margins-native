@@ -265,6 +265,23 @@ final class J12SharingLoopJourneyUITests: XCTestCase {
             XCTAssertEqual(taps - tapsAtStepStart, 1, "Share to Export took more than one tap")
             endStep("Share Margins sheet back to the Export screen")
         }
+
+        // Steps 5 and 6 leave the Export screen under the sheet, so they pass even if the sheet's Export only closed it.
+        // Here the sheet opens from the item screen, so only the sheet's Export can bring up the Export screen.
+        XCTContext.runActivity(named: "J12 item, step 7: Export on a sheet opened from the item screen opens the Export screen") { _ in
+            tap("export.item.button")
+            XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "Details on the Export screen did not open the item screen")
+            tap("item.share.button")
+            XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The Share Margins sheet did not open")
+            let cleanUpQuestion = app.alerts["Remove ums and long pauses?"]
+            if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() }
+            let sheetExport = element("build23.sender.export")
+            XCTAssertTrue(sheetExport.waitForExistence(timeout: 5) && sheetExport.isHittable, "The Share Margins sheet has no Export button on screen")
+            sheetExport.tap(); taps += 1
+            waitUntil("The Share Margins sheet did not close on Export", timeout: 8) { !self.element("build23.sender.experience").exists }
+            XCTAssertTrue(element("export.screen").waitForExistence(timeout: 8), "Export on the sheet did not open the Export screen")
+            XCTAssertFalse(element("item.screen").exists, "Export on the sheet left the item screen showing")
+        }
     }
 
     /// #4688: with only a friend's Margins on the item, Share says why instead of opening a sheet with nothing to send.
