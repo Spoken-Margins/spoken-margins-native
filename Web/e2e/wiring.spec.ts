@@ -223,6 +223,67 @@ test('a feed that blocks browsers asks before any relay call, then follows throu
   await expect(page.getByRole('switch', { name: /Use the server for feeds that need it/ })).toBeChecked();
 });
 
+// #4176, the owner's call of 2026-11-21: a listener's own private feed link may go through the relay, and the consent
+// step names it. With the server already on, a private-looking link is still never sent silently.
+test('a paid show’s private link asks by name before the relay, even with the server on, and Not now leaves it on', async ({ page }, info) => {
+  const relayCalls = countRelay(page);
+  await page.route(`${RELAY}/**`, (route) =>
+    route.fulfill({
+      status: 200,
+      body: feedFixture('enclosure-only-episodes.rss'),
+      headers: { 'content-type': 'application/rss+xml', 'access-control-allow-origin': '*' },
+    }),
+  );
+  // A private-looking link on a host that turns browsers away (aborted, as a CORS refusal looks).
+  await page.route('https://www.patreon.com/**', (route) => route.abort('failed'));
+
+  // First, a public feed that needs the server: the listener says yes, so the server is on.
+  await follow(page, 'https://blocked.test/feed.rss');
+  await page.getByRole('dialog', { name: 'Read this feed through our server?' }).getByRole('button', { name: 'Use the server' }).click();
+  await expect(page.getByText(/Following Spoken Margins Test Show\./)).toBeVisible();
+  await expect(page.getByTestId('relay-private-line')).toHaveCount(0);
+  expect(relayCalls).toHaveLength(1);
+
+  // Then a private link: asked again, with the private line, and nothing sent before the answer.
+  const privateFeed = 'https://www.patreon.com/rss/fixture?auth=TOKEN';
+  await follow(page, privateFeed);
+  const ask = page.getByRole('dialog', { name: 'Read this feed through our server?' });
+  await expect(ask).toBeVisible();
+  await expect(ask.getByTestId('relay-private-line')).toHaveText(
+    'This link looks private. Reading it through our server sends the link to us; we keep nothing.',
+  );
+  expect(relayCalls).toHaveLength(1);
+  await shot(page, info, '26b-relay-ask-private');
+
+  await ask.getByRole('button', { name: 'Not now' }).click();
+  await expect(page.getByText('Not followed. This feed can only be read through our server.')).toBeVisible();
+  expect(relayCalls).toHaveLength(1);
+  await page.getByRole('dialog', { name: 'Follow a show' }).getByRole('button', { name: 'Close' }).click();
+  await tab(page, 'Settings');
+  await expect(page.getByRole('switch', { name: /Use the server for feeds that need it/ })).toBeChecked();
+
+  // Asked again and answered yes: the listener's own link goes through the relay, once.
+  await follow(page, privateFeed);
+  await page.getByRole('dialog', { name: 'Read this feed through our server?' }).getByRole('button', { name: 'Use the server' }).click();
+  await expect.poll(() => relayCalls.length).toBe(2);
+  await expect(page.getByRole('dialog', { name: 'Follow a show' })).toHaveCount(0);
+  expect(new URL(relayCalls[1]!.url()).searchParams.get('url')).toBe(privateFeed);
+});
+
+test('the Follow sheet says where a paid show’s link comes from, and a refused link says what to do (#4176)', async ({ page }, info) => {
+  await page.route('https://feeds.example.com/**', (route) =>
+    route.fulfill({ status: 403, body: 'Forbidden', headers: { 'access-control-allow-origin': '*' } }),
+  );
+  await follow(page, 'https://feeds.example.com/private/show.rss?auth=EXPIRED');
+  const sheet = page.getByRole('dialog', { name: 'Follow a show' });
+  await expect(sheet.getByTestId('follow-private-feed-hint')).toHaveText(
+    'Or type a show’s feed link. For a paid show, such as one on Patreon, copy your private RSS link from the creator’s page.',
+  );
+  await expect(sheet.getByText(MESSAGES.feedRefused)).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Read this feed through our server?' })).toHaveCount(0);
+  await shot(page, info, '26c-follow-refused');
+});
+
 test.describe('offline', () => {
   test.use({ serviceWorkers: 'allow' });
 

@@ -703,9 +703,22 @@ def log(msg: str, echo: bool = True) -> None:
         print(line, flush=True)
 
 
+def is_gh_write(cmd: list[str]) -> bool:
+    """A `gh` call that changes something: a comment, a label, a workflow dispatch or re-run, or an api POST/DELETE."""
+    if cmd[:1] != ["gh"]:
+        return False
+    return (cmd[1:3] in (["pr", "comment"], ["pr", "edit"], ["workflow", "run"], ["run", "rerun"])
+            or (cmd[1:2] == ["api"] and any(arg in ("-X", "--method") for arg in cmd)))
+
+
 def run(cmd: list[str], *, cwd: Path | None = None, check: bool = True,
         timeout: float | None = 300, stdin=subprocess.DEVNULL) -> subprocess.CompletedProcess:
-    res = subprocess.run(cmd, cwd=cwd, stdin=stdin, capture_output=True, text=True, timeout=timeout)
+    # #5217: reads use GH_TOKEN, the GitHub App's token with its own API budget. Writes use SM_WRITE_TOKEN (the
+    # workflow's GITHUB_TOKEN) when set, so they stay authored by the workflow bot and a label change still starts
+    # no run, which the re-arm and tap check rely on.
+    write_token = os.environ.get("SM_WRITE_TOKEN")
+    env = {**os.environ, "GH_TOKEN": write_token} if write_token and is_gh_write(cmd) else None
+    res = subprocess.run(cmd, cwd=cwd, stdin=stdin, capture_output=True, text=True, timeout=timeout, env=env)
     if check and res.returncode != 0:
         raise RuntimeError(f"{cmd[0]} {' '.join(cmd[1:4])}… failed: {res.stderr.strip()[:300]}")
     return res
@@ -1347,7 +1360,7 @@ def run_claude(worktree: Path, out_file: Path, prompt: str, transcript: Path) ->
            "--strict-mcp-config", "--setting-sources", "project", "--no-session-persistence",
            "--max-budget-usd", CLAUDE_BUDGET_USD]
     # Claude gets no GitHub token: it only reads, and anything it can see could reach a public comment (#2170).
-    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN")}
+    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "SM_WRITE_TOKEN")}
     env["CLAUDE_CODE_OAUTH_TOKEN"] = token
     with open(transcript, "wb") as tfh:
         proc = subprocess.Popen(cmd, cwd=worktree, env=env, stdin=subprocess.PIPE, stdout=tfh,

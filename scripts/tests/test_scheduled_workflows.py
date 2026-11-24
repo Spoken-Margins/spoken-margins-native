@@ -130,6 +130,20 @@ class ScheduleGuardTests(unittest.TestCase):
                                               'merge-queue-label-bridge.yml': 15, 'lane-conflicts.yml': 60,
                                               'main-t3.yml': 180, 'open-cloud-prs.yml': 20})
 
+    def test_each_backstop_slot_is_a_daily_cron_in_its_workflow(self):
+        # #5154: the VPS checks phone-build and main-t3's fixed ticks by their times; a cron moved without the table
+        # would have it dispatch at the wrong time or miss a slot.
+        for name, slots in backstop.SLOTS.items():
+            on = triggers(parse(ROOT / '.github/workflows' / name))
+            self.assertIn('workflow_dispatch', on, name)
+            daily = set()
+            for entry in on.get('schedule') or []:
+                minute, hour, *rest = entry['cron'].split()
+                if rest == ['*', '*', '*'] and minute.isdigit() and hour.isdigit():
+                    daily.add(f'{int(hour):02d}:{int(minute):02d}')
+            with self.subTest(name):
+                self.assertEqual(set(slots), daily)
+
 
 if __name__ == '__main__':
     unittest.main()
