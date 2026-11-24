@@ -96,12 +96,16 @@ final class ConversationCatchUpTests: XCTestCase {
                 transcript: Array(repeating: "word", count: words).joined(separator: " "), cleanedTranscript: nil, displayText: nil,
                 status: "active")
         }
+        // The parent key is the one `SharedMarginReview` and `ItemListeningChoices` hand over: `Interjection.sessionScopedId`
+        // (#5133), never the bare id, which another listening pass of the same item can reuse.
+        func key(_ id: String, session: String = "s") -> String { Interjection.sessionScopedId(sessionId: session, id: id) }
         let catchUp = try XCTUnwrap(ConversationCatchUp.make(
             isFinished: true,
-            waiting: [reply(parent: "spoken"), reply(parent: "spoken"), reply(parent: "written"), reply(parent: "gone"), reply(parent: "elsewhere")]))
+            waiting: [reply(parent: key("spoken")), reply(parent: key("spoken")), reply(parent: key("written")), reply(parent: key("gone")),
+                      reply(parent: key("elsewhere")), reply(parent: key("spoken", session: "other-pass"))]))
         let mine = [own("spoken", words: 100), own("written", words: 50, voice: false), own("gone", words: 10)]
         XCTAssertEqual(catchUp.ownParentLengthsMs(ownMargins: mine, hasVoice: { $0.id != "gone" }), [40_000],
-                       "one spoken parent with its file, counted once; written, missing-file and unknown parents left out")
+                       "one spoken parent with its file, counted once; written, missing-file, unknown and other-pass parents left out")
     }
 
     // MARK: The item screen's buttons

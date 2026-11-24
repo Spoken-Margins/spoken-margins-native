@@ -67,10 +67,11 @@ public struct ConversationCatchUp: Equatable, Sendable {
     /// The length of each distinct own Margin the run plays before a reply, for `minutes`. Only a spoken parent whose
     /// recording is on this phone plays (`hasVoice`), as in the review's playlist. A Margin keeps no recording length,
     /// so it is the aligned transcript's last word, else the words at the on-device voice's pace.
+    /// A parent is matched by `Interjection.sessionScopedId`, the key `replyToYouParentId` carries (#5133).
     public func ownParentLengthsMs(ownMargins: [Interjection], hasVoice: (Interjection) -> Bool) -> [Int] {
         var seen = Set<String>()
         return margins.compactMap(\.replyToYouParentId).filter { seen.insert($0).inserted }.compactMap { parentId in
-            guard let parent = ownMargins.first(where: { $0.id == parentId }), parent.audioPath != nil, hasVoice(parent) else {
+            guard let parent = ownMargins.first(where: { $0.sessionScopedId == parentId }), parent.audioPath != nil, hasVoice(parent) else {
                 return nil
             }
             if let lastEndMs = parent.alignedTranscript?.segments.map(\.endMs).max(), lastEndMs > 0 { return lastEndMs }
