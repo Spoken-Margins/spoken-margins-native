@@ -13,6 +13,8 @@ struct LiveSessionMarginDetailView: View {
     @State private var isEditing = false
     @State private var draft = ""
     @State private var asksToDelete = false
+    /// Move to an Item is pushed onto this screen's stack (#4233 Design 2.3, #5304).
+    @State private var showsMove = false
     /// 40% of this screen, for the photo's height (#2708); measured, not read from the device's screen.
     @State private var photoMaxHeight: CGFloat = 320
 
@@ -111,13 +113,16 @@ struct LiveSessionMarginDetailView: View {
                 }
                 Section {
                     if margin.isSpoken { playButton }
-                    if let makeMove {
-                        NavigationLink {
-                            LiveMarginMoveSheetHost(make: makeMove, moved: moved)
-                        } label: {
-                            Label("Move to an Item…", systemImage: "folder")
+                    if makeMove != nil {
+                        // A Button that pushes, not a NavigationLink: under this List's primitive button style, with a
+                        // simultaneous tap gesture to stop the recording, the link never pushed (#5304).
+                        Button("Move to an Item…", systemImage: "folder") {
+                            audio.stop()
+                            showsMove = true
                         }
-                        .simultaneousGesture(TapGesture().onEnded { audio.stop() })
+                        // The move sheet is made from the Margin as it is now, so words still being edited would be left
+                        // behind on the item: Save or Cancel first.
+                        .disabled(isEditing)
                         .accessibilityIdentifier("marginDetail.move.button")
                     } else if let moveUnavailableReason {
                         Text(moveUnavailableReason)
@@ -151,6 +156,9 @@ struct LiveSessionMarginDetailView: View {
                 }
             }
             .buttonStyle(MarginDetailActionButtonStyle())
+            .navigationDestination(isPresented: $showsMove) {
+                if let makeMove { LiveMarginMoveSheetHost(make: makeMove, moved: moved) }
+            }
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { photoMaxHeight = max(160, $0 * 0.4) }
             .confirmationDialog("Delete this Margin?", isPresented: $asksToDelete, titleVisibility: .visible) {
                 Button("Delete Margin", role: .destructive) {
