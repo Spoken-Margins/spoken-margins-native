@@ -42,6 +42,9 @@ public actor LiveSessionFileWorker {
         public var pending: PendingWatchCapture?
         /// The listener chose "On this episode" on the Watch (#3494): the answer says so.
         public var aimedAtItem: Bool = false
+        /// Where it was meant to go, kept on the Margin if the item refuses it and it files into a session instead
+        /// (#4233 Design 2.9.1 case 2). Nil reads as `itemId` at `positionMs` from the player.
+        public var playingThen: LiveSessionPlayingThen?
     }
 
     /// What a deferred Watch Margin needs to be answered and cleared once it is placed.
@@ -586,14 +589,16 @@ public actor LiveSessionFileWorker {
         for time in times {
             let id = "mark-\(Int((time.timeIntervalSince1970 * 1_000).rounded()))"
             let margin = LiveSessionMargin(id: id, text: "", markedAt: time, isBlindMark: true)
-            let decision = LiveSessionFiling.decide(
-                .init(marginId: id, markedAt: time), sessions: candidates(), deletions: deletions, playerRuns: playerRuns, now: now
-            )
+            let incoming = LiveSessionFiling.Incoming(marginId: id, markedAt: time)
+            let decision = LiveSessionFiling.decide(incoming, sessions: candidates(), deletions: deletions, playerRuns: playerRuns, now: now)
+            let hint = LiveSessionFiling.playingThen(for: incoming, decision: decision, playerRuns: playerRuns)
             if case let .playerItem(itemId, positionMs) = decision {
-                pass.placements.append(PlayerPlacement(marginId: id, itemId: itemId, positionMs: positionMs, markedAt: time))
+                pass.placements.append(PlayerPlacement(
+                    marginId: id, itemId: itemId, positionMs: positionMs, markedAt: time, playingThen: hint
+                ))
                 continue
             }
-            if (try? place(margin, by: decision)) != nil { pass.changed = true }
+            if (try? place(margin, by: decision, playingThen: hint)) != nil { pass.changed = true }
         }
         tidy(now: now, pass: &pass)
         return pass
@@ -612,6 +617,9 @@ public actor LiveSessionFileWorker {
         margin.audioPath = placement.audioPath
         margin.durationMs = placement.durationMs
         margin.spokenOn = placement.spokenOn
+        // The item refused it: the session keeps where it was meant to go (#4233 Design 2.9.1 case 2).
+        margin.playingThen = placement.playingThen
+            ?? LiveSessionPlayingThen(itemId: placement.itemId, positionMs: placement.positionMs, source: .playerRun)
         let decision = LiveSessionFiling.decide(
             .init(marginId: placement.marginId, markedAt: placement.markedAt, allowsPlayerItem: false),
             sessions: candidates(), deletions: deletions, playerRuns: [], now: now
@@ -684,13 +692,12 @@ public actor LiveSessionFileWorker {
         // The Watch's clock, corrected by its measured offset; the raw time is kept as evidence (DESIGN section 4 point 8).
         let corrected = LiveSessionWatchSessions.phoneTime(transfer.wallStart, clock: transfer.clock)
         let offset = transfer.clock.flatMap { $0.isFresh(at: transfer.wallStart) ? $0.offset : nil }
-        let decision = LiveSessionFiling.decide(
-            .init(
-                marginId: transfer.marginId, markedAt: transfer.wallStart, clockOffset: offset, sessionId: transfer.sessionId,
-                itemTarget: transfer.itemTarget
-            ),
-            sessions: candidates(), deletions: deletions, playerRuns: playerRuns, now: now
+        let incoming = LiveSessionFiling.Incoming(
+            marginId: transfer.marginId, markedAt: transfer.wallStart, clockOffset: offset, sessionId: transfer.sessionId,
+            itemTarget: transfer.itemTarget
         )
+        let decision = LiveSessionFiling.decide(incoming, sessions: candidates(), deletions: deletions, playerRuns: playerRuns, now: now)
+        let hint = LiveSessionFiling.playingThen(for: incoming, decision: decision, playerRuns: playerRuns)
         switch decision {
         case .alreadyFiled:
             try? inbox.markIncorporated(captureId)
@@ -719,7 +726,7 @@ public actor LiveSessionFileWorker {
                 marginId: transfer.marginId, itemId: itemId, positionMs: positionMs, markedAt: corrected.time,
                 audioPath: transfer.audioPath, durationMs: transfer.durationMs, spokenOn: "watch",
                 pending: PendingWatchCapture(captureId: captureId, receipt: receipt, landedStem: audioURL.deletingPathExtension().path),
-                aimedAtItem: transfer.itemTarget != nil
+                aimedAtItem: transfer.itemTarget != nil, playingThen: hint
             ))
             return nil
         }
@@ -729,7 +736,7 @@ public actor LiveSessionFileWorker {
         margin.audioPath = transfer.audioPath
         margin.durationMs = transfer.durationMs
         margin.spokenOn = "watch"
-        guard let session = try? place(margin, by: decision) else { return nil }
+        guard let session = try? place(margin, by: decision, playingThen: hint) else { return nil }
         pass.changed = true
         pass.filed.append(FiledMargin(marginId: transfer.marginId, audioPath: transfer.audioPath))
         try? inbox.markIncorporated(captureId)
@@ -741,11 +748,14 @@ public actor LiveSessionFileWorker {
     }
 
     /// Puts a Margin where `decision` says, and saves that session. Returns it, or nil when the decision files nothing.
+    /// `playingThen`, when given, is kept on the Margin (#4233 Design 2.9.1); one the Margin already carries is kept.
     private func place(
-        _ margin: LiveSessionMargin, by decision: LiveSessionFiling.Decision, newQuickId: String? = nil
+        _ margin: LiveSessionMargin, by decision: LiveSessionFiling.Decision, newQuickId: String? = nil,
+        playingThen: LiveSessionPlayingThen? = nil
     ) throws -> LiveSession? {
         var target: LiveSession
         var placed = margin
+        if placed.playingThen == nil { placed.playingThen = playingThen }
         switch decision {
         case let .session(id, placement):
             guard let session = sessions()[id] else { return nil }

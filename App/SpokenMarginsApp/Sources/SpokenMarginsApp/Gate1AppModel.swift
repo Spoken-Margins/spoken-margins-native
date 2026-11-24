@@ -307,6 +307,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var sourceImportProgressMessage: String?
     @Published var importInbox: [ImportInboxEntry] = []
     @Published var sourceLinksWaitingForNetwork = 0 // shared links left pending while offline (#1546)
+    @Published var requestedSettingsPage: SettingsPage? // "See why" asks Settings to show the Import Inbox (#4781)
     @Published var selectedProfileId = "phone-tablet-online"
     @Published var importTitle = ""
     @Published var importText = ""
@@ -813,14 +814,6 @@ final class Gate1AppModel: ObservableObject {
             playSourceFromBeginning(fromTimeline: fromTimeline)
         case .playFootnote(let label, let fromTimeline): playFootnote(label: label, fromTimeline: fromTimeline)
         }
-    }
-
-    var localFoundationModelAvailable: Bool {
-        localFoundationModelAvailability.isAvailable
-    }
-
-    var localFoundationModelAvailabilityDescription: String {
-        localFoundationModelAvailability.description
     }
 
     var aiSummaryExperienceAvailable: Bool {

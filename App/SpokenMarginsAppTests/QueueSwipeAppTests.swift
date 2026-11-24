@@ -216,26 +216,79 @@ final class QueueSwipeAppTests: XCTestCase {
         XCTAssertEqual(try kinds(of: queuedIds, in: store), ["file"])
     }
 
-    func testTheInboxQueuesATranscriptAndATextFileInFilenameOrderWithoutNavigating() async throws {
-        restoreDismissedQuickFilesAfterTheTest()
-        let (model, store) = try makeModel()
-        let urls = try writeFiles([(name: "1-essay.txt", text: essayTXT), (name: "2-meeting.txt", text: otterTXT), (name: "3-notes.md", text: "# Notes\n\nSomething to read.")])
-        let screenBefore = String(describing: model.screen)
-        let route = model.quickFolderInboxRoute(files: urls.map(quickFile), folderURL: urls[0].deletingLastPathComponent())
-        let result = try await importPick(urls, route: route, on: model)
-        XCTAssertEqual(result.calls, 1)
-        XCTAssertEqual(try kinds(of: queuedIds, in: store), ["file", TranscriptItemText.referenceType, "file"])
-        XCTAssertEqual(model.diagnostics["quickFolderInboxQueued"], "3")
-        XCTAssertEqual(String(describing: model.screen), screenBefore, "the inbox never moves the listener")
+    /// The model's Quick Folder reads the standard defaults: put its keys back after the test.
+    private func restoreQuickFolderDefaultsAfterTheTest() {
+        let keys = [
+            "quickAccessFolderBookmark", "quickAccessFolderName", "quickAccessFolderPath", "quickAccessLastCheckedAt",
+            "quickAccessFolderProblem", "quickAccessFolderChosenAt", "dismissedQuickAccessFilesV1",
+        ] + QuickAccessFolderState.retiredKeys
+        let prior = keys.map { ($0, UserDefaults.standard.object(forKey: $0)) }
+        addTeardownBlock {
+            for (key, value) in prior {
+                if let value { UserDefaults.standard.set(value, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
+            }
+        }
     }
 
-    func testTheInboxQueuesNothingWhenNothingWasSaved() async throws {
-        restoreDismissedQuickFilesAfterTheTest()
+    /// #4274: new Quick Folder files only wait on Following. A refresh that finds them (at launch, on pull to refresh, or
+    /// here) never imports them, never touches the queue or the loaded item, and says nothing; the listener's own Add to
+    /// Queue still queues one. Seeded with the retired switch on, so on the code before #4274 the inbox imports and queues
+    /// the three files the moment the refresh ends, and the queue and Library assertions fail.
+    func testNewQuickFolderFilesNeverChangeThePlayQueue() async throws {
+        restoreQuickFolderDefaultsAfterTheTest()
+        UserDefaults.standard.set(true, forKey: "quickFolderFeedsQueueV1")
+        let priorQueue = queuedIds
         let (model, _) = try makeModel()
-        let urls = try writeFiles([(name: "empty.txt", text: "   ")])
-        let route = model.quickFolderInboxRoute(files: urls.map(quickFile), folderURL: urls[0].deletingLastPathComponent())
-        let result = try await importPick(urls, route: route, on: model)
-        XCTAssertEqual(result.calls, 1)
-        XCTAssertEqual(queuedIds, [])
+        addTeardownBlock { @MainActor in
+            PlayQueueController.update(model) { queue in
+                queue.clear()
+                priorQueue.forEach { queue.append($0) }
+            }
+        }
+        XCTAssertNil(UserDefaults.standard.object(forKey: "quickFolderFeedsQueueV1"), "the retired switch is deleted at launch")
+        let loadedItem = model.activeItemId
+        PlayQueueController.update(model) { queue in ["swipe-a", "swipe-b"].forEach { queue.append($0) } }
+        XCTAssertEqual(queuedIds, ["swipe-a", "swipe-b"])
+
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("quick-folder-no-queue-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+        model.configureQuickAccessFolder(url: folder)
+        try await pollUntil { model.quickAccess.lastCheckedAt != nil && !model.quickAccess.isRefreshing }
+        XCTAssertNotNil(model.quickAccess.lastCheckedAt, "the first scan of the empty folder finished")
+
+        try "# Notes\n\nSomething to read.".write(to: folder.appendingPathComponent("one.md"), atomically: true, encoding: .utf8)
+        try otterTXT.write(to: folder.appendingPathComponent("two.txt"), atomically: true, encoding: .utf8)
+        try #"{"schemaVersion":"spoken-margins.link-list.v1","entries":[{"url":"https://example.com/a"}]}"#
+            .write(to: folder.appendingPathComponent("three.json"), atomically: true, encoding: .utf8)
+        let libraryCount = model.libraryItems.count
+
+        func folderFiles() -> [QuickAccessFile] {
+            model.quickAddCandidates.compactMap { if case .localFile(let file) = $0 { file } else { nil } }
+        }
+        model.refreshQuickAccessFolder()
+        try await pollUntil { !model.quickAccess.isRefreshing && folderFiles().count == 3 }
+        // No wait for "nothing happened": the old inbox started its import in the same main-actor turn the refresh ended
+        // (`finishRefresh` called it directly), so on that code `sourceImportTask` is already set when the poll above returns.
+
+        XCTAssertEqual(folderFiles().count, 3, "all three new files wait on Following")
+        XCTAssertEqual(queuedIds, ["swipe-a", "swipe-b"], "the queue is untouched")
+        XCTAssertEqual(model.libraryItems.count, libraryCount, "nothing was imported")
+        XCTAssertNil(model.sourceImportTask, "no import started")
+        XCTAssertFalse(model.statusMessage.hasPrefix("Queued"), model.statusMessage)
+        XCTAssertFalse(model.feedbackEvent?.message.hasPrefix("Queued") ?? false)
+        XCTAssertEqual(model.activeItemId, loadedItem, "the loaded item is untouched")
+
+        // The listener's own Add to Queue still queues the file. A row's `name` drops the extension (`QuickAccessFolderScanner`);
+        // the file name is its `id`.
+        let one = try XCTUnwrap(folderFiles().first { $0.id == "one.md" })
+        model.addQuickFolderFileToQueue(one)
+        try await pollUntil { queuedIds.count == 3 }
+        XCTAssertEqual(queuedIds.count, 3)
+        XCTAssertEqual(Array(queuedIds.prefix(2)), ["swipe-a", "swipe-b"])
+        XCTAssertEqual(model.libraryItems.count, libraryCount + 1)
+        if let added = queuedIds.last {
+            XCTAssertTrue(model.libraryItems.contains { $0.id == added }, "the queued id is the item one.md saved")
+        }
     }
 }
