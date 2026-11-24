@@ -129,7 +129,7 @@ function screenCard(id, edge) {
   const s = screens[id] || { id, title: id };
   const c = s.capture || {};
   const img = c.file ? `<img src="${esc(c.file)}" alt="Capture of ${esc(s.title)}" loading="lazy">`
-                     : `<div class="noimg">No capture of this screen yet${c.why ? `: ${esc(c.why)}` : ""}</div>`;
+                     : `<div class="noimg">${c.why ? esc(c.why) : "No capture of this screen yet."}</div>`;
   return `${edge ? `<div class="tap">${esc(edge.control)} <b>(${cost(edge)} tap${cost(edge) > 1 ? "s" : ""})</b>${edge.rulings ? rulingHTML(edge.rulings) : ""}</div>` : ""}
   <article class="card">
     <div class="surface">${esc(SURFACE[s.surface] || s.surface || s.group || "")}</div>
