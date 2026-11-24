@@ -65,6 +65,16 @@ export interface Settings {
    * Cleared by Got it. Anything that is not an array of strings reads as empty.
    */
   libraryMovedOut: readonly string[];
+  /**
+   * Web Settings' "Tell friends when I open Margins they sent by link" (#5275). On by default; off means no opened mark
+   * ever leaves this browser and the arrival shows no notice. A backup never carries it.
+   */
+  openedReceipts: boolean;
+  /**
+   * The links this browser already told the server were opened (#5275): link id to the ISO date it was sent, so a link
+   * is signalled once. Entries older than 31 days are dropped. A backup never carries it.
+   */
+  openedSignalled: Readonly<Record<string, string>>;
 }
 
 export const DEFAULT_SETTINGS: Settings = Object.freeze({
@@ -78,6 +88,8 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
   marginAutoplay: 'unheard',
   libraryModel: '',
   libraryMovedOut: Object.freeze([]) as readonly string[],
+  openedReceipts: true,
+  openedSignalled: Object.freeze({}) as Readonly<Record<string, string>>,
 });
 
 /** The settings-store key prefix of a Library membership row (#4425): `library:<episode id>`. */
@@ -145,6 +157,12 @@ export function readSettings(rows: readonly SettingRow[]): Settings {
     if (row.key === 'transcription' && !['', 'on', 'off'].includes(row.value as string)) continue;
     if (row.key === 'marginAutoplay' && !['unheard', 'all', 'none'].includes(row.value as string)) continue;
     if (row.key === 'libraryModel' && !['', 'added'].includes(row.value as string)) continue;
+    if (row.key === 'openedSignalled') {
+      const value = row.value as Record<string, unknown>;
+      if (value === null || Array.isArray(value) || !Object.values(value).every((at) => typeof at === 'string')) continue;
+      target[row.key] = Object.fromEntries(Object.entries(value));
+      continue;
+    }
     if (row.key === 'libraryMovedOut') {
       if (!Array.isArray(row.value) || !row.value.every((id) => typeof id === 'string')) continue;
       target[row.key] = [...(row.value as string[])];

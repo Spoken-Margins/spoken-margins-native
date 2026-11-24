@@ -78,6 +78,9 @@ export async function openSharedPacket(link: ShareLinkRef, fetchImpl: typeof fet
 /** The header the link server sends with the packet: the UTC day the link stops working, `YYYY-MM-DD` (#2168). */
 export const LINK_EXPIRES_HEADER = 'X-SM-Link-Expires';
 
+/** The header a link server that keeps opened marks sends with the packet, as `1` (#5275). */
+export const LINK_OPENED_HEADER = 'X-SM-Link-Opened';
+
 /** What the footer says when no usable expiry day reached the page (an older server, a missing or odd header). */
 export const LINK_FOOTER_DEFAULT = 'This link works for 30 days.';
 
@@ -105,11 +108,14 @@ export function linkFooterText(expires: string | undefined, now: Date = new Date
   }
 }
 
-/** As openSharedPacket, and the expiry day the server sent with it, if it sent one. Only the day, never a time. */
+/**
+ * As openSharedPacket, and the expiry day the server sent with it, if it sent one (only the day, never a time), and
+ * whether the server keeps opened marks (#5275).
+ */
 export async function openSharedPacketWithExpiry(
   link: ShareLinkRef,
   fetchImpl: typeof fetch = fetch,
-): Promise<{ bytes: Uint8Array; expires: string | undefined }> {
+): Promise<{ bytes: Uint8Array; expires: string | undefined; offersOpened: boolean }> {
   let response: Response;
   try {
     response = await fetchImpl(`${link.origin}/l/${link.id}/packet`, {
@@ -133,7 +139,7 @@ export async function openSharedPacketWithExpiry(
   }
   try {
     const bytes = await openPart(sealed, PART.packet, link.key);
-    return { bytes, expires: response.headers.get(LINK_EXPIRES_HEADER) ?? undefined };
+    return { bytes, expires: response.headers.get(LINK_EXPIRES_HEADER) ?? undefined, offersOpened: response.headers.get(LINK_OPENED_HEADER) === '1' };
   } catch {
     throw new ShareLinkError(LINK_MESSAGES.damaged, 'damaged');
   }

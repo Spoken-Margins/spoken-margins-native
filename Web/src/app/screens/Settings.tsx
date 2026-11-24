@@ -59,8 +59,26 @@ export function Settings() {
       <section className="settings-section">
         <h2>Privacy</h2>
         <p>Your shows, your place in each episode and your Margins stay in this browser, and there is no account. A name you type when sharing stays here too, and goes only into the files you share. Our server reads a feed for you only when your browser can’t and you’ve said yes, and it keeps nothing about it. Opening a shared link fetches its locked copy from our server, which can’t read it.</p>
+        <label className="switch-row">
+          <span>
+            <span className="switch-label">Tell friends when I open Margins they sent by link</span>
+            <span id="opened-state" className="switch-state" data-state={settings.openedReceipts ? 'on' : 'off'} aria-hidden="true">
+              {settings.openedReceipts ? 'On' : 'Off'}
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            className="switch"
+            checked={settings.openedReceipts}
+            aria-describedby="opened-state opened-help"
+            onChange={(event) => void setSetting('openedReceipts', event.target.checked)}
+          />
+        </label>
+        <p id="opened-help">Opening them sends only a mark that the link was opened: no name, device or time of day.</p>
         <details className="more">
           <summary>More about privacy</summary>
+          <p>Opening a friend’s link and pressing Play (or another start button) tells our server that link was opened, unless you turn that off above.</p>
           <p>Clearing this site’s data in your browser removes them.</p>
           <p>Episodes play straight from each show’s own host, which sees the request as it would from any podcast app.</p>
           <p>The microphone is used only while you record a voice Margin.</p>
