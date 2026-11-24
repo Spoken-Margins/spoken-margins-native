@@ -126,6 +126,17 @@ final class OPMLImportTests: XCTestCase {
         XCTAssertEqual(refreshCount, 0)
     }
 
+    /// #4858: a Shortcut's home-network feed opens unticked, so Follow N counts only the rest; nothing is fetched.
+    func testAShortcutsHomeNetworkFeedOpensUnticked() async throws {
+        let importer = makeImporter()
+        importer.load(feedLinks: ["Pod One https://feeds.example.com/one.xml", "My NAS http://nas.local/podcast.xml"])
+        let shown = try preview(importer)
+        XCTAssertEqual(shown.toFollow.map(\.title), ["Pod One", "My NAS"])
+        XCTAssertEqual(importer.selected, [shown.toFollow[0].id])
+        XCTAssertEqual(OPMLImportPreviewWords.row(shown.toFollow[1], source: importer.origin.wordsSource).detail, OPMLImportPreviewWords.homeNetworkDetail)
+        XCTAssertTrue(OPMLFeedsURLProtocol.requestedPaths.isEmpty, "not one feed was fetched")
+    }
+
     func testAFeedThatFailsIsListedWithItsReasonAndTheRestStillFollow() async throws {
         let importer = makeImporter()
         importer.load(data: Data(Self.brokenFeedOPML.utf8))

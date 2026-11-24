@@ -1,26 +1,24 @@
 #!/usr/bin/env python3
-"""The Python tests that read the app's Swift sources, run on every PR push (#5220).
+"""The Python tests that read the app's Swift sources and the files beside them (#5220).
 
-The PR quick tier (`verify-tests.py --plan fast-portable --pr-quick`, 2026-11-20) leaves the runner tests to the merge
-group, and these scans live among them. So a PR that added a button the mini-player keep-out forbids, a tap frame
-under 44 pt or a share glyph passed its own checks and failed only in the merge queue: #5157 on 2026-11-23
-(`test_mini_player_keep_out`, `test_outer_tap_frame`, `test_share_export_glyphs`), which cost the queue a cycle. The
-quick tier now runs this list as its `swift-scans` step whenever the PR changes a file a runner test reads
-(verify-tests.py, PR_QUICK_STEPS), and the merge group still runs every runner test.
+A PR that added a button the mini-player keep-out forbids, a tap frame under 44 pt or a share glyph could pass its own
+checks and fail only in the merge queue: #5157 on 2026-11-23 (`test_mini_player_keep_out`, `test_outer_tap_frame`,
+`test_share_export_glyphs`). Since #5281 every PR runs all runner tests, these included. This list is what to run
+locally for a change under App/ or Packages/ (about a minute), and the lane's readers scope (verify-tests.py
+RUNNER_TEST_READERS) runs it on an App-only diff.
 
   python3 scripts/swift_scan_tests.py          run the scans (do this for any change under App/ or Packages/)
   python3 scripts/swift_scan_tests.py --list   print the modules
 
 A new test that reads App/ or Packages/ joins SCANS with one line. `test_swift_scan_tests.py` finds every test module
 that names a path under App/ or Packages/, itself or through a scripts/ module it loads, and fails unless the module
-is in SCANS or in NOT_SCANS with a reason. The lane's readers scope (verify-tests.py RUNNER_TEST_READERS) runs SCANS
-too, so the list has one home.
+is in SCANS or in NOT_SCANS with a reason.
 
 How the list was made (2026-11-24): each such module was run on this tree and on a copy with App/ and Packages/
 removed. The ones that failed only in the copy read the tree (a few also read Info.plist or docs that name Swift
 files); six guards that pass on an empty tree (container identifiers, outer tap frame, negative sleeps, ordered
-store requests, repeat triggers, failed recorder start) were added by reading them. Together they ran in about 25 s
-in one process on a cloud box.
+store requests, repeat triggers, failed recorder start) were added by reading them. Together they ran in 25 to 60 s in one
+process (a cloud box, a hosted runner).
 """
 import re
 import sys
@@ -61,9 +59,10 @@ SCANS = (
 
 PIPELINE = ('tests the lane, CI, release or repository tools; App/ and Packages/ appear in it only as path inputs '
             'or fixtures, and the merge group runs it with every runner test')
-CONTRACTS = ('checks contracts, fixtures or catalog data, not a rule on the Swift code; the quick tier\'s contracts '
+CONTRACTS = ('checks contracts, fixtures or catalog data, not a rule on the Swift code; the portable plan\'s contracts '
              'step validates the tree')
 NOT_SCANS = {
+    'test_main_t3': PIPELINE,
     'test_check_build29_database': ('checks that Build 29 opens the database, on its own fixtures; it reads only '
                                     'SessionKit\'s Package.resolved, which sends a PR to the Mac checks'),
     'test_sm_build_cache': PIPELINE,
@@ -94,7 +93,7 @@ NOT_SCANS = {
     'test_linux_core_tests': PIPELINE,
     'test_mac_checks_scope': PIPELINE,
     'test_main_t3_bisect': PIPELINE,
-    'test_main_thread_reads': 'the quick tier already runs this guard on the tree as its main-thread-reads step',
+    'test_main_thread_reads': 'the portable plan runs this guard on the tree as its main-thread-reads step (8 s)',
     'test_merge_policy': PIPELINE,
     'test_ops_checkout': PIPELINE,
     'test_owner_tap_alert': PIPELINE,

@@ -59,7 +59,7 @@ def iter_tests(suite):
 
 class PortableStepTable(unittest.TestCase):
     def test_every_step_the_fast_plan_names_is_run_or_left_out_with_a_reason(self):
-        listed = set(verification.PORTABLE_STEPS) | set(verification.PORTABLE_LEFT_OUT) | set(verification.PR_QUICK_STEPS)
+        listed = set(verification.PORTABLE_STEPS) | set(verification.PORTABLE_LEFT_OUT)
         found = literal_steps()
         self.assertEqual(found - listed, set(), 'a fast-plan step the portable plan neither runs nor lists as left out')
         self.assertEqual(listed - found, set(), 'a listed step the fast plan no longer has')
@@ -107,39 +107,27 @@ class PortableStepTable(unittest.TestCase):
             self.assertIn(name, printed)
         self.assertEqual(slots, [], 'the Mac-wide host-test slot is not for a hosted job')
 
-    def test_the_pr_quick_tier_swaps_runner_tests_for_the_swift_scans(self):
-        # #5220: with no runner tests at all, #5157 passed its PR checks and failed three Swift scans in the queue.
+    def test_the_pr_quick_tier_leaves_only_runner_tests_to_the_merge_group(self):
         full = [name for name, _ in self.run_portable()[0]]
-        with patch.object(verification, 'merge_commit_changes', return_value=['App/SpokenMarginsApp/Sources/X.swift']):
-            calls, skipped, slots, printed = self.run_portable(pr_quick=True)
-        self.assertEqual([name for name, _ in calls], ['swift-scans', *(name for name in full if name != 'runner-tests')])
-        self.assertEqual(dict(calls)['swift-scans'], [sys.executable, 'scripts/swift_scan_tests.py'])
+        calls, skipped, slots, printed = self.run_portable(pr_quick=True)
+        self.assertEqual([name for name, _ in calls], [name for name in full if name != 'runner-tests'])
         self.assertEqual(skipped, {**verification.PORTABLE_LEFT_OUT, **verification.PR_QUICK_LEFT_OUT})
         self.assertIn('runner-tests: skipped (the PR quick tier leaves it to the merge group', printed)
         self.assertNotIn('fast-portable runner-tests left out', printed)
         self.assertEqual(slots, [])
 
-    def test_the_swift_scans_run_unless_the_pr_changes_only_files_no_runner_test_reads(self):
-        for changed, runs in ((None, True), ([], True), (['App/SpokenMarginsApp/Info.plist'], True),
-                              (['scripts/main_thread_reads.py'], True), (['docs/overview/storage.md'], True),
-                              (['docs/journeys.md', 'ops/away/README.md'], False)):
-            with self.subTest(changed=changed), \
-                    patch.object(verification, 'merge_commit_changes', return_value=changed):
-                calls, skipped, _, _ = self.run_portable(pr_quick=True)
-                self.assertEqual('swift-scans' in dict(calls), runs)
-                self.assertEqual('swift-scans' in skipped, not runs)
-
-    def test_the_workflow_runs_the_quick_tier_on_prs_only(self):
+    def test_prs_run_the_whole_plan_before_they_reach_the_queue(self):
+        # #5281: with the quick tier, runner-tests and the Linux core tests first ran in the merge group, and the PRs
+        # that broke them were dropped there, each costing a queue cycle for every PR behind it.
         workflow = (ROOT / '.github/workflows/hosted-portable.yml').read_text()
         portable = workflow[workflow.index('\n  portable:'):workflow.index('\n  scope:')]
-        self.assertIn("PR_QUICK: ${{ github.event_name == 'pull_request' && '--pr-quick' || '' }}", portable)
-        self.assertIn('verify-tests.py --plan fast-portable $PR_QUICK', portable)
-        core = portable[portable.index('- name: SessionKitCoreTests on Linux'):]
-        core = core[:core.index('\n      - ')]
-        self.assertIn("if: github.event_name != 'pull_request'", core)
-        # A quick PR pass must not be recorded as the whole plan.
-        self.assertIn('plan=fast-portable-pr-quick tree=', portable)
-        self.assertIn('if [ "$EVENT" = pull_request ]; then', portable)
+        self.assertNotIn('--pr-quick', portable)
+        self.assertIn('verify-tests.py --plan fast-portable --leave-out-slow', portable)
+        steps = portable[portable.index('\n    steps:'):]
+        self.assertNotIn("github.event_name != 'pull_request'", steps)
+        self.assertNotIn("github.event_name == 'pull_request' &&", steps)
+        self.assertIn('plan=fast-portable tree=', portable)
+        self.assertNotIn('plan=fast-portable-pr-quick', portable)
 
     def test_pr_quick_is_refused_with_any_other_plan(self):
         done = subprocess.run([sys.executable, str(SCRIPTS / 'verify-tests.py'), '--plan', 'fast', '--pr-quick', '--list'],

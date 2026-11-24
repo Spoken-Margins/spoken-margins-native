@@ -182,7 +182,7 @@ public enum MarginThreadPresentation {
         )
         var result: [MarginReference: Node] = [:]
         for margin in localMargins where margin.itemId == itemId && margin.status == "active" {
-            let reference = MarginReference.local(margin.id)
+            let reference = MarginReference.local(margin.sessionScopedId)
             result[reference] = Node(
                 reference: reference,
                 senderLabel: MarginLayerSynthesis.ownSenderLabel,

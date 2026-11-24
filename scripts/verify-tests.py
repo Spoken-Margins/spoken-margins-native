@@ -884,19 +884,13 @@ PORTABLE_RUNNER_TESTS_LEFT_OUT = {
 # --plan fast-portable --pr-quick (2026-11-20): a PR's first signal. In the merge queue (MERGE_QUEUE_MAC=queue-only)
 # the long suites run once per merge group, where batching shares their cost; on a PR push the portable job ran
 # them too, and its runner-tests took 1,180 s of the job's 28 minutes. With --pr-quick the plan leaves runner-tests to
-# the merge group and runs every other portable step (about 90 s together). hosted-portable.yml passes it on PRs only.
+# the merge group and runs every other portable step (about 90 s together). Since 2026-11-24 (#5281) no workflow passes
+# it: PRs run the whole plan again, because the queue was the first place runner-tests ran and dropped PRs for it. It
+# stays for a quick hand run.
 PR_QUICK_LEFT_OUT = {
     'runner-tests': 'the PR quick tier leaves it to the merge group, which runs the whole fast-portable plan '
                     '(hosted-portable.yml; for an early run, dispatch it on the branch)',
 }
-# #5220: in its place the quick tier runs the tests that read App/ and Packages/ (scripts/swift_scan_tests.py, 60 s on
-# a hosted runner), so a PR that breaks a scan learns it on its own check, not when the merge group drops it (#5157,
-# 2026-11-23). It has its own step name so its timings never mix with the full runner-tests' in
-# scripts/ci_step_budgets.py. It runs when the PR's merge commit changes a file a runner test reads, or when that
-# can't be told; a PR that changes only other files (docs, ops) skips it.
-PR_QUICK_STEPS = ('swift-scans',)
-SWIFT_SCANS_COMMAND = [sys.executable, 'scripts/swift_scan_tests.py']
-SWIFT_SCANS_TIMEOUT = 600
 PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snapshots and the Mac-only caches'}
 # --plan fast-hosted-sessionkit and --plan fast-mac-rest (#1389): the fast plan split three ways once the repo is
 # public. hosted-portable.yml runs fast-portable on Linux and fast-hosted-sessionkit (SessionKit's build and
@@ -1016,33 +1010,6 @@ def runner_test_scope(changed):
     if surface:
         return 'readers', 'diff touches no lane path; only the tests that read ' + ', '.join(surface[:3]) + ' run'
     return 'none', 'diff touches nothing under scripts/, .github/ or the files the runner tests read'
-
-
-def merge_commit_changes(root=None, fetch_timeout=60):
-    """The paths a PR's merge commit changes against its base, or None when they can't be read (#5220).
-
-    hosted-portable.yml checks a PR out at depth 1 on GitHub's merge commit: parent 1 is the base, parent 2 the PR's
-    head, and neither is present. The base is fetched alone (depth 1, the public remote the checkout used), then the
-    two trees are compared. A commit with one parent, a failed fetch or any git error gives None, which runs
-    everything that reads the diff."""
-    root = ROOT if root is None else root
-    def git(*args, timeout=30):
-        return subprocess.run(['git', '-C', str(root), *args], capture_output=True, text=True, timeout=timeout)
-    try:
-        head = git('cat-file', '-p', 'HEAD')
-        parents = [line.split()[1] for line in head.stdout.splitlines() if line.startswith('parent ')]
-        if head.returncode or len(parents) != 2:
-            return None
-        base = parents[0]
-        if git('rev-parse', '--verify', '--quiet', f'{base}^{{commit}}').returncode:
-            if git('fetch', '--quiet', '--no-tags', '--depth=1', 'origin', base, timeout=fetch_timeout).returncode:
-                return None
-        diff = git('diff', '--name-only', '--no-renames', base, 'HEAD')
-        if diff.returncode:
-            return None
-        return [line for line in diff.stdout.splitlines() if line]
-    except (OSError, subprocess.SubprocessError):
-        return None
 
 
 def ops_tests_needed(changed):
@@ -1912,12 +1879,12 @@ class Run:
             # The lane's own words (lane-runner.py run_auto), so a local FAIL reads as the queue's would.
             errors.extend(f'hot-file ratchet — {line[len("FAIL "):]}' for line in text.splitlines()
                           if line.startswith('FAIL '))
-        if name in ('runner-tests', 'swift-scans', 'ops') or name.startswith('ops-'):
+        if name in ('runner-tests', 'ops') or name.startswith('ops-'):
             # The last summary: parallel_unittest.py prints a failing module's own "Ran" line before its total.
             ran = re.findall(r'Ran (\d+) tests? in ', text)
             entry['executed_count'] = int(ran[-1]) if ran else 0
             if not entry['executed_count']:
-                errors.append('Infrastructure runner executed zero tests' if name in ('runner-tests', 'swift-scans')
+                errors.append('Infrastructure runner executed zero tests' if name == 'runner-tests'
                               else f'{name} executed zero tests')
             if failures := unittest_failures(text):  # name them: CI shows only the manifest's errors (#2457)
                 errors.extend(report_unittest_failures(name, failures))
@@ -2109,12 +2076,6 @@ class Run:
         scope, why = runner_test_scope(self.changed)
         if pr_quick:
             self.skip('runner-tests', PR_QUICK_LEFT_OUT['runner-tests'])
-            changed = merge_commit_changes()
-            scans_scope, scans_why = runner_test_scope(changed)
-            if scans_scope == 'none':
-                self.skip('swift-scans', scans_why)
-            else:
-                self.command('swift-scans', SWIFT_SCANS_COMMAND, timeout=SWIFT_SCANS_TIMEOUT)
         elif portable:
             self.command('runner-tests', [*PARALLEL_RUNNER, '--leave-out', *PORTABLE_RUNNER_TESTS_LEFT_OUT,
                                           *self.runner_leave_out()], **RUNNER_TESTS_LIMITS)
@@ -2677,7 +2638,7 @@ def main():
                         help='Lane runs: the PR\'s changed paths, one per line (renames name both sides). --plan fast then '
                              'skips the runner and ops tests nothing in the diff can affect; without it every step runs')
     parser.add_argument('--pr-quick', action='store_true',
-                        help='--plan fast-portable on a PR: leave runner-tests to the merge group and run the Swift scans (PR_QUICK_STEPS)')
+                        help='--plan fast-portable on a PR: leave runner-tests to the merge group (PR_QUICK_LEFT_OUT)')
     parser.add_argument('--leave-out-slow', action='store_true',
                         help='PR and merge-group runs of the split plans: leave out the slow tier (scripts/slow_tier.py, '
                              '#5145), which --plan slow runs nightly and before builds')
@@ -2702,8 +2663,7 @@ def main():
     if args.list:
         print('\n'.join(f'{t} ({status})' for status, tests in journeys.items() for t in tests) if journeys
               else '\n'.join(sorted(plan_tests(ROOT, PLANS[args.plan][1]))) if args.plan in PLANS
-              else ('fast-portable runs ' + ', '.join([*(s for s in PORTABLE_STEPS if not (args.pr_quick and s in PR_QUICK_LEFT_OUT)),
-                                                        *(PR_QUICK_STEPS if args.pr_quick else ())])
+              else ('fast-portable runs ' + ', '.join(s for s in PORTABLE_STEPS if not (args.pr_quick and s in PR_QUICK_LEFT_OUT))
                     + '; it leaves out ' + ', '.join([*PORTABLE_LEFT_OUT, *(PR_QUICK_LEFT_OUT if args.pr_quick else ())])
                     if args.plan == 'fast-portable'
                     else 'slow tier (scripts/slow_tier.py): ' + ', '.join([*sorted(slow_tier.SLOW_RUNNER_MODULES),

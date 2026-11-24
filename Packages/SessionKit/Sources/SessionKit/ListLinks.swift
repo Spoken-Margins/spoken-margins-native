@@ -135,7 +135,7 @@ public enum FollowedRefreshTrigger: String, CaseIterable, Sendable {
     case tabAppear
     /// Pull down on Following.
     case pull
-    /// The Refresh button on Following.
+    /// The Refresh button Following drew until #4955. Nothing sends it now.
     case refreshButton
     /// **Check now** on a list.
     case checkNow
@@ -152,7 +152,7 @@ public enum FollowedRefreshTrigger: String, CaseIterable, Sendable {
     /// After a local change: a dismissed or imported episode, an unfollow, a muted show or a changed policy.
     case localChange
 
-    /// Whether this trigger lets the list checker run. Exactly the four listener actions.
+    /// Whether this trigger lets the list checker run. The listener actions (`refreshButton` is no longer sent, #4955).
     public var checksListLinks: Bool {
         switch self {
         case .tabAppear, .pull, .refreshButton, .checkNow: true

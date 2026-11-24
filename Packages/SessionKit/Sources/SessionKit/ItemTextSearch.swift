@@ -83,6 +83,11 @@ public enum ItemTextSearch {
         public var matches: [Match]
         /// True when more than `maxMatches` matches exist; `matches` holds the first `maxMatches`.
         public var hasMore: Bool
+
+        public init(matches: [Match] = [], hasMore: Bool = false) {
+            self.matches = matches
+            self.hasMore = hasMore
+        }
     }
 
     public static func search(_ query: String, in text: String, chapters: [Chapter] = [],

@@ -37,6 +37,10 @@ newest main the way the Mac's integration run does (ops/testdesk/integration_rev
 - It opens `revert/pr<N>` as a PR with `automerge` and files a `ready` + `regression` "Re-land #N" issue, both with
   SM_REVERT_TOKEN. That must be a token whose PRs start workflows (the App's installation token): a PR opened with the
   job token starts none, so it would never be tested or merged. Without it nothing is pushed.
+- It is two subcommands. `bisect` files the culprit issue and, when the revert is safe, writes
+  main-t3-revert-request.json into the evidence folder; `revert` then checks every rule again on the newest main and
+  opens it. The token is minted between the two (main-t3.yml): an App token lives one hour and a bisection can take
+  four, and the probes of older commits never run with a write token in their environment.
 - It refuses, and says why in the culprit issue, when the culprit is not a merged PR or is itself a revert; main
   already reverts it, or another revert PR is open; it changes persistence, a packet format, a migration or the lane
   (`.github/`, `scripts/lane*`); it changes only docs, ops or scripts outside the app build; the red run also has
@@ -50,13 +54,14 @@ The scripts/ folder is restored to the red commit's before each probe, so an old
 Run it only in a clean checkout (the workflow job): probes reset tracked files, so it refuses to start when any
 are modified.
 
-Subcommand:
+Subcommands:
 - bisect --sha RED --run-url URL --evidence DIR: as above. Exits 0 whatever it finds; the red status is already set.
   Needs a checkout with full history (fetch-depth: 0) and the red run's evidence folder, so it runs in the red run's
   job, or a job that downloads that evidence and sets up the Mac as main-t3.yml's t3 job does.
+- revert --evidence DIR: opens the revert `bisect` asked for in DIR, if any. Exits 0.
 
-Environment: GH_TOKEN and GH_REPO (the workflow's), and SM_REVERT_TOKEN for the revert (optional: without it the
-culprit issue says the revert was not opened and why). Stdlib only, Python 3.9-compatible.
+Environment: GH_TOKEN and GH_REPO (the workflow's), and SM_REVERT_TOKEN for `revert` only (without it the culprit
+issue says the revert was not opened and why). Stdlib only, Python 3.9-compatible.
 """
 from __future__ import annotations
 
@@ -100,6 +105,8 @@ BUDGET_SECONDS = 130 * 60
 TEST_SOURCES = 'App/SpokenMarginsAppTests'
 DEFAULT_AREA = 'area: groundwork'
 REVERT_TOKEN_ENV = 'SM_REVERT_TOKEN'
+# What `bisect` leaves for `revert` when the culprit is safe to revert (in the evidence folder).
+REVERT_REQUEST = 'main-t3-revert-request.json'
 PR_NUMBER = re.compile(r'Merge pull request #(\d+)|\(#(\d+)\)\s*$')
 
 PASS, FAIL, UNDECIDED = 'pass', 'fail', 'undecided'
@@ -293,14 +300,14 @@ def closed_issues() -> list:
 # ---- Revert: decision and text (pure) ----------------------------------------------------------------
 
 def revert_refusals(commit: dict, paths: list, scope, open_reverts: list, already_reverted: str | None,
-                    unexplained: list, token: str | None) -> list:
+                    unexplained: list, token: str | None, need_token: bool = True) -> list:
     """Reasons not to revert the culprit merge, empty when it is safe to try. `commit` has sha, parents, subject and
     body; `paths` are the files the merge changed against its first parent."""
     reasons = revert.revert_blockers(commit, paths, scope, ROOT, open_reverts, already_reverted)
     if unexplained:
         reasons.append(f'the red run also has {len(unexplained)} failing test{"s" if len(unexplained) != 1 else ""} '
                        'this merge did not cause, so reverting it would leave main red; a person should look at both')
-    if not token:
+    if need_token and not token:
         reasons.append(f'no {REVERT_TOKEN_ENV} is set, and a revert PR opened with the job token would start no checks, '
                        'so it could never merge')
     return reasons
@@ -437,7 +444,7 @@ def present_classes(grouped: dict, root: Path) -> dict:
 def make_probe(grouped: dict, wanted: set, red: str, run_id: str, evidence: Path):
     """The probe function. `wanted` is the red run's failing test ids; `probe.failed` maps a commit to the ones its
     probes saw fail."""
-    lane = t3.load_lane_runner()
+    lane = t3.load_lane_t3()
     lane.T3_TIMEOUT = PROBE_TIMEOUT
     count = [0]
 
@@ -595,6 +602,8 @@ def command_bisect(args) -> int:
         return 2
     evidence = Path(args.evidence)
     evidence.mkdir(parents=True, exist_ok=True)
+    # A request left by an earlier run must never be acted on for this one.
+    (evidence / REVERT_REQUEST).unlink(missing_ok=True)
     red = args.sha
     chosen = t3.pick_manifests(t3.read_manifests(evidence))
     # The red run's own manifests are the evidence; the probes write beside them in bisect-NN folders.
@@ -665,15 +674,11 @@ def command_bisect(args) -> int:
                 unexplained = [t for t in failed_tests if t not in shown]
                 body = culprit_body(result.sha, subject, pr, red, green, args.run_url, shown, result,
                                     failure_issue['html_url'] if failure_issue else None, unexplained)
-                token = os.environ.get(REVERT_TOKEN_ENV) or None
-                commit, refusals = None, []
+                # The token is not read here: it would sit in the environment through hours of probes of older
+                # commits, and an App token lives one hour (main-t3.yml mints it after this step; `revert` uses it).
+                refusals = []
                 try:
-                    fetch_main()
-                    commit = culprit_commit(result.sha)
-                    paths = changed_paths(result.sha)
-                    refusals = revert_refusals(commit, paths, revert.load_test_scope(ROOT),
-                                               open_revert_prs(), reverted_on_main(result.sha), unexplained, token)
-                    refusals += touched_since(paths, changed_on_main_since(red))
+                    _, refusals = revert_safety(result.sha, red, unexplained, token=None, need_token=False)
                 except Exception as error:  # noqa: BLE001 - test-scope.py runs from the red tree; the issue must still go up
                     refusals = [f'could not check whether the revert is safe: {error!r}'[:250]]
                 if refusals:
@@ -688,16 +693,12 @@ def command_bisect(args) -> int:
                     note += (f'. Not explained by this merge, and not bisected: {len(unexplained)} other failing test'
                              f'{"s" if len(unexplained) != 1 else ""} in the red run (another merge or a flake).')
                 if not refusals:
-                    issue_number = int(url.rstrip('/').rsplit('/', 1)[-1])
-                    pr_url, reland, why = open_revert(commit, red, args.run_url, shown, result.probes, issue_number,
-                                                      token, area)
-                    if pr_url:
-                        said = f'Revert opened: {pr_url} (`automerge`). Re-land: {reland or "not filed, see the run log"}.'
-                        note += '. ' + said
-                    else:
-                        said = not_reverted_section([why]).strip()
-                    print(said, flush=True)
-                    t3.gh('issue', 'comment', str(issue_number), '-R', t3.repo(), '--body-file', '-', stdin=said)
+                    request = {'sha': result.sha, 'red': red, 'run_url': args.run_url, 'tests': shown,
+                               'probes': [list(p) for p in result.probes],
+                               'culprit_issue': int(url.rstrip('/').rsplit('/', 1)[-1]), 'area': area,
+                               'failure_issue': failure_issue['number'] if failure_issue else None}
+                    (evidence / REVERT_REQUEST).write_text(json.dumps(request, indent=2) + '\n')
+                    note += '. A revert is next: this run opens it and says so on both issues.'
             else:
                 note = f'Bisected to `{result.sha[:7]}`; its issue is already open.'
         else:
@@ -706,6 +707,64 @@ def command_bisect(args) -> int:
             t3.gh('issue', 'comment', str(failure_issue['number']), '-R', t3.repo(), '--body-file', '-', stdin=note)
     except (RuntimeError, KeyError, ValueError) as error:
         print(f'::warning::Could not post the bisection result: {error}', flush=True)
+    return 0
+
+
+def revert_safety(sha: str, red: str, unexplained: list, token: str | None, need_token: bool = True) -> tuple:
+    """(commit, refusals) for reverting the culprit `sha` on the newest main: the Mac's rules, two breaks, the token,
+    and main having changed the culprit's files since the red run. Raises on a git or gh fault."""
+    fetch_main()
+    commit = culprit_commit(sha)
+    paths = changed_paths(sha)
+    refusals = revert_refusals(commit, paths, revert.load_test_scope(ROOT), open_revert_prs(), reverted_on_main(sha),
+                               unexplained, token, need_token=need_token)
+    refusals += touched_since(paths, changed_on_main_since(red))
+    return commit, refusals
+
+
+def command_revert(args) -> int:
+    """Open the revert that `bisect` asked for in its evidence folder, as SM_REVERT_TOKEN, and say so on the culprit
+    issue and the failure issue. Every safety rule is checked again first: main may have moved since. Exits 0."""
+    os.chdir(ROOT)
+    path = Path(args.evidence) / REVERT_REQUEST
+    if not path.exists():
+        print('No revert to open: the bisection named no culprit, or refused to revert it (its issue says why).',
+              flush=True)
+        return 0
+    try:
+        request = json.loads(path.read_text())
+        issue = int(request['culprit_issue'])
+        sha, red = request['sha'], request['red']
+    except (ValueError, KeyError, TypeError) as error:
+        print(f'::warning::The revert request is unreadable, so nothing is reverted: {error!r}', flush=True)
+        return 0
+    token = os.environ.get(REVERT_TOKEN_ENV) or None
+    pr_url, commit = None, None
+    try:
+        commit, refusals = revert_safety(sha, red, [], token)
+    except Exception as error:  # noqa: BLE001 - whatever broke, the culprit issue says the revert did not happen
+        refusals = [f'could not check whether the revert is safe: {error!r}'[:250]]
+    if not token:
+        refusals.append('the App token did not reach the revert step (its mint failed, or the App is not set up), '
+                        'and re-running the job will not retry the revert, because this culprit issue is now open')
+    if refusals:
+        said = not_reverted_section(refusals).strip()
+    else:
+        pr_url, reland, why = open_revert(commit, request['red'], request['run_url'], request['tests'],
+                                          [tuple(p) for p in request['probes']], issue, token, request['area'])
+        if pr_url:
+            said = f'Revert opened: {pr_url} (`automerge`). Re-land: {reland or "not filed, see the run log"}.'
+        else:
+            said = not_reverted_section([why]).strip()
+    print(said, flush=True)
+    try:
+        t3.gh('issue', 'comment', str(issue), '-R', t3.repo(), '--body-file', '-', stdin=said)
+        # The failure issue was told a revert comes next, so it hears how that ended either way.
+        if request.get('failure_issue'):
+            t3.gh('issue', 'comment', str(request['failure_issue']), '-R', t3.repo(), '--body-file', '-',
+                  stdin=f'Bisected to `{sha[:7]}` (culprit issue #{issue}): {said}')
+    except (RuntimeError, KeyError, ValueError) as error:
+        print(f'::warning::Could not post the revert result: {error}', flush=True)
     return 0
 
 
@@ -720,7 +779,11 @@ def main(argv=None) -> int:
                      help="the red run's evidence folder (its verify-* manifests, `main-<sha7>` under "
                           "$SM_LANE_EVIDENCE_DIR in main-t3.yml); probes write beside them")
     run.add_argument('--budget', type=int, default=BUDGET_SECONDS, help='seconds before it stops starting probes')
+    undo = sub.add_parser('revert', help="open the revert `bisect` asked for, as $SM_REVERT_TOKEN")
+    undo.add_argument('--evidence', required=True, help='the folder `bisect` wrote its revert request into')
     args = parser.parse_args(argv)
+    if args.command == 'revert':
+        return command_revert(args)
     if not re.fullmatch(r'[0-9a-f]{40}', args.sha):
         parser.error('--sha must be a full 40-character commit SHA')
     return command_bisect(args)
