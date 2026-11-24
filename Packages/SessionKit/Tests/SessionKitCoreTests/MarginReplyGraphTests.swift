@@ -57,7 +57,7 @@ final class MarginReplyGraphTests: XCTestCase {
             layers: [layerA, layerB],
             importedMargins: [importedMargin("copy", layer: "layer-a", scoped: "a-1"), importedMargin("reply", layer: "layer-b", scoped: "b-1", links: [link])]
         )
-        XCTAssertEqual(graph.states[.imported("reply")], .linked(.init(link: link, parent: .local("own"))))
+        XCTAssertEqual(graph.states[.imported("reply")], .linked(.init(link: link, parent: .local("session::own"))))
     }
 
     /// Codex audit on 8fe7edf: a deleted local Margin overrode the live copy imported back.
@@ -76,7 +76,7 @@ final class MarginReplyGraphTests: XCTestCase {
             importedMargins: [importedMargin("copy", layer: "layer-a", scoped: "a-1"), importedMargin("reply", layer: "layer-b", scoped: "b-1", links: [link])]
         )
         XCTAssertEqual(graph.states[.imported("reply")], .linked(.init(link: link, parent: .imported("copy"))))
-        XCTAssertNil(graph.states[.local("mine")])
+        XCTAssertNil(graph.states[.local("session::mine")])
         XCTAssertEqual(graph.threads, [link.conversationId: [.init(reply: .init(packageDigest: digestB, packageScopedId: "b-1"), parent: identity)]])
     }
 
@@ -87,12 +87,12 @@ final class MarginReplyGraphTests: XCTestCase {
         let parent = importedMargin("parent", layer: "layer-a", scoped: "a-1")
         let reply = margin("mine", replyTo: link)
         XCTAssertEqual(
-            MarginReplyGraph.build(localMargins: [reply], layers: [deleted], importedMargins: [parent]).states[.local("mine")],
+            MarginReplyGraph.build(localMargins: [reply], layers: [deleted], importedMargins: [parent]).states[.local("session::mine")],
             .parentMissing(link)
         )
         let live = ImportedCommentaryLayer(id: "layer-a", packageDigest: digestA, packageId: "a", itemIdentity: item, importedAt: date)
         let graph = MarginReplyGraph.build(localMargins: [reply], layers: [live], importedMargins: [parent])
-        XCTAssertEqual(graph.states[.local("mine")], .linked(.init(link: link, parent: .imported("parent"))))
+        XCTAssertEqual(graph.states[.local("session::mine")], .linked(.init(link: link, parent: .imported("parent"))))
         XCTAssertTrue(graph.threads.isEmpty, "a reply joins the shared threads once it has been shared")
         let shared = reply.recordingShare(as: .init(packageDigest: digestB, packageScopedId: "b-1"))
         XCTAssertEqual(

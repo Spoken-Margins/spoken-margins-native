@@ -260,6 +260,22 @@ test('the name typed in Share goes on the file, is kept for next time, and a bla
   await context.close();
 });
 
+test('a reply saved from a link whose show the friend does not follow names the sender’s show, not "Shared by" (#4689)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await friendPage(context);
+  await page.goto(LINK);
+  const playing = await startFromBeginning(page).then(() => page.getByRole('dialog', { name: EPISODE }));
+  await playing.getByRole('button', { name: 'Write a Margin' }).click();
+  await playing.getByLabel(/Your Margin at/).fill('My answer.');
+  await playing.getByRole('button', { name: 'Save Margin' }).click();
+  const downloading = page.waitForEvent('download');
+  await playing.getByRole('button', { name: 'Save as a file' }).click();
+  const saved = await readPacket(new Uint8Array(readFileSync((await (await downloading).path()) as string)));
+  // The friend's page files the episode under "Shared by …"; the iPhone took that for another show beside the same guid.
+  expect(saved.episode.showTitle).toBe('Example Show');
+  await context.close();
+});
+
 /** The file Save as a file just wrote, read back: the Margins it carries and whether it has the reply artifact. */
 async function savedPacket(page: Page, playing: Page | ReturnType<Page['getByRole']>) {
   const downloading = page.waitForEvent('download');

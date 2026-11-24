@@ -29,7 +29,8 @@ final class OnboardingProgressTests: XCTestCase {
         XCTAssertEqual(OnboardingStep.allCases.map(\.rawValue), [
             "first_interjection", "reviewed_timeline", "exported_session",
             "added_own_source", "added_from_safari", "added_from_files", "added_podcast",
-            "saw_first_margin_prompt" // added by #2852; earlier builds drop the name
+            "saw_first_margin_prompt", // added by #2852; earlier builds drop the name
+            "heard_first_margin" // added by #4711; earlier builds drop the name
         ])
         XCTAssertEqual(OnboardingStep.core, [.firstInterjection, .reviewedTimeline, .exportedSession])
         XCTAssertEqual(OnboardingStep.sourceExploration, [.addedOwnSource, .addedFromSafari, .addedFromFiles, .addedPodcast])

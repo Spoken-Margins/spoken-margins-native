@@ -135,17 +135,31 @@ INHERITED_CACHE = Path(os.environ.get('SM_LANE_INHERITED_CACHE') or
                        Path.home() / 'Library/Caches/SpokenMarginsLane/inherited-holds.json')
 
 
-def inherited_check(github, tree: Path, base: str, head: str):
+def short_error(text: str, limit: int = 320) -> str:
+    """<text> cut to about <limit> characters, keeping its end. A read's error names the path first and the reason last,
+    and a search path alone is 200 characters: cutting the end off left "gh api search/issues?...page=1:" with no reason
+    in merge group run 45291666840 (2026-11-23)."""
+    if len(text) <= limit:
+        return text
+    head = limit // 3
+    return text[:head] + ' … ' + text[-(limit - head - 3):]
+
+
+def inherited_check(github, tree: Path, base: str, head: str, api=None):
     """#712: a function from the PR's comments to the reasons its inherited audit findings hold it (see
     scripts/lane_inherited_holds.py). The lookup reads other PRs' audits for the commits this PR brings in beyond
-    next; the rules come from next's copy, like the other policies. A lookup that can't finish holds the merge."""
+    next; the rules come from next's copy, like the other policies. A lookup that can't finish holds the merge.
+
+    api, when given, is the GitHub read the lookup uses instead of its own one-try `gh api`: merge_policy.py passes one
+    that waits out rate limits and shares one search between every PR of a run."""
     try:
         policy = base_policy(tree, base, INHERITED_POLICY)
         if policy is None:
             raise RuntimeError(f'{base} has no {INHERITED_POLICY} yet')
-        holds = policy.find_holds(tree, github.repo, f'origin/{base}', head, github.pr, cache=INHERITED_CACHE)
+        reads = {'api': api} if api is not None else {}
+        holds = policy.find_holds(tree, github.repo, f'origin/{base}', head, github.pr, cache=INHERITED_CACHE, **reads)
     except Exception as error:  # noqa: BLE001 - any failure to look holds the merge instead of waving it through
-        why = f'{INHERITED_FAILED}: {str(error)[:200]}. Remove and re-add automerge to check again'
+        why = f'{INHERITED_FAILED}: {short_error(str(error))}. Remove and re-add automerge to check again'
         return lambda comments: [why]
     return lambda comments: policy.reasons(policy.unresolved(holds, comments, head), head)
 

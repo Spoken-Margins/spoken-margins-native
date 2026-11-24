@@ -235,3 +235,173 @@ class QueueActsAsTheApp(unittest.TestCase):
                 token = steps[queue]['env'][var].replace(' ', '')
                 self.assertTrue(token.startswith('${{steps.app-token.outputs.token||secrets.MERGE_QUEUE_TOKEN'),
                                 token)
+
+
+class GuardsRunBeforeTheMacs(unittest.TestCase):
+    """2026-11-20 to 11-24: 157 merge groups failed first in `hosted fast: portable` while their Mac jobs ran beside it,
+    1,569 hosted-Mac minutes, mostly on repository rule tests. hosted-portable.yml's `guards` job runs those tests first
+    in each merge group, every Mac job waits for it, and stop-on-guard-red cancels the run when a guard test fails. No
+    result of `guards` skips a Mac job (audit on 089d17c): a skipped required check counts as passed, so a guards red
+    whose cancel failed, or a setup flake in `guards`, would have let a group merge with no Mac check."""
+
+    REQUIRED = ('hosted fast: scope', 'hosted fast: portable', 'hosted fast: Mac rest', 'hosted app: build (no tests)')
+
+    @classmethod
+    def setUpClass(cls):
+        cls.jobs = parse(ROOT / '.github/workflows/hosted-portable.yml')['jobs']
+
+    @staticmethod
+    def needs(job):
+        needs = job.get('needs', [])
+        return [needs] if isinstance(needs, str) else list(needs)
+
+    def test_guards_is_a_linux_job_of_the_merge_group_that_runs_the_guard_list(self):
+        guards = self.jobs['guards']
+        self.assertEqual(guards['runs-on'], 'ubuntu-latest')
+        self.assertEqual(guards['if'].strip(), "github.event_name == 'merge_group'")
+        self.assertEqual(self.needs(guards), [], 'it starts at once, beside scope')
+        self.assertNotIn('permissions', guards, 'it runs the merge group\'s code with the read-only token')
+        self.assertLessEqual(guards['timeout-minutes'], 10)
+        runs = [step.get('run', '') for step in guards['steps']]
+        self.assertIn('.venv/bin/python scripts/queue_guards.py', runs)
+
+    def test_every_mac_job_waits_for_guards_and_no_guards_result_skips_it(self):
+        macs = [name for name, job in self.jobs.items() if not str(job.get('runs-on', '')).startswith('ubuntu')]
+        self.assertEqual(sorted(macs), ['app-compile', 'mac-rest', 'sessionkit'])
+        for name in macs:
+            with self.subTest(job=name):
+                job = self.jobs[name]
+                self.assertIn('guards', self.needs(job))
+                condition = ' '.join(job['if'].split())
+                # !cancelled() lets the job run whatever `guards` ended with (skipped on every PR push, failed in a
+                # setup step or a test); only the run's cancel stops it, and a failed cancel leaves the Macs running.
+                self.assertTrue(condition.startswith('!cancelled() && '), condition)
+                self.assertNotIn('needs.guards', condition)
+
+    def test_only_a_failed_guard_test_step_cancels_the_run(self):
+        guards = self.jobs['guards']
+        tests = [step for step in guards['steps'] if step.get('run') == '.venv/bin/python scripts/queue_guards.py']
+        self.assertEqual(len(tests), 1)
+        # A step that never ran (checkout, setup-python or Python tools failed) has an empty outcome: not red.
+        self.assertEqual(' '.join(str(guards['outputs']['red']).split()),
+                         "${{ steps.%s.outcome == 'failure' }}" % tests[0]['id'])
+        stop = self.jobs['stop-on-guard-red']
+        self.assertEqual(self.needs(stop), ['guards'])
+        self.assertEqual(stop['runs-on'], 'ubuntu-latest')
+        self.assertEqual(stop['permissions'], {'actions': 'write'})
+        self.assertEqual(' '.join(stop['if'].split()), "always() && needs.guards.outputs.red == 'true'")
+        self.assertIn('gh run cancel', stop['steps'][0]['run'])
+
+    def test_rearm_still_waits_for_every_other_job(self):
+        self.assertEqual(sorted(self.needs(self.jobs['rearm'])), sorted(name for name in self.jobs if name != 'rearm'))
+
+    def test_the_required_check_names_are_all_still_here_and_guards_is_not_one(self):
+        names = {job.get('name') for job in self.jobs.values()}
+        for required in self.REQUIRED:
+            self.assertIn(required, names)
+        self.assertEqual(self.jobs['guards']['name'], 'hosted fast: guards')
+
+
+class DeployWaitAlertStep(unittest.TestCase):
+    """#5255: a deploy waiting for the owner's approval gave him no alert (deploy-web sat `waiting` all of 2026-11-23).
+    owner-tap-alert.yml's scheduled run also runs scripts/deploy_wait_alert.py, as github-actions[bot]."""
+
+    def setUp(self):
+        self.document = parse(ROOT / '.github/workflows/owner-tap-alert.yml')
+        self.step = next((s for s in self.document['jobs']['alert']['steps']
+                          if 'deploy_wait_alert.py' in (s.get('run') or '')), None)
+
+    def test_step_exists_on_the_schedule_and_runs_the_script(self):
+        self.assertIsNotNone(self.step, 'owner-tap-alert.yml must run scripts/deploy_wait_alert.py')
+        self.assertIn("github.event_name == 'schedule'", self.step['if'])
+        self.assertNotIn('pull_request', self.step['if'])
+        self.assertTrue((ROOT / 'scripts/deploy_wait_alert.py').is_file())
+
+    def test_script_is_in_the_sparse_checkout(self):
+        checkout = self.document['jobs']['alert']['steps'][0]
+        self.assertIn('scripts/deploy_wait_alert.py', checkout['with']['sparse-checkout'].split())
+
+    def test_permissions_and_token_let_the_bot_read_runs_and_write_comments(self):
+        permissions = self.document['permissions']
+        self.assertEqual(permissions.get('actions'), 'read')
+        self.assertEqual(permissions.get('issues'), 'write')
+        self.assertEqual(self.step['env']['GH_TOKEN'].replace(' ', ''), '${{github.token}}')
+
+
+class ReadersUseTheAppBudget(unittest.TestCase):
+    """#5217: GITHUB_TOKEN's 1,000 requests an hour for the repository ran out on 2026-11-23 and the last three main-t3
+    runs failed on `commits/<sha>/statuses`. The readers that run in main's context mint the App token (its own, larger
+    budget) with read-only permissions and fall back to GITHUB_TOKEN. merge-policy.yml runs on pull_request from PR
+    branches, which can't use the main-only environment, so it stays on GITHUB_TOKEN; claude-audit.yml mints in its
+    own environment (ClaudeAuditReadsAsTheApp)."""
+
+    CASES = {
+        'main-t3.yml': ('decide', 'Decide'),
+        'merge-stall.yml': ('watch', 'Look for a stall'),
+    }
+
+    def test_each_reader_mints_a_read_only_token_first_and_falls_back(self):
+        for name, (job_id, step_name) in self.CASES.items():
+            with self.subTest(workflow=name):
+                job = parse(ROOT / '.github/workflows' / name)['jobs'][job_id]
+                self.assertEqual(job['environment'], {'name': 'agent-identity', 'deployment': False})
+                steps = job['steps']
+                self.assertTrue(is_app_token_mint_only(steps[0]), 'mint before anything that calls the API')
+                self.assertEqual(steps[0].get('id'), 'app-token')
+                self.assertIs(steps[0].get('continue-on-error'), True, 'a failed mint must fall back, not fail')
+                granted = {k: v for k, v in steps[0]['with'].items() if k.startswith('permission-')}
+                self.assertTrue(granted)
+                self.assertEqual(set(granted.values()), {'read'}, granted)
+                env = next(s for s in steps if s.get('name') == step_name)['env']
+                self.assertEqual(env['GH_TOKEN'].replace(' ', ''), '${{steps.app-token.outputs.token||github.token}}')
+
+    def test_the_app_token_never_reaches_a_checkout(self):
+        for name, (job_id, _) in self.CASES.items():
+            with self.subTest(workflow=name):
+                for step in parse(ROOT / '.github/workflows' / name)['jobs'][job_id]['steps']:
+                    if str(step.get('uses', '')).startswith('actions/checkout'):
+                        self.assertNotIn('app-token', str(step))
+
+    def test_the_alarm_issue_is_still_written_with_the_workflow_token(self):
+        steps = parse(ROOT / '.github/workflows/merge-stall.yml')['jobs']['watch']['steps']
+        look = next(s for s in steps if s.get('name') == 'Look for a stall')
+        self.assertEqual(look['env']['SM_WRITE_TOKEN'], '${{ github.token }}')
+        budget = next(s for s in steps if s.get('name') == 'Read the API budget')
+        self.assertEqual(budget['env']['GH_TOKEN'], '${{ github.token }}', "it watches that token's budget")
+
+    def test_the_main_t3_job_that_writes_stays_on_the_workflow_token(self):
+        job = parse(ROOT / '.github/workflows/main-t3.yml')['jobs']['t3']
+        self.assertEqual(job['env']['GH_TOKEN'], '${{ github.token }}')
+        self.assertNotIn('environment', job)
+
+
+class ClaudeAuditReadsAsTheApp(unittest.TestCase):
+    """#5217: claude-audit read the API with GITHUB_TOKEN, whose 1,000 requests an hour for the repository ran out. It
+    mints the App token and reads with it; writes stay on GITHUB_TOKEN (SM_WRITE_TOKEN). Claude never gets either."""
+
+    def steps(self):
+        return parse(ROOT / '.github/workflows/claude-audit.yml')['jobs']['audit']['steps']
+
+    def test_the_audit_step_reads_as_the_app_and_writes_as_the_workflow(self):
+        steps = self.steps()
+        mint = next(i for i, s in enumerate(steps) if is_app_token_mint_only(s))
+        audit = next(i for i, s in enumerate(steps) if s.get('name') == 'Audit')
+        self.assertLess(mint, audit)
+        self.assertEqual(steps[mint].get('id'), 'app-token')
+        self.assertIs(steps[mint].get('continue-on-error'), True, 'a failed mint must fall back, not fail')
+        permissions = {k for k in steps[mint]['with'] if k.startswith('permission-')}
+        self.assertTrue(permissions, 'the App token must be narrowed')
+        for name in permissions:
+            self.assertEqual(steps[mint]['with'][name], 'read', f'{name}: the App token only reads')
+        env = steps[audit]['env']
+        self.assertEqual(env['GH_TOKEN'].replace(' ', ''), '${{steps.app-token.outputs.token||github.token}}')
+        self.assertEqual(env['SM_WRITE_TOKEN'].replace(' ', ''), '${{github.token}}')
+
+    def test_the_app_token_reaches_no_other_step(self):
+        for step in self.steps():
+            if step.get('name') != 'Audit':
+                self.assertNotIn('app-token', json.dumps(step.get('env', {})) + str(step.get('run', '')))
+
+    def test_the_job_keeps_its_environment(self):
+        self.assertEqual(parse(ROOT / '.github/workflows/claude-audit.yml')['jobs']['audit']['environment'],
+                         'claude-audit')

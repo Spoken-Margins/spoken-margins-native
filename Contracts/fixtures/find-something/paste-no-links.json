@@ -1,0 +1,5 @@
+{
+  "description": "An answer with no links at all: the assistant didn't follow the line form.",
+  "text": "I can't browse the web, but here are some shows you might like:\n- Radiolab\n- 99% Invisible",
+  "expected": []
+}

@@ -75,6 +75,23 @@ export function sharedShowFor(sender: string | undefined, now: string): Show {
   };
 }
 
+/** A title the web gave a holder of friends' episodes ("Shared by …", "Shared with you"), not a show's own (#4689). */
+export function isSharedHolderTitle(title: string): boolean {
+  const folded = title.trim().replace(/\s+/g, ' ').toLowerCase();
+  return folded === 'shared with you' || (folded.startsWith('shared by ') && folded.length > 'shared by '.length);
+}
+
+/**
+ * The show a packet of this episode names (#4689). A "Shared by …" holder is the web's filing place, not the show: its title
+ * written as the packet's `showTitle` made the iPhone rule out the sender's own copy despite the same guid, and import a
+ * second copy. The packet names the show the friend's packet named instead, or no show when that was not kept.
+ */
+export function packetShowFor(show: Show | undefined, episode: Episode): Show | undefined {
+  if (!show?.id.startsWith(SHARED_SHOW_PREFIX)) return show;
+  const title = episode.showTitle?.trim();
+  return title ? { ...show, title } : undefined;
+}
+
 /** The listener's own copy of the packet's episode: by guid, then audio address, then page. */
 export function findEpisode(read: PacketRead, episodes: readonly Episode[]): Episode | undefined {
   const { guid, audioUrl, pageUrl } = read.episode;
@@ -138,9 +155,11 @@ export function placeImport(
   } else {
     const shared = sharedShowFor(read.sender, now);
     if (!shows.some((s) => s.id === shared.id)) show = shared;
-    const { showTitle: _showTitle, publisher: _publisher, ...fields } = read.episode;
+    const { showTitle, publisher: _publisher, ...fields } = read.episode;
+    const realShow = showTitle?.trim();
     episode = {
       ...fields,
+      ...(realShow && !isSharedHolderTitle(realShow) && { showTitle: realShow }),
       id: `${shared.id}#${read.episode.guid ?? read.episode.audioUrl ?? read.episode.pageUrl ?? read.contentDigest}`,
       showId: shared.id,
     };

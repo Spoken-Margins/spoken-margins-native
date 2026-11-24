@@ -93,10 +93,12 @@ public struct ItemDetailLoader {
             }
             return Set(turn.sourceInterjectionIds).isSubset(of: activeInterjectionIDs)
         }
-        let sessionRows = sessions.map { session in
-            let notes = ((try? store.loadInterjections(sessionId: session.id)) ?? [])
-                .filter { $0.status == "active" }
-            return SessionPresentation(
+        let activeNotesBySession = sessions.map { session in
+            (session, ((try? store.loadInterjections(sessionId: session.id)) ?? []).filter { $0.status == "active" })
+        }
+        let itemOwnMargins = activeNotesBySession.flatMap { $0.1 }
+        let sessionRows = activeNotesBySession.map { session, notes in
+            SessionPresentation(
                 session: session,
                 interjectionCount: notes.count,
                 interjectionPreview: notes.reversed().compactMap { note in
@@ -153,6 +155,7 @@ public struct ItemDetailLoader {
             addedAgainAt: item.addedAgainAt,
             sessionRows: sessionRows,
             interjections: interjections,
+            itemOwnMargins: itemOwnMargins,
             importedCommentaryLayers: importedLayers,
             importedCommentaryInterjections: importedInterjections,
             sharedMarginPlacement: placementPasses.pass(itemId: item.id),

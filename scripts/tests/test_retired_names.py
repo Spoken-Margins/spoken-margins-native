@@ -15,7 +15,7 @@ SOURCES = ROOT / "App" / "SpokenMarginsApp" / "Sources"
 
 # Each entry: the retired text and what the listener reads now.
 RETIRED = {
-    "Refresh Sources": "Refresh Following",
+    "Refresh Sources": "pull down on Following",
     "appear in Sources": "appear in Following",
     "under Add Source": "under Add to Library",
     "Opens Add Source": "Opens Add to Library",

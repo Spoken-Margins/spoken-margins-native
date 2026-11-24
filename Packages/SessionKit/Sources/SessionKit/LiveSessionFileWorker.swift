@@ -900,4 +900,120 @@ public actor LiveSessionFileWorker {
         try fileManager.moveItem(at: url, to: audio)
         try JSONEncoder().encode(transfer).write(to: inbox.appending(path: "\(stem).json"), options: .atomic)
     }
+
+    // MARK: Margins moved onto an item (#4233 Design 2.9.4)
+
+    /// What taking moved Margins out of a session did.
+    public struct MovedRemoval: Equatable, Sendable {
+        /// The session as it is now, or nil when the move emptied it and it went.
+        public var session: LiveSession?
+        /// True when the session went: a quick session the listener never renamed, left empty.
+        public var removedSession: Bool
+        /// The Margins that were in the session and are not now.
+        public var removedIds: [String]
+    }
+
+    /// Takes Margins that are now on an item out of session `sessionId`, in one write, after `LiveMarginMove.execute`
+    /// wrote the item side. Their ids go into `deletions.json`, so a late Watch copy of one is refused (filing's step 1),
+    /// but the session's own span does not: a quick session the move empties goes the way `tidy` removes one, so a later
+    /// Margin captured in its span still files, and Undo can bring the session back. Recording files are never deleted.
+    /// Returns nil when no stored session has that id.
+    public func removeMovedMargins(ids: Set<String>, fromSession sessionId: String) throws -> MovedRemoval? {
+        sessions() // loads the deletions too
+        guard let collection, let before = sessions()[sessionId] else { return nil }
+        var after = before
+        after.margins.removeAll { ids.contains($0.id) }
+        let removedIds = before.margins.map(\.id).filter { ids.contains($0) }
+        let previousDeletions = deletions
+        deletions.marginIds.formUnion(ids)
+        let goes = after.margins.isEmpty && LiveMarginMove.removesSession(before, movingIds: ids)
+        do {
+            if goes {
+                var all = sessions()
+                all[sessionId] = nil
+                try collection.writeLegacyMirror(Array(all.values))
+                collection.remove(id: sessionId)
+                cache = all
+                unseenMargins[sessionId] = nil
+                unseenTranscripts[sessionId] = nil
+            } else {
+                after.fitQuickSpan()
+                noteUnseen(from: before, to: after)
+                try persist([after])
+            }
+        } catch {
+            deletions = previousDeletions
+            throw error
+        }
+        try? collection.saveDeletions(deletions)
+        for key in unseenMargins.keys { for id in ids { unseenMargins[key]?[id] = nil } }
+        return MovedRemoval(session: goes ? nil : after, removedSession: goes, removedIds: removedIds)
+    }
+
+    /// Why Undo couldn't put Margins back into their session.
+    public enum RestoreOutcome: Equatable, Sendable {
+        /// They are in the session again (or already were). The session as stored now.
+        case restored(LiveSession)
+        /// The session became a Library item meanwhile.
+        case savedAsNotes
+        /// The listener discarded the session meanwhile.
+        case discarded
+    }
+
+    /// Undo of a move, live side: puts `margins` back into `session` (the session as it was before the move) with their
+    /// ids, recordings, times, position lines and filing notes, and takes their ids out of `deletions.json`. A session the
+    /// move or `tidy` removed is made again from `session`, holding only these Margins. A Margin already back in a session
+    /// is skipped, so a second Undo restores nothing twice. Refused, with nothing changed, when the session was saved as
+    /// notes or discarded meanwhile.
+    public func restoreMovedMargins(_ margins: [LiveSessionMargin], into session: LiveSession) throws -> RestoreOutcome {
+        sessions() // loads the deletions too
+        guard collection != nil else { return .restored(session) }
+        if deletions.deletedSession(session.id) { return .discarded }
+        let stored = sessions()[session.id]
+        if stored?.savedItemId != nil { return .savedAsNotes }
+        var target: LiveSession
+        if let stored {
+            target = stored
+        } else {
+            target = session
+            target.margins = []
+        }
+        let before = target
+        let elsewhere = Set(sessions().values.flatMap { $0.margins.map(\.id) })
+        let returning = margins.filter { !elsewhere.contains($0.id) }
+        guard !returning.isEmpty else { return .restored(stored ?? session) }
+        let previousDeletions = deletions
+        deletions.marginIds.subtract(returning.map(\.id))
+        for margin in returning { target.add(margin) }
+        if stored == nil { noteUnseen(from: LiveSession(id: target.id, startedAt: target.startedAt), to: target) } else {
+            noteUnseen(from: before, to: target)
+        }
+        do {
+            try persist([target])
+        } catch {
+            deletions = previousDeletions
+            throw error
+        }
+        try? collection?.saveDeletions(deletions)
+        return .restored(target)
+    }
+
+    /// Finishes a move the app was stopped in the middle of (Design 2.9.4 step 3): the item side was written, the live
+    /// side not yet. `liveMarginIds` are the live ids of the moved Margins still active on items (the origin records'
+    /// `liveMarginId`, which the app reads from the database). Each of them still in an unsaved session is taken out as
+    /// the move would have. Returns the sessions that changed or went.
+    @discardableResult
+    public func reconcileMovedMargins(liveMarginIds: Set<String>) -> [String] {
+        guard !liveMarginIds.isEmpty else { return [] }
+        let holding = sessions().values
+            .filter { $0.savedItemId == nil && $0.margins.contains { liveMarginIds.contains($0.id) } }
+            .map(\.id)
+            .sorted()
+        var touched: [String] = []
+        for sessionId in holding {
+            let ids = Set(sessions()[sessionId]?.margins.map(\.id).filter { liveMarginIds.contains($0) } ?? [])
+            if (try? removeMovedMargins(ids: ids, fromSession: sessionId)) != nil { touched.append(sessionId) }
+        }
+        return touched
+    }
 }

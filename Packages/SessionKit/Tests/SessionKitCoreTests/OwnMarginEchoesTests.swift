@@ -131,6 +131,15 @@ final class OwnMarginEchoesTests: XCTestCase {
                 XCTAssertEqual(
                     OwnMarginEchoes.isEcho(theMargin, in: theLayer, ownIdentities: OwnMarginEchoes.identities(of: ownHere)),
                     row.echo, "Swift: \(row.why)")
+                let kept = OwnMarginEchoes.friendMargins(layers: [theLayer], records: [theLayer.id: [theMargin]], ownMargins: ownHere)
+                XCTAssertEqual(kept.records[theLayer.id]?.count ?? 0, row.echo ? 0 : 1, "friendMargins: \(row.why)")
+                XCTAssertEqual(kept.layers.count, row.echo ? 0 : 1, "friendMargins layer: \(row.why)")
+                XCTAssertEqual(
+                    SharedPacketArrival.ownCopiesCount(importedIds: ["copy"], saved: [theMargin], layer: theLayer, ownMargins: ownHere) == nil,
+                    !row.echo, "ownCopiesCount: \(row.why)")
+                XCTAssertEqual(
+                    SharedPacketArrival.newMarginCount(importedIds: ["copy"], saved: [theMargin], layer: theLayer, ownMargins: ownHere),
+                    row.echo ? 0 : 1, "newMarginCount: \(row.why)")
                 XCTAssertEqual(try store.loadSharedMarginTallies()["a"]?.total ?? 0, row.echo ? 0 : 1, "SQL: \(row.why)")
                 XCTAssertEqual(try store.loadFriendMarginsArrivals()["a"] == nil, row.echo, "arrivals: \(row.why)")
                 XCTAssertEqual(try store.loadImportedCommentaryInterjections(layerId: "layer").count, 1, "stored either way: \(row.why)")

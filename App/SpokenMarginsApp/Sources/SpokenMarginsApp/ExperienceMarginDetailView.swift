@@ -151,6 +151,10 @@ struct ExperienceMarginDetailView: View {
     var body: some View {
         NavigationStack {
             List {
+                SpeechAskCardInList(surface: .detail)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 Section {
                     // The live session's photo comes first, above the words (#4180). No lookup entry (any other Margin,
                     // or before the lookup loads) shows nothing, never the missing-file line.
@@ -200,7 +204,7 @@ struct ExperienceMarginDetailView: View {
                 }
                 if current.interjection.replyTo != nil {
                     Section("Replying to") {
-                        if let context = model.marginParentContext(of: .local(current.interjection.id), itemId: current.interjection.itemId) {
+                        if let context = model.marginParentContext(of: .local(current.interjection.sessionScopedId), itemId: current.interjection.itemId) {
                             MarginParentContextView(context: context)
                         } else {
                             Text(MarginThreadPresentation.missingParentNote)
@@ -233,7 +237,12 @@ struct ExperienceMarginDetailView: View {
                                 .textSelection(.enabled)
                         }
                     }
-                    if current.canRetryTranscription {
+                    if current.transcriptWaitsForAnswer {
+                        Button("Get Transcript", systemImage: "text.bubble") {
+                            SpeechAskController.shared.getTranscript(on: .detail, model: model)
+                        }
+                        .accessibilityIdentifier("marginDetail.getTranscript.button")
+                    } else if current.canRetryTranscription {
                         Button(model.isRetryingInterjectionTranscription(current.interjection) ? "Transcribing…" : "Retry Transcription", systemImage: "arrow.clockwise") {
                             model.retryInterjectionTranscription(current.interjection)
                         }
@@ -263,7 +272,12 @@ struct ExperienceMarginDetailView: View {
             .task(id: MarginTidyCardModel.key(for: current.interjection)) {
                 await tidy.refresh(for: current.interjection, using: model)
             }
-            .marginExportShareSheet($exportShare)
+            .marginExportShareSheet($exportShare) { completed, activityType, failed in
+                // Save to Files leaves nothing on screen; say it worked. A cancel or a failure says nothing here (#5051).
+                if let message = ExportSavedConfirmation.message(completed: completed, activityType: activityType, failed: failed) {
+                    model.reportConfirmation(message)
+                }
+            }
             .confirmationDialog("What do you want to export?", isPresented: $showsExportQuestion, titleVisibility: .visible) {
                 Button("Text only") { exportThisMargin(.textOnly) }
                     .accessibilityIdentifier("marginDetail.export.textOnly")
@@ -316,6 +330,7 @@ struct ExperienceMarginDetailView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("marginDetail.screen")
             .navigationTitle("Margin")
+            .onDisappear { SpeechAskController.shared.surfaceLeft(.detail) }
             .navigationBarTitleDisplayMode(.inline)
             .scrollContentBackground(.hidden)
             .background(AppColors.bone)

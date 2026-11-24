@@ -48,12 +48,23 @@ extension Gate1AppModel {
         Task { await PublicSourceChecks.ensureMark(itemId: itemId, store: store) }
     }
 
-    /// The share review's note (#3449): how many scene summaries the packet will leave out. The check runs first, so a
-    /// public source is not told its summaries stay home. The count is read from the same rule the packet uses.
-    func refreshWithheldMapNote() async {
-        guard let store = try? requireStore() else { return }
+    /// The share review's note (#3449, #4635): how many scene summaries the packet will leave out. The count is read
+    /// first, from the same rule the packet uses; the public-source check runs only when something would be withheld, so
+    /// an item with no model-written scenes, or one already marked public, contacts nobody. When the check runs, the count
+    /// is read again, so a source it now finds public is not told its summaries stay home. The Share sheet the listener
+    /// opened is the only caller.
+    func refreshWithheldMapNote(store: SQLiteSessionStore) async {
         let itemId = selectedItem.id
+        await recountWithheldMapNote(store: store, itemId: itemId)
+        guard !Task.isCancelled, selectedItem.id == itemId, sharingState.withheldMapSceneCount > 0 else { return }
         await PublicSourceChecks.ensureMark(itemId: itemId, store: store, timeout: PublicSourceChecks.shareTimeout)
+        await recountWithheldMapNote(store: store, itemId: itemId)
+    }
+
+    /// Reads the withheld-scene count for `itemId` from the store, off the main thread, and shows it while that item is
+    /// still the one being shared. It makes no request: the packet build calls it after its own check, so Review and the
+    /// recipient preview match what was sent.
+    func recountWithheldMapNote(store: SQLiteSessionStore, itemId: String) async {
         let count = try? await StoreReader(store).read(priority: .userInitiated) { store -> Int in
             let item = try store.loadItem(id: itemId)
             return SharedMarginExport.withheldSceneCount(
@@ -61,7 +72,7 @@ extension Gate1AppModel {
                 currentProposalID: try store.loadResolvedListeningMapProjection(itemId: itemId)?.proposalId,
                 for: item)
         }
-        guard selectedItem.id == itemId else { return }
+        guard !Task.isCancelled, selectedItem.id == itemId else { return }
         sharingState.withheldMapSceneCount = count ?? 0
     }
 }

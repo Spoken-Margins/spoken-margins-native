@@ -12,7 +12,7 @@ The owner reads only the Claude project chats, never GitHub, and every ask costs
 Answer each in order. Any "yes" means don't ask.
 
 1. **Is it reversible or technical?** Refactors, tests, lanes, scheduling, labels, internal structure, dead code: post a **Default taken** on the issue (options, pick, why) and keep going. He vetoes by number.
-2. **Is it housekeeping?** Superseded PRs, merged-fix issues, labels, re-arming, stale claims, worktrees and caches that `ops/disk` calls safe, Test Desk and Mac worker starts. Do it.
+2. **Is it housekeeping?** Superseded PRs, merged-fix issues, labels, re-arming after a push (never without one: [lane-request skill](../lane-request/SKILL.md), "Re-arm only after a push"), stale claims, worktrees and caches that `ops/disk` calls safe, Test Desk and Mac worker starts. Do it.
 3. **Did he already answer?** Search `docs/decisions.md`, the issue, and project memory. If an earlier answer covers it, act on it and quote it.
 4. **Can a script, a thread or the coordinator do it?** Then they do it. Another session's work goes through the coordinator (threads use their message-the-coordinator tool), never through him. Never ask him to relay a message, paste text into another session, or check on another thread.
 5. **Was it asked before with no new facts?** Don't ask again. If a blocker repeats, file one issue for its lasting fix and stop repeating the ask.

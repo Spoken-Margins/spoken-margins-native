@@ -36,9 +36,21 @@ final class ShareLinkSender: ObservableObject {
         case ready(URL, companionFile: URL?, packet: URL)
         /// The listener hasn't agreed to the upload yet (#2842). The screen asks; nothing has been sealed or sent.
         case needsConsent
-        /// No link was made; the file share is still there. Holds the one line to show.
-        case useFile(String)
+        /// No link was made; the file share is still there. Holds why, which gives the one line to show and what "Share
+        /// link" does afterwards (#4134).
+        case useFile(ShareLinkFallback)
     }
+
+    /// What "Share link" does while this screen shows its state (#4134): a refusal a retry won't pass disables it, and a
+    /// build below the server's minimum hides it.
+    var shareLinkAfterwards: ShareLinkButtonAfterFallback {
+        if case .useFile(let fallback) = state { return fallback.shareLinkAfterwards }
+        return .enabled
+    }
+
+    /// Refuse mode, from this build's Info.plist (#4134). The key is absent today, which is off; it is set in Release only,
+    /// with the App Attest entitlement, so Debug and Simulator builds keep making links.
+    private static let faultPolicy = ShareLinkFaultPolicy.fromInfoPlist(Bundle.main.infoDictionary)
 
     @Published private(set) var state: State = .idle
     /// Shown while the link is made and after, when the share will carry the file too.
@@ -76,18 +88,20 @@ final class ShareLinkSender: ObservableObject {
     /// screen asks the server once (our server, no one else's) so a fresh install can offer the button.
     func isOffered() async -> Bool {
         guard let bridge else { return false }
-        switch await bridge.state(of: ServerService.links) {
-        case .on: return true
-        case .off(.noConfig), .off(.staleConfig):
+        var links = await bridge.state(of: ServerService.links)
+        if links == .off(.noConfig) || links == .off(.staleConfig) {
             await bridge.refreshConfigOnly()
-            return await bridge.state(of: ServerService.links).isOn
-        case .off: return false
+            links = await bridge.state(of: ServerService.links)
         }
+        // Below the server's minimum build the button stays hidden, but the screen says to update instead of nothing
+        // (#4134). Only an idle screen takes the line, so it never replaces a link or a line already on show.
+        if case .off(.buildTooOld) = links, state == .idle { state = .useFile(.updateNeeded) }
+        return links.isOn
     }
 
     /// Seals and uploads the packet at `packageURL`, the file the sender would otherwise share.
     func makeLink(packageURL: URL) {
-        guard state != .making else { return }
+        guard state != .making, shareLinkAfterwards.allowsShareLink else { return }
         // Before anything is read, sealed or sent, and before any key is made: the first link asks (#2842).
         guard ServerSendConsent.hasConsented(to: .shareLinks) else {
             state = .needsConsent
@@ -109,7 +123,7 @@ final class ShareLinkSender: ObservableObject {
                 (packet, preview) = made
                 companionNote = preview.needsCompanionFile ? Self.companionLine : nil
             case .failure(let fallback):
-                state = .useFile(fallback.message)
+                state = .useFile(fallback)
                 return
             }
             var linksState = ServerFeatureState.off(.noConfig)
@@ -132,7 +146,7 @@ final class ShareLinkSender: ObservableObject {
                 },
                 post: ShareLinkTransport.postWithHeaders
             )
-            let result = await client.makeLink(packet: packet, preview: preview, linksState: linksState)
+            let result = await client.makeLink(packet: packet, preview: preview, linksState: linksState, faultPolicy: Self.faultPolicy)
             // The listener went back or changed the selection meanwhile: this link is for a packet the screen no
             // longer shows, so no sheet opens for it.
             guard requests.accepts(ticket) else { return }
@@ -146,7 +160,7 @@ final class ShareLinkSender: ObservableObject {
             case .useFile(let fallback):
                 // No link, so nothing goes with it: the file share beside the button is the way.
                 companionNote = nil
-                state = .useFile(fallback.message)
+                state = .useFile(fallback)
             case .needsConsent:
                 companionNote = nil
                 state = .needsConsent
@@ -172,6 +186,15 @@ final class ShareLinkSender: ObservableObject {
     /// check's line, which is about the link that was made, goes too.
     func reset() {
         requests.cancel()
+        // A line that took "Share link" away stays for as long as this sheet is open: going back to the selection
+        // doesn't make a refusal pass (#4134). A new sheet is a new sender and tries once more.
+        if !shareLinkAfterwards.allowsShareLink {
+            companionNote = nil
+            playCheckLinkID = nil
+            playCheckLine = nil
+            announcementWaitsForSheet = false
+            return
+        }
         state = .idle
         companionNote = nil
         playCheckLinkID = nil
@@ -312,18 +335,53 @@ struct ShareLinkStatusLines: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("build23.sender.share.link.companion")
             }
-            if case .useFile(let message) = state {
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(AppColors.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("build23.sender.share.link.fallback")
+            if case .useFile(let fallback) = state {
+                ShareLinkFallbackLine(message: fallback.message)
             }
             if let playCheckLine {
                 ShareLinkPlayCheckLineView(line: playCheckLine, linkID: playCheckLinkID)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Why no link was made, in the pinned bar above "Share link". From AX1 it keeps to two lines with "More", which opens
+/// the whole message (#3839's rule for the pinned bar; #4134 adds lines long enough to need it).
+struct ShareLinkFallbackLine: View {
+    let message: String
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var showsFullText = false
+
+    private var isLimited: Bool { typeSize >= .accessibility1 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(AppColors.secondaryText)
+                .lineLimit(isLimited ? 2 : nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("build23.sender.share.link.fallback")
+            if isLimited {
+                Button(ShareReviewCardWords.more) { showsFullText = true }
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityHint("Shows the whole message")
+                    .accessibilityIdentifier("build23.sender.share.link.fallback.more")
+            }
+        }
+        .trackedSheet(isPresented: $showsFullText) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(message)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Done") { showsFullText = false }
+                    .filledActionButton()
+                Spacer(minLength: 0)
+            }
+            .padding(24)
+            .presentationDetents([.medium, .large])
+        }
     }
 }
 
