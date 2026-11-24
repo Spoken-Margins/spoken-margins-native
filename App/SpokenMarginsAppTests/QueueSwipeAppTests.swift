@@ -279,8 +279,9 @@ final class QueueSwipeAppTests: XCTestCase {
         XCTAssertFalse(model.feedbackEvent?.message.hasPrefix("Queued") ?? false)
         XCTAssertEqual(model.activeItemId, loadedItem, "the loaded item is untouched")
 
-        // The listener's own Add to Queue still queues the file.
-        let one = try XCTUnwrap(folderFiles().first { $0.name == "one.md" })
+        // The listener's own Add to Queue still queues the file. A row's `name` drops the extension (`QuickAccessFolderScanner`);
+        // the file name is its `id`.
+        let one = try XCTUnwrap(folderFiles().first { $0.id == "one.md" })
         model.addQuickFolderFileToQueue(one)
         try await pollUntil { queuedIds.count == 3 }
         XCTAssertEqual(queuedIds.count, 3)
