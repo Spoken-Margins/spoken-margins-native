@@ -118,9 +118,27 @@ final class MapTextDisclosureTests: XCTestCase {
 
     func testTheReviewNoteIsPlainAndOnlyShownWhenSomethingStays() {
         XCTAssertNil(MapTextDisclosure.withheldNote(sceneCount: 0))
-        XCTAssertTrue(MapTextDisclosure.withheldNote(sceneCount: 1)?.contains("1 scene are left out") == true)
-        XCTAssertTrue(MapTextDisclosure.withheldNote(sceneCount: 7)?.contains("7 scenes are left out") == true)
-        XCTAssertTrue(MapTextDisclosure.withheldNote(sceneCount: 7)?.hasPrefix("Scene summaries stay on this phone.") == true)
+        XCTAssertNil(MapTextDisclosure.withheldNote(sceneCount: -1))
+        XCTAssertEqual(
+            MapTextDisclosure.withheldNote(sceneCount: 1),
+            "The Listening Map title and summary for 1 scene won't be sent, because this source isn't confirmed as freely available online."
+        )
+        XCTAssertEqual(
+            MapTextDisclosure.withheldNote(sceneCount: 2),
+            "Listening Map titles and summaries for 2 scenes won't be sent, because this source isn't confirmed as freely available online."
+        )
+        XCTAssertEqual(
+            MapTextDisclosure.withheldNote(sceneCount: 7),
+            "Listening Map titles and summaries for 7 scenes won't be sent, because this source isn't confirmed as freely available online."
+        )
+    }
+
+    func testThePreviewMapLineNamesTheWithheldScenesOnlyWhenSomethingStays() {
+        XCTAssertNil(MapTextDisclosure.withheldMapLine(sceneCount: 0))
+        XCTAssertNil(MapTextDisclosure.withheldMapLine(sceneCount: -1))
+        XCTAssertEqual(MapTextDisclosure.withheldMapLine(sceneCount: 1), "Listening Map included, without titles and summaries for 1 scene")
+        XCTAssertEqual(MapTextDisclosure.withheldMapLine(sceneCount: 2), "Listening Map included, without titles and summaries for 2 scenes")
+        XCTAssertEqual(MapTextDisclosure.withheldMapLine(sceneCount: 7), "Listening Map included, without titles and summaries for 7 scenes")
     }
 
     private func item(reference: String? = "https://example.com/posts/harbour-lights", type: String? = "url", marked: String?) -> Item {

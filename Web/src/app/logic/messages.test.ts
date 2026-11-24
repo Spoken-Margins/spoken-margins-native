@@ -8,6 +8,14 @@ import { NeedsRelayConsent, PaidPostNoVoice, PostPageReadRefused, ReadHttpError,
 import { SearchError } from '../../sources/search.ts';
 import { MESSAGES, plainError } from './messages.ts';
 
+test('a refused feed link says the app’s words: try again later, or a fresh RSS link for a paid show (#4176)', () => {
+  assert.equal(
+    plainError(new ReadHttpError(403, 'direct')),
+    'The feed turned this link down. Try again later, or for a paid show, copy a fresh RSS link from the creator’s page.',
+  );
+  assert.equal(plainError(new ReadHttpError(401, 'direct')), plainError(new ReadHttpError(403, 'direct')));
+});
+
 test('feed failures read as what happened and what to do, never a status code', () => {
   const rows: Array<[unknown, string]> = [
     [new ReadHttpError(404, 'direct'), MESSAGES.feedGone],
