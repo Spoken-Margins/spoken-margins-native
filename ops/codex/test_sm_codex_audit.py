@@ -1355,6 +1355,19 @@ class OwnerTapPrAudit(unittest.TestCase):
         with patch.object(A, "run", return_value=SimpleNamespace(stdout=failed)), patch.object(A, "gh_json_lines", return_value=[]):
             self.assertEqual(A.head_checks_state(HEAD), ("failed", ["t1"]))
 
+    def test_a_cancelled_lane_conflicts_check_does_not_keep_a_risky_pr_from_its_audit(self):
+        # #5249: required checks green, lane-conflicts' `check` cancelled by its own concurrency group. The audit skipped
+        # #5161 as "checks failed: 1" (run 45319588167); it must read the head as ok and audit it.
+        runs = "\n".join(json.dumps(r) for r in (
+            {"name": "hosted fast: portable", "status": "completed", "conclusion": "success"},
+            {"name": "hosted fast: scope", "status": "completed", "conclusion": "success"},
+            {"name": "check", "status": "completed", "conclusion": "cancelled"}))
+        with patch.object(A, "run", return_value=SimpleNamespace(stdout=runs)), patch.object(A, "gh_json_lines", return_value=[]):
+            self.assertEqual(A.head_checks_state(HEAD), ("ok", []))
+        required = '{"name": "hosted fast: portable", "status": "completed", "conclusion": "cancelled"}'
+        with patch.object(A, "run", return_value=SimpleNamespace(stdout=required)), patch.object(A, "gh_json_lines", return_value=[]):
+            self.assertEqual(A.head_checks_state(HEAD), ("failed", ["hosted fast: portable"]))
+
 
 class UsageRecording(unittest.TestCase):
     def test_batch_retains_transcript_and_records_once_even_on_timeout(self):
