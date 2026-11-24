@@ -56,9 +56,11 @@ if [[ -n "$(git -C "${repo}" status --porcelain -- Web)" ]]; then
   echo "note: Web/ has uncommitted changes; they are not deployed"
 fi
 echo "== build Web/ at ${commit} (relay ${relay_origin})"
-# Web/ imports the share-link page's opener from the server's tree, so that
-# folder comes along (only its .mjs files are read).
-git -C "${repo}" archive HEAD Web research/B4/server/internal/links | tar -x -C "${stage}"
+# Everything the build reads from outside Web/ comes along: the share-link page's opener from the server's tree (only
+# its .mjs files are read) and the Margins control center cases that vite.config.ts reads. scripts/deploy_check.py and
+# deploy-web.yml list the same folders, and test_deploy_check.py fails if vite.config.ts reads a file not listed here.
+sources=(Web research/B4/server/internal/links Contracts/fixtures/margins-control-center)
+git -C "${repo}" archive HEAD "${sources[@]}" | tar -x -C "${stage}"
 if ! (cd "${stage}/Web" && npm ci --no-audit --no-fund --loglevel=error &&
   VITE_RELAY_ORIGIN="${relay_origin}" npm run build -- --outDir "${stage}/dist" --emptyOutDir) >"${stage}/build.log" 2>&1; then
   tail -30 "${stage}/build.log" >&2
