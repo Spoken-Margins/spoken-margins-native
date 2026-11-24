@@ -26,7 +26,7 @@ struct PinnedMarginCardView: View {
         }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
         // Sending or cancelling leaves the caught-up card up; only Dismiss or moving on puts it away (#4785).
-        .sheet(item: $caughtUpShare) { PlainTextShareSheet(text: $0.text) }
+        .trackedSheet(item: $caughtUpShare) { PlainTextShareSheet(text: $0.text) }
         // A Margin that waits for a tap, or could not play, appears at the top of Now while VoiceOver's focus is elsewhere:
         // say so once, when the card enters that stage or another Margin replaces it (#3728). `VoiceOverAnnouncements`
         // decides; the stages that play aloud, and a guided Margin's 420 ms beat, stay silent. The key carries the Margin's
