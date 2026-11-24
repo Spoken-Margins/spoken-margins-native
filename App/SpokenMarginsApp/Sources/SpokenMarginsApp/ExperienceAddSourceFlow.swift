@@ -50,7 +50,6 @@ struct ExperienceAddSourceFlow: View {
                     } else if showsRoutePicker {
                         routePicker
                     } else {
-                        selectedRouteHeader
                         routeContent
                     }
                 }
@@ -77,7 +76,7 @@ struct ExperienceAddSourceFlow: View {
             .navigationTitle(showsPinnedTextAction ? "Add Text" : "Add to Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if showsPinnedTextAction {
+                if showsRouteBack {
                     ToolbarItem(placement: .topBarLeading) {
                         Button {
                             focusedField = nil
@@ -162,6 +161,11 @@ struct ExperienceAddSourceFlow: View {
 
     private var showsPinnedTextAction: Bool {
         !showsRoutePicker && selectedRoute == .pastedText && model.sourceLinkCandidateReview == nil
+    }
+
+    /// Every route page (Link, Paste Text, Quick Folder) uses this one toolbar back, so iOS draws its glass circle (#4954).
+    private var showsRouteBack: Bool {
+        !showsRoutePicker && model.sourceLinkCandidateReview == nil
     }
 
     /// Paste & go sits in the bottom inset of the route picker, in thumb reach at the medium detent (#145).
@@ -257,27 +261,6 @@ struct ExperienceAddSourceFlow: View {
             guard let route = tile.route else { return }
             selectedRoute = route
             showsRoutePicker = false
-        }
-    }
-
-    private var selectedRouteHeader: some View {
-        HStack(spacing: 12) {
-            Button {
-                focusedField = nil
-                showsRoutePicker = true
-            } label: {
-                Image(systemName: "chevron.left")
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.bordered)
-            .accessibilityLabel("Choose a different source type")
-            .accessibilityIdentifier("addSource.route.back")
-            Image(systemName: selectedRoute.systemImage)
-                .foregroundStyle(AppColors.evergreen)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(selectedRoute.title).font(.headline)
-            }
         }
     }
 

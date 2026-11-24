@@ -650,7 +650,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertTrue(model.isSharingInterjectionsPresented)
         XCTAssertEqual(model.sharingState.drafts.count, 2, "both passes are listed")
-        let draft = try XCTUnwrap(model.sharingState.drafts.first { $0.id == "lost-recording" })
+        let draft = try XCTUnwrap(model.sharingState.drafts.first { $0.interjection.id == "lost-recording" })
         XCTAssertEqual(draft.representationChoice, .textOnly)
         XCTAssertEqual(draft.preparationMessage, ShareCleanupWords.Failure.recordingMissing.message)
         let packet = await model.exportSharedInterjections(presentsReadySheet: false)
@@ -1189,7 +1189,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         reopened.prepareShareInterjections()
 
         XCTAssertEqual(reopened.sharingState.draftFilter, .starred)
-        XCTAssertEqual(reopened.sharingState.drafts.filter(\.isIncluded).map(\.id), ["margin-starred"])
+        XCTAssertEqual(reopened.sharingState.drafts.filter(\.isIncluded).map(\.interjection.id), ["margin-starred"])
 
         reopened.setStarredForSharing(curated, starred: false, place: .manage)
         await reopened.settleItemReload() // the item detail reloads off the main thread after the star (#2505)
@@ -1319,7 +1319,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.sharingState.drafts[0].currentEditState.automaticCleanupEnabled)
         XCTAssertTrue(model.sharingState.automaticallyCleanedDraftIDs.isEmpty)
 
-        model.prepareCleanup(forShareDraft: "margin-auto-clean-toggle")
+        model.prepareCleanup(forShareDraft: model.sharingState.drafts[0].id)
         XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
         XCTAssertTrue(model.sharingState.automaticallyCleanedDraftIDs.isEmpty)
 

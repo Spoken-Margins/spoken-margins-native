@@ -516,9 +516,19 @@ public enum ImportedItemResolver {
     /// know the show, a different show rules the match out. Import paths clean a feed's title
     /// differently (Following drops tags and decodes `&amp;`; a direct RSS add keeps CDATA text as
     /// written), so both titles get the same cleanup before they're compared.
+    /// The web app files an episode it knows only from a friend's packet under a holder titled "Shared by <sender>"
+    /// or "Shared with you", and its replies wrote that holder's title as the packet's show (#4689). It names no show,
+    /// so it never rules a GUID match out; files already sent carry it too.
     static func guidShowsAreCompatible(_ lhs: String?, _ rhs: String?) -> Bool {
-        guard let lhs = foldedShowTitle(lhs), let rhs = foldedShowTitle(rhs) else { return true }
+        guard let lhs = foldedShowTitle(lhs), let rhs = foldedShowTitle(rhs),
+              !isWebSharedHolderTitle(lhs), !isWebSharedHolderTitle(rhs) else { return true }
         return lhs == rhs
+    }
+
+    /// A folded show title that is the web app's holder for friends' episodes, not a show's own (#4689).
+    static func isWebSharedHolderTitle(_ folded: String) -> Bool {
+        let prefix = "shared by "
+        return folded == "shared with you" || (folded.hasPrefix(prefix) && folded.count > prefix.count)
     }
 
     /// A show title with entities decoded, tags and extra spaces dropped, and case and accents folded;

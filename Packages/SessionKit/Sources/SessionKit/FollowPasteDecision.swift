@@ -13,6 +13,11 @@ public enum FollowPasteDecision: Equatable {
 
     public static let notALinkMessage = "The clipboard doesn’t hold a link. Copy a show’s link, then tap Paste."
     public static let sheetTitle = "Follow a show"
+    /// The Follow sheet's footer under the link field (#4176). A paid show's private RSS link follows like any other
+    /// feed, and members find it on the creator's or membership page, not in a podcast app. #5094 puts the same words on
+    /// the web Follow sheet; keep the two alike by hand. No privacy promise here: see the #4176 Design, Default 3.
+    public static let sheetFooter =
+        "Or type a show\u{2019}s feed link. For a paid show, such as one on Patreon, copy your private RSS link from the creator\u{2019}s page."
     public static let undoTitle = "Undo"
 
     public static func decide(clipboard: String?) -> FollowPasteDecision {
