@@ -899,6 +899,32 @@ FAST_SPLIT_PLANS = ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest')
 # Plans that run only host steps (no Xcode scheme).
 HOST_ONLY_PLANS = ('slow', 'mac-build', 'main-mac')
 # --plan mac-build's reason for every test step it leaves out (#5281).
+# The shipped-build guards (#5281 audit): SessionKitTests classes that decode this build's stored rows or packets with
+# the last shipped build's frozen model. They protect listener data and packet compatibility, so every merge group
+# runs them, even the build-only Mac job. A class is one when its file uses the frozen module (ShippedSessionKit) or is
+# named for a shipped build or reader; test_slow_tier keeps the rule honest against the files.
+SHIPPED_GUARD_DIR = 'Packages/SessionKit/Tests/SessionKitTests'
+SHIPPED_GUARD_FILE_NAME = re.compile(r'Build\d+|Shipped|PacketExpectations')
+SHIPPED_GUARD_CLASS = re.compile(r'^\s*(?:@\w+\s+)*(?:final\s+)?class\s+(\w+)\s*:[^{]*\bXCTestCase\b', re.M)
+
+
+def shipped_guard_classes(root=None):
+    """Sorted names of the SessionKitTests classes that guard the shipped build's packets and database."""
+    names = set()
+    for path in sorted((Path(root or ROOT) / SHIPPED_GUARD_DIR).glob('*.swift')):
+        text = path.read_text()
+        if SHIPPED_GUARD_FILE_NAME.search(path.stem) or 'ShippedSessionKit' in text:
+            names.update(SHIPPED_GUARD_CLASS.findall(text))
+    return sorted(names)
+
+
+def shipped_guard_regex(classes):
+    """A SwiftPM --filter regex (matched against "Module.Class/test") for exactly these SessionKitTests classes."""
+    if not classes:
+        raise RuntimeError(f'no shipped-build guard classes found in {SHIPPED_GUARD_DIR}')
+    return r'^SessionKitTests\.(?:' + '|'.join(re.escape(name) for name in classes) + ')/'
+
+
 MAC_BUILD_LEFT_OUT = ('the merge queue builds on the Mac and runs no Mac tests (#5281); --plan main-mac runs them on main '
                       '(main-slow.yml), and the Linux job runs the core tests the two platforms share')
 HOSTED_SESSIONKIT_STEPS = ('package-build', 'package-core', 'package-core-serial')
@@ -2273,11 +2299,16 @@ class Run:
     def mac_build(self):
         """--plan mac-build (#5281): the merge queue's Mac job, build only. It compiles SessionKit and every one of
         its test targets with the Mac's Swift (the Linux job builds with another Swift and cannot see Apple-only code),
-        and runs the shipped build's packet and database checks when the diff reaches them: those are guards, which
-        stay on every merge. The Mac tests themselves (SessionKitCoreTests on the Mac, SessionKitTests, the runner
+        then runs the shipped-build guard classes (shipped_guard_classes) on every merge, and the shipped build's
+        packet and database checks when the diff reaches them: those are guards, which stay on every merge. The Mac tests themselves (SessionKitCoreTests on the Mac, SessionKitTests, the runner
         tests that drive Apple tools, ops) run on main instead, in --plan main-mac. Linux runs the 9,950 core tests the
         two share on every merge group."""
         self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
+        # The shipped-build guards run on every merge group whatever the diff (#5281 audit): shipped_compat below
+        # runs only for watched paths and only the classes that export packets.
+        self.command('shipped-guards', [*PACKAGE_RUNNER, '--only', shipped_guard_regex(shipped_guard_classes())],
+                     timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
+                     tests=True)
         self.shipped_compat()
         for name in ('package-core', 'package', 'runner-tests', 'ops', 'tools'):
             self.skip(name, MAC_BUILD_LEFT_OUT)

@@ -138,6 +138,29 @@ class LeaveOutTests(unittest.TestCase):
             self.assertIn(call, body)
         build = source[source.index('    def mac_build(self):'):source.index('    def main_mac(self):')]
         self.assertIn('self.shipped_compat()', build)  # the packet and database guards stay on every merge
+        self.assertIn("'shipped-guards'", build)  # and the frozen-model guard classes, whatever the diff
+        self.assertLess(build.index("'package-build'"), build.index("'shipped-guards'"))
+
+    def test_the_shipped_guard_classes_cover_every_file_that_uses_the_frozen_model(self):
+        # #5281 audit on 0c85405: build-only merge groups had dropped these Build 29 guards.
+        vt = load('verify_tests_guards', 'verify-tests.py')
+        classes = vt.shipped_guard_classes()
+        for name in ('PreparedAudioBuild29Tests', 'FeedEntryFirstSeenBuild29Tests', 'MovedMarginOriginShippedReaderTests',
+                     'PacketExpectationsTests', 'ItemDescriptionBuild29Tests', 'CoopResendBuild29Tests',
+                     'FeedNewItemPolicyBuild29Tests', 'SharedMarginFirstHeardBuild29Tests', 'PDFBibliographyBuild29Tests',
+                     'AddedAgainShippedReaderTests', 'DownloadedVoiceShippedReaderTests', 'Build29UpgradeProgressTests'):
+            self.assertIn(name, classes)
+        folder = ROOT / vt.SHIPPED_GUARD_DIR
+        for path in folder.glob('*.swift'):
+            if 'ShippedSessionKit' in path.read_text():
+                for name in vt.SHIPPED_GUARD_CLASS.findall(path.read_text()):
+                    self.assertIn(name, classes, path.name)
+        regex = re.compile(vt.shipped_guard_regex(classes))
+        self.assertTrue(regex.search('SessionKitTests.PreparedAudioBuild29Tests/testA'))
+        self.assertFalse(regex.search('SessionKitTests.PreparedAudioBuild29TestsMore/testA'))
+        self.assertFalse(regex.search('SessionKitCoreTests.PreparedAudioBuild29Tests/testA'))
+        with self.assertRaises(RuntimeError):
+            vt.shipped_guard_regex([])
         done = subprocess.run([sys.executable, str(SCRIPTS / 'verify-tests.py'), '--plan', 'main-mac',
                                '--leave-out-slow', '--list'], capture_output=True, text=True, cwd=ROOT)
         self.assertNotEqual(done.returncode, 0)  # main-mac never leaves the slow tier out
