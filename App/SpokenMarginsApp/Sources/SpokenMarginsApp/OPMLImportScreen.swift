@@ -20,6 +20,15 @@ final class OPMLImportModel: ObservableObject {
 
         /// A list of links rather than a file: the screen says "list", never "file", and Cancel leaves.
         var isLinkList: Bool { self != .file }
+
+        /// The same origin, for the preview's words in SessionKit (#4858).
+        var wordsSource: OPMLImportPreviewWords.Source {
+            switch self {
+            case .file: return .file
+            case .shortcut: return .shortcut
+            case .assistant: return .assistant
+            }
+        }
     }
 
     enum Phase: Equatable {
@@ -31,7 +40,7 @@ final class OPMLImportModel: ObservableObject {
     }
 
     @Published private(set) var phase: Phase = .choosing
-    /// Ids of the new feeds that will be followed; all of them when a file is read.
+    /// Ids of the new feeds that will be followed; when a file or list is read, all but those on a home-network address (#4858).
     @Published private(set) var selected: Set<String> = []
     @Published private(set) var origin: Origin = .file
     /// The links a Shortcut or the listener's AI passed in, as they were passed.
@@ -131,7 +140,8 @@ final class OPMLImportModel: ObservableObject {
         if !origin.isLinkList { passedFeedLinks = [] }
         do {
             let preview = OPMLImportPlanner.preview(try document(), existing: subscriptions())
-            selected = Set(preview.toFollow.map(\.id))
+            // A home-network feed starts unticked (#4858); the listener can still tick it.
+            selected = preview.defaultSelection
             previewed = preview
             phase = .preview(preview)
         } catch {
@@ -285,27 +295,35 @@ struct OPMLImportScreen: View {
 
     @ViewBuilder
     private func previewSections(_ preview: OPMLImportPreview) -> some View {
+        let source = importer.origin.wordsSource
         Section {
-            if preview.toFollow.isEmpty {
-                Text(importer.origin.isLinkList ? "Nothing new to follow in this list." : "Nothing new to follow in this file.")
+            if let line = OPMLImportPreviewWords.emptyNewLine(preview, source: source) {
+                Text(line)
             }
             ForEach(preview.toFollow) { candidate in
+                let row = OPMLImportPreviewWords.row(candidate, source: source)
                 Toggle(isOn: Binding(
                     get: { importer.isSelected(candidate) },
                     set: { importer.setSelected(candidate, $0) }
                 )) {
-                    feedLabel(candidate.title, detail: candidate.feed.map { URLComponents(string: $0.url)?.host ?? $0.url })
+                    feedLabel(row.title, detail: row.detail)
                 }
                 .tint(AppColors.evergreen)
+                .accessibilityLabel(row.accessibilityLabel)
+                // Keyed by the parsed title, as before #4858, so journey steps that tap a row keep working.
                 .accessibilityIdentifier("opml.import.toggle.\(candidate.title)")
             }
         } header: {
             countHeader("New", preview.toFollow.count)
+        } footer: {
+            if let footer = OPMLImportPreviewWords.newFooter(preview, source: source) {
+                Text(footer)
+            }
         }
         if !preview.alreadyFollowed.isEmpty {
             Section {
                 ForEach(Array(preview.alreadyFollowed.enumerated()), id: \.offset) { _, feed in
-                    feedLabel(feed.title, detail: nil)
+                    feedLabel(OPMLImportPreviewWords.title(feed.title, feedURL: feed.feedURL), detail: nil)
                 }
             } header: {
                 countHeader("Already followed", preview.alreadyFollowed.count)
@@ -316,7 +334,7 @@ struct OPMLImportScreen: View {
         if !preview.duplicatesInFile.isEmpty {
             Section {
                 ForEach(Array(preview.duplicatesInFile.enumerated()), id: \.offset) { _, feed in
-                    feedLabel(feed.title, detail: nil)
+                    feedLabel(OPMLImportPreviewWords.title(feed.title, feedURL: feed.feedURL), detail: nil)
                 }
             } header: {
                 countHeader(importer.origin.isLinkList ? "Repeated in the list" : "Repeated in the file", preview.duplicatesInFile.count)
@@ -324,11 +342,24 @@ struct OPMLImportScreen: View {
                 Text("Each feed is followed once.")
             }
         }
-        if preview.unusableOutlineCount > 0 {
+        if let unusable = OPMLImportPreviewWords.unusableSection(preview, source: source) {
             Section {
-                Text("\(preview.unusableOutlineCount) \(preview.unusableOutlineCount == 1 ? "entry has" : "entries have") no feed link Spoken Margins can use, so \(preview.unusableOutlineCount == 1 ? "it's" : "they're") skipped.")
+                if unusable.names.isEmpty {
+                    Text(unusable.note)
+                } else {
+                    ForEach(Array(unusable.names.enumerated()), id: \.offset) { _, name in
+                        feedLabel(name, detail: nil)
+                    }
+                    if let more = unusable.more {
+                        Text(more).foregroundStyle(AppColors.secondaryText)
+                    }
+                }
             } header: {
-                countHeader("Unusable", preview.unusableOutlineCount)
+                Text(unusable.header)
+            } footer: {
+                if !unusable.names.isEmpty {
+                    Text(unusable.note)
+                }
             }
         }
     }
@@ -340,7 +371,7 @@ struct OPMLImportScreen: View {
                 Text("No feeds were followed.")
             }
             ForEach(result.followed) { candidate in
-                Label(candidate.title, systemImage: "checkmark")
+                Label(OPMLImportPreviewWords.title(candidate.title, feedURL: candidate.feed?.url), systemImage: "checkmark")
             }
         } header: {
             countHeader("Followed", result.followed.count)
@@ -352,7 +383,7 @@ struct OPMLImportScreen: View {
         if !result.failed.isEmpty {
             Section {
                 ForEach(result.failed, id: \.candidate.id) { failure in
-                    feedLabel(failure.candidate.title, detail: failure.reason)
+                    feedLabel(OPMLImportPreviewWords.title(failure.candidate.title, feedURL: failure.candidate.feed?.url), detail: failure.reason)
                 }
             } header: {
                 countHeader("Couldn't follow", result.failed.count)
@@ -362,7 +393,7 @@ struct OPMLImportScreen: View {
         if !result.notTried.isEmpty {
             Section {
                 ForEach(result.notTried) { candidate in
-                    feedLabel(candidate.title, detail: nil)
+                    feedLabel(OPMLImportPreviewWords.title(candidate.title, feedURL: candidate.feed?.url), detail: nil)
                 }
             } header: {
                 countHeader("Stopped before", result.notTried.count)
