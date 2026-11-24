@@ -311,6 +311,71 @@ final class OPMLImportTests: XCTestCase {
         try await body()
     }
 
+    // MARK: - #4920: Select All, Deselect All and search
+
+    func testDeselectAllFollowsNothingAndNeverCallsFollow() async throws {
+        var followCalls = 0
+        let importer = OPMLImportModel(subscriptions: { [] }, follow: { _ in followCalls += 1 })
+        importer.load(data: Data(Self.twelveShowOPML.utf8))
+        XCTAssertEqual(importer.selected.count, 12)
+        XCTAssertEqual(importer.selection?.showsSearch, true)
+        importer.deselectAllShown()
+        XCTAssertTrue(importer.selected.isEmpty)
+        await importer.followSelected()
+        XCTAssertEqual(followCalls, 0)
+        guard case .preview = importer.phase else { return XCTFail("Follow with nothing ticked stays on the preview: \(importer.phase)") }
+        XCTAssertTrue(OPMLFeedsURLProtocol.requestedURLs.isEmpty)
+    }
+
+    func testDeselectAllThenTwoSearchesFollowsExactlyTheTwoTickedFromAFile() async throws {
+        let importer = makeImporter()
+        importer.load(data: Data(Self.twelveShowOPML.utf8))
+        try await followTwoBySearch(importer)
+    }
+
+    func testDeselectAllThenTwoSearchesFollowsExactlyTheTwoTickedFromALinkList() async throws {
+        let importer = makeImporter()
+        importer.load(feedLinks: Self.twelveShowLinks)
+        XCTAssertEqual(importer.origin, .shortcut)
+        try await followTwoBySearch(importer)
+    }
+
+    private func followTwoBySearch(_ importer: OPMLImportModel) async throws {
+        XCTAssertEqual(try preview(importer).toFollow.count, 12)
+        XCTAssertEqual(importer.selection?.newRows.prefix(3).map(\.title), ["Show 1", "Show 2", "Show 3"], "A to Z, numbers by value")
+        importer.deselectAllShown()
+
+        importer.searchText = "Show 3"
+        let three = try XCTUnwrap(importer.matches?.new.first)
+        XCTAssertEqual(importer.matches?.new.map(\.title), ["Show 3"])
+        importer.setSelected(three, true)
+
+        importer.searchText = "show 7 "
+        let seven = try XCTUnwrap(importer.matches?.new.first)
+        XCTAssertEqual(seven.title, "Show 7")
+        importer.setSelected(seven, true)
+        XCTAssertEqual(importer.selection.map { $0.hiddenTickedCount(importer.matches!) }, 1)
+        XCTAssertEqual(importer.selected.count, 2, "Follow counts the ticked show the search hides")
+
+        await importer.followSelected()
+        XCTAssertEqual(importer.searchText, "", "following clears the search")
+        guard case .finished(let result) = importer.phase else { return XCTFail("\(importer.phase)") }
+        XCTAssertEqual(Set(result.followed.map(\.title)), ["Show 3", "Show 7"])
+        XCTAssertEqual(Set(try store.loadFeedSubscriptions().map(\.source.canonicalURL)), [
+            "https://feeds.example.com/show3.xml", "https://feeds.example.com/show7.xml",
+        ])
+    }
+
+    /// Twelve shows in reverse order, so the preview's A to Z order differs from the file's.
+    static let twelveShowLinks = (1...12).reversed().map { "Show \($0) https://feeds.example.com/show\($0).xml" }
+
+    static let twelveShowOPML = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <opml version="2.0"><body>
+    \((1...12).reversed().map { #"  <outline type="rss" text="Show \#($0)" xmlUrl="https://feeds.example.com/show\#($0).xml"/>"# }.joined(separator: "\n"))
+    </body></opml>
+    """
+
     /// `mixedOPML` as the lines a Shortcut passes: names before links, two in one text, and junk for the outline with no link.
     static let mixedLinks = [
         "Pod One https://feeds.example.com/pod1.xml\nPod Two https://feeds.example.com/pod2.xml",

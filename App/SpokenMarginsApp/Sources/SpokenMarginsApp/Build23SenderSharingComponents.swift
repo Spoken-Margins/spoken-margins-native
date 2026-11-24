@@ -1187,7 +1187,7 @@ struct Build23LeadInRow: View {
                 send(.toggleLeadInPreview(id: marginID))
             }
             .buttonStyle(.bordered)
-            .tint(leadIn.isPlaying ? AppColors.plum : AppColors.evergreen)
+            .tint(AppColors.evergreen)
             .disabled(!leadIn.previewIsAvailable && !leadIn.isPlaying)
             .accessibilityIdentifier("build23.sender.leadIn.preview.\(marginID)")
 
@@ -1237,7 +1237,7 @@ struct Build23AudioPreviewControls: View {
                     player.toggle(url: playable.url)
                 }
                 .buttonStyle(.bordered)
-                .tint(isActive ? AppColors.plum : AppColors.evergreen)
+                .tint(AppColors.evergreen)
                 .accessibilityLabel(isActive ? ShareReviewCardWords.stopListening : playable.title)
                 .accessibilityIdentifier("build23.sender.voice-preview.\(playable.id)")
 

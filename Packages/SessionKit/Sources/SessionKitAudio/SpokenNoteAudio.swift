@@ -11,7 +11,7 @@ public struct SystemSpokenNoteTranscriber: SpokenNoteTranscribing {
     }
 
     public func transcribe(fileAt url: URL) async throws -> [AlignedTranscriptSegment] {
-        try await client.transcribeAligned(audioPath: url.path).segments
+        try await client.transcribeAligned(audioPath: url.path, for: .spokenNote).segments
     }
 }
 

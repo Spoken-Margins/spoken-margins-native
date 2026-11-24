@@ -8,7 +8,8 @@ import SessionKitFeeds
 /// time through the app's normal follow path. Nothing is added to the Library, downloaded or
 /// prepared. Opens from Following and from the first-run drawer, and with a list of feed links from the
 /// "Follow Podcasts in Spoken Margins" Shortcut action (#4284), or with the shows the listener's own AI suggested
-/// (Following's "Suggested by your AI" row, #4683).
+/// (Following's "Suggested by your AI" row, #4683). A long list can be unticked or ticked in one tap, is shown A to Z, and
+/// above 10 new shows can be searched (#4920, `OPMLImportSelection`).
 @MainActor
 final class OPMLImportModel: ObservableObject {
     /// Where the previewed feeds came from, for the screen's words.
@@ -40,8 +41,16 @@ final class OPMLImportModel: ObservableObject {
     }
 
     @Published private(set) var phase: Phase = .choosing
-    /// Ids of the new feeds that will be followed; when a file or list is read, all but those on a home-network address (#4858).
-    @Published private(set) var selected: Set<String> = []
+    /// The listener's ticks on the preview, with its sorted rows (#4920); nil outside the preview.
+    @Published private(set) var selection: OPMLImportSelection?
+    /// The preview's search text (#4920). Ticks hidden by a search stay ticked.
+    @Published var searchText = "" {
+        didSet { if searchText != oldValue { refreshMatches() } }
+    }
+    /// The rows the current search shows, worked out once per change to the search or the preview.
+    @Published private(set) var matches: OPMLImportSelection.Matches?
+    /// Ids of the new feeds that will be followed: every new one when a list is read, except home-network feeds (#4858).
+    var selected: Set<String> { selection?.ticked ?? [] }
     @Published private(set) var origin: Origin = .file
     /// The links a Shortcut or the listener's AI passed in, as they were passed.
     private(set) var passedFeedLinks: [String] = []
@@ -82,7 +91,7 @@ final class OPMLImportModel: ObservableObject {
     func reset() {
         guard !isFollowing else { return }
         phase = .choosing
-        selected = []
+        setSelection(nil)
         origin = .file
         passedFeedLinks = []
         previewed = nil
@@ -90,7 +99,7 @@ final class OPMLImportModel: ObservableObject {
 
     func showFailure(_ error: Error) {
         guard !isFollowing else { return }
-        selected = []
+        setSelection(nil)
         phase = .failed(Self.message(for: error, origin: origin))
     }
 
@@ -141,7 +150,7 @@ final class OPMLImportModel: ObservableObject {
         do {
             let preview = OPMLImportPlanner.preview(try document(), existing: subscriptions())
             // A home-network feed starts unticked (#4858); the listener can still tick it.
-            selected = preview.defaultSelection
+            setSelection(OPMLImportSelection(preview: preview, startingTicks: preview.defaultSelection))
             previewed = preview
             phase = .preview(preview)
         } catch {
@@ -149,10 +158,32 @@ final class OPMLImportModel: ObservableObject {
         }
     }
 
-    func isSelected(_ candidate: SourceCandidate) -> Bool { selected.contains(candidate.id) }
+    func isSelected(_ candidate: SourceCandidate) -> Bool { selection?.isTicked(candidate.id) ?? false }
 
     func setSelected(_ candidate: SourceCandidate, _ isOn: Bool) {
-        if isOn { selected.insert(candidate.id) } else { selected.remove(candidate.id) }
+        selection?.setTicked(candidate.id, isOn)
+    }
+
+    /// Select All: ticks every new show the search shows (all of them with no search).
+    func selectAllShown() {
+        guard let matches else { return }
+        selection?.selectAll(matches)
+    }
+
+    /// Deselect All: unticks every new show the search shows (all of them with no search).
+    func deselectAllShown() {
+        guard let matches else { return }
+        selection?.deselectAll(matches)
+    }
+
+    private func setSelection(_ newSelection: OPMLImportSelection?) {
+        selection = newSelection
+        searchText = ""
+        refreshMatches()
+    }
+
+    private func refreshMatches() {
+        matches = selection?.matches(searchText)
     }
 
     /// At the preview: drops the file without following anything. While following: stops before
@@ -177,6 +208,8 @@ final class OPMLImportModel: ObservableObject {
         guard case .preview(let preview) = phase else { return }
         let ticked = preview.toFollow.filter { selected.contains($0.id) }
         guard !ticked.isEmpty else { return }
+        // Follow counts every ticked show, shown or hidden by a search; the search goes before following starts.
+        searchText = ""
         phase = .following(done: 0, total: ticked.count)
         let result = await OPMLImportRunner.follow(
             preview,
@@ -223,12 +256,14 @@ struct OPMLImportScreen: View {
     /// A fresh import each time the screen opens, so an old preview never reappears.
     @StateObject private var importer: OPMLImportModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var isChoosingFile = false
     @State private var didOpenFilePicker = false
     /// Following's Follow sheet opens this screen from "Import from another app" (#3205): the file picker
     /// opens at once instead of waiting for a second tap.
     private let opensFilePickerOnAppear: Bool
-    /// What Done does instead of popping this screen: a Shortcut's import closes the whole drawer (#4290).
+    /// What Done does instead of popping this screen: a Shortcut's import closes the whole drawer (#4290), and an
+    /// import from Following's Follow sheet closes that sheet (#5052). Cancel and the back button still pop.
     private let onDone: (() -> Void)?
 
     init(importer: @autoclosure @escaping () -> OPMLImportModel, opensFilePickerOnAppear: Bool = false, onDone: (() -> Void)? = nil) {
@@ -240,6 +275,8 @@ struct OPMLImportScreen: View {
     var body: some View {
         List { content }
             .listStyle(.insetGrouped)
+            .modifier(ImportSearchField(isOn: showsSearchField, text: $importer.searchText))
+            .scrollDismissesKeyboard(.immediately)
             .scrollContentBackground(.hidden)
             .background(AppColors.bone)
             .safeAreaInset(edge: .bottom) { actions }
@@ -293,14 +330,87 @@ struct OPMLImportScreen: View {
         }
     }
 
+    /// The search field shows only in the preview, above 10 new shows (#4920).
+    private var showsSearchField: Bool {
+        guard case .preview = importer.phase else { return false }
+        return importer.selection?.showsSearch == true
+    }
+
+    private var isSearching: Bool { importer.matches?.isSearching == true }
+
     @ViewBuilder
     private func previewSections(_ preview: OPMLImportPreview) -> some View {
         let source = importer.origin.wordsSource
+        if let selection = importer.selection, let matches = importer.matches {
+            newSection(preview, selection: selection, matches: matches)
+            if !matches.alreadyFollowed.isEmpty {
+                Section {
+                    ForEach(matches.alreadyFollowed) { row in
+                        feedLabel(OPMLImportPreviewWords.title(row.feed.title, feedURL: row.feed.feedURL), detail: nil)
+                    }
+                } header: {
+                    countHeader("Already followed", matches.alreadyFollowed.count, of: matches.isSearching ? selection.alreadyFollowed.count : nil)
+                } footer: {
+                    Text("These stay as they are, including any you've muted.")
+                }
+            }
+            if !matches.repeated.isEmpty {
+                Section {
+                    ForEach(matches.repeated) { row in
+                        feedLabel(OPMLImportPreviewWords.title(row.feed.title, feedURL: row.feed.feedURL), detail: nil)
+                    }
+                } header: {
+                    countHeader(importer.origin.isLinkList ? "Repeated in the list" : "Repeated in the file", matches.repeated.count,
+                                of: matches.isSearching ? selection.repeated.count : nil)
+                } footer: {
+                    Text("Each feed is followed once.")
+                }
+            }
+            // The search is for shows to follow: sections with nothing to tick are hidden while one is typed.
+            if !matches.isSearching, let unusable = OPMLImportPreviewWords.unusableSection(preview, source: source) {
+                Section {
+                    if unusable.names.isEmpty {
+                        Text(unusable.note)
+                    } else {
+                        ForEach(Array(unusable.names.enumerated()), id: \.offset) { _, name in
+                            feedLabel(name, detail: nil)
+                        }
+                        if let more = unusable.more {
+                            Text(more).foregroundStyle(AppColors.secondaryText)
+                        }
+                    }
+                } header: {
+                    Text(unusable.header)
+                } footer: {
+                    if !unusable.names.isEmpty {
+                        Text(unusable.note)
+                    }
+                }
+            }
+        } else {
+            // Not reachable: the preview and its selection are set together. Drawn as an empty preview.
+            Section {
+                Text(OPMLImportPreviewWords.emptyNewLine(preview, source: source)
+                     ?? (importer.origin.isLinkList ? "Nothing new to follow in this list." : "Nothing new to follow in this file."))
+            } header: {
+                countHeader("New", 0)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func newSection(_ preview: OPMLImportPreview, selection: OPMLImportSelection, matches: OPMLImportSelection.Matches) -> some View {
+        let source = importer.origin.wordsSource
+        let hidden = selection.hiddenTickedCount(matches)
         Section {
             if let line = OPMLImportPreviewWords.emptyNewLine(preview, source: source) {
                 Text(line)
+            } else if matches.new.isEmpty {
+                Text("No new shows match.")
+                    .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityIdentifier("opml.import.noMatch")
             }
-            ForEach(preview.toFollow) { candidate in
+            ForEach(matches.new) { candidate in
                 let row = OPMLImportPreviewWords.row(candidate, source: source)
                 Toggle(isOn: Binding(
                     get: { importer.isSelected(candidate) },
@@ -314,54 +424,77 @@ struct OPMLImportScreen: View {
                 .accessibilityIdentifier("opml.import.toggle.\(candidate.title)")
             }
         } header: {
-            countHeader("New", preview.toFollow.count)
+            newHeader(selection: selection, matches: matches)
         } footer: {
-            if let footer = OPMLImportPreviewWords.newFooter(preview, source: source) {
+            // During a search the footer counts hidden ticks; otherwise a Shortcut list with nameless rows says how to fix it (#4858).
+            if hidden > 0 {
+                Text(hidden == 1 ? "1 selected show is hidden by this search." : "\(hidden) selected shows are hidden by this search.")
+                    .accessibilityIdentifier("opml.import.hiddenSelected")
+            } else if !matches.isSearching, let footer = OPMLImportPreviewWords.newFooter(preview, source: source) {
                 Text(footer)
             }
         }
-        if !preview.alreadyFollowed.isEmpty {
-            Section {
-                ForEach(Array(preview.alreadyFollowed.enumerated()), id: \.offset) { _, feed in
-                    feedLabel(OPMLImportPreviewWords.title(feed.title, feedURL: feed.feedURL), detail: nil)
+    }
+
+    /// "New (N)", or "New (12 of 97)" during a search, with Select All and Deselect All when New has 2 or more rows.
+    /// At accessibility text sizes the buttons go on their own line under the title.
+    @ViewBuilder
+    private func newHeader(selection: OPMLImportSelection, matches: OPMLImportSelection.Matches) -> some View {
+        let title = countHeader("New", matches.new.count, of: matches.isSearching ? selection.newRows.count : nil)
+        if selection.showsBulkButtons {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 4) {
+                    title
+                    bulkButtons(selection: selection, matches: matches)
                 }
-            } header: {
-                countHeader("Already followed", preview.alreadyFollowed.count)
-            } footer: {
-                Text("These stay as they are, including any you've muted.")
-            }
-        }
-        if !preview.duplicatesInFile.isEmpty {
-            Section {
-                ForEach(Array(preview.duplicatesInFile.enumerated()), id: \.offset) { _, feed in
-                    feedLabel(OPMLImportPreviewWords.title(feed.title, feedURL: feed.feedURL), detail: nil)
-                }
-            } header: {
-                countHeader(importer.origin.isLinkList ? "Repeated in the list" : "Repeated in the file", preview.duplicatesInFile.count)
-            } footer: {
-                Text("Each feed is followed once.")
-            }
-        }
-        if let unusable = OPMLImportPreviewWords.unusableSection(preview, source: source) {
-            Section {
-                if unusable.names.isEmpty {
-                    Text(unusable.note)
-                } else {
-                    ForEach(Array(unusable.names.enumerated()), id: \.offset) { _, name in
-                        feedLabel(name, detail: nil)
-                    }
-                    if let more = unusable.more {
-                        Text(more).foregroundStyle(AppColors.secondaryText)
-                    }
-                }
-            } header: {
-                Text(unusable.header)
-            } footer: {
-                if !unusable.names.isEmpty {
-                    Text(unusable.note)
+            } else {
+                HStack(spacing: 12) {
+                    title
+                    Spacer(minLength: 8)
+                    bulkButtons(selection: selection, matches: matches)
                 }
             }
+        } else {
+            title
         }
+    }
+
+    private func bulkButtons(selection: OPMLImportSelection, matches: OPMLImportSelection.Matches) -> some View {
+        let shown = matches.new.count
+        let selectLabel = matches.isSearching
+            ? "Select the \(shown) shown \(shown == 1 ? "show" : "shows")"
+            : "Select all \(shown) new \(shown == 1 ? "show" : "shows")"
+        let deselectLabel = matches.isSearching
+            ? "Deselect the \(shown) shown \(shown == 1 ? "show" : "shows")"
+            : "Deselect all \(shown) new \(shown == 1 ? "show" : "shows")"
+        return HStack(spacing: 16) {
+            headerButton("Select All", id: "opml.import.selectAll", label: selectLabel, isEnabled: selection.canSelectAll(matches)) {
+                importer.selectAllShown()
+            }
+            headerButton("Deselect All", id: "opml.import.deselectAll", label: deselectLabel, isEnabled: selection.canDeselectAll(matches)) {
+                importer.deselectAllShown()
+            }
+        }
+    }
+
+    private func headerButton(_ title: String, id: String, label: String, isEnabled: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            action()
+            let count = importer.selected.count
+            let words = count == 0 ? "No shows selected" : (count == 1 ? "1 show selected" : "\(count) shows selected")
+            AccessibilityNotification.Announcement(words).post()
+        } label: {
+            Text(title)
+                .font(.subheadline)
+                .textCase(nil)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .tint(AppColors.evergreen)
+        .disabled(!isEnabled)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(id)
     }
 
     @ViewBuilder
@@ -370,7 +503,7 @@ struct OPMLImportScreen: View {
             if result.followed.isEmpty {
                 Text("No feeds were followed.")
             }
-            ForEach(result.followed) { candidate in
+            ForEach(Self.sortedCandidates(result.followed)) { candidate in
                 Label(OPMLImportPreviewWords.title(candidate.title, feedURL: candidate.feed?.url), systemImage: "checkmark")
             }
         } header: {
@@ -382,7 +515,7 @@ struct OPMLImportScreen: View {
         }
         if !result.failed.isEmpty {
             Section {
-                ForEach(result.failed, id: \.candidate.id) { failure in
+                ForEach(OPMLImportOrder.sorted(result.failed, title: \.candidate.title, feedURL: { $0.candidate.feed?.url }), id: \.candidate.id) { failure in
                     feedLabel(OPMLImportPreviewWords.title(failure.candidate.title, feedURL: failure.candidate.feed?.url), detail: failure.reason)
                 }
             } header: {
@@ -392,7 +525,7 @@ struct OPMLImportScreen: View {
         }
         if !result.notTried.isEmpty {
             Section {
-                ForEach(result.notTried) { candidate in
+                ForEach(Self.sortedCandidates(result.notTried)) { candidate in
                     feedLabel(OPMLImportPreviewWords.title(candidate.title, feedURL: candidate.feed?.url), detail: nil)
                 }
             } header: {
@@ -414,12 +547,15 @@ struct OPMLImportScreen: View {
                     importer.startFollowing()
                 }
                 .disabled(importer.selected.isEmpty)
-                Button {
-                    // A list of links has no file to go back to choosing: Cancel leaves the import as it is, so whoever
-                    // hears it close can still read what it offered (#4683).
-                    if importer.origin.isLinkList { dismiss() } else { importer.cancel() }
-                } label: { Text("Cancel").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
-                    .accessibilityIdentifier("opml.import.cancel")
+                // While a search is typed, the field's own Cancel sits at the top; this one would drop the whole import.
+                if !isSearching {
+                    Button {
+                        // A list of links has no file to go back to choosing: Cancel leaves the import as it is, so whoever
+                        // hears it close can still read what it offered (#4683).
+                        if importer.origin.isLinkList { dismiss() } else { importer.cancel() }
+                    } label: { Text("Cancel").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
+                        .accessibilityIdentifier("opml.import.cancel")
+                }
             case .following:
                 Button { importer.cancel() } label: { Text("Stop").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
                     .accessibilityIdentifier("opml.import.stop")
@@ -448,8 +584,15 @@ struct OPMLImportScreen: View {
         .accessibilityIdentifier(id)
     }
 
-    private func countHeader(_ title: String, _ count: Int) -> some View {
-        Text("\(title) (\(count))")
+    /// "New (3)", or "New (2 of 97)" while a search hides some.
+    private func countHeader(_ title: String, _ count: Int, of total: Int? = nil) -> Text {
+        if let total { return Text("\(title) (\(count) of \(total))") }
+        return Text("\(title) (\(count))")
+    }
+
+    /// The result lists use the preview's A to Z order (#4920).
+    static func sortedCandidates(_ candidates: [SourceCandidate]) -> [SourceCandidate] {
+        OPMLImportOrder.sorted(candidates, title: \.title, feedURL: { $0.feed?.url })
     }
 
     private func feedLabel(_ title: String, detail: String?) -> some View {
@@ -460,5 +603,21 @@ struct OPMLImportScreen: View {
             }
         }
         .frame(minHeight: 44, alignment: .leading)
+    }
+}
+
+/// #4920: the preview's "Search shows" field, applied only when the list is long enough to need it, so `.fileImporter`,
+/// `.task` and the bottom bar stay outside the condition.
+private struct ImportSearchField: ViewModifier {
+    let isOn: Bool
+    @Binding var text: String
+
+    func body(content: Content) -> some View {
+        if isOn {
+            content
+                .searchable(text: $text, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search shows")
+        } else {
+            content
+        }
     }
 }
