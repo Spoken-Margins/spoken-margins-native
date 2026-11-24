@@ -216,6 +216,8 @@ class FakeGitHub:
         for prefix, value in self.answers.items():
             if path.startswith(prefix):
                 return value
+        if '/statuses' in path:
+            return []  # a head with no commit status
         raise KeyError(path)
 
     def rerun(self, run_id):
@@ -228,6 +230,47 @@ class FakeGitHub:
 
     def log_tail(self, job_id):
         return ''
+
+
+def status(id_, run_id, state, context='merge policy'):
+    return {'id': id_, 'context': context, 'state': state, 'target_url': f'https://github.com/o/r/actions/runs/{run_id}'}
+
+
+class StatusTests(unittest.TestCase):
+    """`merge policy` is a commit status (#5162): a cancelled or killed run leaves its status pending or error."""
+
+    JOB = [check(60, 'merge policy run', 500, 'cancelled')]  # the job's own check; not a required name
+
+    def test_a_status_the_cancelled_run_left_pending_or_error_is_re_run(self):
+        for state in ('pending', 'error'):
+            with self.subTest(state=state):
+                action, why = rc.decide(run(), [pull()], self.JOB,
+                                        statuses=[status(900, 500, state), status(800, 499, 'success')])
+                self.assertEqual(action, 'rerun', why)
+                self.assertIn('merge policy', why)
+
+    def test_a_newer_status_from_another_run_is_left_alone(self):
+        action, why = rc.decide(run(), [pull()], self.JOB,
+                                statuses=[status(901, 501, 'pending'), status(900, 500, 'pending')])
+        self.assertEqual(action, 'leave', why)
+
+    def test_a_waiting_status_of_a_successful_run_is_left_alone(self):
+        action, why = rc.decide(run(conclusion='success'), [pull()], [], statuses=[status(900, 500, 'pending')])
+        self.assertEqual(action, 'leave', why)
+
+    def test_an_old_check_run_of_the_same_name_does_not_outrank_the_status(self):
+        # A head checked before #5162 can carry a `merge policy` check run too; ids of the two kinds don't compare.
+        old = [check(99999, 'merge policy', 498, 'success', 'completed')]
+        action, why = rc.decide(run(), [pull()], self.JOB + old, statuses=[status(5, 500, 'pending')])
+        self.assertEqual(action, 'rerun', why)
+
+    def test_main_reads_the_statuses_of_the_head(self):
+        github = FakeGitHub({'actions/runs/500': run(), 'pulls/7': pull(),
+                             f'commits/{HEAD}/check-runs': {'check_runs': self.JOB},
+                             f'commits/{HEAD}/statuses': [status(900, 500, 'pending')]})
+        out = io.StringIO()
+        self.assertEqual(rc.main(['--repo', 'o/r', '--run-id', '500'], github=github, out=out), 0)
+        self.assertEqual(github.reruns, [500], out.getvalue())
 
 
 class MainTests(unittest.TestCase):

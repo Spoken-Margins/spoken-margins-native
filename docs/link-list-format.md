@@ -52,7 +52,7 @@ A listener can paste the whole reply from their own assistant, which is prose ar
 
 Every route (Quick Folder, Paste & go, the handoff folder) runs one arrival (`LinkListArrivalPlan`, #4683):
 
-1. One arrival at a time. If another import is running, a Quick Folder list stays where it is and is tried at the next refresh; Paste & go says the app is busy.
+1. One arrival at a time. If another import is running, a Quick Folder list stays where it is and the tap says the app is busy; so does Paste & go.
 2. Offline, nothing is tried and no try is counted. The Quick Folder list stays; Paste & go asks the listener to paste it again online.
 3. The key is `linklist:` plus the SHA-256 of the title and the entries' links in file order, so the same list by two routes, or twice, is one collection, and the second arrival adds only what failed before. A file saved under the same name each day with new links is a new collection.
 4. A titled list is a collection; an untitled one is loose items. Nothing starts playing and the play queue is not changed.
@@ -62,9 +62,7 @@ Every route (Quick Folder, Paste & go, the handoff folder) runs one arrival (`Li
 
 A link list saved in the Quick Folder shows in the Quick Add list like any other file, and adding it adds its links. The scan offers a `.json` file there only when the file itself says it is a link list (the same `schemaVersion` rule, read off the main thread); a Listening Edition or any other `.json` file never shows. A list the app refuses (a newer version, say) does show, so tapping it names the reason. The scan reads at most 40 `.json` files newest first, each at most 1 MB; a bigger file is read only as far as its first 512 bytes and shows only if it announces the link-list format, so adding it can say why it is refused.
 
-With the Quick Folder feeding the play queue, a new link list arrives the same way, ahead of the text files that arrived with it. Its links are not queued.
-
-A list that didn't fully land while the phone was online is counted and tried again at the next refresh once the app comes forward, up to three tries; then it waits in the Quick Add list for a tap. Offline opens don't count. The count is kept over relaunches (`quickFolderLinkListRetryV1`).
+New files in the Quick Folder, link lists included, wait on Following until you add them (#4274). A list that didn't fully land stays in the Quick Add list for another tap.
 
 ## Shortcuts: Add Link List to Spoken Margins
 
@@ -72,4 +70,4 @@ The listener's own automation (for example one that gets a list from their AI at
 
 The app adds the waiting lists once the share drain has finished its pass, at launch and whenever it comes forward (`drainLinkListHandoffs()`): oldest first, one arrival at a time, through the same arrival as every other route. It stops at the first closed gate or when the phone is offline, and nothing is tried or counted then. A list whose links all landed is removed. One that failed while online is counted (`linkListHandoffTriesV1`), is tried at most once per foreground (a share, a Retry or the network's return can't spend its tries), and is removed on its third failed try, the arrival's banner being the last word. Unreadable files are told once, after the drain. A file that can't be read is removed at once with "A saved link list couldn't be read, so nothing was added from it."
 
-Not yet: a batch of more than eight new files arriving whole, and a list becoming a Library folder (#3769).
+Not yet: a list becoming a Library folder (#3769).

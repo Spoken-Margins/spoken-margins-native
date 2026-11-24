@@ -3,6 +3,7 @@ import Foundation
 import SessionKit
 import SessionKitPersistence
 import SessionKitSupertonic
+import UIKit
 import XCTest
 @testable import SpokenMarginsApp
 
@@ -20,9 +21,17 @@ final class FootnotePlanWiringTests: XCTestCase {
     private struct Fixture { let root: URL; let prepared: URL; let store: SQLiteSessionStore; let item: Item }
 
     private func makeFixture(mediaType: String = "article") throws -> Fixture {
+        let root = try makeRoot()
+        return try makeFixture(root: root, store: SQLiteSessionStore(path: root.appending(path: "store.sqlite").path), mediaType: mediaType)
+    }
+
+    private func makeRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appending(path: "footnote-plan-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let store = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
+        return root
+    }
+
+    private func makeFixture(root: URL, store: SQLiteSessionStore, mediaType: String = "article") throws -> Fixture {
         let item = Item(id: "item", title: "Tides", mediaType: mediaType, text: article, externalReference: nil, status: "ready")
         try store.saveItem(item)
         return Fixture(root: root, prepared: root.appending(path: "Prepared", directoryHint: .isDirectory), store: store, item: item)
@@ -180,6 +189,84 @@ final class FootnotePlanWiringTests: XCTestCase {
     func testAnAssembledFileOfTheNotesPlanLoadsAFootnoteSessionFromTheStore() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let file = try await assembleNotesFile(fixture)
+
+        let session = try XCTUnwrap(Gate1AppModel.loadFootnoteMediaChimeSession(store: fixture.store, itemId: "item", mediaKey: file.mediaKey),
+                                    "the assembled file reads each note in its own segment, so the session finds them")
+        XCTAssertEqual(session.runStartsMs.count, 2, "the fixture cites two notes in two places")
+        XCTAssertNil(Gate1AppModel.loadFootnoteMediaChimeSession(store: fixture.store, itemId: "item", mediaKey: "file:///another.m4a"),
+                     "a session is only for the file the item holds")
+    }
+
+    /// "Chime where cited" on an article that is ready offline, through the app's own clock handler
+    /// (`observeFootnoteMediaChime`, called on every playback tick): the model builds the footnote session for the
+    /// prepared file it sees playing, and when playback runs on into a note it sounds the tone and moves the file past
+    /// the note's words. A seek that lands inside a note passes over it without the tone (#3777). Before #5081 this path
+    /// read every note in full; a session that is never built, or a tick that never reaches it, would fail here.
+    @MainActor
+    func testChimeModeOnAPreparedFileCuesANoteAndMovesPastItThroughTheModelsClock() async throws {
+        UserDefaults.standard.set(FootnoteMode.chime.rawValue, forKey: FootnoteMode.storageKey)
+        let root = try makeRoot()
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: root.appending(path: "store.sqlite"))
+        let fixture = try makeFixture(root: root, store: model.libraryStoreForTesting())
+        addTeardownBlock { [weak model] in
+            if model == nil { try? FileManager.default.removeItem(at: root) }
+        }
+        let file = try await assembleNotesFile(fixture)
+        try await pollUntil(timeout: .seconds(10)) { UIApplication.shared.applicationState == .active }
+        XCTAssertEqual(UIApplication.shared.applicationState, .active,
+                       "app-hosted tests run in the foreground; a note is cued only while the listener can tap")
+
+        var playing = model.snapshot
+        playing.itemId = "item"
+        playing.targetType = TargetType.transcriptBackedMedia.rawValue
+        playing.targetId = file.mediaKey
+        playing.preparedTextAudioStatus = "ready"
+        playing.status = .playing
+        playing.currentMediaTimeMs = 0
+        model.observeFootnoteMediaChime(playing)
+        try await pollUntil { model.footnoteMediaChime.session != nil }
+        let session = try XCTUnwrap(model.footnoteMediaChime.session, "the first tick of the prepared file builds its footnote session")
+        XCTAssertTrue(session.plays(itemId: "item", mediaKey: file.mediaKey))
+        XCTAssertEqual(session.runStartsMs.count, 2)
+
+        func events(_ kind: String) -> [[String: String]] {
+            model.playbackEventRecording.events.filter { $0.kind == kind }.map(\.fields)
+        }
+        func tick(atMs ms: Int) {
+            playing.currentMediaTimeMs = ms
+            model.observeFootnoteMediaChime(playing)
+        }
+
+        // Playback runs on, one segment at a time, up to the first note.
+        let starts = file.timeline.segments.map(\.startMs)
+        let firstNote = try XCTUnwrap(starts.firstIndex(of: session.runStartsMs[0]))
+        for index in 0..<firstNote {
+            tick(atMs: starts[index])
+            XCTAssertTrue(events("footnote.media.move").isEmpty, "the text before the note plays on (segment \(index))")
+        }
+        tick(atMs: starts[firstNote])
+        XCTAssertEqual(events("footnote.media.cue").map { $0["label"] }, ["1"], "one tone, for note 1, where it is cited")
+        let cueMove = try XCTUnwrap(events("footnote.media.move").last)
+        XCTAssertEqual(cueMove["reason"], "cue")
+        let landing = try XCTUnwrap(cueMove["timeMs"].flatMap(Int.init))
+        XCTAssertGreaterThan(landing, file.timeline.segments[firstNote].endMs, "the move passes over the note's words")
+        XCTAssertLessThanOrEqual(landing, starts[firstNote + 1], "and lands no later than the sentence after the citation")
+
+        // The listener seeks into the second note: it passes over silently, with no tone. (Here the cue's move found no
+        // engine session and the model already called this; the explicit call keeps the step a listener's seek either way.)
+        model.footnoteMediaChime.session?.playerMovedOnItsOwn()
+        let secondNote = try XCTUnwrap(starts.firstIndex(of: session.runStartsMs[1]))
+        tick(atMs: starts[secondNote])
+        XCTAssertEqual(events("footnote.media.cue").count, 1, "a seek into a note sounds no tone")
+        let passMove = try XCTUnwrap(events("footnote.media.move").last)
+        XCTAssertEqual(passMove["reason"], "pass")
+        XCTAssertEqual(passMove["timeMs"].flatMap(Int.init), starts[secondNote + 1], "the file goes on at the sentence after the note")
+    }
+
+    /// Assembles the notes plan into one file as `finishBackgroundPreparedAudio` does, saves it as
+    /// `PreparedTextAudioPersister` saves it, and returns the file's identity and timeline.
+    private func assembleNotesFile(_ fixture: Fixture) async throws -> (mediaKey: String, timeline: TranscriptTimeline) {
         let template = try makeTestWAV(duration: 0.2)
         defer { try? FileManager.default.removeItem(at: template) }
         let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
@@ -207,13 +294,7 @@ final class FootnotePlanWiringTests: XCTestCase {
         stored.media = narration.media
         stored.transcriptId = "generated-transcript-item"
         try fixture.store.saveItem(stored)
-
-        let mediaKey = try XCTUnwrap(narration.media.nativeMediaId)
-        let session = try XCTUnwrap(Gate1AppModel.loadFootnoteMediaChimeSession(store: fixture.store, itemId: "item", mediaKey: mediaKey),
-                                    "the assembled file reads each note in its own segment, so the session finds them")
-        XCTAssertEqual(session.runStartsMs.count, 2, "the fixture cites two notes in two places")
-        XCTAssertNil(Gate1AppModel.loadFootnoteMediaChimeSession(store: fixture.store, itemId: "item", mediaKey: "file:///another.m4a"),
-                     "a session is only for the file the item holds")
+        return (try XCTUnwrap(narration.media.nativeMediaId), narration.timeline)
     }
 
     private func makeTestWAV(duration: TimeInterval) throws -> URL {

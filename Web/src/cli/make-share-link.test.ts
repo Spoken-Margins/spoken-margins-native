@@ -74,3 +74,19 @@ test('an article packet from the iPhone makes a link from its text Margins, with
   assert.ok(made.preview.margins.length > 0);
   for (const margin of made.preview.margins) assert.deepEqual(Object.keys(margin), ['text']);
 });
+
+test('#4784 --intro seals answers "none" in the preview; without it the preview is byte-identical to before', async () => {
+  const packet = fixture('web-voice-placeholder.spokenmargins');
+  const previewOf = async (intro?: boolean) => {
+    const { sent, fetchFake } = fakeServer();
+    const made = await makeShareLink(packet, { fileName: 'p.spokenmargins', fetch: fetchFake, intro });
+    const key = keyFromFragment(made.url.split('#')[1] as string) as Uint8Array;
+    return new TextDecoder().decode(await openPart(sent[0]?.parts.get('preview') as Uint8Array, PART.preview, key));
+  };
+  const plain = await previewOf();
+  assert.ok(!plain.includes('answers'));
+  assert.equal(await previewOf(false), plain);
+  const marked = await previewOf(true);
+  assert.deepEqual(JSON.parse(marked), { ...JSON.parse(plain), answers: 'none' });
+  assert.equal(marked, plain.replace(/}$/, ',"answers":"none"}'));
+});

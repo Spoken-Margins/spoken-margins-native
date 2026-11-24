@@ -96,7 +96,7 @@ def routes_for(*bundles, tip=HEAD):
         n, sha = b['pull']['number'], b['pull']['head']['sha']
         routes.update({f'pulls/{n}': b['pull'], f'issues/{n}/comments': b['comments'],
                        f'issues/{n}/events': b['events'], f'pulls/{n}/files': b['files'],
-                       f'commits/{sha}/check-runs': b['check_runs']})
+                       f'commits/{sha}/check-runs': b['check_runs'], f'commits/{sha}/statuses': b.get('statuses', [])})
     return routes
 
 
@@ -201,6 +201,16 @@ class RedOnHead(unittest.TestCase):
         row = status.analyse(bundle(checks=[{'id': 5, 'name': 'automerge', 'status': 'in_progress', 'conclusion': None}]))
         self.assertEqual(row['checks']['running'], ['automerge'])
         self.assertEqual(row['flags'], [])
+
+    def test_the_merge_policy_commit_status_counts_as_a_check(self):
+        # #5162: `merge policy` is a commit status, newest first from the API.
+        def with_statuses(*states):
+            b = bundle()
+            b['statuses'] = [{'id': 10 - n, 'context': 'merge policy', 'state': s} for n, s in enumerate(states)]
+            return status.analyse(b)['checks']
+        self.assertEqual(with_statuses('failure', 'pending')['failing'], ['merge policy'])
+        self.assertEqual(with_statuses('pending')['running'], ['merge policy'])
+        self.assertEqual(with_statuses('success', 'failure')['failing'], [])
 
     def test_an_inconclusive_report_is_not_a_pass_and_is_flagged(self):
         row = status.analyse(bundle([report('INCONCLUSIVE')]))

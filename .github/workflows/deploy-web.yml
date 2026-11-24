@@ -33,6 +33,7 @@ on:
     paths:
       - 'Web/**'
       - 'research/B4/server/internal/links/**'  # deploy-web.sh builds the share-link opener from here
+      - 'Contracts/fixtures/margins-control-center/**'  # vite.config.ts reads the control center cases
       - 'research/B4/deploy/deploy-web.sh'
   workflow_dispatch:
 

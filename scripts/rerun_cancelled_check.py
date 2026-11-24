@@ -82,7 +82,7 @@ class GitHub:
 
 
 def run_of(check: dict) -> int | None:
-    for key in ('details_url', 'html_url'):
+    for key in ('details_url', 'html_url', 'target_url'):
         match = RUN_IN_URL.search(str(check.get(key) or ''))
         if match:
             return int(match.group(1))
@@ -90,13 +90,29 @@ def run_of(check: dict) -> int | None:
 
 
 def abandoned(check: dict) -> bool:
-    """A check run still `in_progress` or `queued` in a run that has ended cancelled: it can never finish, so it blocks
-    the merge like a cancelled one. `merge policy` writes its own check run, and a runner that is cancelled, times out or
-    is lost kills the script before it can mark it (#4986, the audit of #5011); GitHub only marks job checks itself."""
+    """A check still `in_progress`, `queued` or `pending` in a run that has ended cancelled: it can never finish, so it
+    blocks the merge like a cancelled one. `merge policy` writes its own commit status, and a runner that is cancelled,
+    times out or is lost kills the script before it can post the verdict (#4986, the audit of #5011, #5162); GitHub only
+    marks job checks itself."""
     return check.get('conclusion') is None and check.get('status') in ('in_progress', 'queued', 'waiting', 'pending')
 
 
-def decide(run: dict, pulls: list[dict], checks: list[dict], outside=None, waited=True) -> tuple[str, str]:
+# A commit status's state -> the check-run conclusion it stands for here. `error` is what merge_policy.py posts for a
+# cancel, so it reads as one; `pending` has no conclusion yet.
+STATUS_CONCLUSION = {'success': 'success', 'failure': 'failure', 'error': 'cancelled', 'pending': None}
+
+
+def status_rows(statuses: list[dict]) -> list[dict]:
+    """Commit statuses as check-like rows (`merge policy` is a status, #5162): name, id, run link, status, conclusion.
+    They decide whether a run's required check is blocked; they are never a failed job to read the logs of."""
+    return [{'id': s.get('id'), 'name': s.get('context'), 'target_url': s.get('target_url'),
+             'status': 'pending' if s.get('state') == 'pending' else 'completed',
+             'conclusion': STATUS_CONCLUSION.get(s.get('state'), 'failure'), 'is_status': True}
+            for s in statuses]
+
+
+def decide(run: dict, pulls: list[dict], checks: list[dict], outside=None, waited=True,
+           statuses: list[dict] = ()) -> tuple[str, str]:
     """('rerun' | 'wait' | 'leave', why) for one cancelled or failed workflow run, the PRs it ran for and every check
     run on its head commit. `outside(failed check runs)` is merge_queue_dequeued.failed_outside_pr's answer; without it
     a failed job is always the PR's. 'wait' means re-run after RETRY_DELAY_MINUTES once the run has been read again
@@ -116,8 +132,13 @@ def decide(run: dict, pulls: list[dict], checks: list[dict], outside=None, waite
     run_id = int(run['id'])
     names = set(REQUIRED_CHECKS)
     ours = [c for c in checks if run_of(c) == run_id]
-    mine = [c for c in ours if c.get('name') in names]
-    failed = [c for c in ours if c.get('conclusion') in FAILED]
+    # A required check reported as a commit status (`merge policy`, #5162) counts by its newest status, never by a
+    # check run of the same name a build before #5162 left; status and check-run ids are not comparable.
+    posted = status_rows(statuses)
+    by_status = {row['name'] for row in posted}
+    rows = [c for c in checks if c.get('name') not in by_status] + posted
+    mine = [c for c in rows if run_of(c) == run_id and c.get('name') in names]
+    failed = [c for c in ours if c.get('conclusion') in FAILED]  # failed jobs only: their logs are read below
     if run.get('conclusion') == 'failure' and not failed:
         # The failed job is not in the check-run listing (one page of 100): never read that as a cancel (review).
         return 'leave', 'it failed, but no failed job of it is in the check-run listing'
@@ -130,7 +151,7 @@ def decide(run: dict, pulls: list[dict], checks: list[dict], outside=None, waite
             return 'leave', f'a job failed in the PR\'s own code or a step not known to be setup ({where}): a verdict'
     blocked = []
     for name in sorted({c['name'] for c in mine}):
-        newest = max((c for c in checks if c.get('name') == name), key=lambda c: int(c.get('id') or 0))
+        newest = max((c for c in rows if c.get('name') == name), key=lambda c: int(c.get('id') or 0))
         if run_of(newest) == run_id and (newest.get('conclusion') in ('cancelled', *FAILED) or abandoned(newest)):
             blocked.append(name)
     if not blocked:
@@ -156,20 +177,21 @@ def main(argv=None, github=None, out=sys.stdout) -> int:
         run = github.get(f'actions/runs/{args.run_id}')
         pulls = [github.get(f'pulls/{p["number"]}') for p in run.get('pull_requests') or []]
         checks = github.get(f'commits/{run["head_sha"]}/check-runs?filter=all&per_page=100').get('check_runs', [])
-        return run, pulls, checks
+        statuses = github.get(f'commits/{run["head_sha"]}/statuses?per_page=100')
+        return run, pulls, checks, statuses if isinstance(statuses, list) else []
 
     def outside(failed):
         return dequeued.failed_outside_pr(github, failed)
 
     try:
-        run, pulls, checks = read()
-        action, why = decide(run, pulls, checks, outside=outside, waited=args.waited)
+        run, pulls, checks, statuses = read()
+        action, why = decide(run, pulls, checks, outside=outside, waited=args.waited, statuses=statuses)
         if action == 'wait':
             print(f'run {args.run_id} ({run.get("name")}): waiting {RETRY_DELAY_MINUTES} minutes: {why}', file=out,
                   flush=True)
             github.wait(RETRY_DELAY_MINUTES)
-            run, pulls, checks = read()
-            action, why = decide(run, pulls, checks, outside=outside, waited=True)
+            run, pulls, checks, statuses = read()
+            action, why = decide(run, pulls, checks, outside=outside, waited=True, statuses=statuses)
         if action == 'rerun':
             github.rerun(args.run_id)
         print(f'run {args.run_id} ({run.get("name")}): {"re-run" if action == "rerun" else "left alone"}: {why}',

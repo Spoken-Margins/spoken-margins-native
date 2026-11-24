@@ -6,13 +6,16 @@ public struct BatchSessionExportRow: Identifiable, Sendable {
     public let session: Session
     public let itemTitle: String
     public let interjectionCount: Int
+    /// The session is on the listener's own spoken note (#4782), so Export Sessions offers the note's own text switch.
+    public let isSpokenNote: Bool
 
     public var id: String { session.id }
 
-    public init(session: Session, itemTitle: String, interjectionCount: Int) {
+    public init(session: Session, itemTitle: String, interjectionCount: Int, isSpokenNote: Bool = false) {
         self.session = session
         self.itemTitle = itemTitle
         self.interjectionCount = interjectionCount
+        self.isSpokenNote = isSpokenNote
     }
 }
 
@@ -27,7 +30,8 @@ extension SQLiteSessionStore {
         return try loadSessions().compactMap { session in
             guard let item = itemsById[session.itemId] else { return nil }
             return BatchSessionExportRow(session: session, itemTitle: item.title,
-                                         interjectionCount: activeCounts[session.id] ?? 0)
+                                         interjectionCount: activeCounts[session.id] ?? 0,
+                                         isSpokenNote: SpokenNoteItem.isSpokenNote(mediaType: item.mediaType))
         }
     }
 }

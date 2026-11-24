@@ -209,8 +209,9 @@ struct Gate2LiveActivityView: View {
     let isStale: Bool
 
     /// The Margin control is a column down the card's trailing side (#3692): nothing sits above it, and Next is beside
-    /// it instead of on top of it. The fixed vertical size lets the column take the height of the left column, whatever
-    /// height the Lock Screen proposes.
+    /// it instead of on top of it. The fixed vertical size lets the tap column take the height of the left column,
+    /// whatever height the Lock Screen proposes; the circle inside it keeps a fixed size and sits centred, because the
+    /// real card is often only a header tall (#4764).
     var body: some View {
         HStack(alignment: .top, spacing: Gate2ControlSize.marginColumnGap) {
             listeningColumn
@@ -381,40 +382,16 @@ struct Gate2LiveActivityView: View {
         #if SM_LOCKED_MARGIN_SPIKE
         // Phone builds only: record in place, without opening the app (#3086).
         Button(intent: Gate2RecordMarginIntent(finish: state.isRecording)) {
-            marginColumnLabel
+            Gate2MarginControl(finishes: state.isRecording)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(state.isRecording ? "Finish Margin" : "Add a Margin")
         #else
         Link(destination: Gate2CompactCommandURL.url(command: state.isRecording ? "finishInterjection" : "beginInterjection")) {
-            marginColumnLabel
+            Gate2MarginControl(finishes: state.isRecording)
         }
         .accessibilityLabel(state.isRecording ? "Finish Margin" : "Add a Margin")
         #endif
-    }
-
-    /// Start and finish differ by glyph, word, fill and outline, never by colour alone: a soft pill with the microphone
-    /// and "Margin", then a solid white, squarer block with the checkmark and "Finish". The whole column takes the tap.
-    private var marginColumnLabel: some View {
-        let finishes = state.isRecording
-        let outline = RoundedRectangle(
-            cornerRadius: finishes ? Gate2ControlSize.finishCornerRadius : Gate2ControlSize.marginColumnWidth / 2,
-            style: .continuous
-        )
-        return VStack(spacing: 4) {
-            Image(systemName: finishes ? "checkmark" : "mic.fill")
-                .font(.title2.weight(.semibold))
-            Text(finishes ? "Finish" : "Margin")
-                .font(.caption.weight(.bold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        }
-        .dynamicTypeSize(...Gate2ControlSize.captionedGlyphCeiling)
-        .frame(width: Gate2ControlSize.marginColumnWidth)
-        .frame(maxHeight: .infinity)
-        .foregroundStyle(finishes ? Color.black : Color.white)
-        .background(finishes ? Color.white : Color.white.opacity(0.16), in: outline)
-        .contentShape(Rectangle())
     }
 
     @ViewBuilder
@@ -448,6 +425,34 @@ struct Gate2LiveActivityView: View {
         .background(Color.white.opacity(0.12))
         .clipShape(Capsule())
         .expandedHitArea(top: 4, bottom: 16)
+    }
+}
+
+/// The Margin control in the card's trailing column: a fixed circle with only the glyph, centred in a tap column that
+/// takes the card's height. The real Lock Screen card is often only a header tall, so a shape that followed its height
+/// squashed into a near-circle and its caption ran past the curve (#4764). Start and finish differ by glyph and fill,
+/// never by colour alone: a ringed soft disc with the microphone, then a solid white disc with the checkmark. The whole
+/// column takes the tap (#3771), and VoiceOver names the action where the control is wrapped.
+struct Gate2MarginControl: View {
+    let finishes: Bool
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(finishes ? Color.white : Color.white.opacity(0.16))
+            if !finishes {
+                Circle()
+                    .strokeBorder(Color.white.opacity(0.86), lineWidth: 2)
+            }
+            Image(systemName: finishes ? "checkmark" : "mic.fill")
+                .font(.title2.weight(.semibold))
+                .dynamicTypeSize(...Gate2ControlSize.glyphCeiling)
+                .foregroundStyle(finishes ? Color.black : Color.white)
+        }
+        .frame(width: Gate2ControlSize.marginColumnWidth, height: Gate2ControlSize.marginColumnWidth)
+        .frame(width: Gate2ControlSize.marginColumnWidth)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
     }
 }
 
@@ -590,10 +595,10 @@ enum Gate2ControlSize {
     static let skip: CGFloat = 44
     static let play: CGFloat = 52
     static let rowSpacing: CGFloat = 4
-    /// The Margin control's width; its height is the card's content (#3692).
+    /// The Margin circle's diameter and its tap column's width; the column takes the card's content height (#3692,
+    /// #4764).
     static let marginColumnWidth: CGFloat = 60
     static let marginColumnGap: CGFloat = 6
-    static let finishCornerRadius: CGFloat = 14
     static var transportRowWidth: CGFloat { 2 * skim + 2 * skip + play + 4 * rowSpacing }
     /// 24 pt, not 28: under the state word (about 16 pt) it keeps the header column no taller than the titles (22 + 2 +
     /// 16 pt), which keeps a paused card with a next chapter under 160 pt (LiveActivityLayoutTests).
