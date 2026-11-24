@@ -3,6 +3,7 @@ import contextlib
 import datetime
 import io
 import os
+import subprocess
 from pathlib import Path
 import sys
 import unittest
@@ -174,7 +175,8 @@ class AlarmClosingTests(unittest.TestCase):
         tip = {'commit': {'committer': {'date': when(merged_hours_ago)}}}
         calls = []
         patches = {'api': lambda path: [[alarm]] if '/issues' in path else tip,
-                   'gh': lambda *args, stdin=None: calls.append(args) or '',
+                   'gh': lambda *args, stdin=None: calls.append(('READ',) + args) or '',
+                   'gh_write': lambda *args, stdin=None: calls.append(args) or '',
                    'trunk_branch': lambda: 'main'}
         for name, replacement in patches.items():
             self.addCleanup(setattr, watch, name, getattr(watch, name))
@@ -194,6 +196,37 @@ class AlarmClosingTests(unittest.TestCase):
     def test_a_merge_right_after_the_alarm_closes_it(self):
         calls = self.run_watch(merged_hours_ago=0.1, alarm_hours_ago=0.2)
         self.assertEqual(calls[0][:3], ('issue', 'close', '9'))
+
+
+class WriteTokenTests(unittest.TestCase):
+    """#5217: reads run on the GitHub App's token; the alarm issue is written with GITHUB_TOKEN (SM_WRITE_TOKEN) so
+    it stays authored by BOT, which open_alarm() looks for."""
+
+    def env_seen(self, write_token):
+        seen = {}
+
+        def fake_run(args, **kwargs):
+            seen.update(kwargs.get('env') or {})
+            seen['_env_given'] = kwargs.get('env') is not None
+            return subprocess.CompletedProcess(args, 0, stdout='')
+        original = watch.subprocess.run
+        self.addCleanup(setattr, watch.subprocess, 'run', original)
+        watch.subprocess.run = fake_run
+        saved = {k: os.environ.get(k) for k in ('SM_WRITE_TOKEN', 'GH_TOKEN')}
+        self.addCleanup(lambda: [os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+                                 for k, v in saved.items()])
+        os.environ['GH_TOKEN'] = 'app-token'
+        os.environ.pop('SM_WRITE_TOKEN', None)
+        if write_token:
+            os.environ['SM_WRITE_TOKEN'] = write_token
+        watch.gh_write('issue', 'close', '9')
+        return seen
+
+    def test_a_write_uses_the_write_token_when_one_is_set(self):
+        self.assertEqual(self.env_seen('workflow-token')['GH_TOKEN'], 'workflow-token')
+
+    def test_a_write_inherits_the_environment_when_none_is_set(self):
+        self.assertFalse(self.env_seen(None)['_env_given'])
 
 
 class ReadsTests(unittest.TestCase):

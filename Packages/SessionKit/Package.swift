@@ -27,6 +27,8 @@ let package = Package(
         .executable(name: "substack-canary", targets: ["SubstackCanary"]),
         // Runs pasted assistant answers through the app's link resolver (#4673, #4674). The app never links it.
         .executable(name: "episode-link-check", targets: ["EpisodeLinkCheck"]),
+        // Scores the spoken-Margin tidy prompt on Apple's on-device model, on a Mac (#4339). The app never links it.
+        .executable(name: "tidy-eval", targets: ["TidyEval"]),
         // The last shipped build's packet reader, for the app's own test bundle only (#1039): it
         // reads the packet the real app exporter writes. The app target never links it.
         .library(name: "ShippedPacketReader", targets: ["ShippedPacketReader"])
@@ -38,7 +40,7 @@ let package = Package(
         ),
         .package(
             url: "https://github.com/weichsel/ZIPFoundation.git",
-            exact: "0.9.20"
+            exact: "0.9.21"
         )
     ],
     targets: [
@@ -126,6 +128,10 @@ let package = Package(
         .executableTarget(
             name: "EpisodeLinkCheck",
             dependencies: ["SessionKit", "SessionKitFeeds"]
+        ),
+        .executableTarget(
+            name: "TidyEval",
+            dependencies: ["SessionKit"]
         ),
         // The last shipped build's packet reader, frozen for tests (scripts/freeze-shipped-reader.sh, #317).
         // Only the ShippedPacketReader product exposes them, and only the app's test bundle links it.
@@ -217,7 +223,7 @@ let linuxTargets: Set<String> = [
 package.targets.removeAll { !linuxTargets.contains($0.name) }
 package.products.removeAll { !linuxTargets.contains($0.name) }
 package.dependencies = [
-    .package(url: "https://github.com/weichsel/ZIPFoundation.git", exact: "0.9.20"),
+    .package(url: "https://github.com/weichsel/ZIPFoundation.git", exact: "0.9.21"),
     .package(url: "https://github.com/apple/swift-crypto.git", exact: "3.15.1"),
 ]
 package.targets.append(.systemLibrary(name: "SQLite3", path: "Linux/SQLite3", providers: [.apt(["libsqlite3-dev"])]))

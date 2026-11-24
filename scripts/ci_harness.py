@@ -74,15 +74,22 @@ ROOT = M.ROOT
 
 GITHUB_RULES = {
     'G1-group-one-running-one-pending': {
-        'basis': 'documented',
+        'basis': 'observed',
         'text': 'A concurrency group holds at most one running and one pending run or job. A new entry cancels the '
                 'pending one and waits; with cancel-in-progress it cancels the running one too and starts.',
-        'source': 'docs.github.com "Control the concurrency of workflows and jobs"'},
+        'source': 'docs.github.com "Control the concurrency of workflows and jobs". Observed in probe run '
+                  '45340601282 on a branch with no PR, 2026-11-24 (#4937): g1-b joined pending at 06:28:19Z and '
+                  'was cancelled at 06:28:59Z when g1-c joined; g1-c ran at 06:31:00Z, after g1-holder ended at '
+                  '06:30:59Z. With cancel-in-progress, the running cip-holder was cancelled at 06:28:34Z when '
+                  'cip-d joined, and cip-d ran at 06:28:36Z'},
     'G2-skipped-job-joins-no-group': {
-        'basis': 'documented',
-        'text': 'A job whose `if:` is false is skipped before it reaches its job-level group, so it replaces nothing; '
-                'a workflow-level group is joined by every run the trigger starts, skipped jobs or not.',
-        'source': 'stated in claude-audit.yml and merge-queue-label-bridge.yml job-level groups; docs on concurrency'},
+        'basis': 'observed',
+        'text': 'A job whose `if:` is false is skipped before it reaches its job-level group, so it replaces '
+                'nothing; a workflow-level group is joined by every run the trigger starts, skipped jobs or not.',
+        'source': 'stated in claude-audit.yml and merge-queue-label-bridge.yml job-level groups; docs on '
+                  'concurrency. Observed in probe run 45340601282 on a branch with no PR, 2026-11-24 (#4937): '
+                  'g2-skipped (if: false, same group) was skipped at 06:28:42Z and the pending g1-b stayed pending '
+                  'until g1-c cancelled it at 06:28:59Z'},
     'G3-same-instant-order': {
         'basis': 'observed',
         'text': 'Runs created in the same second enter their group in either order: the newer run can be the one '
@@ -98,17 +105,26 @@ GITHUB_RULES = {
     'G5-timeout-is-cancelled': {
         'basis': 'observed',
         'text': 'A job stopped by its timeout-minutes ends with conclusion `cancelled`, not `timed_out`.',
-        'source': '#4752 commit message: #4746 and #4684, "hosted fast: portable" at its 30-minute limit, 2026-11-20'},
+        'source': '#4752 commit message: #4746 and #4684, "hosted fast: portable" at its 30-minute limit, '
+                  '2026-11-20. Probe: job g5-timeout (timeout-minutes 1, sleep 150) of probe run 45340601282 on a '
+                  "branch with no PR, 2026-11-24 (#4937) ended cancelled, and the run's conclusion was cancelled"},
     'G6-token-rerun-runs': {
         'basis': 'observed',
-        'text': 'A re-run requested with GITHUB_TOKEN runs (ci_model A6 was inferred).',
+        'text': 'A re-run requested with GITHUB_TOKEN runs (ci_model A6).',
         'source': 'merge-policy run 44986035608 attempt 2, triggering actor github-actions[bot], success, '
-                  '2026-11-22T04:39:49Z'},
+                  '2026-11-22T04:39:49Z; probe run 45340601282 attempt 2, re-run by job g6-token-rerun of run '
+                  '45341093580, 2026-11-24'},
     'G7-api-check-runs-latest': {
-        'basis': 'documented',
-        'text': '`commits/<sha>/check-runs` returns the latest check run per name by default (filter=latest), which is '
-                'what the audit and the dequeue notifier read.',
-        'source': 'docs.github.com REST "List check runs for a Git reference", parameter filter'},
+        'basis': 'observed',
+        'text': '`commits/<sha>/check-runs` returns the latest check run per name by default (filter=latest), '
+                'which is what the audit and the dequeue notifier read. Read within a second or two of a new run '
+                'being written, it can still return the previous one.',
+        'source': 'docs.github.com REST "List check runs for a Git reference", parameter filter. Probe job '
+                  'g7-newest of probe run 45340601282 on a branch with no PR, 2026-11-24 (#4937) made two runs '
+                  'named "probe-4937 newest" three seconds apart (success 138263082861, then cancelled '
+                  '138263100429): read at once, the default filter still returned the older success; read a few '
+                  'minutes later it returned only the newer cancelled one. A reader right after a write can see '
+                  'the previous run'},
 }
 
 # --- durations and black boxes ---------------------------------------------------------------------------------------
@@ -646,7 +662,13 @@ class TimedWorld(M.World):
         if 'backstop' in self.c.token_403:
             self.note(event, 'backstop: every dispatch refused, HTTP 403')
             return
-        backstop.tick('token', now, out=out, get=fake_get)
+        # The harness models no phone-build runs, so only the slots of workflows it does model (#5154: main-t3's).
+        slots = getattr(backstop, 'SLOTS', None)
+        if slots is None:
+            backstop.tick('token', now, out=out, get=fake_get)
+        else:
+            backstop.tick('token', now, out=out, get=fake_get, workflows=backstop.WORKFLOWS,
+                          slots={name: times for name, times in slots.items() if name in backstop.WORKFLOWS})
         fired = [line for line in out.getvalue().splitlines() if 'dispatched' in line]
         if fired:
             self.note(event, 'backstop: ' + ' | '.join(fired))

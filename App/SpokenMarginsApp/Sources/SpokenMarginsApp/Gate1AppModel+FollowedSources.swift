@@ -449,7 +449,10 @@ extension Gate1AppModel {
         // strongest request (#2136).
         guard followedSourceRefreshGate.request(forced: force) else { return nil }
         isRefreshingFollowedSources = true
-        defer { isRefreshingFollowedSources = false }
+        defer {
+            isRefreshingFollowedSources = false
+            followedSourcePassEnd.passEnded() // a pull the gate refused waits for this (#4955)
+        }
         var nextForce: Bool? = force
         var roundScope = scope
         var covered: FeedRefreshScope?

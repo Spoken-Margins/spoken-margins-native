@@ -779,7 +779,7 @@ class ScheduleGapTests(unittest.TestCase):
 
     def fresh(self, minutes=5, event='schedule'):
         return {name: [{'created_at': at(minutes=minutes), 'event': event, 'conclusion': 'success'}]
-                for name in sweep.backstop.WORKFLOWS}
+                for name in sweep.backstop.watched()}
 
     def test_all_running_on_time_is_quiet(self):
         actions, _ = sweep.decide(facts_of(self.router(self.fresh())))
@@ -808,6 +808,19 @@ class ScheduleGapTests(unittest.TestCase):
         detail = next(a['detail'] for a in sweep.decide(facts_of(self.router(runs)))[0] if a['rule'] == 'schedule-gap')
         self.assertIn('merge-stall.yml last ran 90m ago', detail)
         self.assertIn('merge-queue-label-bridge.yml last ran 50m ago (workflow_dispatch)', detail)
+
+    def test_a_missed_phone_build_slot_is_reported_after_two_hours(self):
+        # #5154: phone-build has no interval, only its 12:00 and 21:30 UTC slots.
+        slot = sweep.backstop.due_slot(NOW, sweep.backstop.SLOTS['phone-build.yml'], grace=2 * sweep.backstop.SLOT_GRACE)
+        runs = self.fresh()
+        before = slot - sweep.backstop.SLOT_EARLY - dt.timedelta(minutes=10)
+        runs['phone-build.yml'] = [{'created_at': before.strftime('%Y-%m-%dT%H:%M:%SZ'), 'event': 'schedule',
+                                    'conclusion': 'success'}]
+        detail = next(a['detail'] for a in sweep.decide(facts_of(self.router(runs)))[0] if a['rule'] == 'schedule-gap')
+        self.assertIn(f'phone-build.yml last ran', detail)
+        self.assertIn(f'missed its {slot:%H:%M} UTC slot', detail)
+        runs['phone-build.yml'][0]['created_at'] = (slot + dt.timedelta(minutes=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        self.assertNotIn('schedule-gap', rules(sweep.decide(facts_of(self.router(runs)))[0]))
 
     def test_an_hourly_workflow_gets_two_hours(self):
         runs = self.fresh()

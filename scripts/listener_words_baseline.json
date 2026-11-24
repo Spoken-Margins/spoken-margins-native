@@ -3,6 +3,12 @@
  "note": "Listener-facing string literals that say \"item\" when #3599 arrived. Keyed by kind and text, with a count. A replacement slice deletes rows (scripts/listener_words.py --update); a new row needs --accept \"reason\". Do not add rows to make a check pass: say episode, article or PDF.",
  "entries": [
   {
+   "kind": "voiceover",
+   "text": "Move Margins to an item",
+   "count": 1,
+   "reason": "#4233 Design 2.5-2.7 sets these strings word for word; the chosen target can be any source kind, so no single noun fits"
+  },
+  {
    "kind": "words",
    "text": "(?i)(?:(?<![A-Za-z0-9])|(?<=\\\\[nrt]))(?:session-)?item-[\\p{L}\\p{N}_-]+",
    "count": 1,
@@ -13,6 +19,12 @@
    "text": "1 Item",
    "count": 1,
    "reason": "#3769/#4720 Collections and Select (owner decisions 1, 3-5): a collection, a Select set and All Items hold mixed sources, so there is no single source noun; counts and labels follow Mail/Files/Photos as #4343 did"
+  },
+  {
+   "kind": "words",
+   "text": "1 had no playback place saved and will be on the item without a place.",
+   "count": 1,
+   "reason": "#4233 Design 2.5-2.7 sets these strings word for word; the chosen target can be any source kind, so no single noun fits"
   },
   {
    "kind": "words",
@@ -88,15 +100,57 @@
   },
   {
    "kind": "words",
+   "text": "Move Margins to an Item…",
+   "count": 1,
+   "reason": "#4233 Design 2.5-2.7 sets these strings word for word; the chosen target can be any source kind, so no single noun fits"
+  },
+  {
+   "kind": "words",
+   "text": "Move to an Item",
+   "count": 2,
+   "reason": "#4233 Design 2.5-2.7 sets these strings word for word; the chosen target can be any source kind, so no single noun fits"
+  },
+  {
+   "kind": "words",
+   "text": "Move to an Item…",
+   "count": 1,
+   "reason": "#4233 Design 2.5-2.7 sets these strings word for word; the chosen target can be any source kind, so no single noun fits"
+  },
+  {
+   "kind": "words",
    "text": "No items",
    "count": 1,
    "reason": "#3769/#4720 Collections and Select (owner decisions 1, 3-5): a collection, a Select set and All Items hold mixed sources, so there is no single source noun; counts and labels follow Mail/Files/Photos as #4343 did"
   },
   {
    "kind": "words",
+   "text": "No playback place was saved with them, so they'll be on the item without a place.",
+   "count": 1,
+   "reason": "#4233 Design 2.5-2.7 sets these strings word for word; the chosen target can be any source kind, so no single noun fits"
+  },
+  {
+   "kind": "words",
+   "text": "No playback place was saved with this Margin, so it will be on the item without a place.",
+   "count": 1,
+   "reason": "#4233 Design 2.5-2.7 sets these strings word for word; the chosen target can be any source kind, so no single noun fits"
+  },
+  {
+   "kind": "words",
+   "text": "No started item matches “…”.",
+   "count": 1,
+   "reason": "#4233 Design 2.5-2.7 sets these strings word for word; the chosen target can be any source kind, so no single noun fits"
+  },
+  {
+   "kind": "words",
    "text": "None of the … items in “…” could be added.",
    "count": 1,
    "reason": "#3769 folder import summary: a picked folder holds mixed sources (PDFs, articles, audio), so there is no single source noun; same wording rule as #4343 collections"
+  },
+  {
+   "kind": "words",
+   "text": "Pick the Margins that belong to an item.",
+   "count": 1,
+   "reason": "#4233 Design 2.5-2.7 sets these strings word for word; the chosen target can be any source kind, so no single noun fits"
   },
   {
    "kind": "words",
@@ -235,6 +289,12 @@
    "text": "… Items",
    "count": 1,
    "reason": "#3769/#4720 Collections and Select (owner decisions 1, 3-5): a collection, a Select set and All Items hold mixed sources, so there is no single source noun; counts and labels follow Mail/Files/Photos as #4343 did"
+  },
+  {
+   "kind": "words",
+   "text": "… had no playback place saved and will be on the item without a place.",
+   "count": 1,
+   "reason": "#4233 Design 2.5-2.7 sets these strings word for word; the chosen target can be any source kind, so no single noun fits"
   },
   {
    "kind": "words",

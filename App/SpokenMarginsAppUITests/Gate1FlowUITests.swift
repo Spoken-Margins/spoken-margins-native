@@ -179,7 +179,9 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("timeline.rail").exists)
         // A chapter or the Beginning, found by identifier: the compact Beginning row no longer says "Chapter" (#4778).
         XCTAssertTrue(scrollToChapterOrBeginningRow().exists)
-        XCTAssertTrue(scrollToButton(containingLabel: "Assistant response").exists)
+        // The seeded turn sits inside a chapter that the Timeline folds away from the playhead (#3895), so open it
+        // the way a listener would before looking for the row (#5007).
+        XCTAssertTrue(openFoldedChapters(untilButtonContaining: "Assistant response").exists)
         returnToNowPlayingFromTimelineIfNeeded()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
 
@@ -1326,6 +1328,33 @@ final class Gate1FlowUITests: XCTestCase {
         }
         XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing button containing \(text)")
         return candidate
+    }
+
+    /// Taps each folded chapter's "Expand chapter" chevron on screen until a button containing `text` exists, then
+    /// scrolls it into reach, up or down. The Timeline folds chapters away from the playhead (#3895), so a row inside
+    /// one only appears once its chapter is opened (#5007).
+    private func openFoldedChapters(untilButtonContaining text: String) -> XCUIElement {
+        let target = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+        let folded = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "timeline.chapter.fold.", "Expand chapter"))
+        for _ in 0..<12 where !target.exists {
+            // The topmost folded chevron may sit above the screen, so take the first one that can be tapped now.
+            guard let chevron = folded.allElementsBoundByIndex.first(where: isReadyToTap) else {
+                app.swipeUp()
+                continue
+            }
+            let identifier = chevron.identifier
+            chevron.tap()
+            XCTAssertTrue(waitUntil(app.buttons[identifier], "label BEGINSWITH %@", "Collapse chapter"),
+                          "Chapter \(identifier) did not open")
+        }
+        XCTAssertTrue(target.waitForExistence(timeout: 4),
+                      "Missing button containing \(text) after opening the folded chapters: \(app.debugDescription)")
+        for _ in 0..<12 where !isReadyToTap(target) {
+            if target.frame.midY < app.frame.midY { app.swipeDown() } else { app.swipeUp() }
+        }
+        XCTAssertTrue(target.isHittable, "Button containing \(text) never came into reach")
+        return target
     }
 
     /// The first Timeline chapter row or the Beginning row. Chapter rows carry the heading trait as well as the button
