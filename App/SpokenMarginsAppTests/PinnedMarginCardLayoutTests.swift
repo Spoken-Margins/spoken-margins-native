@@ -67,6 +67,8 @@ final class PinnedMarginCardLayoutTests: XCTestCase {
                 // The saved-answer card with a long name, which draws the inline share icon (#3905). The height budgets above
                 // bound it at accessibility3; the icon itself is proved by the Test Desk's screenshots, not by this table.
                 ("answerSaved long name", .answerSaved(atMs: 65_000, sentTo: longName), .none, .unavailable),
+                ("savedHere", .savedHere(atMs: 65_000), .none, .unavailable),
+                ("hearItLand comingUp", .comingUp(msRemaining: 5_000), .hearItLand, .unavailable),
                 ("lastMargin", .lastMargin(senders: 1), .none, .unavailable),
                 ("lastMargin many", .lastMargin(senders: 3), .none, .unavailable),
                 ("moment comingUp", .comingUp(msRemaining: 8_000), .moment, .unavailable),

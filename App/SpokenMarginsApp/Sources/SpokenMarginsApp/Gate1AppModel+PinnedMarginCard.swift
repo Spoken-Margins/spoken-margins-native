@@ -53,7 +53,7 @@ extension Gate1AppModel {
         }
         if let moment = marginMoment {
             let current = moment.playing ?? moment.target
-            let run: PinnedMarginCard.Run = moment.isReview ? .review : .moment
+            let run: PinnedMarginCard.Run = moment.isReview ? .review : hearItLandRun(forMomentTarget: moment.target.marginId)
             let subject: PinnedMarginCard.Subject = current.isYours || !moment.isReview && current.label == nil
                 ? .yours : .friend(current.label) // `Subject` drops every stand-in, "a friend" included
             let position = CantPlayListening.cardPosition(in: moment) // a review counts its Margins; one Margin is never "1 of 1"
@@ -76,7 +76,7 @@ extension Gate1AppModel {
         }
         // A friend's Margin the listener went to that is never read aloud: its words, while the source is still near it (#4934).
         if let landing = shownSilentMarginLanding { return landing.card(noun: sourceNoun) }
-        if let saved = friendAnswerSavedCard { return saved }
+        if let saved = friendAnswerSavedCard ?? hearItLandWrittenCard { return saved }
         // After a catch-up run, the card that says no answer is owed, ahead of any heard Margin still ahead (#4785).
         if let caughtUp = caughtUpCard { return caughtUp }
         // Auto-play off still holds the slot: Next Margin is reachable between Margins and the title never moves.

@@ -33,17 +33,26 @@ final class ListeningRulesState: ObservableObject {
         if stored != rules { rules = stored }
         if !loaded { loaded = true }
     }
+
+    /// The first read failed: the Rules screen still shows its empty state and **New rule**, instead of nothing at all
+    /// (PR 10b audit). Rules already shown stay.
+    func noteReadFailed() {
+        if !loaded { loaded = true }
+    }
 }
 
 /// Thin wiring from the Rules screens to `ListeningRulesStore`. The words, sections, guard and match counts are in
 /// SessionKit (`ListeningRuleScreens`, `ListeningRuleEvaluator`). After every change Following's entries and rules are read
 /// again, so its rows, the Show screen's Skipped group and "Add everything new" follow the change at once.
 extension Gate1AppModel {
-    /// Reads the rules. A failed read keeps what is shown.
+    /// Reads the rules. A failed read keeps what is shown, and a failed first read still lets the screen offer New rule.
     func reloadListeningRules() async {
         guard let store else { return }
         let state = ListeningRulesState.shared
-        guard let stored = try? await state.service(for: store).rules() else { return }
+        guard let stored = try? await state.service(for: store).rules() else {
+            state.noteReadFailed()
+            return
+        }
         state.publish(stored)
     }
 
@@ -70,7 +79,7 @@ extension Gate1AppModel {
         }
     }
 
-    private func changeListeningRules(
+    func changeListeningRules(
         context: String, _ change: (ListeningRulesStore) async throws -> ListeningRulesStore.Change
     ) async -> ListeningRulesStore.Change? {
         guard let store else {
@@ -82,6 +91,8 @@ extension Gate1AppModel {
             let result = try await change(state.service(for: store))
             state.publish(result.rules)
             await reloadFollowingShowEntries()
+            // A rule that covers a suggestion ends it; a deleted one may bring it back (#4046 PR 12).
+            await reloadRuleSuggestions()
             return result
         } catch {
             reportFailure(error, context: context)

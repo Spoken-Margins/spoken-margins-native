@@ -439,6 +439,8 @@ extension Gate1AppModel {
         // `trigger.checksListLinks` before it touches the store, so every other trigger costs nothing here. The check runs on
         // its own task: a slow or dead list host must not keep a pull's spinner turning. **Check now** awaits the runner itself.
         startListLinkCheck(trigger: trigger)
+        // The rule learner reads the new episodes, off the main thread (#4046 PR 12).
+        if covered != nil { Task { [weak self] in await self?.reloadRuleSuggestions() } }
         return covered
     }
 

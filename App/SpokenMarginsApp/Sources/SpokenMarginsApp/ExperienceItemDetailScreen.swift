@@ -18,6 +18,8 @@ struct ExperienceItemDetailScreen: View {
     /// Saved live-session photos for Recent Margins (#4180), observed directly so they appear once the launch load finishes.
     @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
 
+    /// The followed show this item came from, for **Show less like this** (#4046 PR 12); nil for an item from no followed show.
+    @State private var showLessTarget: ShowLessTarget?
     @State private var confirmsTrash = false
     /// Why Share has nothing to send, when it has none (#4229).
     @State private var shareExplanation: ItemShareStart.Explanation?
@@ -47,6 +49,8 @@ struct ExperienceItemDetailScreen: View {
     @State private var pdfExport: PDFCommentExportModel?
     /// A tap on Play or "Skip to …" made before its start is possible, kept until it can run (#3788).
     @StateObject private var arrival = FriendArrivalPresenter()
+    /// "Keep Sam’s readings together" under the friend's intro, from the second packet from one sender (#5033).
+    @StateObject private var senderOffer = SenderCollectionOfferPresenter()
     private let episodeLinker = ImportedFileEpisodeLinker()
 
     /// Finds whether the open item is a PDF, or a Word document with a kept original (#4338, #4595). A PDF needs only the
@@ -108,6 +112,7 @@ struct ExperienceItemDetailScreen: View {
                         }
                     }
                     if let friendIntro { FriendMarginsSummary(intro: friendIntro, receipt: sharingCoordinator.introReceipt) }
+                    SenderCollectionOfferRow(presenter: senderOffer)
                     if let description = model.selectedItem.descriptionText {
                         ItemDescriptionPreview(text: description).id(model.selectedItem.id)
                     }
@@ -202,6 +207,20 @@ struct ExperienceItemDetailScreen: View {
                                 .accessibilityIdentifier("item.menu.exportWord.button")
                         }
                         quickActionButtons
+                        // An episode or post from a followed show (#4046 PR 12): the same mark the Show screen writes.
+                        if let target = showLessTarget {
+                            let marked = model.showLessMark(entryId: target.entryId, itemId: target.item.id) != nil
+                            Button(ShowLessWords.menuTitle(isMarked: marked), systemImage: ShowLessWords.symbol) {
+                                Task {
+                                    if marked {
+                                        await model.unmarkShowLess(entryId: target.entryId, itemId: target.item.id)
+                                    } else {
+                                        await model.markShowLess(target.mark)
+                                    }
+                                }
+                            }
+                            .accessibilityIdentifier("item.menu.showLess.button")
+                        }
                         if episodeLinkStatus.canLink && !episodeLinkStatus.canChange {
                             Button("Episode can't change: friends' Margins are on it", systemImage: "link") {}
                                 .disabled(true)
@@ -243,11 +262,16 @@ struct ExperienceItemDetailScreen: View {
                 }
             }
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
+            .task(id: "\(model.selectedItem.id)|\(model.feedSubscriptions.count)") {
+                showLessTarget = await model.showLessTarget(itemId: model.selectedItem.id)
+            }
             // Runs again when the item's Library row arrives, so the entry is not missed on a screen opened before the row.
             .task(id: "\(model.selectedItem.id)|\(model.libraryItems.contains { $0.id == model.selectedItem.id })") {
                 await refreshKeptOriginal()
             }
             .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Skip to the Margins" (#3365)
+            .onAppear { senderOffer.refresh(model: model, arriving: !newSharedMargins.isEmpty) }
+            .onChange(of: senderOfferKey) { senderOffer.refresh(model: model, arriving: !newSharedMargins.isEmpty) }
             .onDisappear {
                 WrittenMarginReadings.leftItemScreen(model.selectedItem.id)
                 arrival.cancel()
@@ -1059,6 +1083,12 @@ struct ExperienceItemDetailScreen: View {
     /// Shared Margins on this item that the listener hasn't heard (#474).
     private var newSharedMargins: [SharedMarginReview.Entry] {
         model.newSharedMargins(itemId: model.selectedItem.id)
+    }
+
+    /// Changes when something the sender collection offer reads changes: the open item, the Library's rows (a Margin the
+    /// listener saved, a packet that arrived), the collections, or the friend's waiting Margins.
+    private var senderOfferKey: String {
+        "\(model.selectedItem.id)|\(model.libraryPresentationRevision)|\(model.libraryCollections.collections.count)|\(newSharedMargins.count)"
     }
 
     private var itemMargins: [MarginRow] {

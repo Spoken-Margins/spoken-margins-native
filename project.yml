@@ -198,6 +198,12 @@ targets:
               - com.spokenmargins.subrip
               - org.openxmlformats.wordprocessingml.document
               - public.plain-text
+          # A list of shows from another podcast app or a friend (#4046 PR 5). Alternate: one more choice in Open In.
+          - CFBundleTypeName: Podcast list
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - org.opml.opml
         UTExportedTypeDeclarations:
           - UTTypeIdentifier: com.spokenmargins.package
             UTTypeDescription: Spoken Margins Package
@@ -221,6 +227,16 @@ targets:
                 - srt
               public.mime-type:
                 - application/x-subrip
+          # OPML (.opml): the system declares no type for it, so an .opml file could not be opened in the app (#4046 PR 5).
+          - UTTypeIdentifier: org.opml.opml
+            UTTypeDescription: OPML podcast list
+            UTTypeConformsTo:
+              - public.xml
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - opml
+              public.mime-type:
+                - text/x-opml
         LSRequiresIPhoneOS: true
         LSSupportsOpeningDocumentsInPlace: true
         ITSAppUsesNonExemptEncryption: false

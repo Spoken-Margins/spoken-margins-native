@@ -102,7 +102,7 @@ extension PinnedMarginCard {
         case .silentHere:
             // No Next Margin: the Skim arrows sit right under the card.
             return [Action(job: .dismissSilentMargin, title: "Dismiss", hint: "Hides this card. The \(ahead) keeps playing.", prominence: .quiet)]
-        case .answerSaved, .lastMargin:
+        case .answerSaved, .savedHere, .lastMargin:
             return []
         case .caughtUp(let stillNew, _, _):
             let dismiss = Action(job: .dismissCaughtUp, title: "Dismiss", hint: "Hides this card.", prominence: .quiet)
