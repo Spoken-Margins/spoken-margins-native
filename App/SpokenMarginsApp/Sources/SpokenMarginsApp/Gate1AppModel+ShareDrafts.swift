@@ -135,7 +135,17 @@ extension Gate1AppModel {
     /// sheet here, so this is the one place the rule is applied. `activePlaybackIsPlaying` and `pause()` read the same
     /// layers in the same order: a Margin voice first, then a Skim bridge, then the source.
     private func pauseForShareFlow() {
-        if ShareFlowPlayback.onOpen(isPlaying: activePlaybackIsPlaying) == .pause { pause() }
+        guard ShareFlowPlayback.onOpen(isPlaying: activePlaybackIsPlaying) == .pause else { return }
+        pauseKeepingShareSheetItem()
+    }
+
+    /// A pause from inside the share sheet. Pausing the source reloads the playing item into `selectedItem` in the
+    /// background. When the sheet is for another item (a Margin from the Margins tab, Margin details or a reply back),
+    /// that reload would swap the sheet's item for the playing one before Send, and the packet would name the wrong
+    /// source, so the reload is dropped. The sheet's own pauses (opening it, the sender lead-in preview) come here.
+    func pauseKeepingShareSheetItem() {
+        pause()
+        if selectedItem.id != activeItemId { _ = backgroundRefresh.beginItem() }
     }
 
     /// Where the sharing star's counts are kept (#4173): on this phone, as four numbers.

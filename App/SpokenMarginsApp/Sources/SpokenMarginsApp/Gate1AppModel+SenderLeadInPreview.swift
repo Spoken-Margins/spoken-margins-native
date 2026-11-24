@@ -27,9 +27,10 @@ extension Gate1AppModel {
         return ["http", "https"].contains(url.scheme?.lowercased() ?? "") ? url : nil
     }
 
-    /// Starting the preview pauses the main player if it's playing, and leaves it paused (Design §2).
+    /// Starting the preview pauses the main player if it's playing, and leaves it paused (Design §2). The sheet may be
+    /// for another item than the one playing, so the pause keeps the sheet's item (#5050 audit).
     func pauseForSenderPreview() {
         guard snapshot.status.isPlaybackActive else { return }
-        pause()
+        pauseKeepingShareSheetItem()
     }
 }
