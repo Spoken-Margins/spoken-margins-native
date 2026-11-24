@@ -47,10 +47,11 @@ struct Build23SenderSharingExperience: View {
         #endif
     }
 
-    /// Whether the main Share button makes a link. False in a build without links, and while the server says no.
+    /// Whether the main Share button makes a link. False in a build without links, while the server says no, and when this
+    /// build is below the server's minimum (#4134).
     private var sharesLink: Bool {
         #if SM_SHARE_LINK_CREATION
-        isLinkOffered
+        isLinkOffered && linkSender.shareLinkAfterwards != .hidden
         #else
         false
         #endif
@@ -59,6 +60,15 @@ struct Build23SenderSharingExperience: View {
     private var isMakingLink: Bool {
         #if SM_SHARE_LINK_CREATION
         linkSender.state == .making
+        #else
+        false
+        #endif
+    }
+
+    /// "Share link" can't be tapped: a link is being made, or the line on show is a refusal a retry won't pass (#4134).
+    private var linkButtonBlocked: Bool {
+        #if SM_SHARE_LINK_CREATION
+        isMakingLink || !linkSender.shareLinkAfterwards.allowsShareLink
         #else
         false
         #endif
@@ -206,7 +216,7 @@ struct Build23SenderSharingExperience: View {
             .accessibilityIdentifier("build23.sender.select.continue")
         case .review where sharesLink:
             linkShareButton(isWorking: Build23ShareRequestPolicy.showsMakingLink(isMakingLink: isMakingLink, pendingShare: pendingShare))
-                .disabled(!snapshot.canAdvance || isMakingLink)
+                .disabled(!snapshot.canAdvance || linkButtonBlocked)
                 .accessibilityIdentifier("build23.sender.review.share")
         case .review:
             Button("Share \(includedCount)", systemImage: "square.and.arrow.up") {
@@ -217,7 +227,7 @@ struct Build23SenderSharingExperience: View {
             .accessibilityIdentifier("build23.sender.review.share")
         case .recipientPreview where sharesLink:
             linkShareButton(isWorking: Build23ShareRequestPolicy.showsMakingLink(isMakingLink: isMakingLink, pendingShare: pendingShare))
-                .disabled(snapshot.previewState != .ready || isMakingLink)
+                .disabled(snapshot.previewState != .ready || linkButtonBlocked)
                 .accessibilityIdentifier("build23.sender.preview.share")
         case .recipientPreview:
             Button(
@@ -262,7 +272,8 @@ struct Build23SenderSharingExperience: View {
             playCheckLine: linkSender.playCheckLine,
             playCheckLinkID: linkSender.playCheckLinkID
         )
-        if sharesLink, lines.hasLines {
+        // Below the minimum build the button is hidden, and the update line shows anyway (#4134).
+        if sharesLink || linkSender.shareLinkAfterwards == .hidden, lines.hasLines {
             lines
         }
         #endif
