@@ -59,6 +59,47 @@ public enum SharedPacketArrival {
         return saved.filter { added.contains($0.id) && $0.isNewToListener && SharedMarginAudio.canOffer($0) }.count
     }
 
+    /// `newMarginCount(importedIds:saved:)` without the listener's own copies (#4910): a Margin that came back in a packet
+    /// is not "new from a friend". `ownMargins` are the own Margins of the file's item.
+    public static func newMarginCount(
+        importedIds: [String], saved: [ImportedCommentaryInterjection], layer: ImportedCommentaryLayer,
+        ownMargins: [Interjection]
+    ) -> Int {
+        let own = OwnMarginEchoes.identities(of: ownMargins)
+        let added = Set(importedIds)
+        return saved.filter {
+            added.contains($0.id) && !OwnMarginEchoes.isEcho($0, in: layer, ownIdentities: own)
+                && $0.isNewToListener && SharedMarginAudio.canOffer($0)
+        }.count
+    }
+
+    /// How many Margins the file added when every one of them is a copy of the listener's own, else nil. A copy is a
+    /// copy whether or not it could play, so `isNewToListener` and `canOffer` are not asked.
+    public static func ownCopiesCount(
+        importedIds: [String], saved: [ImportedCommentaryInterjection], layer: ImportedCommentaryLayer,
+        ownMargins: [Interjection]
+    ) -> Int? {
+        let own = OwnMarginEchoes.identities(of: ownMargins)
+        let added = Set(importedIds)
+        let addedRecords = saved.filter { added.contains($0.id) }
+        guard !addedRecords.isEmpty,
+              addedRecords.allSatisfy({ OwnMarginEchoes.isEcho($0, in: layer, ownIdentities: own) }) else { return nil }
+        return addedRecords.count
+    }
+
+    /// Whether the item held a friend's Margins before the file came in: any layer that is not made only of the
+    /// listener's own copies. A layer with no records (a Listening Map) counts, as any live layer does.
+    public static func hadFriendMargins(
+        layers: [ImportedCommentaryLayer], records: [String: [ImportedCommentaryInterjection]], ownMargins: [Interjection]
+    ) -> Bool {
+        !OwnMarginEchoes.friendMargins(layers: layers, records: records, ownMargins: ownMargins).layers.isEmpty
+    }
+
+    /// Said for a file that added only the listener's own Margins.
+    public static func ownCopiesMessage(count: Int) -> String {
+        count == 1 ? "Nothing new: this is your own Margin" : "Nothing new: these are your own Margins"
+    }
+
     /// The honest parts of the old Import sheet, one tap away on the item's screen.
     public static let aboutTitle = "About this file"
     public static let aboutIntegrity = "Unchanged since it was sent. The name on it comes from the sender's app and isn't proven."

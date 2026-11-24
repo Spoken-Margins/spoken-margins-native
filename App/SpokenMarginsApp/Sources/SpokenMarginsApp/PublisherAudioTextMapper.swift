@@ -1,5 +1,4 @@
 import Foundation
-import Speech
 import SessionKit
 import SessionKitAudio
 import SessionKitFeeds
@@ -44,7 +43,13 @@ enum PublisherAudioTextMapper {
     ) {
         guard audio.textMapStatus == nil, !running.contains(audio.itemId) else { return }
         // Never prompt for Speech Recognition from an import: wait until the listener has allowed it.
-        guard SFSpeechRecognizer.authorizationStatus() == .authorized else {
+        guard SpeechRecognitionAccess.isAuthorized else {
+            // Still open: Allow starts it again (#4715), quietly; a decided no waits for the next open of the item.
+            if SpeechRecognitionAccess.state == .notDetermined {
+                SpeechAskController.shared.transcriptionHeld(.publisherTextMap, key: audio.itemId) {
+                    resume(itemId: audio.itemId, store: store, transcriber: transcriber, report: report)
+                }
+            }
             return report("waiting_for_speech_recognition")
         }
         guard let remoteURL = URL(string: audio.audioURL) else {
@@ -137,7 +142,7 @@ enum PublisherAudioTextMapper {
         // old one's chunks; the chunks are removed afterwards.
         let cacheKey = "publisher-audio-\(UUID().uuidString)"
         defer { removeTranscriptionCaches(cacheKey) }
-        return try await transcriber.transcribeSourceAudio(url: localURL, itemId: cacheKey, durationMs: durationMs)
+        return try await transcriber.transcribeSourceAudio(url: localURL, itemId: cacheKey, durationMs: durationMs, for: .publisherTextMap)
     }
 
     /// Clear each transcriber cache independently, even if another folder cannot be removed.

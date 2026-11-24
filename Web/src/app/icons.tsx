@@ -152,3 +152,12 @@ export const ShareIcon = () => (
     <path d="M7 11H5.5v9h13v-9H17" />
   </Icon>
 );
+
+/** Three dots, for a row's "More" button. */
+export const MoreIcon = () => (
+  <Icon>
+    <circle cx="5.5" cy="12" r="1.5" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+    <circle cx="18.5" cy="12" r="1.5" fill="currentColor" stroke="none" />
+  </Icon>
+);

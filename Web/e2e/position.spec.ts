@@ -1,6 +1,6 @@
 // Where the listener left off survives a refresh (#4096): scrub then refresh, with and without a pause in between.
 import { expect, test, type Page } from '@playwright/test';
-import { FEED_ORIGIN, seconds, serveFixtures } from './fixtures.ts';
+import { FEED_ORIGIN, followAndAdd, seconds, serveFixtures } from './fixtures.ts';
 
 const FEED = `${FEED_ORIGIN}/enclosure-only-episodes.rss`;
 const TITLE = 'Episode 3: No link, GUID and audio';
@@ -17,8 +17,9 @@ async function open(page: Page) {
   await sheet.getByLabel('Show name, or a feed or Substack address').fill(FEED);
   await sheet.getByRole('button', { name: 'Follow' }).click();
   await expect(page.getByRole('heading', { name: 'Following' })).toBeVisible();
+  await followAndAdd(page, 'Spoken Margins Test Show', [TITLE]);
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Library' }).click();
-  await page.getByRole('button', { name: new RegExp(TITLE) }).click();
+  await page.getByRole('button', { name: new RegExp(`^(?!More for ).*${TITLE}`) }).click();
   const playing = page.getByRole('dialog', { name: TITLE });
   await expect(playing.getByRole('button', { name: 'Pause' })).toBeVisible();
   return playing;
@@ -34,10 +35,10 @@ async function scrubTo(page: Page, to: number) {
 async function reopenAndRead(page: Page) {
   await page.reload();
   await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Library' }).click();
-  const resume = page.getByRole('button', { name: new RegExp(TITLE) }).getByText(/Resume at/);
+  const resume = page.getByRole('button', { name: new RegExp(`^(?!More for ).*${TITLE}`) }).getByText(/Resume at/);
   await expect(resume).toBeVisible();
   const shown = seconds((await resume.textContent())!.replace('Resume at ', ''));
-  await page.getByRole('button', { name: new RegExp(TITLE) }).click();
+  await page.getByRole('button', { name: new RegExp(`^(?!More for ).*${TITLE}`) }).click();
   await expect(page.getByRole('dialog', { name: TITLE })).toBeVisible();
   // Past zero: the saved place is applied when the audio's metadata arrives, not when the dialog opens.
   await expect.poll(() => audioTime(page)).toBeGreaterThan(1);

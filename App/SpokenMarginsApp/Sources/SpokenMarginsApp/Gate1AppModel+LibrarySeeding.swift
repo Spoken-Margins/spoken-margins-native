@@ -53,6 +53,7 @@ extension Gate1AppModel {
             }
             var rows = try loadLibraryRows(store: store)
             libraryWasEmptyAtLaunch = rows.isEmpty
+            if !UITestingHooks.suppressesFirstRun { runHeardFirstMarginMigration(libraryWasEmptyAtLaunch: rows.isEmpty) }
             let storedWelcomeSampleVersion = UserDefaults.standard.integer(
                 forKey: Self.welcomeSampleSeedVersionKey
             )
