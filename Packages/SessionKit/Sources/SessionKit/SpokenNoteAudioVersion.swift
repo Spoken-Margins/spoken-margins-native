@@ -38,6 +38,24 @@ public enum SpokenNoteCleanClock {
         return cache.map(for: folder)
     }
 
+    /// Whether the note playing `noteMediaURL` (its recording or its version) has a usable Shorter pauses version, so a
+    /// place on it could be on either clock. With none, the recording's is the only clock it has.
+    public static func hasVersion(noteMediaURL: String?) -> Bool {
+        guard let noteMediaURL, !noteMediaURL.isEmpty else { return false }
+        if SpokenNoteCleanFiles.namesCleanAudio(noteMediaURL) { return map(forMediaURL: noteMediaURL) != nil }
+        let isPath = noteMediaURL.hasPrefix("/")
+        guard let url = isPath ? URL(fileURLWithPath: noteMediaURL) : URL(string: noteMediaURL) else { return false }
+        let clean = SpokenNoteCleanFiles.audioURL(inNoteFolder: url.deletingLastPathComponent())
+        return map(forMediaURL: isPath ? clean.path : clean.absoluteString) != nil
+    }
+
+    /// Whether a note's place with no file kept still has a known clock, the recording's: when it came from a player run
+    /// (this build keeps the file with every run, so a run's place with none was saved by a build before the version
+    /// existed), or when the note has no version to have played. Otherwise it is not known and is never guessed (#4779).
+    public static func placeWithNoFileIsOnRecording(fromRun: Bool, noteMediaURL: String?) -> Bool {
+        fromRun || !hasVersion(noteMediaURL: noteMediaURL)
+    }
+
     /// A playing time on `mediaURL` as a time on the recording's clock.
     public static func recordedMs(playingMs: Int, mediaURL: String?) -> Int {
         map(forMediaURL: mediaURL)?.recordedMs(fromCleanMs: playingMs) ?? playingMs
@@ -87,7 +105,12 @@ public enum SpokenNoteCleanClock {
         }
 
         private static func stamp(_ folder: URL) -> String {
-            [folder.appendingPathComponent(SpokenNoteWholePlayback.layoutFileName), SpokenNoteCleanFiles.layoutURL(inNoteFolder: folder)]
+            // The version's audio too: a map read between its layout and its audio being written would otherwise
+            // stay "no version" until the layout changed.
+            [
+                folder.appendingPathComponent(SpokenNoteWholePlayback.layoutFileName), SpokenNoteCleanFiles.layoutURL(inNoteFolder: folder),
+                SpokenNoteCleanFiles.audioURL(inNoteFolder: folder)
+            ]
                 .map { url in
                     let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
                     let date = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0

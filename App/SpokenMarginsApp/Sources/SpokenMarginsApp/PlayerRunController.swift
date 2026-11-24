@@ -73,13 +73,15 @@ enum PlayerRunController {
                 saved = try PlayerItemMargin.placeSpoken(
                     audioPath: audioPath, atMediaTimeMs: placement.positionMs, markedAt: placement.markedAt,
                     itemId: placement.itemId, repository: store, readAloudPlace: readAloudPlace(for: placement),
-                    playedOnMediaURL: placement.playingThen?.playingMediaURL // the file it was taken on (#4779)
+                    playedOnMediaURL: placement.playingThen?.playingMediaURL, // the file it was taken on (#4779)
+                    playedFromRun: placement.playingThen?.source == .playerRun
                 )
             } else {
                 // A Lock Screen Mark: a written Margin with words that say what it is (#3203).
                 saved = try PlayerItemMargin.placeMark(
                     atMediaTimeMs: placement.positionMs, markedAt: placement.markedAt, itemId: placement.itemId, repository: store,
-                    playedOnMediaURL: placement.playingThen?.playingMediaURL
+                    playedOnMediaURL: placement.playingThen?.playingMediaURL,
+                    playedFromRun: placement.playingThen?.source == .playerRun
                 )
             }
         } catch {

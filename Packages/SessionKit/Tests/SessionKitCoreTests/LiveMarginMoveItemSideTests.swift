@@ -91,11 +91,14 @@ final class LiveMarginMoveItemSideTests: XCTestCase {
         return (item, recordedURL, shorterURL)
     }
 
-    private func movedPlace(hintMs: Int, playedURL: String?, attachShorter: Bool) throws -> (Int?, Int?) {
+    private func movedPlace(
+        hintMs: Int, playedURL: String?, attachShorter: Bool, source: LiveSessionPlayingThen.Source = .playerRun, withVersion: Bool = true
+    ) throws -> (Int?, Int?) {
         let note = try note(attachShorter: attachShorter)
+        if !withVersion { try FileManager.default.removeItem(at: directory.appending(path: "note/clean", directoryHint: .isDirectory)) }
         try seed(note.item, session(for: "note", resumeMs: 1_000))
         let url = playedURL == "recorded" ? note.recordedURL : playedURL == "shorter" ? note.shorterURL : nil
-        let margin = spoken("p", at: 1, hint: .init(itemId: "note", positionMs: hintMs, source: .playerRun, playingMediaURL: url))
+        let margin = spoken("p", at: 1, hint: .init(itemId: "note", positionMs: hintMs, source: source, playingMediaURL: url))
         let planned = try plan([margin], itemId: "note")
         XCTAssertEqual(planned.itemDurationMs, 4_000, "the percent is on the recording's length")
         _ = try LiveMarginMove.execute(plan: planned, repository: store, movedAt: at(500))
@@ -119,11 +122,25 @@ final class LiveMarginMoveItemSideTests: XCTestCase {
         XCTAssertEqual(try movedPlace(hintMs: 1_500, playedURL: "shorter", attachShorter: false).0, 3_000)
     }
 
-    func testANotePlaceWithNoKnownFileMovesWithNoPlace() throws {
+    func testAWatchPlaceWithNoFileOnANoteWithAVersionMovesWithNoPlace() throws {
         // #4779 audit on 9443c0a: a Watch's position from a build that sends no file, with the phone's record gone. Its
         // clock is not known, so it is not guessed, as the Watch's placement path refuses it too.
-        XCTAssertNil(try movedPlace(hintMs: 3_000, playedURL: nil, attachShorter: true).0)
-        XCTAssertNil(try movedPlace(hintMs: 3_000, playedURL: nil, attachShorter: false).0)
+        XCTAssertNil(try movedPlace(hintMs: 3_000, playedURL: nil, attachShorter: true, source: .watchTarget).0)
+        XCTAssertNil(try movedPlace(hintMs: 3_000, playedURL: nil, attachShorter: false, source: .watchTarget).0)
+    }
+
+    func testARunPlaceSavedByAnEarlierBuildKeepsItsPlaceOnTheRecording() throws {
+        // #4779 audit on 12a94f7: a hint saved before the file was kept has no file key. Its run played the recording,
+        // the only file there was, so its place stands.
+        let json = #"{"itemId":"note","positionMs":3000,"source":"playerRun"}"#
+        let decoded = try JSONDecoder().decode(LiveSessionPlayingThen.self, from: Data(json.utf8))
+        XCTAssertNil(decoded.playingMediaURL)
+        XCTAssertEqual(try movedPlace(hintMs: 3_000, playedURL: nil, attachShorter: true).0, 3_000)
+    }
+
+    func testAWatchPlaceWithNoFileOnANoteWithNoVersionKeepsItsPlace() throws {
+        // #4779 audit on 12a94f7: a note with no version has only the recording's clock.
+        XCTAssertEqual(try movedPlace(hintMs: 3_000, playedURL: nil, attachShorter: false, source: .watchTarget, withVersion: false).0, 3_000)
     }
 
     // MARK: What is kept

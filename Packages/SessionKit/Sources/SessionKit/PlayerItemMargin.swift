@@ -28,8 +28,8 @@ public enum PlayerItemMargin {
         /// `placeSpoken` was given no recording; a Mark goes through `placeMark`.
         case noRecording
         case notWritten
-        /// A spoken note's place came with no file, so its clock is not known: its recording and its Shorter pauses
-        /// version run on different clocks, and a guess would anchor it on the wrong words (#4779). It files elsewhere.
+        /// A spoken note's place came with no file while the note has a Shorter pauses version, and not from a player
+        /// run, so its clock is not known: a guess would anchor it on the wrong words (#4779). It files elsewhere.
         case clockUnknown
     }
 
@@ -51,11 +51,13 @@ public enum PlayerItemMargin {
         itemId: String,
         repository: SessionRepository & StructuredDocumentRepository,
         readAloudPlace: ReadAloudPlace? = nil,
-        playedOnMediaURL: String? = nil
+        playedOnMediaURL: String? = nil,
+        playedFromRun: Bool = false
     ) throws -> Interjection {
         guard let audioPath, !audioPath.isEmpty else { throw Failure.noRecording }
         let target = try Target(
-            itemId: itemId, mediaTimeMs: mediaTimeMs, repository: repository, readAloudPlace: readAloudPlace, playedOnMediaURL: playedOnMediaURL)
+            itemId: itemId, mediaTimeMs: mediaTimeMs, repository: repository, readAloudPlace: readAloudPlace, playedOnMediaURL: playedOnMediaURL,
+            playedFromRun: playedFromRun)
         // A retry after the first try got as far as the store: the Margin is already there, so never write a second copy.
         if let existing = (try? repository.loadInterjections(sessionId: target.original.id))?.first(where: { $0.audioPath == audioPath }) {
             return existing
@@ -91,9 +93,11 @@ public enum PlayerItemMargin {
         itemId: String,
         repository: SessionRepository & StructuredDocumentRepository,
         timeZone: TimeZone = .current,
-        playedOnMediaURL: String? = nil
+        playedOnMediaURL: String? = nil,
+        playedFromRun: Bool = false
     ) throws -> Interjection {
-        let target = try Target(itemId: itemId, mediaTimeMs: mediaTimeMs, repository: repository, playedOnMediaURL: playedOnMediaURL)
+        let target = try Target(
+            itemId: itemId, mediaTimeMs: mediaTimeMs, repository: repository, playedOnMediaURL: playedOnMediaURL, playedFromRun: playedFromRun)
         let words = markWords(
             mediaTimeMs: target.isArticle ? nil : target.timeMs, itemTitle: target.item.title, markedAt: markedAt, timeZone: timeZone
         )
@@ -198,10 +202,16 @@ public enum PlayerItemMargin {
     /// A time taken on `playedOn` as a time on the file `item` names now, which the engine converts from when it
     /// saves (#4779). A spoken note can move between its recording and its Shorter pauses version while a Watch
     /// Margin records, and their clocks differ; the saved place must be the words that played. Any other item keeps its
-    /// time. A note's time with no file known throws `clockUnknown`, never a guess.
-    static func timeOnAttachedFile(_ playedMs: Int, playedOn: String?, item: Item) throws -> Int {
+    /// time. A note's time with no file is on the recording's clock when that is the only one it can be on
+    /// (`SpokenNoteCleanClock.placeWithNoFileIsOnRecording`); otherwise it throws `clockUnknown`, never a guess.
+    static func timeOnAttachedFile(_ playedMs: Int, playedOn: String?, fromRun: Bool = false, item: Item) throws -> Int {
         guard SpokenNoteItem.isSpokenNote(mediaType: item.mediaType) else { return playedMs }
-        guard let playedOn else { throw Failure.clockUnknown }
+        guard let playedOn else {
+            guard SpokenNoteCleanClock.placeWithNoFileIsOnRecording(fromRun: fromRun, noteMediaURL: item.media?.url) else {
+                throw Failure.clockUnknown
+            }
+            return SpokenNoteCleanClock.playingMs(recordedMs: playedMs, mediaURL: item.media?.url)
+        }
         guard playedOn != item.media?.url else { return playedMs }
         let recordedMs = SpokenNoteCleanClock.recordedMs(playingMs: playedMs, mediaURL: playedOn)
         return SpokenNoteCleanClock.playingMs(recordedMs: recordedMs, mediaURL: item.media?.url)
@@ -221,13 +231,13 @@ public enum PlayerItemMargin {
 
         init(
             itemId: String, mediaTimeMs playedMs: Int, repository: SessionRepository & StructuredDocumentRepository,
-            readAloudPlace: ReadAloudPlace? = nil, playedOnMediaURL: String? = nil
+            readAloudPlace: ReadAloudPlace? = nil, playedOnMediaURL: String? = nil, playedFromRun: Bool = false
         ) throws {
             guard let item = try? repository.loadItem(id: itemId), item.deletedAt == nil else { throw Failure.itemNotFound }
             guard let original = StoredSessionMargin.targetSession(in: try repository.loadSessions(itemId: itemId)) else {
                 throw Failure.noSession
             }
-            let mediaTimeMs = try PlayerItemMargin.timeOnAttachedFile(playedMs, playedOn: playedOnMediaURL, item: item)
+            let mediaTimeMs = try PlayerItemMargin.timeOnAttachedFile(playedMs, playedOn: playedOnMediaURL, fromRun: playedFromRun, item: item)
             func clamped(_ durationMs: Int?) -> Int {
                 durationMs.map { min(max(0, mediaTimeMs), max(0, $0 - 1)) } ?? max(0, mediaTimeMs)
             }

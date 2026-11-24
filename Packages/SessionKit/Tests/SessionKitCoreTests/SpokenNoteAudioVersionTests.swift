@@ -166,15 +166,32 @@ final class SpokenNoteAudioVersionTests: XCTestCase {
         // Taken at 1.5 s on the version; As recorded was chosen before it was written: 3 s on the recording.
         XCTAssertEqual(try PlayerItemMargin.timeOnAttachedFile(1_500, playedOn: cleanURL, item: noteItem(attached: recordedURL)), 3_000)
         XCTAssertEqual(try PlayerItemMargin.timeOnAttachedFile(1_500, playedOn: cleanURL, item: noteItem(attached: cleanURL)), 1_500, "same file")
-        // #4779 audit on 9443c0a: a note's place with no file has no known clock, so it is never guessed.
+        // #4779 audits on 9443c0a and 12a94f7: a Watch place with no file, on a note with a version, has no known clock,
+        // so it is never guessed.
         XCTAssertThrowsError(try PlayerItemMargin.timeOnAttachedFile(1_500, playedOn: nil, item: noteItem(attached: cleanURL))) {
             XCTAssertEqual($0 as? PlayerItemMargin.Failure, .clockUnknown)
         }
         XCTAssertThrowsError(try PlayerItemMargin.timeOnAttachedFile(1_500, playedOn: nil, item: noteItem(attached: recordedURL)))
+        // A run's place with no file was saved by a build before the version existed: the recording's clock.
+        XCTAssertEqual(try PlayerItemMargin.timeOnAttachedFile(3_000, playedOn: nil, fromRun: true, item: noteItem(attached: cleanURL)), 1_500)
+        XCTAssertEqual(try PlayerItemMargin.timeOnAttachedFile(3_000, playedOn: nil, fromRun: true, item: noteItem(attached: recordedURL)), 3_000)
         XCTAssertEqual(try PlayerItemMargin.timeOnAttachedFile(
             1_500, playedOn: nil, item: noteItem(attached: recordedURL, mediaType: "podcast")), 1_500, "any other item keeps its time")
         XCTAssertEqual(try PlayerItemMargin.timeOnAttachedFile(
             1_500, playedOn: cleanURL, item: noteItem(attached: recordedURL, mediaType: "podcast")), 1_500, "only a note has two clocks")
+    }
+
+    func testANotePlaceWithNoFileKeepsItsTimeWhenTheNoteHasNoVersion() throws {
+        // #4779 audit on 12a94f7: with no version (every note of a listener on As recorded) there is one clock, so an
+        // older Watch's place, or one whose record the phone lost, is still placed.
+        try writeNote(withAudio: false)
+        XCTAssertFalse(SpokenNoteCleanClock.hasVersion(noteMediaURL: recordedURL))
+        XCTAssertEqual(try PlayerItemMargin.timeOnAttachedFile(3_000, playedOn: nil, item: noteItem(attached: recordedURL)), 3_000)
+        try Data([0]).write(to: SpokenNoteCleanFiles.audioURL(inNoteFolder: folder))
+        XCTAssertTrue(SpokenNoteCleanClock.hasVersion(noteMediaURL: recordedURL), "read from the recording's URL")
+        XCTAssertTrue(SpokenNoteCleanClock.hasVersion(noteMediaURL: cleanURL))
+        XCTAssertTrue(SpokenNoteCleanClock.hasVersion(noteMediaURL: SpokenNoteWholePlayback.audioURL(inFolder: folder).path), "or its path")
+        XCTAssertFalse(SpokenNoteCleanClock.hasVersion(noteMediaURL: nil))
     }
 
     func testOnlyAMarginRunningOnTheSessionHoldsAVersionChange() {
