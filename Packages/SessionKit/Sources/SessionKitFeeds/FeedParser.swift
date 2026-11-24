@@ -117,7 +117,18 @@ public final class FeedParser: @unchecked Sendable {
     private func parseJSON(_ data: Data) throws -> ParsedFeed {
         struct JSONFeed: Decodable {
             struct Item: Decodable {
-                struct Attachment: Decodable { var url: String; var mime_type: String?; var size_in_bytes: Int? }
+                struct Attachment: Decodable {
+                    var url: String; var mime_type: String?; var size_in_bytes: Int?
+                    enum CodingKeys: String, CodingKey { case url, mime_type, size_in_bytes }
+                    // The size is only a hint for the article feed route (#4640): a string or out-of-range value is
+                    // dropped, never a reason to reject the whole feed.
+                    init(from decoder: Decoder) throws {
+                        let c = try decoder.container(keyedBy: CodingKeys.self)
+                        url = try c.decode(String.self, forKey: .url)
+                        mime_type = try c.decodeIfPresent(String.self, forKey: .mime_type)
+                        size_in_bytes = try? c.decodeIfPresent(Int.self, forKey: .size_in_bytes)
+                    }
+                }
                 var id: String?
                 var url: String?
                 var external_url: String?

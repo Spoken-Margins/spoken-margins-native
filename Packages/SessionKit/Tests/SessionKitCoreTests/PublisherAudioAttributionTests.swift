@@ -49,4 +49,19 @@ final class PublisherAudioAttributionTests: XCTestCase {
         XCTAssertEqual(PublisherAudioAttribution.VoiceRowButton.useAppVoice.systemImage, "waveform")
         XCTAssertEqual(PublisherAudioAttribution.VoiceRowButton.playPublisherAudio.systemImage, "person.wave.2")
     }
+
+    func testOnlyASwitchWithinTheSameItemIsAnnounced() {
+        typealias Voice = PublisherAudioAttribution.PlayingVoice
+        let recording = Voice(itemId: "a", source: "type3_audio_narration")
+        let appVoice = Voice(itemId: "a", source: nil)
+        XCTAssertEqual(PublisherAudioAttribution.switchAnnouncement(from: appVoice, to: recording), "Playing the publisher's audio.")
+        XCTAssertEqual(PublisherAudioAttribution.switchAnnouncement(from: recording, to: appVoice),
+                       "The publisher's audio stopped. Reading on with the app's voice.")
+        XCTAssertNil(PublisherAudioAttribution.switchAnnouncement(from: recording, to: Voice(itemId: "b", source: nil)), "the queue moved on")
+        XCTAssertNil(PublisherAudioAttribution.switchAnnouncement(from: recording, to: Voice(itemId: nil, source: nil)), "playback ended")
+        XCTAssertNil(PublisherAudioAttribution.switchAnnouncement(from: Voice(itemId: "b", source: nil), to: recording), "another article starts on its recording")
+        XCTAssertNil(PublisherAudioAttribution.switchAnnouncement(from: Voice(itemId: nil, source: nil), to: recording))
+        XCTAssertNil(PublisherAudioAttribution.switchAnnouncement(from: recording, to: Voice(itemId: "a", source: "article_feed_enclosure")))
+        XCTAssertNil(PublisherAudioAttribution.switchAnnouncement(from: appVoice, to: appVoice))
+    }
 }

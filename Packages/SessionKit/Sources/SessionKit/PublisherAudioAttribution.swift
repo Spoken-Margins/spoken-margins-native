@@ -66,4 +66,18 @@ public enum PublisherAudioAttribution {
         let lowered = host.lowercased()
         return lowered.hasPrefix("www.") ? String(lowered.dropFirst(4)) : lowered
     }
+
+    /// The voice and the item playing, as the Now pane watches them for VoiceOver.
+    public struct PlayingVoice: Equatable, Sendable {
+        public var itemId: String?
+        public var source: String?
+        public init(itemId: String?, source: String?) { self.itemId = itemId; self.source = source }
+    }
+
+    /// What VoiceOver hears when the playing voice changes, or nil. Only a switch within the same item counts: a new
+    /// item, or playback ending, is not the publisher's audio stopping (#4640 audit).
+    public static func switchAnnouncement(from old: PlayingVoice, to new: PlayingVoice) -> String? {
+        guard old.itemId != nil, old.itemId == new.itemId, (old.source == nil) != (new.source == nil) else { return nil }
+        return new.source != nil ? "Playing the publisher's audio." : "The publisher's audio stopped. Reading on with the app's voice."
+    }
 }

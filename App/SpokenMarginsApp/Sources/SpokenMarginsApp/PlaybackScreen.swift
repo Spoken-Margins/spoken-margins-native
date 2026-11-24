@@ -213,12 +213,12 @@ struct PlaybackScreen: View {
                 // "Go to this moment in the source" lands on Now for a written Margin too (#3961); a spoken one is also covered
                 // above, and both set the same pane. The first value is never acted on, so a later open never jumps panes.
                 .onChange(of: model.showNowRequests) { _, _ in selectedPane = .now }
-                .onChange(of: model.snapshot.publisherAudioSource) { old, new in
-                    // VoiceOver hears the automatic switches; a tapped switch is announced by the row's redraw (#4640).
-                    guard !PublisherVoiceSwitchTap.consume(new), UIAccessibility.isVoiceOverRunning, (old == nil) != (new == nil) else { return }
-                    UIAccessibility.post(notification: .announcement, argument: new != nil
-                        ? "Playing the publisher's audio."
-                        : "The publisher's audio stopped. Reading on with the app's voice.")
+                .onChange(of: PublisherAudioAttribution.PlayingVoice(itemId: model.snapshot.itemId, source: model.snapshot.publisherAudioSource)) { old, new in
+                    // VoiceOver hears the automatic switches within one item; a tapped switch is announced by the row's
+                    // redraw, and a new item or the end of playback is no switch (#4640).
+                    guard !PublisherVoiceSwitchTap.consume(new.source), UIAccessibility.isVoiceOverRunning,
+                          let announcement = PublisherAudioAttribution.switchAnnouncement(from: old, to: new) else { return }
+                    UIAccessibility.post(notification: .announcement, argument: announcement)
                 }
                 // The dock returns only once the keyboard has left the Timeline editor (#4043); a missed hide can't
                 // strand it.
