@@ -3728,7 +3728,7 @@ final class SupertonicSpeechPlaybackClientTests: XCTestCase {
         let firstChunkStarted = expectation(description: "first chunk started")
         let secondChunkStarted = expectation(description: "second chunk started")
         let nextChunkStarted = expectation(description: "rendered chunk starts after gap")
-        var starts = 0
+        let startCount = PlaybackStartCounter()
         let client = SupertonicSpeechPlaybackClient(
             renderer: renderer,
             voice: .m2,
@@ -3737,7 +3737,7 @@ final class SupertonicSpeechPlaybackClientTests: XCTestCase {
             fallbackRate: 0.5,
             audioSessionActivator: {},
             audioPlayerStarter: { _, _ in
-                starts += 1
+                let starts = startCount.increment()
                 if starts == 1 { firstChunkStarted.fulfill() }
                 if starts == 2 { secondChunkStarted.fulfill() }
                 if starts == 3 { nextChunkStarted.fulfill() }
@@ -5188,7 +5188,8 @@ private final class SlowStandInRenderer: SupertonicRendering, @unchecked Sendabl
         let url = FileManager.default.temporaryDirectory.appending(path: "system-voice-\(UUID().uuidString).wav")
         try FileManager.default.copyItem(at: template, to: url)
         lock.withLock { files.append(url) }
-        Thread.sleep(forTimeInterval: 0.3)
+        // Blocks its thread on purpose, like a slow synchronous render; `Thread.sleep` is unavailable in async code.
+        usleep(300_000)
         return SupertonicNarrationResult(audioURL: url, duration: 1, sampleRate: 44_100, renderDuration: 0.3, sessionLoadCount: 0,
                                          engine: SupertonicNarrationResult.systemVoiceEngine)
     }
