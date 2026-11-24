@@ -40,8 +40,8 @@ public enum SenderCollectionOffer {
         public let itemIDs: [String]
 
         public var title: String { "Keep \(senderName)'s readings together" }
-        public var detail: String { "Put the \(itemIDs.count) items from \(senderName) in one collection." }
-        public var countLine: String { "\(itemIDs.count) items from \(senderName)" }
+        public var detail: String { "Put the \(itemIDs.count) readings from \(senderName) in one collection." }
+        public var countLine: String { "\(itemIDs.count) readings from \(senderName)" }
         /// The name the New Collection sheet starts with; the listener may type a course name instead.
         public var defaultCollectionName: String {
             ItemCollectionEditing.normalizedName("From \(senderName)") ?? "From \(senderName)"

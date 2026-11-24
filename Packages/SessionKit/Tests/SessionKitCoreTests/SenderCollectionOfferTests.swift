@@ -41,10 +41,10 @@ final class SenderCollectionOfferTests: XCTestCase {
         XCTAssertEqual(offer.senderID, sam)
         XCTAssertEqual(offer.itemIDs, ["a", "b"])
         XCTAssertEqual(offer.title, "Keep Sam's readings together")
-        XCTAssertEqual(offer.detail, "Put the 2 items from Sam in one collection.")
-        XCTAssertEqual(offer.countLine, "2 items from Sam")
+        XCTAssertEqual(offer.detail, "Put the 2 readings from Sam in one collection.")
+        XCTAssertEqual(offer.countLine, "2 readings from Sam")
         XCTAssertEqual(offer.defaultCollectionName, "From Sam")
-        XCTAssertEqual(offer.accessibilityLabel, "Keep Sam's readings together. Put the 2 items from Sam in one collection.")
+        XCTAssertEqual(offer.accessibilityLabel, "Keep Sam's readings together. Put the 2 readings from Sam in one collection.")
     }
 
     func testTheOfferShowsOnEitherOfTheSendersItems() {
