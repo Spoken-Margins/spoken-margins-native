@@ -22,6 +22,41 @@ public struct ExportItem: Codable, Equatable {
     public var author: String? = nil
     /// A paper's DOI or arXiv id, authors and year, when its PDF carried one (#206).
     public var bibliography: PDFBibliography? = nil
+    /// `spoken_note` for the listener's own spoken note, exported from the Export screen or Export Sessions (#4782);
+    /// nil otherwise, so every other export is as before.
+    public var sourceKind: String? = nil
+    /// A spoken note's words and how complete they are (#4782). Written only with `sourceKind`.
+    public var noteTranscript: ExportNoteTranscript? = nil
+}
+
+/// A spoken note's transcript in an export (#4782).
+public struct ExportNoteTranscript: Codable, Equatable {
+    /// `note` (the note's own file) or `last_playback` (its file couldn't be read).
+    public var source: String
+    /// Only for `note`.
+    public var recordingCount: Int? = nil
+    public var recordingsWithWords: Int? = nil
+    /// Every one of at least one recording has words. Only for `note`.
+    public var complete: Bool? = nil
+    /// Present only when the transcript goes with the export (Source Text on), possibly empty.
+    public var recordings: [ExportNoteRecording]? = nil
+
+    public static let noteSource = "note"
+    public static let lastPlaybackSource = "last_playback"
+
+    public var isFallback: Bool { source == Self.lastPlaybackSource }
+}
+
+public struct ExportNoteRecording: Codable, Equatable {
+    public var number: Int
+    public var hasWords: Bool
+    public var sentences: [ExportNoteSentence]
+}
+
+public struct ExportNoteSentence: Codable, Equatable {
+    /// Nil only for text the last playback's timeline doesn't cover; no Margin sits on such text.
+    public var segmentId: String? = nil
+    public var text: String
 }
 
 public struct ExportSession: Codable, Equatable {
@@ -65,6 +100,8 @@ public struct ExportInterjection: Codable, Equatable {
     /// other Margin's export. Its `roughPercent`, `mediaTimeMs` and `sourceCharOffset` are then zeros that mean nothing:
     /// read `hasPlace`, not them.
     public var noPlace: Bool? = nil
+    /// A spoken note's sentence this Margin was placed on (#4782); nil when it sits on none, and for every other source.
+    public var sourceSegmentId: String? = nil
 
     /// Whether this Margin has a place on its item (`Interjection.hasPlace`).
     public var hasPlace: Bool { noPlace != true }
@@ -81,6 +118,10 @@ public struct ExportOptions: Equatable {
     public var targetType: String?
     public var targetId: String?
     public var interjectionIds: [String]?
+    /// Whether a spoken note's whole transcript goes with the export (#4782). Nil, which every caller but the Export
+    /// screen and Export Sessions passes, exports a note exactly as before; any value turns note mode on for a note,
+    /// and `includeFullText` is then ignored for it. Other sources ignore it.
+    public var includeSpokenNoteText: Bool?
 
     public init(
         sessionId: String? = nil,
@@ -92,7 +133,8 @@ public struct ExportOptions: Equatable {
         scope: String = "full_session",
         targetType: String? = nil,
         targetId: String? = nil,
-        interjectionIds: [String]? = nil
+        interjectionIds: [String]? = nil,
+        includeSpokenNoteText: Bool? = nil
     ) {
         self.sessionId = sessionId
         self.includeFullText = includeFullText
@@ -104,6 +146,7 @@ public struct ExportOptions: Equatable {
         self.targetType = targetType
         self.targetId = targetId
         self.interjectionIds = interjectionIds
+        self.includeSpokenNoteText = includeSpokenNoteText
     }
 }
 
@@ -172,17 +215,24 @@ public enum SessionExportMarkdownRenderer {
             lines.append("Source URL: \(sourceURL)")
             lines.append("")
         }
-        if let mediaSourceType = export.item.mediaSourceType, !mediaSourceType.isEmpty {
+        // A spoken note says what it is, not how it plays (#4782).
+        if let mediaSourceType = export.item.sourceKind ?? export.item.mediaSourceType, !mediaSourceType.isEmpty {
             lines.append("Source Type: \(mediaSourceType)")
             lines.append("")
         }
-        if let text = export.item.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+        // A spoken note in note mode (#4782) writes its words once, in its own section, with its Margins in place.
+        let noteTranscript = export.item.noteTranscript
+        let rendersNoteSection = noteTranscript?.recordings != nil
+        if let noteTranscript, rendersNoteSection {
+            SpokenNoteMarkdownSection.append(noteTranscript, interjections: export.interjections, to: &lines)
+        }
+        if noteTranscript == nil, let text = export.item.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
             lines.append("## Source Text")
             lines.append("")
             lines.append(text)
             lines.append("")
         }
-        if let transcript = export.item.sourceTranscript?.trimmingCharacters(in: .whitespacesAndNewlines), !transcript.isEmpty {
+        if noteTranscript == nil, let transcript = export.item.sourceTranscript?.trimmingCharacters(in: .whitespacesAndNewlines), !transcript.isEmpty {
             lines.append("## Source Transcript")
             lines.append("")
             lines.append(transcript)
@@ -214,7 +264,11 @@ public enum SessionExportMarkdownRenderer {
             }
         }
 
-        let interjectionsById = Dictionary(uniqueKeysWithValues: export.interjections.map { ($0.id, $0) })
+        // The note's Margins already sit in its section, so the Timeline doesn't repeat them (#4782).
+        let timelineInterjections = rendersNoteSection
+            ? export.interjections.filter { $0.targetType != InterjectionTargetType.item.rawValue }
+            : export.interjections
+        let interjectionsById = Dictionary(uniqueKeysWithValues: timelineInterjections.map { ($0.id, $0) })
         let turnsById = Dictionary(uniqueKeysWithValues: export.turns.map { ($0.id, $0) })
         let contextualSourceInterjections = inSourceOrder(export.timeline.compactMap { entry -> ExportInterjection? in
             guard entry.type == "interjection",
@@ -234,8 +288,8 @@ public enum SessionExportMarkdownRenderer {
             }
             return interjection
         }, by: \.targetId)
-        lines.append("## Timeline")
-        lines.append("")
+        let linesBeforeTimeline = lines
+        lines = []
         var renderedSourceContext = false
         var renderedTurnContexts: Set<String> = []
         for entry in export.timeline {
@@ -269,13 +323,13 @@ public enum SessionExportMarkdownRenderer {
                 continue
             }
         }
-        if export.timeline.isEmpty, !export.interjections.isEmpty {
+        if export.timeline.isEmpty, !timelineInterjections.isEmpty {
             let sourceInterjections = inSourceOrder(
-                export.interjections.filter { $0.targetType == InterjectionTargetType.item.rawValue }
+                timelineInterjections.filter { $0.targetType == InterjectionTargetType.item.rawValue }
             )
             appendContextualSourceInterjections(sourceInterjections, to: &lines)
             let turnInterjections = Dictionary(
-                grouping: export.interjections.filter { $0.targetType != InterjectionTargetType.item.rawValue },
+                grouping: timelineInterjections.filter { $0.targetType != InterjectionTargetType.item.rawValue },
                 by: \.targetId
             )
             for targetId in turnInterjections.keys.sorted() {
@@ -285,6 +339,14 @@ public enum SessionExportMarkdownRenderer {
                     to: &lines
                 )
             }
+        }
+        let timelineLines = lines
+        lines = linesBeforeTimeline
+        // A note whose Margins all sit in its section may leave nothing for the Timeline, and then it has no heading.
+        if !(rendersNoteSection && timelineLines.isEmpty) {
+            lines.append("## Timeline")
+            lines.append("")
+            lines += timelineLines
         }
         return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
     }
@@ -490,7 +552,7 @@ public enum SessionExportMarkdownRenderer {
         for margin in unplaced { appendInterjectionMarker(margin, to: &lines) }
     }
 
-    private static func appendInterjectionMarker(
+    static func appendInterjectionMarker(
         _ interjection: ExportInterjection,
         to lines: inout [String]
     ) {

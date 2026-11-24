@@ -40,7 +40,7 @@ OWNER_LOGIN = 'uncomposed'  # as in owner_tap_alert.py
 AUTOMERGE = 'automerge'
 MARKER = '<!-- merge-stall-alarm -->'
 BOT = 'github-actions[bot]'
-# These run on a PR's head while they wait for something else, so they aren't progress (`merge policy` stays in progress
+# These run on a PR's head while they wait for something else, so they aren't progress (`merge policy` stays pending
 # while it waits for an audit or the owner's tap, #4986). The `release` job's check sits on
 # the trunk's tip, never on the PR's head.
 WAITING_CHECKS = {'automerge', 'automerge-mac', 'merge policy'}
