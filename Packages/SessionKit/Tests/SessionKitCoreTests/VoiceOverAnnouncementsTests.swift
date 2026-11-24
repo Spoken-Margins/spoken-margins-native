@@ -128,14 +128,16 @@ final class VoiceOverAnnouncementsTests: XCTestCase {
 
     // MARK: First-Margin prompt (#5036)
 
-    func testTheFirstMarginPromptIsAnnouncedWhenItAppears() {
-        XCTAssertEqual(VoiceOverAnnouncements.firstMarginPrompt(wasShowing: false, isShowing: true),
+    func testTheFirstMarginPromptIsAnnouncedWhenItComesIntoView() {
+        XCTAssertEqual(VoiceOverAnnouncements.firstMarginPrompt(alreadyAnnounced: false, isInView: true),
                        "Add a Margin: say what you're thinking.")
     }
 
-    func testTheFirstMarginPromptIsSilentOnEveryOtherChange() {
-        XCTAssertNil(VoiceOverAnnouncements.firstMarginPrompt(wasShowing: true, isShowing: true))
-        XCTAssertNil(VoiceOverAnnouncements.firstMarginPrompt(wasShowing: true, isShowing: false))
-        XCTAssertNil(VoiceOverAnnouncements.firstMarginPrompt(wasShowing: false, isShowing: false))
+    func testTheFirstMarginPromptIsSaidOncePerShowing() {
+        // Back on Now after the Timeline, or the card redrawn: already said, so silent.
+        XCTAssertNil(VoiceOverAnnouncements.firstMarginPrompt(alreadyAnnounced: true, isInView: true))
+        XCTAssertNil(VoiceOverAnnouncements.firstMarginPrompt(alreadyAnnounced: true, isInView: false))
+        // Not drawn (another pane, or not due): nothing to say yet.
+        XCTAssertNil(VoiceOverAnnouncements.firstMarginPrompt(alreadyAnnounced: false, isInView: false))
     }
 }

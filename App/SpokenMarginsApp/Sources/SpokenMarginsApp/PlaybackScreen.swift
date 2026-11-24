@@ -60,6 +60,7 @@ struct PlaybackScreen: View {
     @State private var timelinePull = TimelinePullHolder()
     @State private var playbackTick = 0 // bumped by each progress tick, so this screen follows the clock (#2074)
     @StateObject private var nowScene = NowSceneController()
+    @State private var firstMarginPromptAnnounced = false // said once per showing (#5036)
 
     /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
     /// looks first. On Now it sits in line with the title, so the screen gets no taller (#2262).
@@ -327,11 +328,13 @@ struct PlaybackScreen: View {
             if selectedPane == .now { model.noteFriendListen() }
         }
         // The first-Margin prompt appears above the header while VoiceOver's focus is usually on the play controls: say so
-        // once when it comes into view, without moving focus (#5036). It is drawn only on the Now pane, so the moment it
-        // appears is "due and Now showing". `VoiceOverAnnouncements` decides; VoiceOver off makes the post silent.
-        .onChange(of: firstMarginPromptIsInView) { wasInView, isInView in
-            if let text = VoiceOverAnnouncements.firstMarginPrompt(wasShowing: wasInView, isShowing: isInView) {
+        // once when it comes into view, without moving focus (#5036). It is drawn only on the Now pane, so "in view" is "due
+        // and Now showing"; `initial` covers a screen that opens with it already there, and the flag keeps a trip to the
+        // Timeline and back from repeating it. `VoiceOverAnnouncements` decides; VoiceOver off makes the post silent.
+        .onChange(of: firstMarginPromptIsInView, initial: true) { _, isInView in
+            if let text = VoiceOverAnnouncements.firstMarginPrompt(alreadyAnnounced: firstMarginPromptAnnounced, isInView: isInView) {
                 AccessibilityNotification.Announcement(text).post()
+                firstMarginPromptAnnounced = true
             }
         }
         .onChange(of: selectedPane) { _, pane in

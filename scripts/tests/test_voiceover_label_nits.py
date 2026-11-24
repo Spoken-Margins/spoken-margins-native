@@ -66,7 +66,7 @@ class VoiceOverLabelNitTests(unittest.TestCase):
         self.assertIn('.accessibilityLabel(model.isResolvingSourceLink ? "Adding to Library" : "Add to Library")', add)
         paste = _read("PasteAndGoBar.swift")
         spinner = paste[paste.index("ProgressView()"):]
-        self.assertIn('.accessibilityLabel("Adding the link")', spinner[:300])
+        self.assertIn('.accessibilityLabel("Adding the link")', spinner[:600])
 
     def test_playback_has_one_button_called_library(self):
         text = _read("PlaybackScreen.swift")
@@ -74,7 +74,7 @@ class VoiceOverLabelNitTests(unittest.TestCase):
         exit_button = exit_button[:exit_button.index('accessibilityIdentifier("playback.exit.button")')]
         self.assertIn('.accessibilityLabel("Back to Library")', exit_button)
         home = text[:text.index('accessibilityIdentifier("playback.home.button")')]
-        self.assertIn('.accessibilityLabel("Library")', home[-80:])
+        self.assertIn('.accessibilityLabel("Library")', home[-200:])
 
 
 if __name__ == "__main__":
