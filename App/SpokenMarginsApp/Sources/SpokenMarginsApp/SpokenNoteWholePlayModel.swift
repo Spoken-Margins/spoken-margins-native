@@ -15,9 +15,11 @@ final class SpokenNoteWholePlayModel: ObservableObject {
     @Published private(set) var isPreparing = false
     /// A plain line for a play that could not start, for an alert or the note screen's message line.
     @Published var message: String?
-    /// The note's sentences on the joined audio's clock, once known. The note screen reads it to light the sentence that is
-    /// sounding and to jump to one.
+    /// The note's sentences on the clock of the file that plays (the recording, or its Shorter pauses version, #4779),
+    /// once known. The note screen reads it to light the sentence that is sounding and to jump to one.
     @Published private(set) var timeline: SpokenNoteWholeTimeline?
+    /// The same sentences on the recording's clock, the one Margins are saved on. The note screen places Margins by it.
+    @Published private(set) var recordedTimeline: SpokenNoteWholeTimeline?
 
     /// The screen that asked has gone: a play that finishes now does not start anything.
     private var isAbandoned = false
@@ -69,7 +71,8 @@ final class SpokenNoteWholePlayModel: ObservableObject {
                         store: noteStore, joiner: SpokenNoteAudioJoiner(), writer: store, version: version, attach: false)
                     let plan = SpokenNoteVersionSwitch.plan(previousMediaURL: previous, newMediaURL: prepared.audioURL.absoluteString)
                     let sessions = plan != nil && !isOpenSession ? ((try? store.loadSessions(itemId: itemId)) ?? []) : []
-                    return .success(Ready(prepared: prepared, plan: plan, savedSessions: sessions))
+                    let recorded = noteStore.peek().flatMap { SpokenNoteWholePlayback.timeline(of: $0, inFolder: noteStore.folderURL) }
+                    return .success(Ready(prepared: prepared, plan: plan, savedSessions: sessions, recordedTimeline: recorded))
                 } catch {
                     return .failure(error)
                 }
@@ -80,6 +83,7 @@ final class SpokenNoteWholePlayModel: ObservableObject {
                 let prepared = ready.prepared
                 timelineRequests += 1
                 timeline = prepared.timeline
+                recordedTimeline = ready.recordedTimeline
                 guard !isAbandoned, shouldStart?() ?? true else { return }
                 // Chosen again while the file was read: get the newly chosen one ready instead (#4779).
                 guard app.spokenNoteClean.version == version else {
@@ -150,6 +154,7 @@ final class SpokenNoteWholePlayModel: ObservableObject {
         let prepared: SpokenNoteWholePlayback.Prepared
         let plan: SpokenNoteVersionSwitch?
         let savedSessions: [Session]
+        let recordedTimeline: SpokenNoteWholeTimeline?
     }
 
     /// For a note with a saved session (not open now) whose place was kept on the other version's clock: the place on
@@ -161,16 +166,21 @@ final class SpokenNoteWholePlayModel: ObservableObject {
     }
 
     /// Reads where the note's takes sit in the joined file, for a note whose audio was joined before (it may be playing
-    /// now, or paused from earlier). A note never played has no joined file, and no timeline.
-    func refreshTimeline(note: SpokenNote, noteFolder: URL) {
+    /// now, or paused from earlier). A note never played has no joined file, and no timeline. `playingMediaURL` is the
+    /// file the open session plays when it is this note: the lit sentence follows that file's clock (#4779).
+    func refreshTimeline(note: SpokenNote, noteFolder: URL, playingMediaURL: String?) {
         timelineRequests += 1
         let request = timelineRequests
         Task {
-            let found = await Task.detached(priority: .utility) {
-                SpokenNoteWholePlayback.timeline(of: note, inFolder: noteFolder)
+            let (playing, recorded) = await Task.detached(priority: .utility) { () -> (SpokenNoteWholeTimeline?, SpokenNoteWholeTimeline?) in
+                let recorded = SpokenNoteWholePlayback.timeline(of: note, inFolder: noteFolder)
+                guard SpokenNoteCleanFiles.namesCleanAudio(playingMediaURL) else { return (recorded, recorded) }
+                return (SpokenNoteWholePlayback.timeline(of: note, inFolder: noteFolder, playingMediaURL: playingMediaURL), recorded)
             }.value
             // Reads can finish out of order: only the newest request's answer is kept.
-            if request == timelineRequests, found != timeline { timeline = found }
+            guard request == timelineRequests else { return }
+            if playing != timeline { timeline = playing }
+            if recorded != recordedTimeline { recordedTimeline = recorded }
         }
     }
 

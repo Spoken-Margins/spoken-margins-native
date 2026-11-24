@@ -48,6 +48,19 @@ public enum SpokenNoteCleanClock {
         map(forMediaURL: mediaURL)?.cleanMs(fromRecordedMs: recordedMs) ?? recordedMs
     }
 
+    /// Margins with their saved times moved onto the clock of the file at `mediaURL`, for code that compares them with
+    /// the playing position or seeks to them (a Margin moment, the Margins that follow it). Saved times stay on the
+    /// recording's clock (#4779); this is the one place a list of them is read on the playing clock. Nothing changes,
+    /// and no file is read, unless `mediaURL` names a note's Shorter pauses version.
+    public static func onPlayingClock(_ margins: [Interjection], mediaURL: String?) -> [Interjection] {
+        guard let map = map(forMediaURL: mediaURL) else { return margins }
+        return margins.map { margin in
+            var moved = margin
+            moved.anchor.mediaTimeMs = margin.anchor.mediaTimeMs.map { map.cleanMs(fromRecordedMs: $0) }
+            return moved
+        }
+    }
+
     /// Maps by note folder, made again when either layout file changes. Small: one entry a note played this launch.
     private static let cache = MapCache()
 
@@ -124,6 +137,18 @@ public struct SpokenNoteVersionSwitch: Equatable, Sendable {
 }
 
 extension SpokenNoteVersionPlan {
+    /// Whether the open session's phase holds a version change: a Margin being recorded, summarised or played, or a
+    /// conversation, each run on the session as it is. Playing the note, and a session that has ended or was never
+    /// started, hold nothing; a finished session stays open and must not grey the choice out.
+    public static func phaseHoldsVersionChange(_ phase: SessionPhase) -> Bool {
+        switch phase {
+        case .recordingInterjection, .interjectionSummary, .summaryPlayback, .addendumCapture, .aiResponsePlayback, .conversation:
+            return true
+        case .idle, .itemPlayback, .finished, .abandoned:
+            return false
+        }
+    }
+
     /// The version an item's media URL plays.
     public static func attachedVersion(mediaURL: String?) -> SpokenNoteAudioVersion {
         SpokenNoteCleanFiles.namesCleanAudio(mediaURL) ? .shorterPauses : .asRecorded

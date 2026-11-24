@@ -104,7 +104,9 @@ struct SpokenNoteRecordingView: View {
         .task { recorder.attach(model.makeSpokenNoteRecorderEnvironment(), opening: opening) }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
         .onChange(of: recorder.snapshot?.note) { _, _ in refreshWholeTimeline() }
-        .onChange(of: wholePlay.timeline) { _, _ in refreshMargins() }
+        .onChange(of: wholePlay.recordedTimeline) { _, _ in refreshMargins() }
+        // A version change restarts the note in a new session on the other file: the lit sentence follows its clock (#4779).
+        .onChange(of: model.snapshot.sessionId) { _, _ in refreshWholeTimeline() }
         // Add a Margin from here, the Lock Screen or the headphones starts the app's own Margin screens, which sit under this
         // one. This screen closes, the note plays on, and the Margin screen shows (#3664). A take being recorded stays.
         .onChange(of: isMarginCaptureActive) { _, active in
@@ -357,12 +359,13 @@ struct SpokenNoteRecordingView: View {
 
     private func refreshMargins() {
         guard let note = recorder.snapshot?.note else { return }
-        noteMargins.refresh(noteId: note.id, timeline: wholePlay.timeline, app: model)
+        // Margins are saved on the recording's clock, whichever version plays (#4779).
+        noteMargins.refresh(noteId: note.id, timeline: wholePlay.recordedTimeline, app: model)
     }
 
     private func refreshWholeTimeline() {
         guard let note = recorder.snapshot?.note, let folder = recorder.noteFolder else { return }
-        wholePlay.refreshTimeline(note: note, noteFolder: folder)
+        wholePlay.refreshTimeline(note: note, noteFolder: folder, playingMediaURL: isThisNoteOpen ? model.openSessionMediaURL : nil)
     }
 
     private var recordButton: some View {

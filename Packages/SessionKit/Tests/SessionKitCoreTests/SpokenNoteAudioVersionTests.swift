@@ -110,6 +110,48 @@ final class SpokenNoteAudioVersionTests: XCTestCase {
         XCTAssertEqual(plan.newMediaURL, cleanURL)
     }
 
+    // MARK: Margins on the playing clock
+
+    private func spokenMargin(_ id: String, savedMs: Int?) -> Interjection {
+        Interjection(
+            id: id, itemId: "note-item", sessionId: "session", targetType: .item, targetId: "note-item",
+            createdAt: Date(timeIntervalSince1970: 0), roughPercent: 50,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: savedMs),
+            audioPath: "\(id).m4a", audioStatus: "saved", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+            displayText: "A Margin", status: "active")
+    }
+
+    func testAMarginMomentOnShorterPausesSeeksToTheWordsNotTheRecordingsTime() throws {
+        try writeNote()
+        let played = spokenMargin("m1", savedMs: 3_000) // 3 s on the recording is 1.5 s on the version
+        let later = spokenMargin("m2", savedMs: 3_500)
+        let onClock = SpokenNoteCleanClock.onPlayingClock([played, later], mediaURL: cleanURL)
+        let anchors = try XCTUnwrap(MarginMomentPlanner.anchors(
+            played: onClock[0], among: onClock, clock: .media, targetMediaTimeMs: 1_500))
+        XCTAssertEqual(anchors.target.mediaTimeMs, 1_500, "the saved time would land 1.5 s past the words")
+        XCTAssertEqual(anchors.others.map(\.mediaTimeMs), [2_000])
+        XCTAssertEqual(onClock[0].anchor.anchorType, .media, "only the time moves")
+    }
+
+    func testMarginsStayAsSavedOnTheRecordingAndWithNoTime() throws {
+        try writeNote()
+        let margins = [spokenMargin("m1", savedMs: 3_000), spokenMargin("m2", savedMs: nil)]
+        XCTAssertEqual(SpokenNoteCleanClock.onPlayingClock(margins, mediaURL: recordedURL), margins)
+        XCTAssertEqual(SpokenNoteCleanClock.onPlayingClock(margins, mediaURL: nil), margins)
+        XCTAssertEqual(SpokenNoteCleanClock.onPlayingClock(margins, mediaURL: "https://example.com/episode.mp3"), margins)
+        XCTAssertNil(SpokenNoteCleanClock.onPlayingClock(margins, mediaURL: cleanURL)[1].anchor.mediaTimeMs, "a missing time is never made 0:00")
+    }
+
+    func testOnlyAMarginRunningOnTheSessionHoldsAVersionChange() {
+        XCTAssertFalse(SpokenNoteVersionPlan.phaseHoldsVersionChange(.finished), "a note played to its end leaves the choice open")
+        XCTAssertFalse(SpokenNoteVersionPlan.phaseHoldsVersionChange(.itemPlayback))
+        XCTAssertFalse(SpokenNoteVersionPlan.phaseHoldsVersionChange(.idle))
+        XCTAssertFalse(SpokenNoteVersionPlan.phaseHoldsVersionChange(.abandoned))
+        for phase: SessionPhase in [.recordingInterjection, .interjectionSummary, .summaryPlayback, .addendumCapture, .aiResponsePlayback, .conversation] {
+            XCTAssertTrue(SpokenNoteVersionPlan.phaseHoldsVersionChange(phase), phase.rawValue)
+        }
+    }
+
     func testTheAttachedVersionIsReadFromTheURLAlone() {
         XCTAssertEqual(SpokenNoteVersionPlan.attachedVersion(mediaURL: cleanURL), .shorterPauses)
         XCTAssertEqual(SpokenNoteVersionPlan.attachedVersion(mediaURL: recordedURL), .asRecorded)

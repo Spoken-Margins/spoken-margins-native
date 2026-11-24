@@ -8,10 +8,10 @@ import SessionKitAudio
 /// rest of the app stay as they are. Margins are saved on the recording's clock either way (`SpokenNoteCleanClock`).
 extension Gate1AppModel {
     /// Whether a version change must wait: a take or Margin being recorded, a written Margin open, a skim open, or a
-    /// Margin (rather than the note) playing each hold the session where it is.
+    /// Margin (rather than the note) playing each hold the session where it is. A finished session holds nothing.
     var spokenNoteVersionChangeIsBlocked: Bool {
         recordingNavigationIsLocked || spokenNoteClean.takeIsRecording || skimBridgeState != nil
-            || (hasActiveSession && snapshot.phase != .itemPlayback)
+            || (hasActiveSession && SpokenNoteVersionPlan.phaseHoldsVersionChange(snapshot.phase))
     }
 
     /// The open session plays this note (not one of its Margins).

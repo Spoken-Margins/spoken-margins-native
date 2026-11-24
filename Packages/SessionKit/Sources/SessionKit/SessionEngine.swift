@@ -6228,8 +6228,9 @@ public final class SessionEngine {
     }
 
     private func repairMediaPercentages(_ session: Session, durationMs: Int, forceNotes: Bool = false) throws -> Session {
+        let sessionItem = item(for: session)
         guard durationMs > 0,
-              !isTextBackedMedia(item(for: session)) else {
+              !isTextBackedMedia(sessionItem) else {
             return session
         }
         var updatedSession = session
@@ -6242,10 +6243,14 @@ public final class SessionEngine {
         }
         guard forceNotes || lastMediaPercentageRepair?.sessionId != session.id
                 || lastMediaPercentageRepair?.durationMs != durationMs else { return updatedSession }
+        // A note's Margins are saved on the recording's clock; `durationMs` is the length of the file playing, which is
+        // shorter for its Shorter pauses version (#4779). Their times are read on that file's clock first.
+        let noteMediaURL = SpokenNoteItem.isSpokenNote(mediaType: sessionItem?.mediaType ?? "") ? sessionItem?.media?.url : nil
         try inRepositoryTransaction {
             for var interjection in try repository.loadInterjections(sessionId: session.id)
             where interjection.targetType == .item {
-                guard let mediaTimeMs = interjection.anchor.mediaTimeMs else { continue }
+                guard let savedTimeMs = interjection.anchor.mediaTimeMs else { continue }
+                let mediaTimeMs = noteMediaURL.map { SpokenNoteCleanClock.playingMs(recordedMs: savedTimeMs, mediaURL: $0) } ?? savedTimeMs
                 let percent = mediaPercent(mediaTimeMs, durationMs: durationMs)
                 guard percent != interjection.roughPercent else { continue }
                 interjection.roughPercent = percent

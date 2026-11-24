@@ -217,6 +217,15 @@ public enum SpokenNoteWholePlayback {
         return SpokenNoteWholeTimeline(note: note, layout: layout)
     }
 
+    /// The note's sentences on the clock of the file at `mediaURL`: the Shorter pauses version's when it names that
+    /// version (#4779), else the joined recording's. What the note screen lights and jumps by must be on the clock of
+    /// the file playing, so a version that no longer matches the joined takes gives nil, never the recording's times.
+    public static func timeline(of note: SpokenNote, inFolder folder: URL, playingMediaURL mediaURL: String?) -> SpokenNoteWholeTimeline? {
+        guard SpokenNoteCleanFiles.namesCleanAudio(mediaURL) else { return timeline(of: note, inFolder: folder) }
+        guard existingAudioURL(inFolder: folder) != nil, let layout = readLayout(inFolder: folder) else { return nil }
+        return cleanPlayback(note: note, layout: layout, folder: folder)?.timeline
+    }
+
     /// Where the engine should play an item from: the note's joined file, when the item is a spoken note whose media was
     /// attached by `prepare`. Nil otherwise, so a start never falls back to reading the note's words aloud in a synthetic
     /// voice, which is not what a spoken note is. It names the file without looking for it, so it is safe on the main
