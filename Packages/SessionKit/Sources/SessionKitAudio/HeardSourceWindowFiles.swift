@@ -42,10 +42,7 @@ public final class HeardSourceWindowFiles {
     /// it, nor can a written one or one with no media time (the app only recovers context for spoken Margins at a
     /// time in the item), and a ready context isn't replaced by it.
     public static func isStillNeeded(by margin: Interjection?) -> Bool {
-        guard let margin, margin.status != "deleted",
-              margin.captureKind != .written,
-              margin.targetType == .item,
-              margin.anchor.mediaTimeMs != nil else { return false }
+        guard let margin, margin.status != "deleted", margin.canHaveSourceContext else { return false }
         return margin.anchorContextStatus != .ready
     }
 

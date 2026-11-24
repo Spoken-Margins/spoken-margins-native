@@ -11,6 +11,26 @@ public enum MarginPlacePresentation {
     /// The details' "Position" line for a Margin with no place.
     public static let detailPosition = "No place saved"
 
+    /// Where a Margin with no place sorts on the Timeline and in Now Playing's list (PR 3c): after every placed entry.
+    /// Every placed position is a percent clamped to 0...100, a friend's Margin with no evidence sorts at 100, and a
+    /// reflection at its source Margins' place, so 101 is past all of them and never drawn as a number.
+    public static let timelineSortPosition = 101
+
+    /// The Timeline card's corner for a Margin with no place: "No place", never a percent made from its stored zeros.
+    public static let timelineLabel = TimelinePositionLabel.Label(
+        corner: MarginRowWording.noPlace, spoken: MarginRowWording.noPlace, chapterDetail: MarginRowWording.noPlace)
+
+    /// The Timeline card's detail line for one of the listener's own Margins: "Captured at 40%", or "No place".
+    public static func timelineDetail(for margin: Interjection, position: Int) -> String {
+        margin.hasPlace ? "Captured at \(position)%" : MarginRowWording.noPlace
+    }
+
+    /// Whether a row in Now Playing's lists (Nearby Margins, Margins) offers Play. A Margin with no place has no moment to
+    /// play, so Play is dimmed and its words still open its details. Same answer as a tap on its row (`MarginRowTap`).
+    public static func offersPlay(_ margin: Interjection) -> Bool {
+        MarginRowTap.action(for: margin) == .playMoment
+    }
+
     /// The line under a Margin on the item screen: "At 40%", or "No place" for a Margin with no place (Design 2.8).
     public static func itemScreenLine(for margin: Interjection) -> String {
         margin.hasPlace ? "At \(margin.roughPercent)%" : MarginRowWording.noPlace

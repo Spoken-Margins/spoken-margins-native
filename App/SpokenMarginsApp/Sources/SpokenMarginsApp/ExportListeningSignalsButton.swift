@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The **Export Listening Signals** button (#4050), in Settings › Help & Privacy and on the Your AI screen (#4683, Design 2b,
+/// The **Export Listening Signals** button (#4050), in Settings › Privacy & Legal and on the Your AI screen (#4683, Design 2b,
 /// section 4). Moved out of `SettingsScreen` unchanged so both places say the same thing: "Export Listening Signals", or
 /// "Nothing Recorded Yet" once an export found nothing, and disabled while it exports. Each place writes its own caption.
 struct ExportListeningSignalsButton: View {

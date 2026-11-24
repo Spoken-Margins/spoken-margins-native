@@ -152,6 +152,10 @@ public struct PinnedMarginCard: Equatable, Sendable {
     /// The run-up the sender chose for the Margin this card is about, nil for none (#4171). The card's "sec" cut-over and
     /// its hop buttons count from it rather than from the default.
     public let targetLeadInMs: Int?
+    /// "Start a minute earlier" has somewhere to go (#4171): the model found a plan for this Margin
+    /// (`MarginMomentSequence.startEarlierPlan`, or `StartEarlier.plan` for a Margin playing by itself). The card adds the
+    /// button only in the stages the Design names, and never for the listener's own Margin or a can't-play listening.
+    public let canStartEarlier: Bool
 
     /// "Skip to the Margins" and a can't-play listening are a review: the Margins follow one another and Next Margin moves
     /// between them. "Play this moment" is a moment. A Margin that plays when the episode reaches it is in no run.
@@ -160,9 +164,10 @@ public struct PinnedMarginCard: Equatable, Sendable {
     public init(
         subject: Subject, stage: Stage, position: String? = nil, voiceTime: String? = nil,
         noun: SourceNoun = .episode, nextPress: NextMarginPress = .unavailable, run: Run = .none,
-        chainsWithoutLeadIn: Bool = false, targetLeadInMs: Int? = nil
+        chainsWithoutLeadIn: Bool = false, targetLeadInMs: Int? = nil, canStartEarlier: Bool = false
     ) {
         self.targetLeadInMs = targetLeadInMs.map(SenderLeadIn.clamped)
+        self.canStartEarlier = canStartEarlier
         self.run = run
         self.chainsWithoutLeadIn = chainsWithoutLeadIn
         self.subject = subject
@@ -311,7 +316,10 @@ public enum NextMarginPress: Equatable, Sendable {
         /// A review or "Play this moment" is waiting at its lead-in. In a review the episode plays on between Margins,
         /// so `positionMs` and `targetMs` (the playhead and the Margin ahead, nil when not known) say how far off it is.
         /// `targetLeadInMs` is the run-up the sender chose for that Margin (#4171); nil for the review's own length.
-        case momentLeadIn(isReview: Bool, positionMs: Int? = nil, targetMs: Int? = nil, targetLeadInMs: Int? = nil)
+        /// `runUpStartMs` is where the running review's run-up before the target starts
+        /// (`MarginMomentSequence.targetRunUpStartMediaTimeMs`). When given it wins over `targetLeadInMs`, so a run-up
+        /// the listener lengthened with "Start a minute earlier" (#4171) is not read as the default and offered a hop forward.
+        case momentLeadIn(isReview: Bool, positionMs: Int? = nil, targetMs: Int? = nil, targetLeadInMs: Int? = nil, runUpStartMs: Int? = nil)
         /// A review's or moment's voice is sounding.
         case momentVoice(isReview: Bool, isLastMargin: Bool)
         /// No moment is running: the episode plays and a friend's Margins come as it reaches them. `positionMs` is the
@@ -324,13 +332,13 @@ public enum NextMarginPress: Equatable, Sendable {
 
     public static func press(_ context: Context) -> NextMarginPress {
         switch context {
-        case .momentLeadIn(let isReview, let position, let target, let targetLeadInMs):
+        case .momentLeadIn(let isReview, let position, let target, let targetLeadInMs, let runUpStartMs):
             guard isReview else { return .unavailable }
             // The episode plays on between a review's Margins and nothing hops ahead by itself: the first press goes to the
             // next Margin's lead-in, the second plays the Margin. A second of slack, so the lead-in's own seek (which can
             // land a millisecond short) is not offered as a hop of its own.
             if let position, let target {
-                let leadIn = MarginMomentSequence.leadInStartMediaTimeMs(
+                let leadIn = runUpStartMs ?? MarginMomentSequence.leadInStartMediaTimeMs(
                     forTarget: MarginMomentAnchor(marginId: "next", mediaTimeMs: target, leadInMs: targetLeadInMs),
                     leadInMs: MarginMomentSequence.reviewLeadInMs
                 )
