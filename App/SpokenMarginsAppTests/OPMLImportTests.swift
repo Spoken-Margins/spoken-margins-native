@@ -300,7 +300,6 @@ final class OPMLImportTests: XCTestCase {
         try await body()
     }
 
-    /// `mixedOPML` as the lines a Shortcut passes: names before links, two in one text, and junk for the outline with no link.
     // MARK: - #4920: Select All, Deselect All and search
 
     func testDeselectAllFollowsNothingAndNeverCallsFollow() async throws {
@@ -366,6 +365,7 @@ final class OPMLImportTests: XCTestCase {
     </body></opml>
     """
 
+    /// `mixedOPML` as the lines a Shortcut passes: names before links, two in one text, and junk for the outline with no link.
     static let mixedLinks = [
         "Pod One https://feeds.example.com/pod1.xml\nPod Two https://feeds.example.com/pod2.xml",
         "Pod Three: https://feeds.example.com/pod3.xml",
