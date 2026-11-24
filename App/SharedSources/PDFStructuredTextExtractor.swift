@@ -778,6 +778,17 @@ enum PDFStructuredTextExtractor {
             return bounds.width < lineWidth * 0.8 && offColumn && narrow && tokens.count <= 12
         }
 
+        /// A short label printed in a figure that doesn't pass for a table cell
+        /// ("Base Model EA-3B", "(b) Supervised Finetuning"): at most eight words,
+        /// not a sentence or a section heading, narrower than the text column (#4588).
+        func looksLikeFigureLabel(_ line: TextLine) -> Bool {
+            if looksLikeTableCell(line) { return true }
+            guard let bounds = line.bounds, lineWidth > 0, bounds.width < lineWidth * 0.8 else { return false }
+            let tokens = line.text.split(separator: " ")
+            return !tokens.isEmpty && tokens.count <= 8 && !PDFStructuredTextExtractor.looksLikeProse(line.text)
+                && !PDFStructuredTextExtractor.looksLikeSectionHeading(line.text)
+        }
+
         /// A display equation: math set apart from the text column (centred or
         /// narrow), not a sentence with some symbols in it.
         func looksLikeDisplayMath(_ line: TextLine) -> Bool {
@@ -821,9 +832,10 @@ enum PDFStructuredTextExtractor {
     /// needs three lines; any other run needs five, so a short list or a
     /// paragraph's last line is never taken for a table. An uncaptioned run is a
     /// table only when a table caption is on this page, the next, or the three
-    /// before (long tables run on). Failing that, a run of three or more near a
-    /// figure caption is text printed inside the figure: axis ticks, panel
-    /// labels, screenshots.
+    /// before (long tables run on), unless a figure caption sits right below it.
+    /// Failing that, a run of three or more near a figure caption is text printed
+    /// inside the figure: axis ticks, panel labels, screenshots. The rule is
+    /// `PDFCellRunRole` in SessionKit (#4588).
     private static func tableAndFigureLineIndices(
         in lines: [TextLine],
         layout: BodyLayout,
@@ -833,6 +845,7 @@ enum PDFStructuredTextExtractor {
         let cells = lines.map(layout.looksLikeTableCell)
         let captions = lines.indices.filter { isTableCaption(lines[$0].text) || isFigureCaption(lines[$0].text) }
         let tableCaptions = captions.filter { isTableCaption(lines[$0].text) }
+        let figureCaptions = captions.filter { !isTableCaption(lines[$0].text) }
         var result = captionedTableLines(in: lines, captions: tableCaptions, layout: layout)
         var figure = Set<Int>()
         var index = 0
@@ -852,13 +865,28 @@ enum PDFStructuredTextExtractor {
                 if cells[probe] { end = probe }
                 probe += 1
             }
-            let length = end - index + 1
-            let captioned = tableCaptions.contains { $0 >= index - 3 && $0 <= end + 3 }
             let run = (index...end).filter { !captions.contains($0) && !result.contains($0) }
-            if captioned ? length >= 3 : (nearTableCaption && length >= 5) {
-                result.formUnion(run)
-            } else if nearFigureCaption && length >= 3 {
+            // The run's own figure caption, with the label lines before it, if it sits just under the figure.
+            var own = PDFCellRunRole.ownFigureCaption(
+                start: index, end: end, tableCaptions: tableCaptions, figureCaptions: figureCaptions,
+                lineCount: lines.count,
+                isLabel: { layout.looksLikeFigureLabel(lines[$0]) && !captions.contains($0) })
+            if let caption = own {
+                let figureLines = (index...end).filter { !captions.contains($0) } + caption.labels
+                let lowest = figureLines.compactMap { lines[$0].bounds?.minY }.min()
+                let top = lines[caption.line].bounds?.maxY
+                let justBelow = lowest.flatMap { lowest in top.map { Double(lowest - $0) } }
+                    .map { PDFCellRunRole.isJustBelow(gap: $0, bodySize: Double(layout.bodySize)) } ?? false
+                if !justBelow { own = nil }
+            }
+            switch PDFCellRunRole.role(start: index, end: end, tableCaptions: tableCaptions,
+                                       hasOwnFigureCaption: own != nil, nearTableCaption: nearTableCaption,
+                                       nearFigureCaption: nearFigureCaption) {
+            case .table: result.formUnion(run)
+            case .figure:
                 figure.formUnion(run)
+                figure.formUnion((own?.labels ?? []).filter { !result.contains($0) })
+            case nil: break
             }
             index = end + 1
         }

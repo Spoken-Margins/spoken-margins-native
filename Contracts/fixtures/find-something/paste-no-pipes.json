@@ -1,0 +1,22 @@
+{
+  "description": "No line uses the \"fields | link\" form, so every line with a link counts. Prose with no link, a bare word and an ftp link are not entries.",
+  "text": "Sure! Two ideas.\nTradeoffs — Nursing https://example.com/1\nftp://example.com/file\nHidden Brain - Relationships 2.0: https://example.com/2\nhttps\nThat's all.",
+  "expected": [
+    {
+      "url": "https://example.com/1",
+      "kind": "other",
+      "claimedShow": "Tradeoffs",
+      "claimedTitle": "Nursing",
+      "markedShowLink": false,
+      "line": "Tradeoffs — Nursing https://example.com/1"
+    },
+    {
+      "url": "https://example.com/2",
+      "kind": "other",
+      "claimedShow": "Hidden Brain",
+      "claimedTitle": "Relationships 2.0",
+      "markedShowLink": false,
+      "line": "Hidden Brain - Relationships 2.0: https://example.com/2"
+    }
+  ]
+}

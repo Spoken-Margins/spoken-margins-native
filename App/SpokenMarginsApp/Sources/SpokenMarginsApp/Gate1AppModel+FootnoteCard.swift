@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import SessionKit
+import SessionKitSupertonic
 import UIKit
 
 /// The Footnote card on the Now screen (#3777, Design PR 5): which note, if any, the narrator is reading where it is

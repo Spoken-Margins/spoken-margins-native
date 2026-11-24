@@ -194,6 +194,22 @@ class PortableStepTable(unittest.TestCase):
         self.assertIn('package-steps', by_name)
 
 
+class QueueGuardsRunInPortableToo(unittest.TestCase):
+    """hosted-portable.yml's `guards` job runs scripts/queue_guards.py first in a merge group, and a red there skips the
+    Mac jobs, which then report success. So `portable` must run every guard itself, or a guard could fail alone and
+    leave the group green."""
+
+    def test_portable_runs_every_guard_whole(self):
+        import queue_guards
+        import slow_tier
+        self.assertTrue(queue_guards.GUARDS)
+        for module in queue_guards.GUARDS:
+            with self.subTest(module=module):
+                self.assertFalse([prefix for prefix in verification.PORTABLE_RUNNER_TESTS_LEFT_OUT
+                                  if prefix.split('.')[0] == module], 'left out of portable, in whole or in part')
+                self.assertNotIn(module, slow_tier.SLOW_RUNNER_MODULES, 'moved to the nightly slow tier')
+
+
 class SupertonicModelSkips(unittest.TestCase):
     """#1820: the package step allows exactly the tests that read Supertonic's downloaded model to skip."""
 

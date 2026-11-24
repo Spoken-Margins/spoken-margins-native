@@ -5,27 +5,6 @@ import SessionKit
 import SessionKitPersistence
 import SessionKitSupertonic
 
-struct PreparedChunkPlan: Equatable, Sendable {
-    var index: Int
-    var startOffset: Int
-    var sourceLength: Int
-    var text: String
-    /// Set on the chunks of a footnote (an aside, or a note's definition in the notes section); nil on every other
-    /// chunk (#3777). Assembly leaves the definitions out of the whole audio, because the asides already read them.
-    var footnote: NarrationChunkPlanner.FootnoteTag? = nil
-
-    /// Background preparation's plan for an article: the article plan the player's lookups use too
-    /// (#312). Production and the tests both call this, so they can't drift apart. `asides` is the plan kind the
-    /// preparation was created with (`FootnotePlanDecision`, or the manifest's own kind): the same text has a plain
-    /// plan and, when a note can be read where it is cited, a plan with note chunks (#3777).
-    static func articlePlan(_ articleText: String, asides: Bool = false) -> [PreparedChunkPlan] {
-        NarrationChunkPlanner.articlePlan(articleText, asides: asides).chunks.map {
-            PreparedChunkPlan(index: $0.index, startOffset: $0.startOffset, sourceLength: $0.sourceLength, text: $0.text,
-                              footnote: $0.footnote)
-        }
-    }
-}
-
 /// Single-entry cache: bounds retained text/plans while reusing a document
 /// across successive chunk jobs. Changed source always requires a new plan.
 final class PreparedChunkPlanCache: @unchecked Sendable {
