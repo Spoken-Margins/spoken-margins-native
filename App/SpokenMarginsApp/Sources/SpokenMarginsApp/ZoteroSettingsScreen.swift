@@ -19,8 +19,11 @@ struct ZoteroSettingsScreen: View {
                 Section {
                     Label(connection.statusLine, systemImage: "checkmark.circle")
                         .accessibilityIdentifier("zotero.connected")
-                    Button("Disconnect", role: .destructive) { papers.disconnect() }
-                        .frame(minHeight: 44)
+                    Button(role: .destructive) { papers.disconnect() } label: {
+                        Text("Disconnect")
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
                         .accessibilityHint("Forgets the key on this iPhone. Lists you follow from your library keep their papers.")
                         .accessibilityIdentifier("zotero.disconnect")
                 } footer: {

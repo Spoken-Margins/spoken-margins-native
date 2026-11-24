@@ -173,7 +173,8 @@ final class PaperSourceFollowingTests: XCTestCase {
 
     func testALongListIsReadAHundredAtATimeAndStopsAt500() async throws {
         // Paging only: the rows are the real fixture's, given new keys so that each page holds different papers.
-        let real = try XCTUnwrap(JSONSerialization.jsonObject(with: try fixture("zotero-group-collection")) as? [[String: Any]])
+        let realData = try fixture("zotero-group-collection")
+        let real = try XCTUnwrap(JSONSerialization.jsonObject(with: realData) as? [[String: Any]])
         func page(_ number: Int) throws -> Data {
             let rows = (0..<100).map { index -> [String: Any] in
                 var row = real[index % 24]

@@ -30,6 +30,7 @@ struct FollowedPapersScreen: View {
             }
         }
         .background(AppColors.bone)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("papers.screen")
         .task {
             await papers.load(model: model)
@@ -174,6 +175,7 @@ private struct PaperRowView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(AppColors.panel)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("papers.row.\(row.id)")
     }
 

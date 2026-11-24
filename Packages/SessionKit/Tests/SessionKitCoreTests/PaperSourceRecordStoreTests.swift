@@ -79,7 +79,8 @@ final class PaperSourceRecordStoreTests: XCTestCase {
         try store.saveItem(Item(id: "article", title: "Article", mediaType: "text", text: "Body text", externalReference: nil, status: "ready"))
         for index in 0..<5 { try store.savePaperSource(sample(collection: "COLL000\(index)")) }
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
-        XCTAssertEqual(try Self.schemaObjects(atPath: path), try Self.build29SchemaObjects(), "no table, column or index is added")
+        let build29Schema = try Self.build29SchemaObjects()
+        XCTAssertEqual(try Self.schemaObjects(atPath: path), build29Schema, "no table, column or index is added")
         XCTAssertEqual(try SQLiteSessionStore(path: path).listItems().map(\.id), ["article"])
     }
 
