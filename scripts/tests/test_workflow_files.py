@@ -282,3 +282,29 @@ class ReadersUseTheAppBudget(unittest.TestCase):
         job = parse(ROOT / '.github/workflows/main-t3.yml')['jobs']['t3']
         self.assertEqual(job['env']['GH_TOKEN'], '${{ github.token }}')
         self.assertNotIn('environment', job)
+
+
+class DeployWaitAlertStep(unittest.TestCase):
+    """#5255: a deploy waiting for the owner's approval gave him no alert (deploy-web sat `waiting` all of 2026-11-23).
+    owner-tap-alert.yml's scheduled run also runs scripts/deploy_wait_alert.py, as github-actions[bot]."""
+
+    def setUp(self):
+        self.document = parse(ROOT / '.github/workflows/owner-tap-alert.yml')
+        self.step = next((s for s in self.document['jobs']['alert']['steps']
+                          if 'deploy_wait_alert.py' in (s.get('run') or '')), None)
+
+    def test_step_exists_on_the_schedule_and_runs_the_script(self):
+        self.assertIsNotNone(self.step, 'owner-tap-alert.yml must run scripts/deploy_wait_alert.py')
+        self.assertIn("github.event_name == 'schedule'", self.step['if'])
+        self.assertNotIn('pull_request', self.step['if'])
+        self.assertTrue((ROOT / 'scripts/deploy_wait_alert.py').is_file())
+
+    def test_script_is_in_the_sparse_checkout(self):
+        checkout = self.document['jobs']['alert']['steps'][0]
+        self.assertIn('scripts/deploy_wait_alert.py', checkout['with']['sparse-checkout'].split())
+
+    def test_permissions_and_token_let_the_bot_read_runs_and_write_comments(self):
+        permissions = self.document['permissions']
+        self.assertEqual(permissions.get('actions'), 'read')
+        self.assertEqual(permissions.get('issues'), 'write')
+        self.assertEqual(self.step['env']['GH_TOKEN'].replace(' ', ''), '${{github.token}}')
