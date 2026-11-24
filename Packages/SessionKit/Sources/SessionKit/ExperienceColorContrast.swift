@@ -586,6 +586,14 @@ public enum AppColorContrastAudit {
             background: white.composited(over: plate, alpha: 0.12),
             minimumRatio: 4.5
         ))
+        // The Lock Screen card's start-Margin circle: a ring of white at 0.86 on its own fill of white at 0.16. It is a
+        // control edge, not text, so it needs the non-text ratio; it keeps the circle visible on a dimmed screen (#4764).
+        pairs.append(.init(
+            name: "live activity Margin ring at 0.86 on white at 0.16 over live activity plate",
+            foreground: white.composited(over: plate, alpha: 0.86),
+            background: white.composited(over: plate, alpha: 0.16),
+            minimumRatio: 3
+        ))
         return pairs
     }()
 

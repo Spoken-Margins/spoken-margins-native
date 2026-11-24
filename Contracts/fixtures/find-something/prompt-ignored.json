@@ -1,0 +1,13 @@
+{
+  "answers": {
+    "who": "self",
+    "expert": "me",
+    "push": "nope",
+    "length": 45,
+    "now": [
+      "x"
+    ],
+    "extra": "x"
+  },
+  "expected": "I want one podcast episode for myself that I'll have something to say about. Help me pick.\n\nSuggest 3 or 4 specific episodes (not shows). Put each on one line in this form:\nShow — Episode title | length | clean or explicit | suggested timestamp for my comment | link\nUse an Apple Podcasts episode link when you can. For a Substack, give the post link. One link per line, nothing else on the line after the link.\nUnder each episode line, add one line starting \"Why:\" with one sentence on why it suits me and one question I could think about at that moment.\nBefore you answer, look up each link and confirm it opens that exact episode. Never write a link from memory or guess an ID. If you can't confirm an episode link, give the show's Apple Podcasts link and add (show link) before it."
+}

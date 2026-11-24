@@ -37,7 +37,7 @@ Write `{{OUT_DIR}}/design.md`: the whole flow, start to finish, across every iss
 4. **Outcomes**: every outcome the owner asked for, quoted from the issue or the record, each with where the design meets it.
 5. **Device conditions**: the rows of `device-conditions.md` this flow meets, so the builder writes those host tests.
 6. **Starting states**: the listener-history states this flow meets (a first run, a finished episode, a friend's Margins on an item already heard, and so on), each with its expected behaviour.
-7. **PR plan**: hidden pieces first (storage, logic, tests; each merges alone), then the visible part, which merges whole: a listener can start, finish and leave the feature, and the flows around it still work. Each PR small enough for one Sonnet session, naming its files and the host test that proves it. The visible PR is written by a session that can't run a simulator: put its before-and-after captures and journey steps in the plan as steps the lane or the Test Desk runs after the PR is armed, never as a first step the builder must finish before writing code. A missing capture is a step for the Test Desk, not a reason for the builder to wait.
+7. **PR plan**: one PR for the whole issue (Cole, 2026-11-23). It merges whole: a listener can start, finish and leave the feature, and the flows around it still work. Split it into two PRs only when a database or packet change must ship before the feature (for example, so the last shipped build can still open the database or import the packet); then the first PR holds only that change and the second holds everything else. Never plan more than two. Name the PR's files and the host tests that prove it. The PR is written by a session that can't run a simulator: put its before-and-after captures and journey steps in the plan as steps the lane or the Test Desk runs after the PR is armed, never as a first step the builder must finish before writing code. A missing capture is a step for the Test Desk, not a reason for the builder to wait.
 8. **Defaults taken**: every taste or technical call you made, numbered, each with the options you weighed and why you picked yours, so the owner can veto by number.
 9. **Checked:** the files, captures (with their commit) and comments this design rests on.
 
@@ -46,7 +46,7 @@ Write `{{OUT_DIR}}/design.md`: the whole flow, start to finish, across every iss
 Nothing is posted before a fresh reviewer has read it. Give reviewers the drafts, the issues and the captures, not your reasoning.
 
 1. **Gap finder** (Agent tool, `model: opus`): missed states, flows around it that break, owner outcomes not met, starting states not covered, contradictions with `Design/`, `docs/journeys.md` or the record, and anything a listener would see half-built.
-2. **Builder read** (Agent tool, `model: sonnet`): could a Sonnet builder build each PR in the plan without making a design call? Every question it asks is a gap.
+2. **Builder read** (Agent tool, `model: sonnet`): could a builder build the plan's PR without making a design call? Every question it asks is a gap.
 
 Fix every real gap. Write `{{OUT_DIR}}/review.md`: each finding, and what you did about it (fixed, or rejected with why).
 

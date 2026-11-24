@@ -10,6 +10,9 @@ extension Gate1AppModel {
         case addedText
         /// A friend's share link opened as a tapped one does (#3782); its progress and failure show as a tapped link's do.
         case openingShareLink
+        /// The text holds a link list from the listener's own AI (#4683). It is read and added by a task; Paste & go's bar
+        /// watches `linkListArrival.phase` and closes the sheet when the list has arrived.
+        case readingLinkList
         /// Nothing was created; the message says why.
         case notAdded(String)
     }
@@ -19,6 +22,26 @@ extension Gate1AppModel {
     /// only when `startSession` says so; the Library's copied-link card (#2944) and Paste & go never do.
     @discardableResult
     func pasteAndGo(_ content: String?, html: String? = nil, startSession: Bool = false) -> PasteAndGoOutcome {
+        // A reply from the listener's own AI holds a link list (#4683). The marker is checked first, so a friend's share
+        // link inside a brief doesn't hijack it; text without the marker never takes this path.
+        if let content {
+            switch LinkListArrivalPlan.classifyPaste(content) {
+            case .notALinkList:
+                break
+            case .assistantPrompt:
+                // The prompt the app gave the listener holds an example list; it must never be added as a brief.
+                return .notAdded(LinkListArrivalPlan.assistantPromptMessage)
+            case .mightBeLinkList:
+                guard !linkListArrivalIsBusy else { return .notAdded(Self.collectionImportBusyMessage) }
+                beginPastedLinkList(content, html: html, startSession: startSession)
+                return .readingLinkList
+            }
+        }
+        return pasteAndGoWithoutLinkList(content, html: html, startSession: startSession)
+    }
+
+    /// Paste & go as it was before link lists: a link, a friend's share link or text.
+    func pasteAndGoWithoutLinkList(_ content: String?, html: String? = nil, startSession: Bool = false) -> PasteAndGoOutcome {
         switch PasteIntake.classify(content) {
         case .shareLink(let url):
             openShareLink(url)

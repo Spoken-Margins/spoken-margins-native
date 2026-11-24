@@ -227,6 +227,20 @@ public actor NotForMeStore {
         try commit(sources: sources, items: next)
     }
 
+    /// Marks a followed show's episode the way Not for me in Following does: under the subscription's own feed
+    /// address (the key the coordinator checks with), never a catalog's copy of it, and with the stored entry's own
+    /// GUID, page and audio addresses.
+    public func markItem(_ entry: FeedEntry, of subscription: FeedSubscription) throws {
+        try markItem(feedURL: subscription.source.canonicalURL, guid: entry.episodeGUID,
+                     canonicalURL: entry.canonicalURL, audioURL: entry.audioURL, title: entry.title)
+    }
+
+    /// Undo of `markItem(_:of:)`.
+    public func unmarkItem(_ entry: FeedEntry, of subscription: FeedSubscription) throws {
+        try unmarkItem(feedURL: subscription.source.canonicalURL, guid: entry.episodeGUID,
+                       canonicalURL: entry.canonicalURL, audioURL: entry.audioURL)
+    }
+
     // MARK: Writing
 
     private static func capped(_ items: [MarkedItem]) -> [MarkedItem] {

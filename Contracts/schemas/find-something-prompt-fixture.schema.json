@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Find-something prompt fixture (#4707)",
+  "description": "One case for the rule that turns a person's quiz answers into the prompt text: the answers, and the exact prompt that must come out. The page's Node test and, later, the app's SessionKit port both render every fixture, so the rendering cannot drift. Answer values may be strings, numbers or arrays so a fixture can test bad input; expected is typed by hand from the rule, never generated.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "answers",
+    "expected"
+  ],
+  "properties": {
+    "answers": {
+      "type": "object"
+    },
+    "expected": {
+      "type": "string"
+    }
+  }
+}

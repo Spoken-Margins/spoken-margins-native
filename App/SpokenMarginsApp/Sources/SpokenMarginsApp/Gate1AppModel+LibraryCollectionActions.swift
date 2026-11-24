@@ -43,14 +43,15 @@ extension Gate1AppModel {
         }
     }
 
-    /// Delete Collection: the collection goes, and every item and Margin in it stays in the Library.
+    /// Delete Collection: the collection goes, and every item and Margin in it stays in the Library. `quiet` leaves the
+    /// confirmation out, for Undo of a link list that already says what it did (#4683).
     @discardableResult
-    func deleteCollection(collectionID: String) async -> Bool {
+    func deleteCollection(collectionID: String, quiet: Bool = false) async -> Bool {
         guard let store, let collection = libraryCollections.collections.first(where: { $0.id == collectionID }) else { return false }
         switch await libraryCollections.delete(collection, store: store) {
         case .saved:
             collectionsChanged()
-            reportConfirmation("Deleted “\(collection.name)”. Everything in it is still in your Library.")
+            if !quiet { reportConfirmation("Deleted “\(collection.name)”. Everything in it is still in your Library.") }
             return true
         case .failed(let error):
             reportFailure(error, context: "Collection change failed")

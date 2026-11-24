@@ -160,7 +160,7 @@ test('without the app’s handler the page is the page a friend sees, and a link
   await expect(page.getByTestId('arrival-failed')).toBeVisible();
   expect(await probe.messages()).toEqual([]);
   await page.goto(`${STUB}/l/vectorvoice01#${KEY}`);
-  await expect(page.getByTestId('arrival').getByRole('button', { name: 'Play' })).toBeVisible();
+  await expect(page.getByTestId('arrival').getByRole('button', { name: 'Start from the beginning', exact: true })).toBeVisible();
   expect(await probe.messages()).toEqual([]);
 });
 

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { expect, test, type Page, type Request } from '@playwright/test';
 import { MESSAGES } from '../src/app/logic/messages.ts';
 import { readPacket } from '../src/packet/read.ts';
-import { FEED_ORIGIN, SHOTS_DIR, feedFixture, seconds, serveAudio, serveFixtures, shot } from './fixtures.ts';
+import { FEED_ORIGIN, SHOTS_DIR, feedFixture, nowTab, seconds, serveAudio, serveFixtures, shot } from './fixtures.ts';
 
 const FEED = `${FEED_ORIGIN}/enclosure-only-episodes.rss`;
 const EPISODE_3 = 'Episode 3: No link, GUID and audio';
@@ -104,6 +104,9 @@ test('follow, play, write and record Margins, export them, and open the file in 
   const audioTime = () => friendPage.getByTestId('audio').evaluate((a: HTMLAudioElement) => a.currentTime);
   await expect.poll(audioTime, { timeout: 10_000 }).toBeGreaterThanOrEqual(writtenAt - 0.5);
   expect(await audioTime()).toBeLessThan(writtenAt + 4);
+  // The friend's Margins are unheard, so Now Playing opens on its Margins tab (part of #3216); the episode's list is on Now.
+  await expect(friendPlaying.getByRole('tab', { name: /Margins/ })).toHaveAttribute('aria-selected', 'true');
+  await nowTab(friendPage);
   await expect(friendPlaying.getByRole('button', { name: /^Play from .*tide bit is the one/ })).toBeVisible();
   await shot(friendPage, info, '22-friend-landed');
 

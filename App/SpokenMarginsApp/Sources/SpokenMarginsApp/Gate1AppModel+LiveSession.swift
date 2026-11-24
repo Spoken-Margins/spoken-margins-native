@@ -70,13 +70,22 @@ extension Gate1AppModel {
         if let directory = Self.liveSessionDirectory {
             var named = session
             named.title = title
-            try? LiveSessionRecord(
+            let record = LiveSessionRecord(
                 itemId: itemId, session: named, transcript: transcript, placed: finalPlaced,
                 savedMarginIds: Dictionary(linked.map { ($0.liveId, $0.saved.id) }, uniquingKeysWith: { first, _ in first })
-            ).save(in: directory)
+            )
+            // The write goes off the main thread. A record that failed to save shows no photo, now or after a
+            // relaunch (#4180); the session's save still succeeds, as before. A saved one updates the photo lookup
+            // from this value before this returns, so the item screen opened next has its photos on the first draw
+            // without reading the file back.
+            let recordSaved = await Task.detached(priority: .userInitiated) {
+                (try? record.save(in: directory)) != nil
+            }.value
+            if recordSaved { SavedMarginPhotoIndex.shared.add(record) }
         }
-        // The session stays in the session store as saved, so a late copy of one of its Margins is still known (#2487).
+        // Kept as saved, so a late Margin copy is known (#2487); the sweep skips it, so the Margin transcription takes any wordless spoken Margin (#4715).
         await LiveSessionFileWorker.shared.markSaved(sessionId: session.id, itemId: itemId)
+        for margin in LiveSessionWrites.spokenAwaitingWords(linked) { scheduleTranscription(for: margin) }
         // Nothing below reads the rows back, so the Library and the item are read off the main thread (#2505).
         try await reloadLibraryRowsOffMain(store: store)
         refreshMarginRowsInBackground(forItem: itemId)
@@ -112,6 +121,8 @@ extension Gate1AppModel {
 
     /// Removes a purged item's session record, which holds the meeting's transcript.
     func removeLiveSessionRecord(itemId: String) {
+        // Nothing shows this item's photos again, even before the files below are gone (#4180).
+        SavedMarginPhotoIndex.shared.remove(itemId: itemId)
         guard let directory = Self.liveSessionDirectory else { return }
         // The record's folder walk and unlink go off the main actor (#2510).
         Task.detached(priority: .utility) {

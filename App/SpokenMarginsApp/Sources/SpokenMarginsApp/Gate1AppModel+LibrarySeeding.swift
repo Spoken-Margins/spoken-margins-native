@@ -208,6 +208,7 @@ extension Gate1AppModel {
                 "database": databaseURL.lastPathComponent
             ]
             exportPreview = ""
+            exportSpokenNoteFootnote = nil
             refreshMarginRowsInBackground()
             tryRefreshOfflineStorageUsage()
             reportSuccess("Listening queue ready.")

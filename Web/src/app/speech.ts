@@ -2,12 +2,11 @@
 // "Cole wrote:" and reads the words, so a synthetic voice never passes for the sender's. Nothing is fetched and
 // nothing leaves the page; the voice is the one this browser ships. Where a browser has no voice, the Margin still
 // shows on screen and nothing else changes.
-import { writtenIntro } from './logic/arrival.ts';
 
 let context: AudioContext | undefined;
 
 /** A short, soft tone. Resolves when it ends, or at once where this browser won't make one. */
-function tone(): Promise<void> {
+export function tone(): Promise<void> {
   return new Promise((resolve) => {
     // A browser that keeps the audio context suspended never ends the tone; speech goes ahead without it.
     setTimeout(resolve, 600);
@@ -55,7 +54,7 @@ export interface Reading {
   cancel(): void;
   /**
    * Holds the voice where it is, for the player's Pause (#4473). A browser that can't hold speech (Chrome on Android
-   * keeps talking) has the reading stopped instead, so Pause always silences it; `onEnd` then fires as for `cancel`.
+   * keeps talking) has the reading stopped instead, so Pause always silences it; `onEnd` then fires, even before the voice began.
    */
   pause(): void;
   /** Carries on a held voice from where it stopped. Does nothing once the reading has ended. */
@@ -63,11 +62,11 @@ export interface Reading {
 }
 
 /**
- * Plays the tone, then says "<sender> wrote:" and the words. `onStart` fires as the voice begins (the player turns the
+ * Plays the tone, then says `intro` ("Cole wrote:", "You wrote:"; readingIntro) and the words. `onStart` fires as the voice begins (the player turns the
  * episode down); `onEnd` fires when it finishes or can't speak. Returns undefined where this browser has no voice, and
  * then calls neither.
  */
-export function readWrittenMargin(author: string | undefined, words: string, hooks: { onStart(): void; onEnd(): void }): Reading | undefined {
+export function readWrittenMargin(intro: string, words: string, hooks: { onStart(): void; onEnd(): void }): Reading | undefined {
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
   if (!synth || typeof SpeechSynthesisUtterance === 'undefined' || !words.trim()) return undefined;
   let live = true;
@@ -91,7 +90,7 @@ export function readWrittenMargin(author: string | undefined, words: string, hoo
   };
   const speak = () => {
     if (!live) return;
-    const utterance = new SpeechSynthesisUtterance(`${writtenIntro(author)} ${words}`);
+    const utterance = new SpeechSynthesisUtterance(`${intro} ${words}`);
     // Chrome can collect an utterance that nothing holds, and then never fires `onend`: hold it, and give up on a
     // reading that outlasts any plausible speech so the episode never stays turned down.
     held = utterance;
@@ -138,7 +137,11 @@ export function readWrittenMargin(author: string | undefined, words: string, hoo
       } catch {
         // Handled below: a voice that is still talking is stopped.
       }
-      if (!synth.paused) cancel();
+      if (synth.paused) return;
+      // Stopped before the voice began, `cancel` says nothing; the player's turn for this Margin must still end.
+      const begun = started;
+      cancel();
+      if (!begun) hooks.onEnd();
     },
     resume() {
       if (!live || !paused) return;

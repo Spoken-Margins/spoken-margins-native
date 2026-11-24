@@ -17,6 +17,8 @@
 //    ignores a setting it doesn't know, and a newer one reads its default.
 //    #3043: a voice Margin's audio is stored as bytes (`voice.data`) instead of a Blob (`voice.blob`), since Safari's
 //    private browsing won't store a Blob. Rows with a Blob still read; see voice-rows.ts. Still shape 2.
+//    Part of #3216: a Margin may carry `heard` and `leadIn`, and settings `marginAutoplay`; an older copy ignores all
+//    three. Still shape 2.
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
 
 export const DB_VERSION = 1;
@@ -43,6 +45,11 @@ export interface Settings {
    * this browser and written only into a shared file (#4107). A backup never carries it.
    */
   senderName: string;
+  /**
+   * The Margins tab's Autoplay (part of #3216): which Margins play by themselves when the episode reaches them. 'unheard'
+   * (friends' Margins not yet heard), 'all', or 'none' (a tone marks each). Defaults to 'unheard'.
+   */
+  marginAutoplay: 'unheard' | 'all' | 'none';
 }
 
 export const DEFAULT_SETTINGS: Settings = Object.freeze({
@@ -53,6 +60,7 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
   lastBackupAt: '',
   transcription: '',
   senderName: '',
+  marginAutoplay: 'unheard',
 });
 
 export interface Snapshot {
@@ -100,6 +108,7 @@ export function readSettings(rows: readonly SettingRow[]): Settings {
     if (typeof row.value !== typeof target[row.key]) continue;
     if (typeof row.value === 'number' && !Number.isFinite(row.value)) continue;
     if (row.key === 'transcription' && !['', 'on', 'off'].includes(row.value as string)) continue;
+    if (row.key === 'marginAutoplay' && !['unheard', 'all', 'none'].includes(row.value as string)) continue;
     target[row.key] = row.value;
   }
   return settings;

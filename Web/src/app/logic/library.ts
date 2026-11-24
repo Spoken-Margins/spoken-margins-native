@@ -98,6 +98,32 @@ export function followingRows(
   });
 }
 
+/** What a Following search finds (#4427): the shows, in the list's order, and the episodes from every show, newest first. */
+export interface FollowingMatches {
+  shows: FollowingRow[];
+  episodes: Episode[];
+}
+
+/**
+ * A Following search (#4427 Design, 2026-11-22). A show matches on its title or its author. An episode matches on its own
+ * title only, so searching a show's name lists the show and not every one of its episodes. Episodes come from every row,
+ * each once. A blank query keeps every show and lists no episodes.
+ */
+export function followingMatches(query: string, rows: readonly FollowingRow[]): FollowingMatches {
+  if (query.trim() === '') return { shows: [...rows], episodes: [] };
+  const shows = rows.filter((row) => matchesSearch(query, [row.show.title, row.show.author]));
+  const seen = new Set<string>();
+  const episodes: Episode[] = [];
+  for (const row of rows) {
+    for (const episode of row.episodes) {
+      if (seen.has(episode.id)) continue;
+      seen.add(episode.id);
+      if (matchesSearch(query, [episode.title])) episodes.push(episode);
+    }
+  }
+  return { shows, episodes: newestFirst(episodes) };
+}
+
 export interface MarginGroup {
   episodeId: string;
   episode: Episode | undefined;
@@ -129,6 +155,39 @@ export function marginGroups(margins: readonly Margin[], episodes: readonly Epis
       };
     })
     .sort((a, b) => time(b.newestAt) - time(a.newestAt));
+}
+
+/** One Margins group as a search shows it (#4427): the Margins left, and whether the group's own title matched. */
+export interface MarginGroupMatch {
+  group: MarginGroup;
+  /** The Margins that show, in the group's order: all of them when `byTitle`. */
+  margins: Margin[];
+  /** The episode's or the show's title matched, so the whole group shows. */
+  byTitle: boolean;
+}
+
+/**
+ * A Margins search (#4427 Design, 2026-11-22). A group whose episode title or show title matches keeps all its Margins;
+ * any other group keeps the Margins whose text (written words or a voice Margin's transcript) or author matches, and is
+ * dropped when none do. The screen's stand-in titles for a missing episode or show are never searched: `showTitle` and
+ * `group.episode` give undefined for those. Group and Margin order are the input's. A blank query keeps everything.
+ */
+export function marginMatches(
+  query: string,
+  groups: readonly MarginGroup[],
+  showTitle: (showId: string | undefined) => string | undefined,
+): MarginGroupMatch[] {
+  if (query.trim() === '') return groups.map((group) => ({ group, margins: group.margins, byTitle: false }));
+  const found: MarginGroupMatch[] = [];
+  for (const group of groups) {
+    if (matchesSearch(query, [group.episode?.title, showTitle(group.episode?.showId)])) {
+      found.push({ group, margins: group.margins, byTitle: true });
+      continue;
+    }
+    const margins = group.margins.filter((m) => matchesSearch(query, [m.text, m.author]));
+    if (margins.length > 0) found.push({ group, margins, byTitle: false });
+  }
+  return found;
 }
 
 /** The id of the newest Margin overall, for the "Newest" label. */

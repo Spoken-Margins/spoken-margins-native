@@ -1,25 +1,21 @@
-# Who reviews changes to the paths that run, gate or steer the automation (#4915, step 2).
+# Who reviews changes to the CI and deploy paths (#4915).
 #
 # This file only asks for the owner's review on a pull request that touches these paths. It does not block a merge:
 # the ruleset does not require code-owner review, and the `owner-tap` label rule in scripts/merge_policy.py still
 # decides what merges today. The last matching line wins, and every line names the same owner.
-# scripts/tests/test_codeowners.py fails if a path the merge rules hold for the owner is left out.
+#
+# Kept to CI and deploy files only (owner, 2026-11-22, #4915 round 3): once the ruleset requires code-owner review,
+# every line here is an Approve he must give. scripts/tests/test_codeowners.py fails if a path the merge rules hold
+# for the owner (scripts/lane_merge_rules.py OWNER_TAP_FILES and OWNER_TAP_PREFIXES) is left out.
 
-# The pipeline: workflows, merge rules, trust rules and the runner and audit tooling.
+# CI: workflows, this file, and the merge rules the merge-policy check runs.
 /.github/                       @uncomposed
-/scripts/lane_*.py              @uncomposed
-/scripts/merge_policy.py        @uncomposed
-/scripts/merge_queue_*.py       @uncomposed
-/scripts/comment_trust.py       @uncomposed
-/scripts/signoff_check.py       @uncomposed
-/scripts/owner_tap_alert.py     @uncomposed
-/ops/                           @uncomposed
-
-# Text that agents read as instructions.
-/AGENTS.md                      @uncomposed
-/CLAUDE.md                      @uncomposed
-/.claude/                       @uncomposed
-
-# How the project takes contributions and security reports.
-/CONTRIBUTING.md                @uncomposed
-/SECURITY.md                    @uncomposed
+/scripts/lane_merge_rules.py    @uncomposed
+# Keeps fork PRs off the self-hosted Macs.
+/ops/runner-guard/              @uncomposed
+# Deploys to the server.
+/ops/server-deploy/             @uncomposed
+/ops/*/deploy.sh                @uncomposed
+/research/B4/deploy/            @uncomposed
+# App Store and TestFlight upload settings.
+/Config/ExportOptions-*.plist   @uncomposed

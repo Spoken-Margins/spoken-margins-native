@@ -35,15 +35,21 @@ TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
 
 
 TRUSTED_BOTS = (BOT[0],)
+# The GitHub App the agents act as (#4915). GitHub reports its comments as `<slug>[bot]` with association NONE, so
+# without this entry an audit, hold note or /lane request an agent posts as the App would be ignored and the PR held.
+# Kept equal to scripts/comment_trust.py's list by scripts/tests/test_app_identity_trust.py.
+TRUSTED_APP_SLUGS = ('spoken-margins-agent',)
 
 
 def trusted_comment(comment: dict) -> bool:
-    """Whether the runner may act on this comment: the owner's, a member's or collaborator's, or the project's bot.
+    """Whether the runner may act on this comment: the owner's, a member's or collaborator's, the project's bot, or
+    the agents' App.
 
     A comment without author_association (GitHub always sends it) is not trusted.
     """
     login = (comment.get('user') or {}).get('login')
-    return comment.get('author_association') in TRUSTED_ASSOCIATIONS or login in TRUSTED_BOTS
+    bots = TRUSTED_BOTS + tuple(f'{slug}[bot]' for slug in TRUSTED_APP_SLUGS)
+    return comment.get('author_association') in TRUSTED_ASSOCIATIONS or login in bots
 
 
 def base_policy(tree: Path, base: str, path: str):
@@ -65,6 +71,11 @@ AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
 CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)  # how the audit task's verdict line opens
 
 
+# The start of every reason audit_blocker gives when no audit covers the head yet. merge_policy.py treats a PR held only
+# for this (or for the owner's tap) as waiting, not failed; an audit with blocking findings never starts with it.
+AUDIT_MISSING = 'has no Codex or Claude audit'
+
+
 def audit_blocker(comments: list[dict], head: str) -> str | None:
     """Why the Codex or Claude audits on the PR don't clear its head, or None when the newest audit of the head is clean.
 
@@ -82,12 +93,12 @@ def audit_blocker(comments: list[dict], head: str) -> str | None:
             verdict = next((line.strip() for line in rest.splitlines() if line.strip()), '')
             audits.append((AUDIT_SHA.findall(heading), verdict))
     if not audits:
-        return 'has no Codex or Claude audit comment yet'
+        return f'{AUDIT_MISSING} comment yet'
     on_head = [verdict for shas, verdict in audits if any(head.startswith(sha) for sha in shas)]
     if not on_head:
         audited = next((shas[0] for shas, _ in reversed(audits) if shas), None)
-        return (f'has no Codex or Claude audit of its head: the audit is on `{audited}`, the head is `{head[:7]}`' if audited
-                else f'has no Codex or Claude audit naming its head `{head[:7]}`')
+        return (f'{AUDIT_MISSING} of its head: the audit is on `{audited}`, the head is `{head[:7]}`' if audited
+                else f'{AUDIT_MISSING} naming its head `{head[:7]}`')
     if not CLEAN_AUDIT.match(on_head[-1]):
         return f'the Codex or Claude audit on the head `{head[:7]}` has blocking findings (it doesn\'t say "No blocking findings")'
     return None

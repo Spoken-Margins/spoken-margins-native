@@ -1,9 +1,17 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Margin } from '../../shared/model.ts';
-import { canStar, isStarred, keepingStar, toggleStar, withStar } from './star.ts';
+import { canStar, isStarred, keepingHeard, keepingStar, toggleStar, withStar } from './star.ts';
 import { withWords } from './voice-words.ts';
 import { withReplyChoice, choiceFor } from './reply-choice.ts';
+
+test('a rewritten friend’s Margin keeps the heard mark the stored one has, and never invents one (part of #3216)', () => {
+  const friend: Margin = { id: 'f', episodeId: 'e', atSeconds: 5, createdAt: '2026-11-17T10:00:00Z', author: 'Sam' };
+  assert.equal(keepingHeard(friend, { ...friend, heard: true }).heard, true);
+  assert.equal(keepingHeard(friend, friend).heard, undefined);
+  assert.equal(keepingHeard(friend, undefined).heard, undefined);
+  assert.equal(keepingHeard({ ...friend, heard: true }, friend).heard, true);
+});
 
 const margin: Margin = { id: 'm', episodeId: 'e', atSeconds: 4, createdAt: '2026-11-02T10:00:00Z', text: 'Words.', replyToId: 'packet:x:1' };
 

@@ -18,6 +18,11 @@ export interface PlacedImport {
   /** A new "shared with you" show to store, when the episode is new and that show doesn't exist yet. */
   show?: Show;
   margins: Margin[];
+  /**
+   * Every one of the packet's Margins as this browser holds it once `margins` are stored: a Margin already here is that
+   * stored copy, with its own id, heard and author, and a new reply to it links to that copy (the arrival preview).
+   */
+  held: Margin[];
   /** Where to start playing: the earliest Margin's moment. */
   landAt: number | undefined;
   /**
@@ -153,7 +158,16 @@ export function placeImport(
     return rest;
   };
   const placed = read.margins.map((m) => ({ ...ownCopy(m), episodeId: episode.id, ...(unnamedAuthor && !m.author?.trim() && { author: unnamedAuthor }) }));
-  const margins = placed.filter((m) => !existing.some((e) => sameMargin(e, m, episode.title)));
+  const stored = new Map(placed.map((m) => [m.id, existing.find((e) => sameMargin(e, m, episode.title))]));
+  const held = placed.map((m) => {
+    const copy = stored.get(m.id);
+    if (copy) return copy;
+    const parent = m.replyToId === undefined ? undefined : stored.get(m.replyToId);
+    return parent ? { ...m, replyToId: parent.id } : m;
+  });
+  // What is stored is what the preview showed: a new reply to a Margin already here hangs under the stored copy, whose id
+  // the packet's own id for it would never find (audit 2 on #4505).
+  const margins = held.filter((_, i) => !stored.get(placed[i].id));
   const landAt = placed.length ? Math.min(...placed.map((m) => m.atSeconds)) : undefined;
   const pending = read.percentMargins.map(({ margin, percent }) => ({
     percent,
@@ -164,11 +178,27 @@ export function placeImport(
     newEpisode: !own || filled,
     ...(show && { show }),
     margins,
+    held,
     landAt,
     skipped: Math.max(0, read.textMarginCount - pending.length),
     pending,
     duplicates: placed.length - margins.length,
   };
+}
+
+/**
+ * The packet's Margins as the arrival preview shows them (part of #3216): as this browser will hold them once placed.
+ * A packet's Margin ids come from its digest, so a Margin the listener already has from an earlier packet has another
+ * id here; the preview shows the stored copy (heard, the listener's own), and its starts queue the id the player finds.
+ */
+export function previewMargins(
+  read: PacketRead,
+  shows: readonly Show[],
+  episodes: readonly Episode[],
+  existing: readonly Margin[],
+  unnamedAuthor: string | undefined,
+): Margin[] {
+  return placeImport(read, shows, episodes, undefined, existing, { unnamedAuthor }).held;
 }
 
 /** How near the end a Margin placed by percent may sit: a Margin on the very last moment would never be reached. */

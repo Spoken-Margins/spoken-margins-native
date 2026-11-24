@@ -7,8 +7,9 @@ import { downloadFile } from '../download.ts';
 import { useRestoreFocus } from '../focus.ts';
 import { BackIcon, CloseIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenIcon, PlayIcon, ShareIcon, SkipIcon, StopIcon } from '../icons.tsx';
 import { withCopyLength } from '../logic/copy-length.ts';
-import { arrivedLengthNote, cueFor, friendMargins, leading, possessive, readsAloud, senderName, speakingLine } from '../logic/arrival.ts';
+import { arrivedLengthNote, cueFor, friendMargins, leading, possessive, readingNote, readsAloud, senderName, speakingLine } from '../logic/arrival.ts';
 import { landingOffer, type Landing } from '../logic/import.ts';
+import { marginRows, nextMargin, opensOnMarginsTab, playQueue, startFor, unheardCount, type NextMargin, type Row } from '../logic/margins-control-center.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
 import {
   allPicked, candidateLabel, currentPicks, pickedFromList, pickedMargins, preselected, nowCard, replyBackOffer, savedFileNextStep, selectAllLabel, selectAllTap,
@@ -27,6 +28,7 @@ import type { RecordedVoice, VoiceRecording } from '../ports.ts';
 import { services } from '../services.ts';
 import { useUi } from '../ui.tsx';
 import { voicePlaceholder } from '../../shared/placeholder.ts';
+import { MarginsControlList, NextMarginPill } from './MarginsTab.tsx';
 import { isPlaceholder, prefillOverPlaceholder, voiceMarginOnStop, withWords } from '../logic/voice-words.ts';
 import { TranscriptionNote, useTranscription } from '../transcription.tsx';
 import { MarginRow } from './Margins.tsx';
@@ -111,7 +113,7 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
         <p className="arrived-margin-text">
           {margin.author ? <strong>{margin.author}</strong> : null} {formatClock(margin.atSeconds)}: {words}
         </p>
-        {voiced && <p className="arrived-margin-note">Your device’s voice is reading {possessive(senderName(margin.author))} words.</p>}
+        {voiced && <p className="arrived-margin-note">{readingNote(margin)}</p>}
       </div>
       {lengthNote && (
         <p className="arrived-margin-note" data-testid="arrived-margin-length-note">
@@ -299,9 +301,31 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
     return () => window.removeEventListener('keydown', onKey);
   }, [composer, onClose]);
 
+  // Which of the two tabs shows, per episode (part of #3216): an episode with a friend's Margin still unheard opens on
+  // Margins, any other on Now. It is settled once, early, so hearing the last
+  // unheard Margin doesn't move the listener off the tab they are on; after that only their own tap changes it.
+  const [pinnedTab, setPinnedTab] = useState<{ episodeId: string; tab: PlaybackTab }>();
+
   if (!episode) return null;
   const show = data.shows.find((s) => s.id === episode.showId);
   const margins = data.margins.filter((m) => m.episodeId === episode.id).sort((a, b) => a.atSeconds - b.atSeconds);
+  const rows = marginRows(margins);
+  let tab: PlaybackTab = opensOnMarginsTab(rows) ? 'margins' : 'now';
+  if (pinnedTab?.episodeId === episode.id) tab = pinnedTab.tab;
+  // Settled once the Margins are in, or once the episode plays (an episode with none, or an article's placed later).
+  else if (margins.length > 0 || player.playing) setPinnedTab({ episodeId: episode.id, tab });
+  const chooseTab = (next: PlaybackTab) => setPinnedTab({ episodeId: episode.id, tab: next });
+  const autoplay = data.settings.marginAutoplay;
+  const playheadMs = player.time * 1000;
+  const next = nextMargin(playheadMs, rows, autoplay);
+  // Every move here is a button the listener pressed: the row's Jump and the Next Margin pill. Nothing moves by itself.
+  const startRow = (row: Row) => {
+    const start = startFor(row, rows, autoplay, player.now() * 1000);
+    if (start) player.startMargins(start.seekToMs / 1000, { atSeconds: start.atMs / 1000, queue: start.queue });
+  };
+  const pressNext = (pressed: NextMargin) =>
+    player.startMargins(pressed.destinationMs / 1000, { atSeconds: pressed.marginTimeMs / 1000, queue: playQueue(rows, pressed.firstToPlayId, autoplay) });
+  const unheard = unheardCount(rows);
   const duration = player.duration;
   const remaining = duration ? Math.max(0, duration - player.time) : undefined;
   // A Margin begun while a friend's plays or shows, or within 20 seconds after, answers it (owner 2026-10-25, #473).
@@ -322,7 +346,7 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
   };
 
   return (
-    <div className="now-playing" role="dialog" aria-modal="true" aria-labelledby="np-title">
+    <div className={`now-playing np-on-${tab}`} role="dialog" aria-modal="true" aria-labelledby="np-title">
       <header className="np-header">
         <button ref={closeRef} type="button" className="icon-button" aria-label="Close Now Playing" onClick={onClose}>
           <DownIcon />
@@ -331,7 +355,40 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
         <span className="icon-button-spacer" />
       </header>
 
-      <div className="np-body">
+      {tab === 'margins' ? (
+        <div className="np-body np-body-margins" id="np-panel" role="tabpanel" aria-labelledby="np-tab-margins">
+          <p className="row-kicker">{show?.title}</p>
+          <h2 id="np-title" className="np-title np-title-compact">
+            {episode.title}
+          </h2>
+          <LandingOffer landing={landing} />
+          <ArrivedMargin margins={margins} />
+          <MarginsControlList
+            context="playback"
+            rows={rows}
+            margins={new Map(margins.map((m) => [m.id, m]))}
+            playheadMs={playheadMs}
+            playingId={player.arrived?.margin.id}
+            autoplay={autoplay}
+            onAutoplay={(choice) => void data.setSetting('marginAutoplay', choice)}
+            onStart={startRow}
+          />
+          {/* The library-wide list (every episode's Margins, opening a file or link, Export) stays its own tab. */}
+          <p className="mc-all">
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                onClose();
+                window.location.hash = 'margins';
+              }}
+            >
+              All Margins and export
+            </button>
+          </p>
+        </div>
+      ) : (
+      <div className="np-body" id="np-panel" role="tabpanel" aria-labelledby="np-tab-now">
         <p className="row-kicker">{show?.title}</p>
         <h2 id="np-title" className="np-title">
           {episode.title}
@@ -442,9 +499,43 @@ export function NowPlaying({ onClose, landing }: { onClose: () => void; landing?
           )}
         </section>
       </div>
+      )}
+
+      {/* The dock (owner's prototype v3): on Margins, where the episode is and Play/Pause, since the transport is on Now;
+          on both, the switch between the two tabs. Next Margin floats over whichever tab shows. */}
+      <div className="np-dock">
+        <NextMarginPill next={next} onPress={pressNext} />
+        {tab === 'margins' && (
+          <div className="mc-dock-line">
+            <span className="mc-dock-time" data-testid="elapsed">
+              {formatClock(player.time)}
+              {duration ? ` / ${formatClock(duration)}` : ''}
+            </span>
+            <button type="button" className="mc-dock-play" aria-label={player.playing ? 'Pause' : 'Play'} onClick={player.toggle}>
+              {player.playing ? <PauseIcon size={24} /> : <PlayIcon size={24} />}
+            </button>
+          </div>
+        )}
+        <div className="np-tabs" role="tablist" aria-label="Now Playing">
+          <button type="button" role="tab" id="np-tab-now" aria-selected={tab === 'now'} aria-controls="np-panel" onClick={() => chooseTab('now')}>
+            Now
+          </button>
+          <button type="button" role="tab" id="np-tab-margins" aria-selected={tab === 'margins'} aria-controls="np-panel" onClick={() => chooseTab('margins')}>
+            Margins
+            {unheard > 0 && (
+              <span className="np-tab-count">
+                {unheard}
+                <span className="visually-hidden"> unheard</span>
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
+
+type PlaybackTab = 'now' | 'margins';
 
 /** When this page opened: a Margin made since is one the listener made while listening to the friend's (#3784). */
 const PAGE_OPENED_AT = Date.now();
