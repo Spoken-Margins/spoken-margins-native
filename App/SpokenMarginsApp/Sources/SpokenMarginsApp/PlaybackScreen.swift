@@ -217,6 +217,9 @@ struct PlaybackScreen: View {
                                     .background(AppColors.listeningBackground)
                             }
                         }
+                        // The whole pinned stack is opaque, so nothing added to it later can let the scrolling passage
+                        // show through its words (#5016: the speech card was see-through).
+                        .background(AppColors.listeningBackground)
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if !timelineDock.hidesDock { playbackControls }
