@@ -726,6 +726,17 @@ These came in the project chat, so most have no comment of his to link. Each cit
     - #4713: goes to the desk (T4 request on #5243).
     - #4574 and #4937: groundwork, but each still has cloud work left. #4574 needs #4802's conflict and token step. #4937 needs its Done when 7 probes. They stay `ready`.
 
+- **PRs run the whole Linux portable plan again before they reach the merge queue (2026-11-24, #5281, PR #5294).** Only 3 PRs merged between 09:00 and 12:20Z with about 30 armed. Since 2026-11-20 a PR had run only a quick tier of `hosted fast: portable`, with no runner-tests and no Linux SessionKitCoreTests, so the queue was the first place those ran. In the 24 hours to 12:30Z, 18 of the 58 PRs that left the queue failed portable, and each failure rebuilt every group behind it. The thread "Speed up the merge queue" offered three options: the full Linux plan on PRs (its pick, about 12 more free Linux minutes per push), Mac checks on PRs too, or changing the queue settings. He took the first by merging #5294 at 17:41Z and wrote "merged" in the thread. Mac checks still run only in the queue. What would show it's waste: two weeks in which merge groups fail portable as often per merged PR as in the week before.
+
+- **Merge conflicts get a GitHub-side resolver, after a 12-hour shadow trial (2026-11-24, #5320).** A thread measured the `lane-conflicts` hand-offs from 2026-11-03 to 2026-11-24 by re-running all 101 merges: about 11 a day that week (about 2 a day before 11-18), 8% fixable by a rule, about half small or medium overlaps, the rest hard. Owning threads fixed their own in a median of about 5 minutes; the 17 that went through the Mac finisher took a median of 2.3 hours. Asked to pick a GitHub-side resolver, an in-project thread on a schedule, or no new loop, Cole chose the GitHub-side resolver, with these changes in his words:
+  1. "Shadow trial is 12 hours, not a week. Start it after #5316 merges, and measure the conflict rate during it, since this week's rate may be inflated by the poisoned queue."
+  2. "Drop the automatic dequeue, or limit it to cases #5316 doesn't cover (#5316 already stops a commit that failed alone twice). Two jobs moving the same labels would fight."
+  3. "Trusted same-repo branches only. The model gets the merge text and no shell, because a conflicting file is untrusted input on a public repo."
+  4. "One writer per branch: act only on PRs with no push in the last 30 minutes, or ones that were handed off."
+  5. "Grade the trial on outcomes: do the PR's checks pass on its proposed merge, and are both sides' changes kept? If fewer than about half its 'can combine' cases pass, it doesn't go live."
+  6. "#5318 already lets the Mac worker take conflict hand-offs without the finisher's hour. When the resolver goes live, point `lane_conflicts.py`'s hand-off at the resolver instead."
+  - How it is carried out: #5320 holds the build. Its workflow change is his merge tap. Until it goes live, conflicts go to the owning thread and then to the Mac worker (#5318).
+
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
   - Verification layers: tests that pass while the app is broken usually fake the boundary that broke, such as audio sessions, players, file paths across containers and network responses.
