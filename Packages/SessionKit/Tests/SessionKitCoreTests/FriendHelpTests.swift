@@ -32,6 +32,8 @@ final class FriendHelpTests: XCTestCase {
     func testTheSitePageAsksTheSameQuestionsUnderTheSameAnchors() throws {
         let page = String(decoding: try TestInputs.data(.site, "friends/index.html"), as: UTF8.self)
         XCTAssertEqual(Self.siteHeadings(page), FriendHelpTopic.allCases.map { "<h2 id=\"\($0.rawValue)\">\($0.question)</h2>" })
+        // No other anchored heading, including one with markup inside that the pattern above can't see.
+        XCTAssertEqual(page.components(separatedBy: "<h2 id=").count - 1, FriendHelpTopic.allCases.count)
     }
 
     func testTheSiteCheckFailsWhenAQuestionDrifts() throws {

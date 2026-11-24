@@ -5,7 +5,8 @@ import SwiftUI
 /// `FriendHelpTopic`'s; the site's `friends/` page asks the same questions. It reads no model and loads nothing, so
 /// it opens offline and over anything, including a recording or an import waiting underneath.
 struct FriendHelpSection: View {
-    /// The question to move VoiceOver to once its row is on screen; `nil` leaves focus where the screen puts it.
+    /// The question to move VoiceOver to once its row is on screen; `nil` leaves focus where the screen puts it. Each
+    /// row's identity is its topic's `id`, so a screen scrolls to a question with `scrollTo(topic.id)`.
     let focus: FriendHelpTopic?
 
     @AccessibilityFocusState private var focused: FriendHelpTopic?
@@ -26,7 +27,6 @@ struct FriendHelpSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.vertical, 4)
-                .id(topic)
                 .onAppear {
                     guard topic == focus, !hasFocused else { return }
                     hasFocused = true
@@ -59,7 +59,8 @@ struct FriendHelpScreen: View {
                     guard let focus else { return }
                     Task { @MainActor in
                         await Task.yield()
-                        proxy.scrollTo(focus, anchor: .top)
+                        // By the row's ForEach identity, which the list knows before it builds a row below the fold.
+                        proxy.scrollTo(focus.id, anchor: .top)
                     }
                 }
             }

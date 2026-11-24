@@ -4,7 +4,7 @@ import { FRIEND_HELP_WORDS, friendHelpHref, type FriendHelpTopic } from '../logi
 
 export function FriendHelpLink({ topic, text = FRIEND_HELP_WORDS.get }: { topic?: FriendHelpTopic; text?: string }) {
   return (
-    <p>
+    <p className="help-line">
       <a className="help-link" href={friendHelpHref(topic)} target="_blank" rel="noopener noreferrer">
         {text}
       </a>
