@@ -90,6 +90,7 @@ extension Gate1AppModel {
             isReplyBack: replyBack != nil, isSingleMargin: isSingleMargin, hasStarredCandidates: hasStarredCandidates)
         sharingState.draftFilter = hasStarredCandidates ? .starred : .all
         isSharingInterjectionsPresented = true
+        pauseForShareFlow()
         // The summary: the sheet needs the address, the type and whether there is text, not the article (#2506).
         if let item = try? requireStore().loadItemSummary(id: selectedItem.id) {
             let reference = secureSharedItemURL(for: item)
@@ -126,6 +127,14 @@ extension Gate1AppModel {
             }
         }
         sharingState.isPreparing = false
+    }
+
+    /// Opening the share sheet pauses whatever is sounding, and closing it leaves it paused (#5050, `ShareFlowPlayback`).
+    /// Every way into Share with a Friend (the playback screen, the Margins tab, Margin details, a reply back) opens the
+    /// sheet here, so this is the one place the rule is applied. `activePlaybackIsPlaying` and `pause()` read the same
+    /// layers in the same order: a Margin voice first, then a Skim bridge, then the source.
+    private func pauseForShareFlow() {
+        if ShareFlowPlayback.onOpen(isPlaying: activePlaybackIsPlaying) == .pause { pause() }
     }
 
     /// Where the sharing star's counts are kept (#4173): on this phone, as four numbers.
