@@ -234,7 +234,7 @@ class CommandTests(unittest.TestCase):
     """command_bisect end to end with git, gh and the lane replaced by recorders."""
 
     def run_command(self, result_for, failure_issue=True, git_fails=False, red_failed=None, probe_failed=None,
-                    closed=None):
+                    closed=None, revert_hooks=None, env=None, open_extra=None):
         import argparse
         import json
         import os
@@ -261,11 +261,14 @@ class CommandTests(unittest.TestCase):
             return commits
 
         patches = [(B.t3, 'gh', gh), (B.t3, 'repo', lambda: 'o/r'), (B.t3, 'open_issues',
-                                                                       lambda: [issue] if failure_issue else []),
+                                                                       lambda: ([issue] if failure_issue else []) + list(open_extra or [])),
                    (B.t3, 'find_last_green', lambda sha: GREEN), (B.t3, 'read_manifests',
                                                                     lambda ev: {'verify-app': failed}),
                    (B, 'merges_in_range', merges), (B, 'make_probe', lambda *a: result_for),
-                   (B, 'git', lambda *a: ''), (os, 'chdir', lambda p: None)]
+                   (B, 'git', lambda *a: ''), (os, 'chdir', lambda p: None)] + [
+                   (B, name, hook) for name, hook in (revert_hooks or {}).items()]
+        saved_env = {k: os.environ.get(k) for k in (env or {})}
+        os.environ.update(env or {})
         saved = [(o, n, getattr(o, n)) for o, n, _ in patches]
         for o, n, v in patches:
             setattr(o, n, v)
@@ -277,7 +280,79 @@ class CommandTests(unittest.TestCase):
         finally:
             for o, n, v in saved:
                 setattr(o, n, v)
+            for k, v in saved_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
         return calls, saved_json
+
+    def safe_revert_hooks(self, opened):
+        """A culprit whose revert is safe: a merged PR that changed one app file, nothing reverted or open yet."""
+        def open_revert(commit, red, run_url, tests, probes, issue, token, area):
+            opened.append((commit['sha'], issue, token, area, tests))
+            return 'https://github.com/o/r/pull/77', 'https://github.com/o/r/issues/78', ''
+        return {'fetch_main': lambda: None,
+                'culprit_commit': lambda sha: {'sha': sha, 'parents': ['a' * 40, 'b' * 40],
+                                               'subject': 'Merge pull request #100 from x/y', 'body': 'Fix it'},
+                'changed_paths': lambda sha: ['App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift'],
+                'open_revert_prs': lambda: [], 'reverted_on_main': lambda sha: None, 'open_revert': open_revert}
+
+    def test_a_safe_culprit_with_the_revert_token_is_reverted_and_both_issues_say_so(self):
+        opened = []
+        calls, record = self.run_command(lambda sha: B.FAIL, revert_hooks=self.safe_revert_hooks(opened),
+                                         env={B.REVERT_TOKEN_ENV: 'app-token'})
+        self.assertEqual(len(opened), 1)
+        sha, issue, token, area, tests = opened[0]
+        self.assertEqual((sha, issue, token, area), (record['culprit'], 9, 'app-token', 'area: hear it well'))
+        create = [c for c in calls if c[0][:2] == ('issue', 'create')][0]
+        self.assertNotIn('Not reverted automatically', create[1])
+        comments = {c[0][2]: c[1] for c in calls if c[0][:2] == ('issue', 'comment')}
+        self.assertEqual(sorted(comments), ['5', '9'])
+        for text in comments.values():
+            self.assertIn('https://github.com/o/r/pull/77', text)
+        self.assertIn('https://github.com/o/r/issues/78', comments['9'])
+
+    def test_without_the_revert_token_nothing_is_reverted_and_the_culprit_issue_says_why(self):
+        opened = []
+        calls, _ = self.run_command(lambda sha: B.FAIL, revert_hooks=self.safe_revert_hooks(opened),
+                                    env={B.REVERT_TOKEN_ENV: ''})
+        self.assertEqual(opened, [])
+        body = [c for c in calls if c[0][:2] == ('issue', 'create')][0][1]
+        self.assertIn('## Not reverted automatically', body)
+        self.assertIn(B.REVERT_TOKEN_ENV, body)
+        self.assertEqual([c[0][2] for c in calls if c[0][:2] == ('issue', 'comment')], ['5'])
+
+    def test_a_revert_that_fails_to_apply_is_said_on_the_culprit_issue(self):
+        hooks = self.safe_revert_hooks([])
+        hooks['open_revert'] = lambda *a: (None, '', '`git revert -m 1` does not apply cleanly on the newest main (f)')
+        calls, _ = self.run_command(lambda sha: B.FAIL, revert_hooks=hooks, env={B.REVERT_TOKEN_ENV: 'app-token'})
+        comments = {c[0][2]: c[1] for c in calls if c[0][:2] == ('issue', 'comment')}
+        self.assertIn('does not apply cleanly', comments['9'])
+        self.assertNotIn('Revert opened', comments['5'])
+
+    def test_two_breaks_are_never_reverted(self):
+        foo, bar = 'SpokenMarginsAppTests/Foo/testA', 'SpokenMarginsAppTests/Bar/testB'
+        opened = []
+        calls, record = self.run_command(lambda sha: B.FAIL, red_failed=[foo, bar],
+                                         probe_failed={shas(4)[0]: {foo}},
+                                         revert_hooks=self.safe_revert_hooks(opened),
+                                         env={B.REVERT_TOKEN_ENV: 'app-token'})
+        self.assertEqual(opened, [])
+        body = [c for c in calls if c[0][:2] == ('issue', 'create')][0][1]
+        self.assertIn('this merge did not cause', body)
+
+    def test_a_culprit_whose_issue_is_already_open_is_not_reverted_again(self):
+        """A re-run on the same red commit finds the culprit issue open: no second issue, no second revert."""
+        opened = []
+        culprit = shas(4)[0]
+        existing = {'number': 9, 'body': B.CULPRIT_MARKER % culprit, 'user': {'login': 'github-actions[bot]'}}
+        calls, record = self.run_command(lambda sha: B.FAIL, open_extra=[existing],
+                                         revert_hooks=self.safe_revert_hooks(opened),
+                                         env={B.REVERT_TOKEN_ENV: 'app-token'})
+        self.assertEqual(record['culprit'], culprit)
+        self.assertEqual(opened, [])
+        self.assertEqual([c for c in calls if c[0][:2] == ('issue', 'create')], [])
 
     def test_a_culprit_opens_one_ready_regression_issue_with_the_prs_area_and_comments_on_the_failure_issue(self):
         calls, record = self.run_command(lambda sha: B.FAIL)
@@ -421,6 +496,136 @@ class CredentialTests(unittest.TestCase):
                 self.assertNotIn(auth, str(caught.exception))
             finally:
                 B.ROOT = original
+
+
+class RevertRefusalTests(unittest.TestCase):
+    """The hosted revert refuses what the Mac's integration run refuses (integration_revert.revert_blockers), plus two
+    breaks in one red run and a missing revert token."""
+    APP = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift'
+
+    def refusals(self, paths, subject='Merge pull request #100 from x/y', body='Fix the thing', parents=2,
+                 open_reverts=(), already=None, unexplained=(), token='app-token'):
+        commit = {'sha': 'c' * 40, 'parents': ['p' * 40] * parents, 'subject': subject, 'body': body}
+        return B.revert_refusals(commit, list(paths), B.revert.load_test_scope(B.ROOT), list(open_reverts), already,
+                                 list(unexplained), token)
+
+    def test_a_merged_pr_that_changed_app_code_is_safe_to_revert(self):
+        self.assertEqual(self.refusals([self.APP]), [])
+        self.assertEqual(self.refusals([self.APP, 'App/SpokenMarginsAppTests/FooTests.swift', 'docs/x.md']), [])
+
+    def test_each_refusal_row(self):
+        rows = {
+            'persistence': dict(paths=['Packages/SessionKit/Sources/SessionKitPersistence/SQLiteSessionStore.swift']),
+            'a packet format': dict(paths=['Packages/SessionKit/Sources/SessionKitSharing/PacketWriter.swift']),
+            'the lane': dict(paths=[self.APP, '.github/workflows/main-t3.yml']),
+            'the lane ': dict(paths=[self.APP, 'scripts/lane-runner.py']),
+            'a migration': dict(paths=['App/SpokenMarginsApp/Sources/SpokenMarginsApp/StoreMigration.swift']),
+            'only docs': dict(paths=['docs/journeys.md', 'scripts/main_t3.py']),
+            'not a merged pull request': dict(paths=[self.APP], parents=1, subject='Fix the thing'),
+            'itself a revert': dict(paths=[self.APP], body='Revert #90: something'),
+            'already reverts it': dict(paths=[self.APP], already='d' * 40),
+            'another revert PR is open': dict(paths=[self.APP], open_reverts=['#55']),
+            'did not cause': dict(paths=[self.APP], unexplained=['SpokenMarginsAppTests/Bar/testB']),
+            B.REVERT_TOKEN_ENV: dict(paths=[self.APP], token=None),
+        }
+        for words, row in rows.items():
+            with self.subTest(words.strip()):
+                reasons = self.refusals(**row)
+                self.assertTrue(any(words.strip() in r for r in reasons), reasons)
+
+
+class OpenRevertTests(unittest.TestCase):
+    """open_revert on a real temporary repository with a bare origin; gh replaced by a recorder."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.origin, self.work = base / 'origin.git', base / 'work'
+        subprocess.run(['git', 'init', '-q', '--bare', '-b', 'main', str(self.origin)], check=True)
+        subprocess.run(['git', 'clone', '-q', str(self.origin), str(self.work)], check=True, capture_output=True)
+        self.git('checkout', '-q', '-b', 'main')
+        self.app = self.work / 'App' / 'a.swift'
+        self.app.parent.mkdir(parents=True)
+        self.app.write_text('let a = 1\n')
+        self.git('add', '.')
+        self.git('commit', '-q', '-m', 'green')
+        self.git('checkout', '-q', '-b', 'topic')
+        self.app.write_text('let a = 2\n')
+        self.git('commit', '-q', '-am', 'break it')
+        self.git('checkout', '-q', 'main')
+        self.git('merge', '-q', '--no-ff', '-m', 'Merge pull request #100 from x/topic\n\nBreak the thing', 'topic')
+        self.culprit = self.git('rev-parse', 'HEAD')
+        self.git('push', '-q', 'origin', 'main')
+        self.saved = (B.ROOT, B.gh_as, B.t3.repo)
+        B.ROOT = self.work
+        self.calls = []
+
+        def gh_as(token, *args, stdin=None):
+            self.calls.append((token, args, stdin))
+            if args[:2] == ('pr', 'create'):
+                return 'https://github.com/o/r/pull/77\n'
+            if args[:2] == ('issue', 'create'):
+                return 'https://github.com/o/r/issues/78\n'
+            return ''
+
+        B.gh_as = gh_as
+        B.t3.repo = lambda: 'o/r'
+
+    def tearDown(self):
+        B.ROOT, B.gh_as, B.t3.repo = self.saved
+        self.tmp.cleanup()
+
+    def git(self, *args, cwd=None):
+        return subprocess.run(['git', '-C', str(cwd or self.work), '-c', 'user.name=t', '-c', 'user.email=t@example.com',
+                               *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    def run_revert(self):
+        B.fetch_main()
+        commit = B.culprit_commit(self.culprit)
+        return commit, B.open_revert(commit, self.culprit, 'https://run', ['SpokenMarginsAppTests/Foo/testA'],
+                                     [(self.culprit, B.FAIL)], 9, 'app-token', 'area: hear it well')
+
+    def test_the_merge_is_reverted_on_main_pushed_and_opened_with_automerge_and_a_reland_issue(self):
+        commit, (pr_url, reland, why) = self.run_revert()
+        self.assertEqual((pr_url, reland, why), ('https://github.com/o/r/pull/77', 'https://github.com/o/r/issues/78', ''))
+        self.assertEqual(commit['parents'][1:] != [], True)
+        self.assertEqual(B.revert.pr_title(commit['subject'], commit['body']), 'Break the thing')
+        pushed = self.git('log', '-1', '--format=%B', 'refs/heads/revert/pr100', cwd=self.origin)
+        self.assertIn(f'This reverts commit {self.culprit}.', pushed)
+        self.assertEqual(self.git('show', 'refs/heads/revert/pr100:App/a.swift', cwd=self.origin), 'let a = 1')
+        self.assertEqual({token for token, _, _ in self.calls}, {'app-token'})
+        create = next(c for c in self.calls if c[1][:2] == ('pr', 'create'))
+        self.assertIn('automerge', create[1][create[1].index('--label') + 1])
+        self.assertIn('Part of #9', create[2])
+        issue = next(c for c in self.calls if c[1][:2] == ('issue', 'create'))
+        labels = [issue[1][i + 1] for i, a in enumerate(issue[1]) if a == '--label']
+        self.assertEqual(sorted(labels), ['area: hear it well', 'ready', 'regression'])
+        self.assertIn('https://github.com/o/r/pull/77', issue[2])
+        edit = next(c for c in self.calls if c[1][:2] == ('pr', 'edit'))
+        self.assertIn('Re-land: https://github.com/o/r/issues/78', edit[2])
+        # The checkout is back on the red commit and the local branch is gone.
+        self.assertEqual(self.git('rev-parse', 'HEAD'), self.culprit)
+        self.assertEqual(self.git('branch', '--list', 'revert/pr100'), '')
+
+    def test_a_revert_that_conflicts_with_newer_main_pushes_nothing(self):
+        other = Path(self.tmp.name) / 'other'
+        subprocess.run(['git', 'clone', '-q', str(self.origin), str(other)], check=True, capture_output=True)
+        (other / 'App' / 'a.swift').write_text('let a = 3\n')
+        self.git('commit', '-q', '-am', 'newer main edits the same line', cwd=other)
+        self.git('push', '-q', 'origin', 'main', cwd=other)
+        _, (pr_url, _, why) = self.run_revert()
+        self.assertIsNone(pr_url)
+        self.assertIn('does not apply cleanly', why)
+        self.assertIn('App/a.swift', why)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.git('branch', '--list', 'revert/pr100', cwd=self.origin), '')
+        self.assertEqual(self.git('status', '--porcelain', '--untracked-files=no'), '')
+
+    def test_a_merge_main_already_undid_is_not_reverted_twice(self):
+        self.git('revert', '--no-edit', '-m', '1', self.culprit)
+        self.git('push', '-q', 'origin', 'main')
+        B.fetch_main()
+        self.assertTrue(B.reverted_on_main(self.culprit))
 
 
 class GitRangeTests(unittest.TestCase):
