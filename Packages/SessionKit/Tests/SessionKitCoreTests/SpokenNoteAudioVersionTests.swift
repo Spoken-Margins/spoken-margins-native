@@ -152,6 +152,14 @@ final class SpokenNoteAudioVersionTests: XCTestCase {
         }
     }
 
+    func testAMarginMomentNeverRunsOnAcrossAVersionChange() {
+        XCTAssertEqual(SpokenNoteVersionPlan.marginMomentAction(isRunning: false, isPlayingVoice: false), .none)
+        XCTAssertEqual(SpokenNoteVersionPlan.marginMomentAction(isRunning: true, isPlayingVoice: true), .hold,
+                       "a Margin's voice playing holds the note where it is")
+        XCTAssertEqual(SpokenNoteVersionPlan.marginMomentAction(isRunning: true, isPlayingVoice: false), .end,
+                       "a moment listening on the old file's clock would play its Margins at the wrong words")
+    }
+
     func testTheAttachedVersionIsReadFromTheURLAlone() {
         XCTAssertEqual(SpokenNoteVersionPlan.attachedVersion(mediaURL: cleanURL), .shorterPauses)
         XCTAssertEqual(SpokenNoteVersionPlan.attachedVersion(mediaURL: recordedURL), .asRecorded)

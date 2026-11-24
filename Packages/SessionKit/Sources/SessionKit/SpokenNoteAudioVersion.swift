@@ -149,6 +149,24 @@ extension SpokenNoteVersionPlan {
         }
     }
 
+    /// What a version change does with a Margin moment running on the note.
+    public enum MarginMomentAction: Equatable, Sendable {
+        /// No moment runs: nothing to do.
+        case none
+        /// A Margin's voice is playing: the change waits until it ends.
+        case hold
+        /// The moment plays the note or listens for its next Margin: it ends before the restart.
+        case end
+    }
+
+    /// A moment's targets, lead-in and waiting Margins were put on the playing file's clock when it started, so it
+    /// can't go on across a restart on the other file: a Margin voice playing holds the change, and a moment that is
+    /// only playing the note or listening (which can last to the note's end) ends with the restart.
+    public static func marginMomentAction(isRunning: Bool, isPlayingVoice: Bool) -> MarginMomentAction {
+        guard isRunning else { return .none }
+        return isPlayingVoice ? .hold : .end
+    }
+
     /// The version an item's media URL plays.
     public static func attachedVersion(mediaURL: String?) -> SpokenNoteAudioVersion {
         SpokenNoteCleanFiles.namesCleanAudio(mediaURL) ? .shorterPauses : .asRecorded

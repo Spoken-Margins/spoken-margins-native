@@ -12,6 +12,13 @@ extension Gate1AppModel {
     var spokenNoteVersionChangeIsBlocked: Bool {
         recordingNavigationIsLocked || spokenNoteClean.takeIsRecording || skimBridgeState != nil
             || (hasActiveSession && SpokenNoteVersionPlan.phaseHoldsVersionChange(snapshot.phase))
+            || spokenNoteMarginMomentAction == .hold
+    }
+
+    /// What a version change does with the Margin moment running now, if any.
+    var spokenNoteMarginMomentAction: SpokenNoteVersionPlan.MarginMomentAction {
+        SpokenNoteVersionPlan.marginMomentAction(
+            isRunning: marginMomentConductor != nil, isPlayingVoice: marginMomentConductor?.isPlayingVoice == true)
     }
 
     /// The open session plays this note (not one of its Margins).
@@ -74,6 +81,9 @@ extension Gate1AppModel {
             return true
         }
         let itemId = prepared.itemId
+        // A moment's times are on the old file's clock, and a restart of the same item wouldn't end it. The coordinator
+        // never gets here while a moment's voice plays (it holds); a Play note tap ends the voice as any Play would.
+        if spokenNoteMarginMomentAction != .none { endMarginMoment() }
         _ = run { engine in
             try prepareSourceMediaPlayback(itemId: itemId)
             let restarted = try engine.restartSpokenNote(atMediaTimeMs: startMs, playing: playing)
