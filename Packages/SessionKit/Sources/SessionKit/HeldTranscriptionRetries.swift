@@ -110,7 +110,8 @@ public enum HeldTranscription: String, Sendable, CaseIterable {
 
 /// The work held for the listener's answer, each piece once (by kind and key, the latest retry kept), oldest first.
 /// On Allow every retry runs, so no held path depends on its own bookkeeping to start again (the round-1 gap was a
-/// retry that needed `requestedURL`). On a decided no they are dropped. In memory only: a relaunch starts each path
+/// retry that needed `requestedURL`). On a decided no they are dropped, and each piece's decline (`whenDeclined`) runs,
+/// so work that kept files or a waiting status for the answer ends cleanly. In memory only: a relaunch starts each path
 /// again on its own, and it meets the hold again if the answer is still open.
 @MainActor
 public final class HeldTranscriptionRetries {
@@ -121,6 +122,7 @@ public final class HeldTranscriptionRetries {
     }
 
     private var entries: [Entry] = []
+    private var declines: [(kind: HeldTranscription, key: String, decline: @MainActor () -> Void)] = []
     private let liveSessionSweep: @MainActor () -> Void
     private let spokenNoteSweep: @MainActor () -> Void
 
@@ -159,6 +161,14 @@ public final class HeldTranscriptionRetries {
         }
     }
 
+    /// What held work of `kind` under `key` does on a decided no, instead of waiting forever: delete what it kept for the
+    /// retry and say it can't be done, with no banner. A later call for the same kind and key replaces it. Allow and `drop`
+    /// forget it.
+    public func whenDeclined(_ kind: HeldTranscription, key: String, decline: @escaping @MainActor () -> Void) {
+        declines.removeAll { $0.kind == kind && $0.key == key }
+        declines.append((kind, key, decline))
+    }
+
     /// The gate held work for `purpose`. Registers the retry the sink owns: the live-session sweep for a live-session,
     /// Watch or Shortcut spoken Margin, the spoken-note sweep for a spoken note. Every other purpose's retry is the
     /// caller's or the waiting list's.
@@ -175,21 +185,26 @@ public final class HeldTranscriptionRetries {
     /// the speech service.
     public func drop(_ kind: HeldTranscription, keys: Set<String>) {
         entries.removeAll { $0.kind == kind && keys.contains($0.key) }
+        declines.removeAll { $0.kind == kind && keys.contains($0.key) }
     }
 
-    /// Settles the held work against iOS's answer: allowed runs every retry, oldest first; a decided no drops them;
-    /// undecided keeps them. Returns how many retries ran.
+    /// Settles the held work against iOS's answer: allowed runs every retry, oldest first; a decided no drops them and
+    /// runs every decline, oldest first; undecided keeps them. Returns how many retries ran.
     @discardableResult
     public func settle(access: SpeechRecognitionAccessState) -> Int {
         switch access {
         case .notDetermined:
             return 0
         case .denied, .restricted:
+            let declined = declines
             entries.removeAll()
+            declines.removeAll()
+            for entry in declined { entry.decline() }
             return 0
         case .authorized:
             let due = entries
             entries.removeAll()
+            declines.removeAll()
             for entry in due { entry.retry() }
             return due.count
         }

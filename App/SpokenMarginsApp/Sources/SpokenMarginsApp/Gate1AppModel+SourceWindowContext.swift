@@ -76,11 +76,28 @@ extension Gate1AppModel {
                   let store = self.store,
                   let current = try? store.loadInterjections(sessionId: interjection.sessionId).first(where: { $0.id == interjection.id }),
                   current.anchorContextStatus != .ready else { return }
-            self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "failed:heard_audio_unavailable"
-            self.run { engine in
-                self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjection.id, sessionId: interjection.sessionId)
-                self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
-            }
+            self.markSourceWindowUnavailable(interjection, diagnostic: "failed:heard_audio_unavailable")
+        }
+    }
+
+    /// The Margin's source context can't be recovered: its row says so, with no banner.
+    private func markSourceWindowUnavailable(_ interjection: Interjection, diagnostic: String) {
+        diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = diagnostic
+        run { engine in
+            snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjection.id, sessionId: interjection.sessionId)
+            refreshSelectedItemInBackground()
+            refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
+        }
+    }
+
+    /// #4715: a held source window waits for the answer with its heard audio kept. A decided no ends it: the audio goes and
+    /// the Margin reads unavailable, unless a retry is already working on it.
+    private func whenSourceWindowDeclined(_ interjection: Interjection, diagnostic: String) {
+        let key = Self.marginIdentity(interjection)
+        SpeechAskController.shared.heldRetries.whenDeclined(.sourceWindow, key: key) { [weak self] in
+            guard let self, !self.pendingSourceContextInterjectionIds.contains(key) else { return }
+            self.heardSourceWindows.discardInBackground(key)
+            self.markSourceWindowUnavailable(interjection, diagnostic: diagnostic)
         }
     }
 
@@ -130,6 +147,7 @@ extension Gate1AppModel {
                 self.run { engine in
                     if outcome == .waitingForAnswer {
                         self.diagnostics[transcriptionKey] = "waiting:speech_recognition" // still pending; Allow retries it
+                        self.whenSourceWindowDeclined(interjection, diagnostic: "failed:heard_audio:\(failure ?? "no_speech")")
                     } else if outcome == .unavailable {
                         self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjection.id, sessionId: interjection.sessionId)
                         self.diagnostics[transcriptionKey] = "failed:heard_audio:\(failure ?? "no_speech")"
@@ -318,15 +336,13 @@ extension Gate1AppModel {
             } catch {
                 // #4715: the hold is no failure. The Margin stays pending and Allow schedules it again; the defer clears the mark.
                 self.noteSourceWindowHeld(interjection, error: error)
-                let outcome = SourceWindowTranscriptionOutcome(hasWords: false, held: HeldTranscription.isHold(error))
-                self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", sessionId: interjection.sessionId, interjectionId: interjectionId)] = outcome == .waitingForAnswer ? "waiting:speech_recognition" : "failed:\(SafeErrorText.describe(error))"
-                guard outcome == .unavailable else { return }
-                self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "unavailable"
-                self.run { engine in
-                    self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjectionId, sessionId: interjection.sessionId)
-                    self.refreshSelectedItemInBackground()
-                    self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjectionId)
+                let failed = "failed:\(SafeErrorText.describe(error))"
+                guard SourceWindowTranscriptionOutcome(hasWords: false, held: HeldTranscription.isHold(error)) == .unavailable else {
+                    self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "waiting:speech_recognition"
+                    return self.whenSourceWindowDeclined(interjection, diagnostic: failed)
                 }
+                self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "unavailable"
+                self.markSourceWindowUnavailable(interjection, diagnostic: failed)
                 if reportsResult {
                     self.reportWarning(ListenerErrorText.line(prefix: "Source context could not be recovered:", error: error))
                 }

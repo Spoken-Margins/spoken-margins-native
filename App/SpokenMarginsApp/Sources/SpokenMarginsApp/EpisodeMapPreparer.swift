@@ -67,6 +67,8 @@ final class EpisodeMapPreparer {
     /// The one item whose map was asked for and is waiting on something else: its download, or a transcript
     /// the model is making. The model sets and clears it through `pendingMapGenerationItemId`.
     var pendingRequestItemId: String?
+    /// The status while a held map waits for the listener's Speech Recognition answer (#4715).
+    static let waitingForSpeechStatus = "Waiting for speech recognition"
     /// How often a run reads the phone's heat while it works. Tests shorten it.
     var heatCheckInterval: Duration = .seconds(10)
     /// Why the running task was cancelled, when it was a pause rather than the listener (#2092).
@@ -474,9 +476,14 @@ final class EpisodeMapPreparer {
                             self?.prepare(itemId: item.id, policy: initialJob.policy, trigger: trigger, isHeldRetry: true)
                         }
                     }
+                    // A decided no: the map can't be made, so the status stops saying it waits (no banner, as before).
+                    SpeechAskController.shared.heldRetries.whenDeclined(.episodeMap, key: item.id) { [weak self] in
+                        guard let self, self.task == nil, self.status == Self.waitingForSpeechStatus else { return }
+                        self.status = "Failed"
+                    }
                 }
                 try? await self.saveJob(job, store: host.store)
-                self.status = held ? "Waiting for speech recognition" : "Failed"
+                self.status = held ? Self.waitingForSpeechStatus : "Failed"
                 host.recordEpisodeMapDiagnostic(
                     "episodeMapPreparation:\(item.id)",
                     EpisodeMapRunGuard.failedDiagnostic(SafeErrorText.describe(error), stage: job.stage, at: Date())

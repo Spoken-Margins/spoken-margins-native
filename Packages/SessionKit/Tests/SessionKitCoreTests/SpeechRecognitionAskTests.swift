@@ -349,6 +349,42 @@ final class SpeechAskHeldTranscriptionTests: XCTestCase {
         }
     }
 
+    /// #4715, a decided no cleans up: a held source window keeps its heard audio and a held map says it waits, so a decided
+    /// no must end each one (delete the audio, mark the Margin unavailable; the map's status stops waiting) instead of
+    /// leaving them waiting forever. Allow and `drop` forget the decline.
+    @MainActor
+    func testADecidedNoRunsEachHeldPiecesDeclineAndAllowForgetsIt() {
+        for decided in [SpeechRecognitionAccessState.denied, .restricted] {
+            let retries = HeldTranscriptionRetries()
+            var declined: [String] = []
+            var retried = 0
+            retries.hold(.sourceWindow, key: "s::m1") { retried += 1 }
+            retries.whenDeclined(.sourceWindow, key: "s::m1") { declined.append("m1 first") }
+            retries.whenDeclined(.sourceWindow, key: "s::m1") { declined.append("m1") }
+            retries.hold(.episodeMap, key: "item") { retried += 1 }
+            retries.whenDeclined(.episodeMap, key: "item") { declined.append("map") }
+            XCTAssertEqual(retries.settle(access: .notDetermined), 0)
+            XCTAssertEqual(declined, [], "undecided keeps waiting")
+            XCTAssertEqual(retries.settle(access: decided), 0)
+            XCTAssertEqual(declined, ["m1", "map"], "\(decided): each decline once, the latest for a key, oldest first")
+            XCTAssertEqual(retried, 0)
+            XCTAssertTrue(retries.isEmpty)
+            XCTAssertEqual(retries.settle(access: decided), 0)
+            XCTAssertEqual(declined.count, 2, "a decline runs once")
+        }
+
+        let allowed = HeldTranscriptionRetries()
+        var declined = 0
+        allowed.hold(.sourceWindow, key: "s::m1") {}
+        allowed.whenDeclined(.sourceWindow, key: "s::m1") { declined += 1 }
+        allowed.hold(.sourceWindow, key: "s::m2") {}
+        allowed.whenDeclined(.sourceWindow, key: "s::m2") { declined += 1 }
+        allowed.drop(.sourceWindow, keys: ["s::m2"])
+        XCTAssertEqual(allowed.settle(access: .authorized), 1)
+        XCTAssertEqual(allowed.settle(access: .denied), 0)
+        XCTAssertEqual(declined, 0, "Allow and drop forget the decline")
+    }
+
     /// The sink registers the live-session sweep itself for a live-session, Watch or Shortcut Margin, once however many
     /// were held, so a `try?` at the caller loses none of them. Other purposes register nothing here.
     @MainActor
