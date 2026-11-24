@@ -63,6 +63,8 @@ PATH_SCHEMA_RULES = [
     ("quiz/find-something.v1.json", "find-something-quiz.schema.json"),
     ("fixtures/find-something/*.json", "find-something-prompt-fixture.schema.json"),
     ("traces/*.json", "session-trace.schema.json"),
+    ("fixtures/share-link-attest/requests/*.json", "share-link-attest-request.schema.json"),
+    ("fixtures/share-link-attest/responses/*.json", "share-link-attest-response.schema.json"),
 ]
 
 NEGATIVE_PATH_SCHEMA_RULES = [
