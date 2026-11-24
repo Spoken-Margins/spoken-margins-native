@@ -385,6 +385,67 @@ final class SpeechAskHeldTranscriptionTests: XCTestCase {
         XCTAssertEqual(declined, 0, "Allow and drop forget the decline")
     }
 
+    /// #4715: a kill right after Allow must not lose held Margins or takes. Each sweep's held-across-launch record is
+    /// forgotten only after that sweep ran to the end, never on Allow itself, and never for a sweep that could not run yet.
+    @MainActor
+    func testASweepsLaunchRecordIsForgottenOnlyAfterTheSweepRanToTheEnd() async {
+        let (started, startedSignal) = AsyncStream<Void>.makeStream()
+        let (gate, opens) = AsyncStream<Void>.makeStream()
+        var forgotten: [String] = []
+        let retries = HeldTranscriptionRetries(
+            liveSessionSweep: {
+                startedSignal.yield()
+                for await _ in gate { break }
+                return true
+            },
+            spokenNoteSweep: { false },
+            sweepFinished: { forgotten.append($0) }
+        )
+        retries.reported(.liveSessionMargin)
+        retries.reported(.spokenNote)
+        XCTAssertEqual(retries.settle(access: .authorized), 2)
+        for await _ in started { break }
+        XCTAssertEqual(forgotten, [], "the live-session sweep is still running")
+        opens.yield()
+        await retries.sweepsEnded()
+        XCTAssertEqual(forgotten, [SpeechRecognitionAsk.liveSessionMarginHeldKey], "the note sweep could not run yet")
+    }
+
+    /// A hold reported while its sweep still runs starts the sweep again on the next Allow; the first run ending must
+    /// not forget the record the second run still needs.
+    @MainActor
+    func testAnOlderSweepEndingLeavesTheRecordForTheNewerRun() async {
+        var gates: [AsyncStream<Void>.Continuation] = []
+        let (started, startedSignal) = AsyncStream<Void>.makeStream()
+        var forgotten: [String] = []
+        let retries = HeldTranscriptionRetries(
+            liveSessionSweep: {
+                let (gate, opens) = AsyncStream<Void>.makeStream()
+                gates.append(opens)
+                startedSignal.yield()
+                for await _ in gate { break }
+                return true
+            },
+            spokenNoteSweep: { true },
+            sweepFinished: { forgotten.append($0) }
+        )
+        var runs = started.makeAsyncIterator()
+        retries.reported(.watchMargin)
+        retries.settle(access: .authorized)
+        let olderRun = retries.runningSweeps.last
+        _ = await runs.next()
+        retries.reported(.shortcutMargin)
+        retries.settle(access: .authorized)
+        _ = await runs.next()
+        gates[0].yield()
+        await olderRun?.value
+        XCTAssertEqual(retries.runningSweeps.count, 1, "the older run ended")
+        XCTAssertEqual(forgotten, [], "the newer run still needs the record")
+        gates[1].yield()
+        await retries.sweepsEnded()
+        XCTAssertEqual(forgotten, [SpeechRecognitionAsk.liveSessionMarginHeldKey])
+    }
+
     /// The sink registers the live-session sweep itself for a live-session, Watch or Shortcut Margin, once however many
     /// were held, so a `try?` at the caller loses none of them. Other purposes register nothing here.
     @MainActor

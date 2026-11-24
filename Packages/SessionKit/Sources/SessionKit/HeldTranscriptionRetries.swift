@@ -123,8 +123,21 @@ public final class HeldTranscriptionRetries {
 
     private var entries: [Entry] = []
     private var declines: [(kind: HeldTranscription, key: String, decline: @MainActor () -> Void)] = []
-    private let liveSessionSweep: @MainActor () -> Void
-    private let spokenNoteSweep: @MainActor () -> Void
+    private let liveSessionSweep: SweepRun
+    private let spokenNoteSweep: SweepRun
+    private let sweepFinished: (@MainActor (_ heldAcrossLaunchKey: String) -> Void)?
+    private var sweepRuns = 0
+    private var latestRun: [String: Int] = [:]
+    private var running: [Int: Task<Void, Never>] = [:]
+
+    /// A sweep that says when it is done: true once it ran to the end (whatever it filled), false when it could not run
+    /// yet (no store at launch, say), so the record that carries it across a launch must stay.
+    public typealias Sweep = @MainActor () async -> Bool
+
+    private enum SweepRun {
+        case started(@MainActor () -> Void)
+        case reportsDone(Sweep)
+    }
 
     /// The key the live-session sweep is held under: one sweep covers every live-session, Watch and Shortcut Margin.
     public static let liveSessionSweepKey = "live-session-spoken-margins"
@@ -134,12 +147,27 @@ public final class HeldTranscriptionRetries {
     /// `liveSessionSweep` transcribes every live-session spoken Margin that has no words yet
     /// (`LiveSessionSpokenMarginSweep`); `spokenNoteSweep` every spoken note take with none (`SpokenNoteTranscriptSweep`).
     /// Each runs once on Allow however many of its kind were held.
+    /// Here each sweep only starts, and the caller forgets the records that carry them across a launch.
     public init(
         liveSessionSweep: @escaping @MainActor () -> Void = {},
         spokenNoteSweep: @escaping @MainActor () -> Void = {}
     ) {
-        self.liveSessionSweep = liveSessionSweep
-        self.spokenNoteSweep = spokenNoteSweep
+        self.liveSessionSweep = .started(liveSessionSweep)
+        self.spokenNoteSweep = .started(spokenNoteSweep)
+        sweepFinished = nil
+    }
+
+    /// #4715: a sweep's held-across-launch record (`HeldTranscription.Retry.heldAcrossLaunchKey`) is forgotten only once
+    /// that sweep says it ran to the end, and only if no later Allow started it again meanwhile: `sweepFinished` gets the
+    /// key then. Forgetting it on Allow, while the sweep still ran, lost the held Margins and takes to a kill right after.
+    public init(
+        liveSessionSweep: @escaping Sweep,
+        spokenNoteSweep: @escaping Sweep,
+        sweepFinished: @escaping @MainActor (_ heldAcrossLaunchKey: String) -> Void
+    ) {
+        self.liveSessionSweep = .reportsDone(liveSessionSweep)
+        self.spokenNoteSweep = .reportsDone(spokenNoteSweep)
+        self.sweepFinished = sweepFinished
     }
 
     public var isEmpty: Bool { entries.isEmpty }
@@ -174,9 +202,40 @@ public final class HeldTranscriptionRetries {
     /// caller's or the waiting list's.
     public func reported(_ purpose: HeldTranscription) {
         switch purpose.retry {
-        case .liveSessionSweep: hold(.liveSessionMargin, key: Self.liveSessionSweepKey, retry: liveSessionSweep)
-        case .spokenNoteSweep: hold(.spokenNote, key: Self.spokenNoteSweepKey, retry: spokenNoteSweep)
+        case .liveSessionSweep: hold(.liveSessionMargin, key: Self.liveSessionSweepKey, retry: retry(liveSessionSweep, purpose))
+        case .spokenNoteSweep: hold(.spokenNote, key: Self.spokenNoteSweepKey, retry: retry(spokenNoteSweep, purpose))
         case .callerRegisters, .waitingList, .none: return
+        }
+    }
+
+    /// The sweeps still running, oldest first.
+    public var runningSweeps: [Task<Void, Never>] { running.sorted { $0.key < $1.key }.map(\.value) }
+
+    /// Waits until every sweep Allow started has ended.
+    public func sweepsEnded() async {
+        while let sweep = runningSweeps.first { await sweep.value }
+    }
+
+    private func retry(_ sweep: SweepRun, _ purpose: HeldTranscription) -> @MainActor () -> Void {
+        switch sweep {
+        case .started(let start):
+            return start
+        case .reportsDone(let sweep):
+            let launchKey = purpose.retry.heldAcrossLaunchKey
+            return { [weak self] in
+                guard let self else { return }
+                sweepRuns += 1
+                let run = sweepRuns
+                if let launchKey { latestRun[launchKey] = run }
+                running[run] = Task { @MainActor [weak self] in
+                    let ranToTheEnd = await sweep()
+                    guard let self else { return }
+                    running[run] = nil
+                    guard let launchKey, latestRun[launchKey] == run else { return }
+                    latestRun[launchKey] = nil
+                    if ranToTheEnd { sweepFinished?(launchKey) }
+                }
+            }
         }
     }
 
