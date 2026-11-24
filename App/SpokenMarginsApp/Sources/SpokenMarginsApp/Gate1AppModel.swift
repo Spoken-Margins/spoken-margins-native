@@ -306,6 +306,7 @@ final class Gate1AppModel: ObservableObject {
     let linkListArrival = LinkListArrivalState() // Paste & go's wait on a pasted link list and the Quick Folder's retries (#4683)
     let aiFollowSuggestionsModel = AIFollowSuggestionsModel() // shows the listener's AI suggested following (#4683)
     let notForMe = NotForMeHolder() // what the listener said Not for me to, kept on the phone (#4285)
+    lazy var spokenNoteClean: SpokenNoteCleanCoordinator = { let made = SpokenNoteCleanCoordinator(); made.attach(self); return made }() // Shorter pauses for spoken notes (#4779)
     @Published var sourceImportProgressMessage: String?
     @Published var importInbox: [ImportInboxEntry] = []
     @Published var sourceLinksWaitingForNetwork = 0 // shared links left pending while offline (#1546)
@@ -584,15 +585,6 @@ final class Gate1AppModel: ObservableObject {
         return []
         #endif
     }
-
-    #if DEBUG
-    /// Tests that model a write through the app must share its serialized connection.
-    /// Opening another connection also races unrelated offline-ledger startup work.
-    func libraryStoreForTesting() throws -> SQLiteSessionStore {
-        precondition(Self.isRunningUnitTests)
-        return try requireStore()
-    }
-    #endif
 
     init(
         sourceLinkResolver: LinkResolutionClient? = nil,
@@ -1318,7 +1310,7 @@ final class Gate1AppModel: ObservableObject {
         }
         run { engine in
             try hangTelemetry.labels.scoped("start.prepareSource") { try prepareSourceMediaPlayback(itemId: activeItemId) }
-            let started = try engine.startSession(itemId: activeItemId)
+            let started = try engine.startSession(itemId: activeItemId, atMediaTimeMs: spokenNoteClean.takePendingStartMs(itemId: activeItemId))
             snapshot = try hangTelemetry.labels.scoped("start.playbackRate") { try applyPreferredPlaybackRate(to: started, engine: engine) }
             if let store, let sessionId = snapshot.sessionId {
                 try seedUITestingSummaryInterjectionIfNeeded(sessionId: sessionId, engine: engine, store: store)
@@ -1555,6 +1547,7 @@ final class Gate1AppModel: ObservableObject {
 
     func startItem(id: String, trigger: VoiceoverLookupDecision.Trigger = .play) {
         guard prepareToStartItem(id: id, trigger: trigger) else { return }
+        guard !startSpokenNoteThroughChosenVersion(itemId: id) else { return } // #4779
         silentMarginLanding = nil
         do {
             let store = try requireStore()

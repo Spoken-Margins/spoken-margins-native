@@ -207,6 +207,13 @@ public final class SessionEngine {
 
     @discardableResult
     public func startSession(itemId: String) throws -> SessionSnapshot {
+        try startSession(itemId: itemId, atMediaTimeMs: 0)
+    }
+
+    /// Starts a new session of an item with its own audio at `atMediaTimeMs` instead of its beginning: a spoken note
+    /// changing version starts at the same moment on the other file (#4779).
+    @discardableResult
+    public func startSession(itemId: String, atMediaTimeMs startMs: Int) throws -> SessionSnapshot {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // time to first audio counts from here (#357)
         try require("startSession", category: "sync", capabilities: ["canonical_persistence", "receive_prepared_packages", "browser_session_handoff"])
         forgetFailure(unlessItemIs: itemId)
@@ -236,7 +243,7 @@ public final class SessionEngine {
             phase: .itemPlayback,
             currentTargetType: targetType,
             currentTargetId: itemPlaybackTargetId(for: item, targetType: targetType),
-            position: targetType == .itemTextTTS ? Position(charOffset: 0, chapterId: nil) : Position(charOffset: 0, mediaTimeMs: 0, chapterId: nil),
+            position: targetType == .itemTextTTS ? Position(charOffset: 0, chapterId: nil) : Position(charOffset: 0, mediaTimeMs: max(0, startMs), chapterId: nil),
             completionPercent: 0,
             playbackRate: 1
         )
@@ -249,6 +256,24 @@ public final class SessionEngine {
         try labels.scoped("start.play") { try playCurrentTarget(session) }
         labels.scoped("start.publish") { publishPlaybackStart(for: session, phase: .itemPlayback) }
         return snapshot
+    }
+
+    /// A spoken note moving to its other version (#4779). The two files run on different clocks, so the open session is
+    /// set aside (kept, never resumed: a Continue can't then pick up its place on the wrong clock) and a new one starts at
+    /// `atMediaTimeMs` on the file now attached to the item, playing or paused as asked. Nothing else the app holds (the
+    /// screen, a sleep timer) is the engine's to change.
+    @discardableResult
+    public func restartSpokenNote(atMediaTimeMs startMs: Int, playing: Bool) throws -> SessionSnapshot {
+        guard let open = currentSession, let item = currentItem, SpokenNoteItem.isSpokenNote(mediaType: item.mediaType) else {
+            throw SessionKitError.invalidCommandForState("restartSpokenNote")
+        }
+        _ = try endSession()
+        if var ended = try repository.loadSession(id: open.id), ended.status == "in_progress" {
+            ended.phase = .abandoned
+            try repository.saveSession(ended)
+        }
+        let started = try startSession(itemId: open.itemId, atMediaTimeMs: startMs)
+        return playing ? started : try pause()
     }
 
     @discardableResult
@@ -2348,11 +2373,16 @@ public final class SessionEngine {
             if targetType == .transcriptBackedMedia || targetType == .browserOwnedMedia {
                 // A spoken note's Margin names its sentence, not a time: the note's joined audio is made again when a take is
                 // added, so the time is read from the timeline now (#3664). Any other item keeps the time it was recorded at.
-                let noteSentenceTimeMs = SpokenNoteItem.isSpokenNote(mediaType: playingItem.mediaType)
+                let isNote = SpokenNoteItem.isSpokenNote(mediaType: playingItem.mediaType)
+                let noteSentenceTimeMs = isNote
                     ? SpokenNoteMargins.mediaTimeMs(of: stored.anchor, in: storedTranscriptTimeline(itemId: item.id)) : nil
+                // A note's saved time is on the recording's clock; the version with shorter pauses plays on its own (#4779).
+                let savedTimeMs = isNote
+                    ? stored.anchor.mediaTimeMs.map { SpokenNoteCleanClock.playingMs(recordedMs: $0, mediaURL: playingItem.media?.url) }
+                    : stored.anchor.mediaTimeMs
                 let anchorMediaTimeMs = publisher.flatMap {
                     $0.mediaTimeMs(textOffset: stored.anchor.startChar)
-                } ?? narrationMediaTimeMs ?? noteSentenceTimeMs ?? stored.anchor.mediaTimeMs
+                } ?? narrationMediaTimeMs ?? noteSentenceTimeMs ?? savedTimeMs
                 guard let mediaTimeMs = anchorMediaTimeMs,
                       mediaTimeMs >= 0 else {
                     throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
@@ -5318,13 +5348,17 @@ public final class SessionEngine {
            !isPlayingPublisherAudio(session) {
             let resolved = resolveMediaAnchor(for: session, playbackPosition: playbackPosition)
             lastResolvedMediaAnchor = resolved
+            // A spoken note's Margin is saved on the recording's clock, whichever version plays (#4779).
+            let savedMediaTimeMs = SpokenNoteItem.isSpokenNote(mediaType: currentItem?.mediaType ?? "")
+                ? SpokenNoteCleanClock.recordedMs(playingMs: resolved.mediaTimeMs, mediaURL: currentItem?.media?.url)
+                : resolved.mediaTimeMs
             return Anchor(
                 anchorType: resolved.transcriptSegmentId == nil ? .media : .transcript,
                 startChar: resolved.startChar,
                 endChar: resolved.endChar,
                 anchorBefore: resolved.anchorBefore,
                 anchorAfter: resolved.anchorAfter,
-                mediaTimeMs: resolved.mediaTimeMs,
+                mediaTimeMs: savedMediaTimeMs,
                 playbackRateObserved: resolved.playbackRateObserved,
                 transcriptSegmentId: resolved.transcriptSegmentId
             )
@@ -6271,8 +6305,9 @@ public final class SessionEngine {
     }
 
     private func repairMediaPercentages(_ session: Session, durationMs: Int, forceNotes: Bool = false) throws -> Session {
+        let sessionItem = item(for: session)
         guard durationMs > 0,
-              !isTextBackedMedia(item(for: session)) else {
+              !isTextBackedMedia(sessionItem) else {
             return session
         }
         var updatedSession = session
@@ -6285,10 +6320,14 @@ public final class SessionEngine {
         }
         guard forceNotes || lastMediaPercentageRepair?.sessionId != session.id
                 || lastMediaPercentageRepair?.durationMs != durationMs else { return updatedSession }
+        // A note's Margins are saved on the recording's clock; `durationMs` is the length of the file playing, which is
+        // shorter for its Shorter pauses version (#4779). Their times are read on that file's clock first.
+        let noteMediaURL = SpokenNoteItem.isSpokenNote(mediaType: sessionItem?.mediaType ?? "") ? sessionItem?.media?.url : nil
         try inRepositoryTransaction {
             for var interjection in try repository.loadInterjections(sessionId: session.id)
             where interjection.targetType == .item {
-                guard let mediaTimeMs = interjection.anchor.mediaTimeMs else { continue }
+                guard let savedTimeMs = interjection.anchor.mediaTimeMs else { continue }
+                let mediaTimeMs = noteMediaURL.map { SpokenNoteCleanClock.playingMs(recordedMs: savedTimeMs, mediaURL: $0) } ?? savedTimeMs
                 let percent = mediaPercent(mediaTimeMs, durationMs: durationMs)
                 guard percent != interjection.roughPercent else { continue }
                 interjection.roughPercent = percent
