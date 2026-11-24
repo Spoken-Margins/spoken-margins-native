@@ -24,7 +24,7 @@ final class PlaybackLeadingToolbarTests: XCTestCase {
                     PlaybackLeadingToolbar(
                         pane: pane, timelineEditorHasFocus: false,
                         nowHeaderIsVisible: driver.headerIsVisible, returnToNow: {}
-                    ) { Image(systemName: "chevron.left") }
+                    ) { _ in Image(systemName: "chevron.left") }
                 }
         }
     }
