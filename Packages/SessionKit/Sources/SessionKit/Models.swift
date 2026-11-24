@@ -308,16 +308,24 @@ public struct LinkResolutionRequest: Codable, Equatable, Sendable {
     /// audio whatever its address looks like. A redirector such as `ccdn.php?filename=/eps/x.mp3` has no
     /// audio extension but plays (#3345).
     public var declaredAudio: Bool
+    /// The episode file a friend's packet names (#5286). An episode page can link several feed editions (MP3, Opus,
+    /// Ogg); with this set, the resolver takes the edition whose file this is, so the listener's copy is the one the
+    /// packet's Margins were made on. Nil for everything a listener adds themselves, which keeps the page's first feed.
+    public var preferredEnclosureURL: String?
 
-    public init(id: String, inputURL: String, sourceSurface: String, createdAt: Date, declaredAudio: Bool = false) {
+    public init(
+        id: String, inputURL: String, sourceSurface: String, createdAt: Date, declaredAudio: Bool = false,
+        preferredEnclosureURL: String? = nil
+    ) {
         self.id = id
         self.inputURL = inputURL
         self.sourceSurface = sourceSurface
         self.createdAt = createdAt
         self.declaredAudio = declaredAudio
+        self.preferredEnclosureURL = preferredEnclosureURL
     }
 
-    private enum CodingKeys: String, CodingKey { case id, inputURL, sourceSurface, createdAt, declaredAudio }
+    private enum CodingKeys: String, CodingKey { case id, inputURL, sourceSurface, createdAt, declaredAudio, preferredEnclosureURL }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -326,6 +334,7 @@ public struct LinkResolutionRequest: Codable, Equatable, Sendable {
         sourceSurface = try container.decode(String.self, forKey: .sourceSurface)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         declaredAudio = try container.decodeIfPresent(Bool.self, forKey: .declaredAudio) ?? false
+        preferredEnclosureURL = try container.decodeIfPresent(String.self, forKey: .preferredEnclosureURL)
     }
 }
 
