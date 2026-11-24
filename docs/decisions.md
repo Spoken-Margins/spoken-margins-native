@@ -725,6 +725,7 @@ These came in the project chat, so most have no comment of his to link. Each cit
     - #5110, #5016, #4781: their code is merged, so they go to the desk (T4 requests on #5231, #5124 and #5148).
     - #4713: goes to the desk (T4 request on #5243).
     - #4574 and #4937: groundwork, but each still has cloud work left. #4574 needs #4802's conflict and token step. #4937 needs its Done when 7 probes. They stay `ready`.
+- **The Share Margins sheet loses Next and Back and gets the four rewordings, as designed (2026-11-24, #4647, #5180).** Under AGENTS.md rule 4 of "A sharing change to an app screen" ("Removing or renaming a sharing control needs the owner's yes first"), the thread asked him on a decision card: "May the Share Margins list drop Next/Back and change four lines of wording?" He chose "Yes, as designed" (16:24Z). Every sheet that isn't a reply becomes one list, with no Next, no Back, no step bar and no one-at-a-time review. Four lines change: the cleanup switch's off caption, the first-time alert's last sentence, the stale line ("Check it and share again"), and "Back to your Margins" on the preview. The reply sheet is unchanged. Rule 2 still applies: #5180 merges only after a session has looked at the screens on a simulator.
 
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
