@@ -21,6 +21,8 @@ struct CaseFile: Decodable { let cases: [EvalCase] }
 struct Variant: Decodable {
     let id: String
     var app: Bool? = nil
+    /// Run the app's whole path (`MarginTidyProposer`), not one request.
+    var proposer: Bool? = nil
     var instructions: String? = nil
     var prompt: String? = nil
     var contextCharacters: Int? = nil
@@ -119,7 +121,51 @@ enum Runner {
         try out.close()
     }
 
+    /// The app's whole path: `MarginTidyProposer` (pieces, guard, filler-only fallback) with the same request the app
+    /// client sends. A proposal that fell back to the filler-only tidy is recorded as a guard rejection.
+    static func runApp(variant: Variant, item: EvalCase, model: SystemLanguageModel) async -> Row {
+        let calls = Counter()
+        let proposer = MarginTidyProposer(model: { transcript, before, after in
+            calls.increment()
+            func tidy(_ request: MarginTidyRequest) async throws -> String {
+                let session = LanguageModelSession(
+                    model: SystemLanguageModel(useCase: .general, guardrails: .permissiveContentTransformations),
+                    instructions: request.instructions
+                )
+                let response = try await session.respond(
+                    to: request.prompt,
+                    options: GenerationOptions(samplingMode: .greedy, maximumResponseTokens: request.maximumResponseTokens)
+                )
+                return response.content
+            }
+            do {
+                return try await tidy(MarginTidyPrompt.request(transcript: transcript, before: before, after: after))
+            } catch LanguageModelSession.GenerationError.exceededContextWindowSize {
+                return try await tidy(MarginTidyPrompt.request(transcript: transcript, before: "", after: ""))
+            }
+        })
+        let start = Date()
+        let proposal = await proposer.proposal(marginId: item.id, transcript: item.transcript, before: item.before, after: item.after)
+        let seconds = Date().timeIntervalSince(start)
+        let context = BoundedAnchorContext.select(before: item.before, after: item.after)
+        return Row(
+            variant: variant.id, caseId: item.id, kind: item.kind, transcript: item.transcript,
+            fillerOnly: MarginTidy.fillerOnly(item.transcript), reply: proposal?.text, error: nil,
+            guardRejection: proposal == nil || proposal?.source == .onDeviceAI ? nil : "fell back to filler-only (\(calls.value) requests)",
+            promptTokens: nil, contextSize: model.contextSize,
+            seconds: seconds, contextBefore: context.before.count, contextAfter: context.after.count
+        )
+    }
+
+    final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        var value: Int { lock.withLock { count } }
+        func increment() { lock.withLock { count += 1 } }
+    }
+
     static func run(variant: Variant, item: EvalCase, model: SystemLanguageModel) async -> Row {
+        if variant.proposer == true { return await runApp(variant: variant, item: item, model: model) }
         let instructions: String
         let prompt: String
         let context: (before: String, after: String)

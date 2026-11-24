@@ -1,108 +1,118 @@
 {
- "variants": [
-  {
-   "id": "v0-app",
-   "app": true
-  },
-  {
-   "id": "v0-shipped-text",
-   "instructions": "Process all content on device. Follow the requested output bounds and never reproduce long source passages.",
-   "prompt": "Rewrite the spoken note below as clear written sentences in the speaker's own voice and person. Keep every claim, number, name, quotation and negation. Remove filler words, false starts and repetition. Do not add facts, opinions or words from the passage; the passage is only there so you understand what the note refers to. Reply with the rewritten note only.\n\nPassage before: {before}\nPassage after: {after}\nSpoken note: {note}"
-  },
-  {
-   "id": "v1-edit-role",
-   "permissive": true,
-   "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every number, name, quotation, question and \"not\".\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.",
-   "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote to edit:\n{note}"
-  },
-  {
-   "id": "v2-edit-fewshot",
-   "permissive": true,
-   "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every number, name, quotation, question and \"not\".\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh 40 percent is right, you know\nEdited: I don't think 40 percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
-   "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:"
-  },
-  {
-   "id": "v3-fewshot-nopassage",
-   "permissive": true,
-   "contextCharacters": 0,
-   "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every number, name, quotation, question and \"not\".\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh 40 percent is right, you know\nEdited: I don't think 40 percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
-   "prompt": "Note: {note}\nEdited:"
-  },
-  {
-   "id": "v4-numbers-as-said",
-   "permissive": true,
-   "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every name, quotation, question and \"not\".\nWrite each number the way the speaker said it: words stay words, digits stay digits.\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh forty percent is right, you know\nEdited: I don't think forty percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
-   "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:"
-  },
-  {
-   "id": "v4-ctx0",
-   "permissive": true,
-   "contextCharacters": 0,
-   "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every name, quotation, question and \"not\".\nWrite each number the way the speaker said it: words stay words, digits stay digits.\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh forty percent is right, you know\nEdited: I don't think forty percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
-   "prompt": "Note: {note}\nEdited:"
-  },
-  {
-   "id": "v4-ctx250",
-   "permissive": true,
-   "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every name, quotation, question and \"not\".\nWrite each number the way the speaker said it: words stay words, digits stay digits.\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh forty percent is right, you know\nEdited: I don't think forty percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
-   "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:",
-   "contextCharacters": 250
-  },
-  {
-   "id": "v4-before1000",
-   "permissive": true,
-   "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every name, quotation, question and \"not\".\nWrite each number the way the speaker said it: words stay words, digits stay digits.\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh forty percent is right, you know\nEdited: I don't think forty percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
-   "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:",
-   "contextBefore": 1000,
-   "contextAfter": 0
-  },
-  {
-   "id": "v4-before2000",
-   "permissive": true,
-   "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every name, quotation, question and \"not\".\nWrite each number the way the speaker said it: words stay words, digits stay digits.\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh forty percent is right, you know\nEdited: I don't think forty percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
-   "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:",
-   "contextBefore": 2000,
-   "contextAfter": 0
-  },
-  {
-   "id": "v4-ctx1000",
-   "permissive": true,
-   "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every name, quotation, question and \"not\".\nWrite each number the way the speaker said it: words stay words, digits stay digits.\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh forty percent is right, you know\nEdited: I don't think forty percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
-   "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:",
-   "contextCharacters": 1000
-  },
-  {
-   "id": "v4-default-guardrails",
-   "permissive": false,
-   "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every name, quotation, question and \"not\".\nWrite each number the way the speaker said it: words stay words, digits stay digits.\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh forty percent is right, you know\nEdited: I don't think forty percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
-   "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:"
-  },
-  {
-   "id": "v5-fewshot4",
-   "permissive": true,
-   "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every number, name, quotation, question and \"not\".\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh 40 percent is right, you know\nEdited: I don't think 40 percent is right.\nNote: they called it \"fully safe\" in, in 2019\nEdited: They called it \"fully safe\" in 2019.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
-   "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:"
-  },
-  {
-   "id": "v5-spell",
-   "permissive": true,
-   "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every number, name, quotation, question and \"not\".\nNever add anything the speaker did not say. A short note stays short. Use the text around the note only to spell its names and terms correctly. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh 40 percent is right, you know\nEdited: I don't think 40 percent is right.\nNote: they called it \"fully safe\" in, in 2019\nEdited: They called it \"fully safe\" in 2019.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
-   "prompt": "Text around the note:\n{before} … {after}\n\nNote: {note}\nEdited:"
-  },
-  {
-   "id": "v5-spell-before1500",
-   "permissive": true,
-   "contextBefore": 1500,
-   "contextAfter": 250,
-   "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every number, name, quotation, question and \"not\".\nNever add anything the speaker did not say. A short note stays short. Use the text around the note only to spell its names and terms correctly. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh 40 percent is right, you know\nEdited: I don't think 40 percent is right.\nNote: they called it \"fully safe\" in, in 2019\nEdited: They called it \"fully safe\" in 2019.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
-   "prompt": "Text around the note:\n{before} … {after}\n\nNote: {note}\nEdited:"
-  },
-  {
-   "id": "v5-ctx0",
-   "permissive": true,
-   "contextCharacters": 0,
-   "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every number, name, quotation, question and \"not\".\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh 40 percent is right, you know\nEdited: I don't think 40 percent is right.\nNote: they called it \"fully safe\" in, in 2019\nEdited: They called it \"fully safe\" in 2019.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
-   "prompt": "Note: {note}\nEdited:"
-  }
- ]
+  "variants": [
+    {
+      "id": "v0-app",
+      "app": true
+    },
+    {
+      "id": "v0-shipped-text",
+      "instructions": "Process all content on device. Follow the requested output bounds and never reproduce long source passages.",
+      "prompt": "Rewrite the spoken note below as clear written sentences in the speaker's own voice and person. Keep every claim, number, name, quotation and negation. Remove filler words, false starts and repetition. Do not add facts, opinions or words from the passage; the passage is only there so you understand what the note refers to. Reply with the rewritten note only.\n\nPassage before: {before}\nPassage after: {after}\nSpoken note: {note}"
+    },
+    {
+      "id": "v1-edit-role",
+      "permissive": true,
+      "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every number, name, quotation, question and \"not\".\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.",
+      "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote to edit:\n{note}"
+    },
+    {
+      "id": "v2-edit-fewshot",
+      "permissive": true,
+      "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every number, name, quotation, question and \"not\".\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh 40 percent is right, you know\nEdited: I don't think 40 percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
+      "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:"
+    },
+    {
+      "id": "v3-fewshot-nopassage",
+      "permissive": true,
+      "contextCharacters": 0,
+      "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every number, name, quotation, question and \"not\".\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh 40 percent is right, you know\nEdited: I don't think 40 percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
+      "prompt": "Note: {note}\nEdited:"
+    },
+    {
+      "id": "v4-numbers-as-said",
+      "permissive": true,
+      "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every name, quotation, question and \"not\".\nWrite each number the way the speaker said it: words stay words, digits stay digits.\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh forty percent is right, you know\nEdited: I don't think forty percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
+      "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:"
+    },
+    {
+      "id": "v4-ctx0",
+      "permissive": true,
+      "contextCharacters": 0,
+      "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every name, quotation, question and \"not\".\nWrite each number the way the speaker said it: words stay words, digits stay digits.\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh forty percent is right, you know\nEdited: I don't think forty percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
+      "prompt": "Note: {note}\nEdited:"
+    },
+    {
+      "id": "v4-ctx250",
+      "permissive": true,
+      "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every name, quotation, question and \"not\".\nWrite each number the way the speaker said it: words stay words, digits stay digits.\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh forty percent is right, you know\nEdited: I don't think forty percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
+      "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:",
+      "contextCharacters": 250
+    },
+    {
+      "id": "v4-before1000",
+      "permissive": true,
+      "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every name, quotation, question and \"not\".\nWrite each number the way the speaker said it: words stay words, digits stay digits.\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh forty percent is right, you know\nEdited: I don't think forty percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
+      "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:",
+      "contextBefore": 1000,
+      "contextAfter": 0
+    },
+    {
+      "id": "v4-before2000",
+      "permissive": true,
+      "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every name, quotation, question and \"not\".\nWrite each number the way the speaker said it: words stay words, digits stay digits.\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh forty percent is right, you know\nEdited: I don't think forty percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
+      "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:",
+      "contextBefore": 2000,
+      "contextAfter": 0
+    },
+    {
+      "id": "v4-ctx1000",
+      "permissive": true,
+      "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every name, quotation, question and \"not\".\nWrite each number the way the speaker said it: words stay words, digits stay digits.\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh forty percent is right, you know\nEdited: I don't think forty percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
+      "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:",
+      "contextCharacters": 1000
+    },
+    {
+      "id": "v4-default-guardrails",
+      "permissive": false,
+      "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every name, quotation, question and \"not\".\nWrite each number the way the speaker said it: words stay words, digits stay digits.\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh forty percent is right, you know\nEdited: I don't think forty percent is right.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
+      "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:"
+    },
+    {
+      "id": "v5-fewshot4",
+      "permissive": true,
+      "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every number, name, quotation, question and \"not\".\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh 40 percent is right, you know\nEdited: I don't think 40 percent is right.\nNote: they called it \"fully safe\" in, in 2019\nEdited: They called it \"fully safe\" in 2019.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
+      "prompt": "Text around the note, for reference only:\n{before} … {after}\n\nNote: {note}\nEdited:"
+    },
+    {
+      "id": "v5-spell",
+      "permissive": true,
+      "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every number, name, quotation, question and \"not\".\nNever add anything the speaker did not say. A short note stays short. Use the text around the note only to spell its names and terms correctly. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh 40 percent is right, you know\nEdited: I don't think 40 percent is right.\nNote: they called it \"fully safe\" in, in 2019\nEdited: They called it \"fully safe\" in 2019.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
+      "prompt": "Text around the note:\n{before} … {after}\n\nNote: {note}\nEdited:"
+    },
+    {
+      "id": "v5-spell-before1500",
+      "permissive": true,
+      "contextBefore": 1500,
+      "contextAfter": 250,
+      "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every number, name, quotation, question and \"not\".\nNever add anything the speaker did not say. A short note stays short. Use the text around the note only to spell its names and terms correctly. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh 40 percent is right, you know\nEdited: I don't think 40 percent is right.\nNote: they called it \"fully safe\" in, in 2019\nEdited: They called it \"fully safe\" in 2019.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
+      "prompt": "Text around the note:\n{before} … {after}\n\nNote: {note}\nEdited:"
+    },
+    {
+      "id": "v5-ctx0",
+      "permissive": true,
+      "contextCharacters": 0,
+      "instructions": "You are a careful copy editor. A listener spoke a short note while listening to a text. Turn the note into clean written text.\n\nRemove filler words (um, uh, you know), false starts and words said twice. Fix punctuation and capitals.\nKeep the speaker's own words, meaning, person and language. Keep every number, name, quotation, question and \"not\".\nNever add anything the speaker did not say. A short note stays short. Reply with the edited note only.\n\nExamples:\nNote: um so this is is wrong\nEdited: This is wrong.\nNote: I don't, I don't think uh 40 percent is right, you know\nEdited: I don't think 40 percent is right.\nNote: they called it \"fully safe\" in, in 2019\nEdited: They called it \"fully safe\" in 2019.\nNote: wait, is this, uh, is this per year\nEdited: Is this per year?",
+      "prompt": "Note: {note}\nEdited:"
+    },
+    {
+      "id": "v6-app",
+      "app": true,
+      "notes": "What the app sends from 2026-11-24: v2's wording via MarginTidyPrompt.request, one request, no pieces."
+    },
+    {
+      "id": "v6-app-proposer",
+      "proposer": true,
+      "notes": "The app's whole path: MarginTidyProposer cuts Margins over 200 words into pieces, guards each, falls back to filler-only per piece."
+    }
+  ]
 }

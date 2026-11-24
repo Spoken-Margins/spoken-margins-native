@@ -288,15 +288,93 @@ final class MarginTidyProposerTests: XCTestCase {
 
     // MARK: The prompt
 
-    func testPromptIsTheDesignsWordsWithThePassageAndTheNote() {
-        let prompt = MarginTidyPrompt.text(transcript: "um it held", before: "Before text.", after: "After text.")
-        XCTAssertTrue(prompt.hasPrefix(
-            "Rewrite the spoken note below as clear written sentences in the speaker's own voice and person. "
-                + "Keep every claim, number, name, quotation and negation. Remove filler words, false starts and repetition. "
-                + "Do not add facts, opinions or words from the passage; the passage is only there so you understand what the note "
-                + "refers to. Reply with the rewritten note only."
-        ))
-        XCTAssertTrue(prompt.hasSuffix("Passage before: Before text.\nPassage after: After text.\nSpoken note: um it held"))
+    func testRequestPutsTheTaskInTheInstructionsAndOnlyTheNoteAndPassageInThePrompt() {
+        let request = MarginTidyPrompt.request(transcript: "  um it held  ", before: "Before text.", after: "After text.")
+        XCTAssertTrue(request.instructions.hasPrefix("You are a careful copy editor."))
+        XCTAssertTrue(request.instructions.contains("Keep every number, name, quotation, question and \"not\"."))
+        XCTAssertFalse(request.instructions.contains("um it held"), "the listener's words never go in the instructions")
+        XCTAssertEqual(request.prompt, "Text around the note, for reference only:\nBefore text. … After text.\n\nNote: um it held\nEdited:")
+        XCTAssertEqual(request.maximumResponseTokens, 64)
+    }
+
+    func testRequestWithoutAPassageAsksForTheNoteAlone() {
+        XCTAssertEqual(MarginTidyPrompt.request(transcript: "it held", before: "", after: "").prompt, "Note: it held\nEdited:")
+    }
+
+    func testRequestCapsTheReplyByTheNotesLength() {
+        let long = Array(repeating: "word", count: 300).joined(separator: " ")
+        XCTAssertEqual(MarginTidyPrompt.request(transcript: long, before: "", after: "").maximumResponseTokens, 900)
+        let huge = Array(repeating: "word", count: 3_000).joined(separator: " ")
+        XCTAssertEqual(MarginTidyPrompt.request(transcript: huge, before: "", after: "").maximumResponseTokens, 1_500)
+    }
+
+    // MARK: Long Margins
+
+    func testAShortMarginIsOnePiece() {
+        XCTAssertEqual(MarginTidyChunks.split("  um it held  "), ["um it held"])
+        XCTAssertEqual(MarginTidyChunks.split("   "), [])
+    }
+
+    func testALongMarginIsCutAtSentenceEndsAndKeepsEveryWordInOrder() {
+        let sentence = "so this part is about the trains and it goes on for a while."
+        let transcript = Array(repeating: sentence, count: 40).joined(separator: " ")
+        let pieces = MarginTidyChunks.split(transcript)
+        XCTAssertGreaterThan(pieces.count, 1)
+        for piece in pieces {
+            XCTAssertLessThanOrEqual(piece.split(separator: " ").count, MarginTidyChunks.maximumWords)
+            XCTAssertTrue(piece.hasSuffix("."), "cut at a sentence end: \(piece.suffix(20))")
+        }
+        XCTAssertEqual(pieces.joined(separator: " "), transcript)
+    }
+
+    func testASentenceLongerThanAPieceIsCutAtCommasThenBetweenWords() {
+        let clause = "and then another thing happened"
+        let commas = Array(repeating: clause + ",", count: 10).joined(separator: " ")
+        let pieces = MarginTidyChunks.split(commas, maximumWords: 12)
+        XCTAssertTrue(pieces.allSatisfy { $0.hasSuffix(",") && $0.split(separator: " ").count <= 12 })
+        XCTAssertEqual(pieces.joined(separator: " "), commas)
+        let run = Array(repeating: "word", count: 25).joined(separator: " ")
+        XCTAssertEqual(MarginTidyChunks.split(run, maximumWords: 10).map { $0.split(separator: " ").count }, [10, 10, 5])
+    }
+
+    func testALongMarginIsTidiedAPieceAtATimeWithTheSamePassage() async {
+        let sentence = "um so this part is about the trains and it goes on for a while."
+        let transcript = Array(repeating: sentence, count: 40).joined(separator: " ")
+        let passages = Counter()
+        let echo = MarginTidyProposer(model: { piece, before, after in
+            if before == "Passage before." && after == "Passage after." { passages.increment() }
+            return piece.replacingOccurrences(of: "um so this", with: "This")
+        })
+        let proposal = await echo.proposal(marginId: "long", transcript: transcript, before: "Passage before.", after: "Passage after.")
+        XCTAssertEqual(proposal?.source, .onDeviceAI)
+        XCTAssertEqual(proposal?.text, Array(repeating: "This part is about the trains and it goes on for a while.", count: 40).joined(separator: " "))
+        XCTAssertEqual(passages.value, MarginTidyChunks.split(transcript).count, "every piece gets the same passage")
+    }
+
+    func testAPieceTheGuardRejectsKeepsItsFillerOnlyTidy() async {
+        let first = Array(repeating: "um the first part had 12 trains in it.", count: 20).joined(separator: " ")
+        let second = Array(repeating: "uh the second part had none at all.", count: 25).joined(separator: " ")
+        let transcript = first + " " + second
+        let pieces = MarginTidyChunks.split(transcript)
+        XCTAssertEqual(pieces.count, 2)
+        let proposer = MarginTidyProposer(model: { piece, _, _ in
+            piece.contains("12")
+                ? piece.replacingOccurrences(of: "12 ", with: "")
+                : piece.replacingOccurrences(of: "uh the second", with: "The second")
+        })
+        let proposal = await proposer.proposal(marginId: "mixed", transcript: transcript)
+        XCTAssertEqual(proposal?.source, .onDeviceAI)
+        XCTAssertEqual(proposal?.text, MarginTidy.fillerOnly(pieces[0]).trimmingCharacters(in: .whitespacesAndNewlines) + " "
+            + pieces[1].replacingOccurrences(of: "uh the second", with: "The second"))
+    }
+
+    func testAMarginPastTheLastPieceIsNotSentToTheModel() async {
+        let transcript = Array(repeating: "um this part is about trains.", count: MarginTidyChunks.maximumWords * MarginTidyChunks.maximumPieces / 6 + 50).joined(separator: " ")
+        let model = ScriptedModel(.text("Word."))
+        let proposer = MarginTidyProposer(model: model.model)
+        let proposal = await proposer.proposal(marginId: "huge", transcript: transcript)
+        XCTAssertEqual(model.calls, 0)
+        XCTAssertEqual(proposal?.source, .fillers)
     }
 
     func testSameWordsIgnoresCaseAndEdgeWhitespaceOnly() {

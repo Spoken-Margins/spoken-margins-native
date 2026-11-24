@@ -95,8 +95,7 @@ final class MarginTidyTests: XCTestCase {
     func testGuardRejectionsTable() {
         let rows: [(name: String, proposal: String, expected: MarginTidyGuard.Rejection)] = [
             ("a digit number dropped", "I met Sarah in Boston and she said \"no way\" about the percent. It was not two hundred.", .numberMissing("12")),
-            ("digits rewritten as words", "I met Sarah in Boston and she said \"no way\" about the twelve percent. It was not two hundred.", .numberMissing("12")),
-            ("a number word rewritten as digits", "I met Sarah in Boston and she said \"no way\" about the 12 percent. It was not 200.", .numberMissing("two")),
+            ("a number changed", "I met Sarah in Boston and she said \"no way\" about the 12 percent. It was not three hundred.", .numberMissing("two hundred")),
             ("percent dropped", "I met Sarah in Boston and she said \"no way\" about the 12. It was not two hundred.", .numberMissing("percent")),
             ("a name dropped", "I met someone in Boston and she said \"no way\" about the 12 percent. It was not two hundred.", .nameMissing("Sarah")),
             ("a place dropped", "I met Sarah and she said \"no way\" about the 12 percent. It was not two hundred.", .nameMissing("Boston")),
@@ -190,6 +189,14 @@ final class MarginTidyTests: XCTestCase {
             ("hyphenated number split", "it was twenty-five percent higher", "it was twenty five percent higher"),
             ("quoted span ends with a comma", "he said \"no way,\" and left the room", "he said \"no way\" and left the room"),
             ("quoted span moves its full stop", "he said \"no way.\" Then he left", "he said \"no way\". Then he left"),
+            ("digits rewritten as words", "she told us at the time it was 12 percent and not 200", "she told us it was twelve percent and not two hundred"),
+            ("number words rewritten as digits (Apple's model does this)", "the sample was only forty two people", "The sample was only 42 people."),
+            ("thousands as digits", "now it's under two thousand", "Now it is under 2,000."),
+            ("percent as a sign", "it fell by twelve percent", "It fell by 12%."),
+            ("a title written short", "the doctor said it was fine to stop", "The Dr said it was fine to stop."),
+            ("one as a pronoun", "I liked the one by the river better", "I liked the one by the river better."),
+            ("a negation said twice tidied to one", "it's not, it's not the whole story", "It's not the whole story."),
+            ("spanish stays spanish", "eh, esto no es lo que dijo el autor", "Esto no es lo que dijo el autor."),
             ("contractions expanded", "I can't say it's what they're after, we've seen it", "I cannot say it is what they are after, we have seen it"),
         ]
         for row in rows {
@@ -198,10 +205,19 @@ final class MarginTidyTests: XCTestCase {
     }
 
     func testRealLossesAreStillCaughtInAnotherSpelling() {
-        XCTAssertEqual(MarginTidyGuard.rejection(original: "it was twenty-five percent higher", proposal: "it was twenty percent higher"), .numberMissing("five"))
-        XCTAssertEqual(MarginTidyGuard.rejection(original: "it was twenty-five percent higher", proposal: "it was a lot higher"), .numberMissing("twenty"))
+        XCTAssertEqual(MarginTidyGuard.rejection(original: "it was twenty-five percent higher", proposal: "it was twenty percent higher"), .numberMissing("twenty five"))
+        XCTAssertEqual(MarginTidyGuard.rejection(original: "it was twenty-five percent higher", proposal: "it was a lot higher"), .numberMissing("twenty five"))
         XCTAssertEqual(MarginTidyGuard.rejection(original: "I read Sarah's paper twice", proposal: "I read the paper twice"), .nameMissing("Sarah's"))
         XCTAssertEqual(MarginTidyGuard.rejection(original: "we heard from Jean-Luc yesterday", proposal: "we heard from him yesterday"), .nameMissing("Jean-Luc"))
         XCTAssertNotNil(MarginTidyGuard.rejection(original: "he said \"no way,\" and left the room", proposal: "he said \"no chance\" and left the room"))
+    }
+
+    func testRewritesTheAppleModelWasSeenMakingAreRejected() {
+        // Names from the passage, a translation, and a dropped "nobody" (#4339 eval, 2026-11-24).
+        XCTAssertEqual(MarginTidyGuard.rejection(original: "um I think he was wrong about this", proposal: "I think Colonel Varga was wrong about this."), .nameAdded("Colonel"))
+        XCTAssertEqual(MarginTidyGuard.rejection(original: "eh, esto no es lo que dijo el autor", proposal: "This is not what the author said."), .languageChanged)
+        XCTAssertEqual(MarginTidyGuard.rejection(original: "so nobody checked the numbers here", proposal: "So everyone checked the numbers here."), .negationDropped)
+        XCTAssertEqual(MarginTidyGuard.rejection(original: "it's not, it's not, it's not the whole story", proposal: "It's the whole story."), .negationDropped)
+        XCTAssertEqual(MarginTidyGuard.rejection(original: "the doctor said it was fine to stop", proposal: "The Dr Smith said it was fine to stop."), .nameAdded("Smith"))
     }
 }

@@ -20,12 +20,21 @@ def norm(s):
 def bare(s):
     return re.sub(r"[^a-z0-9'.% ]+", " ", norm(s)).replace(" .", " ").split()
 
+NUMBER_WORDS = {"forty two": "42", "two thousand": "2,000", "twelve": "12", "two hundred": "200"}
+
 def score(row):
     case = CASES[row["caseId"]]
     reply = row.get("reply") or ""
+    if not reply and not row.get("error") and not row.get("guardRejection"):
+        reply = case["transcript"]  # the app path offers nothing when the tidy is the same words
     r = norm(reply)
     rb = " " + " ".join(w.strip(".") for w in bare(reply)) + " "
-    missing = [t for t in case["mustKeep"] if t != "?" and " " + " ".join(w.strip(".") for w in bare(t)) + " " not in rb] + \
+    for words, digits in NUMBER_WORDS.items():  # a number kept as digits still counts as kept
+        if " " + digits + " " in rb: rb += words + " "
+    def has(t):
+        forms = [t] + ([NUMBER_WORDS[t.lower()]] if t.lower() in NUMBER_WORDS else [])
+        return any(" " + " ".join(w.strip(".") for w in bare(f)) + " " in rb for f in forms)
+    missing = [t for t in case["mustKeep"] if t != "?" and not has(t)] + \
               (["?"] if "?" in case["mustKeep"] and "?" not in reply else [])
     corrected = all(norm(b) in r for b in case.get("betterWith", [])) and bool(case.get("betterWith"))
     present = [t for t in case["mustNotContain"] if norm(t) in r]
