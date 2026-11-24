@@ -159,7 +159,7 @@ final class SpokenNoteCleanCutTests: XCTestCase {
         let cut = SpokenNoteTakeCut.make(words: words, silentFlags: silent, durationMs: durationMs)
         let bytes = try JSONEncoder().encode(cut).count
         XCTAssertLessThan(bytes, 200_000)
-        XCTAssertGreaterThan(cut.kept.count, 2_000)
+        XCTAssertGreaterThan(cut.kept.count, 1_900, "about 2,100 cuts, less the ones that touch and merge")
 
         let layout = SpokenNoteWholeAudioLayout(
             requested: [.init(id: "t", audioFileName: "take-t.m4a", durationMs: durationMs)],

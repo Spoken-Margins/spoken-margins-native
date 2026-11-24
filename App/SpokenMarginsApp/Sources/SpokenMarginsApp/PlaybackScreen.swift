@@ -279,6 +279,9 @@ struct PlaybackScreen: View {
                 NavigationStack {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 18) {
+                            if let noteId = playingSpokenNoteId {
+                                SpokenNoteAudioVersionControl(clean: model.spokenNoteClean, noteId: noteId, placement: .listeningOptions)
+                            }
                             playbackRateControl
                             mixedAudioControl
                             PlaybackFollowOptionsView()
@@ -712,6 +715,10 @@ struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.showTitle")
             }
 
+            if let noteId = playingSpokenNoteId {
+                SpokenNoteAudioVersionLine(clean: model.spokenNoteClean, noteId: noteId)
+            }
+
             // The line is about the listener's own Margins, so it waits while a friend's Margin has the screen (#3790).
             if !model.friendListenState.isInProgress {
                 PlaybackMarginTranscriptionStatusView(status: PlaybackMarginTranscriptionStatus(
@@ -1120,6 +1127,12 @@ struct PlaybackScreen: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("playback.mixedAudio.control")
         }
+    }
+
+    /// The note behind the item playing on Now, when it is a spoken note (#4779).
+    private var playingSpokenNoteId: String? {
+        guard model.selectedItem.id == model.snapshot.itemId else { return nil }
+        return SpokenNoteItem.noteId(fromReference: model.selectedItem.externalReference)
     }
 
     @ViewBuilder

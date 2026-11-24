@@ -82,7 +82,7 @@ final class FillerTranscriptionProbeTests: XCTestCase {
             let labels = Self.labels(fromAMI: xml)
             let url = audioDir.appendingPathComponent(clip)
             let silent = try SpokenNoteSilentFlags.read(url: url)
-            for engine in ["SpeechTranscriber", "DictationTranscriber", "SFSpeechRecognizer"] {
+            for engine in Self.engines {
                 let cache = out.appendingPathComponent("\(clip).\(engine).json")
                 var tokens: [Token]
                 var wall = 0.0
@@ -123,7 +123,7 @@ final class FillerTranscriptionProbeTests: XCTestCase {
 
         var report = "| Engine | Labelled fillers | Found | Recall | Returned fillers | False fillers | False share | Unlabelled fillers | Real words | Real words cut (filler spans) | Fillers inside full cut | Real words cut (full cut) | Rule B found | Rule B real words cut | Speed (audio s / wall s) | Note |\n"
         report += "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
-        for engine in ["SpeechTranscriber", "DictationTranscriber", "SFSpeechRecognizer"] {
+        for engine in Self.engines {
             guard let r = totals[engine] else { continue }
             let recall = r.labelled > 0 ? Double(r.found) / Double(r.labelled) : 0
             let falseShare = r.returnedFillers > 0 ? Double(r.falseFillers) / Double(r.returnedFillers) : 0
@@ -171,6 +171,10 @@ final class FillerTranscriptionProbeTests: XCTestCase {
 
     // MARK: - Engines
 
+    /// "SpeechTranscriber 60s" is the same engine on silence-aware stretches of at most 60 s, as the issue's word pass
+    /// would have run it: spoken-note takes are minutes long, not a 38-minute file. It finds no more fillers.
+    static let engines = ["SpeechTranscriber", "SpeechTranscriber 60s", "DictationTranscriber", "SFSpeechRecognizer"]
+
     @available(macOS 26.0, *)
     static func transcribe(url: URL, engine: String) async throws -> [Token] {
         switch engine {
@@ -178,11 +182,40 @@ final class FillerTranscriptionProbeTests: XCTestCase {
             return try await transcribeLongFormSpeechFile(at: url).flatMap(\.timedText).map {
                 Token(text: $0.text, startMs: $0.startMs, endMs: $0.endMs)
             }
+        case "SpeechTranscriber 60s":
+            return try await chunked(url: url)
         case "DictationTranscriber":
             return try await dictation(url: url)
         default:
             return try await legacy(url: url)
         }
+    }
+
+    @available(macOS 26.0, *)
+    static func chunked(url: URL) async throws -> [Token] {
+        let asset = AVURLAsset(url: url)
+        let durationMs = Int((try await asset.load(.duration).seconds * 1000).rounded())
+        let ranges = silenceAwareSpeechAudioChunkRanges(
+            durationMs: durationMs, silenceRanges: (try? sustainedSilenceRanges(in: url)) ?? [],
+            preferredChunkMs: 50_000, maximumChunkMs: 60_000
+        )
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("filler-probe-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var tokens: [Token] = []
+        for (index, range) in ranges.enumerated() {
+            let chunk = directory.appendingPathComponent("chunk-\(index).m4a")
+            let exporter = try XCTUnwrap(AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A))
+            exporter.timeRange = CMTimeRange(
+                start: CMTime(value: CMTimeValue(range.startMs), timescale: 1000), duration: CMTime(value: CMTimeValue(range.lengthMs), timescale: 1000)
+            )
+            try await exporter.export(to: chunk, as: .m4a)
+            guard let passages = try? await transcribeLongFormSpeechFile(at: chunk) else { continue }
+            tokens += passages.flatMap(\.timedText).map {
+                Token(text: $0.text, startMs: $0.startMs + range.startMs, endMs: $0.endMs + range.startMs)
+            }
+        }
+        return tokens
     }
 
     @available(macOS 26.0, *)

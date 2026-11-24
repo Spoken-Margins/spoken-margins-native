@@ -225,6 +225,9 @@ public enum SpokenNoteWholePlayback {
         guard SpokenNoteItem.isSpokenNote(mediaType: item.mediaType), item.media?.url != nil,
               let noteId = SpokenNoteItem.noteId(fromReference: item.externalReference),
               let store = SpokenNoteStarter.store(noteId: noteId, in: applicationSupport) else { return nil }
+        // The version with shorter pauses is played when it is what `prepare` attached (#4779). The URL is rebuilt under today's
+        // folder, never taken from the row, so a moved app container still finds it.
+        if SpokenNoteCleanFiles.namesCleanAudio(item.media?.url) { return SpokenNoteCleanFiles.audioURL(inNoteFolder: store.folderURL) }
         return audioURL(inFolder: store.folderURL)
     }
 
@@ -247,7 +250,9 @@ public enum SpokenNoteWholePlayback {
     public static func prepare(
         store: SpokenNoteStore,
         joiner: any SpokenNoteMeasuredAudioJoining,
-        writer: any SpokenNotePlaybackWriting
+        writer: any SpokenNotePlaybackWriting,
+        version: SpokenNoteAudioVersion = .asRecorded,
+        attach: Bool = true
     ) async throws -> Prepared {
         guard let note = store.peek() else { throw PrepareError.noteUnreadable }
         let requested = requestedTakes(of: note, inFolder: store.folderURL)
@@ -265,15 +270,40 @@ public enum SpokenNoteWholePlayback {
         }
         // The note is read again: a transcript can arrive while the takes are being joined, and the item's text and timeline
         // must not go back to the note as it was before the join. A take added meanwhile is simply not in the layout yet.
-        let timeline = SpokenNoteWholeTimeline(note: store.peek() ?? note, layout: layout)
-        guard try writer.attachPlayback(
-            itemId: SpokenNoteItem.itemId(forNoteId: note.id), audioURL: audio,
-            durationMs: layout.durationMs, timeline: timeline.mediaTimeline, text: timeline.text
-        ) else { throw PrepareError.itemGone }
-        return Prepared(
-            itemId: SpokenNoteItem.itemId(forNoteId: note.id), audioURL: audio,
-            durationMs: layout.durationMs, timeline: timeline, rebuilt: rebuilt
+        let latest = store.peek() ?? note
+        // The version with shorter pauses is attached only when it is made from exactly these takes (#4779); otherwise, and for
+        // As recorded, the recording is.
+        let chosen = version == .shorterPauses ? cleanPlayback(note: latest, layout: layout, folder: store.folderURL) : nil
+        let playing = chosen ?? (audio, SpokenNoteWholeTimeline(note: latest, layout: layout))
+        let prepared = Prepared(
+            itemId: SpokenNoteItem.itemId(forNoteId: note.id), audioURL: playing.audio,
+            durationMs: playing.timeline.durationMs, timeline: playing.timeline, rebuilt: rebuilt
         )
+        if attach { try self.attach(prepared, writer: writer) }
+        return prepared
+    }
+
+    /// Points the note's Library item at the prepared file and its timeline. A caller that changes the version under an
+    /// open session prepares with `attach: false` and attaches only once it knows the restart will follow (#4779), so the
+    /// item never names one file while the session plays the other.
+    public static func attach(_ prepared: Prepared, writer: any SpokenNotePlaybackWriting) throws {
+        guard try writer.attachPlayback(
+            itemId: prepared.itemId, audioURL: prepared.audioURL, durationMs: prepared.durationMs,
+            timeline: prepared.timeline.mediaTimeline, text: prepared.timeline.text
+        ) else { throw PrepareError.itemGone }
+    }
+
+    /// The version with shorter pauses and its timeline, when one is made from exactly the takes in `layout` and its file is there.
+    static func cleanPlayback(
+        note: SpokenNote, layout: SpokenNoteWholeAudioLayout, folder: URL
+    ) -> (audio: URL, timeline: SpokenNoteWholeTimeline)? {
+        guard let map = SpokenNoteCleanClock.map(inNoteFolder: folder, recorded: layout) else { return nil }
+        return (SpokenNoteCleanFiles.audioURL(inNoteFolder: folder), SpokenNoteWholeTimeline(note: note, layout: layout, map: map))
+    }
+
+    /// The recording's layout, when the note was joined.
+    public static func recordedLayout(inFolder folder: URL) -> SpokenNoteWholeAudioLayout? {
+        readLayout(inFolder: folder)
     }
 
     private static let temporaryPrefix = "whole-note.tmp-"

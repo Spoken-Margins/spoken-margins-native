@@ -51,33 +51,55 @@ final class SpokenNoteWholePlayModel: ObservableObject {
         isPreparing = true
         isAbandoned = false
         message = nil
+        let version = app.spokenNoteClean.version
         Task {
             await beforeStart?()
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<SpokenNoteWholePlayback.Prepared, Error> in
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<(SpokenNoteWholePlayback.Prepared, String?), Error> in
                 do {
-                    return .success(try await SpokenNoteWholePlayback.prepare(
-                        store: noteStore, joiner: SpokenNoteAudioJoiner(), writer: store))
+                    // The file attached before, so a note whose version changed since its last play starts at the same
+                    // moment on the new one instead of carrying on with a place on the other clock (#4779).
+                    let previous = (try? store.loadItemSummary(id: itemId))?.media?.url
+                    return .success((try await SpokenNoteWholePlayback.prepare(
+                        store: noteStore, joiner: SpokenNoteAudioJoiner(), writer: store, version: version, attach: false), previous))
                 } catch {
                     return .failure(error)
                 }
             }.value
             isPreparing = false
             switch result {
-            case .success(let prepared):
+            case .success(let (prepared, previousMediaURL)):
                 timelineRequests += 1
                 timeline = prepared.timeline
                 guard !isAbandoned, shouldStart?() ?? true else { return }
+                // Chosen again while the file was read: get the newly chosen one ready instead (#4779).
+                guard app.spokenNoteClean.version == version else {
+                    play(noteId: noteId, app: app, shouldStart: shouldStart)
+                    return
+                }
                 let labels = MainThreadOperationLabels.shared // so a slow start names its step (#2256)
                 labels.scoped("spokenNote.play") {
+                    // A version change under the open session attaches its file itself, right before the restart.
+                    if isOpenSession, !prepared.rebuilt,
+                       app.restartSpokenNoteIfVersionChanged(prepared: prepared, playing: true) { return }
+                    do {
+                        try SpokenNoteWholePlayback.attach(prepared, writer: store)
+                    } catch {
+                        message = Self.failureMessage(error)
+                        return
+                    }
                     if isOpenSession, prepared.rebuilt {
                         // A take was added since this note was last played, so the paused session holds the older, shorter file.
                         app.startNewSession(id: itemId)
                     } else if isOpenSession {
                         app.playPause()
+                    } else if let startMs = app.spokenNoteSavedPlaceOnNewVersion(itemId: itemId, previousMediaURL: previousMediaURL, prepared: prepared) {
+                        app.startSpokenNoteSession(itemId: itemId, atMs: startMs)
                     } else {
+                        app.spokenNoteClean.routingItemId = itemId // this start already has the chosen version
                         app.startItem(id: itemId)
                     }
                 }
+                app.spokenNoteClean.notePlaybackStarted(noteId: noteId)
             case .failure(let error):
                 message = Self.failureMessage(error)
             }

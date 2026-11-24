@@ -113,12 +113,14 @@ struct SpokenNoteRecordingView: View {
         }
         // A Margin that began while a take was still being saved closes this screen once the take is done.
         .onChange(of: recorder.phase) { _, phase in
+            model.spokenNoteClean.takeIsRecording = phase != .idle // holds a version change (#4779)
             guard phase == .idle, isMarginCaptureActive else { return }
             dismiss()
         }
         .onChange(of: recorder.noteFolder) { _, _ in refreshWholeTimeline() }
         // Anything other than Done that removes this screen still closes a take that is running, so it is saved.
         .onDisappear {
+            model.spokenNoteClean.takeIsRecording = false
             player.stop()
             wholePlay.abandon()
             noteExport.abandon()
@@ -291,6 +293,10 @@ struct SpokenNoteRecordingView: View {
         VStack(spacing: 10) {
             if isThisNoteOpen, recorder.phase == .idle { marginRow }
             if !takes.isEmpty { playNoteButton }
+            if !takes.isEmpty, let noteId = recorder.snapshot?.note.id {
+                SpokenNoteAudioVersionControl(clean: model.spokenNoteClean, noteId: noteId, placement: .noteScreen)
+                    .disabled(recorder.phase != .idle) // a take being recorded holds the version as it is
+            }
             recordButton
         }
         .padding(.horizontal, 20)

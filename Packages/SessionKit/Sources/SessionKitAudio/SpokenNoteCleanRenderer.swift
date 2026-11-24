@@ -30,7 +30,7 @@ public struct SpokenNoteRenderTake: Sendable {
     }
 }
 
-/// Makes a note's `clean/whole-note.m4a` from its takes and their cuts (#4779 PR 3).
+/// Makes a note's `clean/whole-note.m4a`, the version with long pauses shortened, from its takes and their cuts (#4779).
 ///
 /// One composition with one audio track: each kept stretch is laid end to end, in order, with no overlap, and a 10 ms
 /// fade down and up at every join. It exports to a temporary file in `clean/` and renames it into place, then saves
@@ -56,7 +56,7 @@ public struct SpokenNoteCleanRenderer: Sendable {
     }
 
     public func render(
-        takes: [SpokenNoteRenderTake], noteFolder: URL, pausesOnly: SpokenNotePausesOnlyReason? = nil,
+        takes: [SpokenNoteRenderTake], noteFolder: URL,
         progress: @escaping @Sendable (Double) -> Void = { _ in }
     ) async throws -> SpokenNoteCleanLayout {
         let requested = takes.map(\.requested)
@@ -133,17 +133,24 @@ public struct SpokenNoteCleanRenderer: Sendable {
         }
         exporter.audioMix = mix
         let temporary = folder.appendingPathComponent("\(Self.temporaryPrefix)\(UUID().uuidString.lowercased()).m4a")
+        let box = ExporterBox(exporter)
+        try Task.checkCancellation()
+        // The session may only be cancelled once it is exporting (cancelling it earlier makes `export(to:)` raise), so
+        // a cancellation is noted here and carried out by the progress loop, which sees the session's state.
         let monitor = Task {
-            for await state in exporter.states(updateInterval: 0.25) {
-                if case .exporting(let exportProgress) = state { progress(exportProgress.fractionCompleted) }
+            for await state in box.exporter.states(updateInterval: 0.1) {
+                if case .exporting(let exportProgress) = state {
+                    if box.isCancelRequested { box.exporter.cancelExport() }
+                    progress(exportProgress.fractionCompleted)
+                }
             }
         }
         defer { monitor.cancel() }
         do {
             try await withTaskCancellationHandler {
-                try await exporter.export(to: temporary, as: .m4a)
+                try await box.exporter.export(to: temporary, as: .m4a)
             } onCancel: {
-                exporter.cancelExport()
+                box.requestCancel()
             }
             try Task.checkCancellation()
         } catch {
@@ -166,8 +173,9 @@ public struct SpokenNoteCleanRenderer: Sendable {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
         let saved = max(0, recordedMs - expectedMs)
-        let result: SpokenNoteCleanResult = pausesOnly.map { .pausesOnly(reason: $0, savedMs: saved) } ?? .made(savedMs: saved)
-        let layout = SpokenNoteCleanLayout(requested: requested, cutFingerprints: fingerprints, placements: placements, durationMs: expectedMs, result: result)
+        let layout = SpokenNoteCleanLayout(
+            requested: requested, cutFingerprints: fingerprints, placements: placements, durationMs: expectedMs, result: .made(savedMs: saved)
+        )
         try SpokenNoteCleanFiles.write(layout, to: SpokenNoteCleanFiles.layoutURL(inNoteFolder: noteFolder))
         progress(1)
         return layout
@@ -179,6 +187,19 @@ public struct SpokenNoteCleanRenderer: Sendable {
     // MARK: Helpers
 
     static let temporaryPrefix = "whole-note.tmp-"
+
+    #if canImport(AVFoundation)
+    /// The export session is used from its own progress loop and from cancellation; both only call its thread-safe API.
+    private final class ExporterBox: @unchecked Sendable {
+        let exporter: AVAssetExportSession
+        private let lock = NSLock()
+        private var cancelRequested = false
+        init(_ exporter: AVAssetExportSession) { self.exporter = exporter }
+
+        var isCancelRequested: Bool { lock.withLock { cancelRequested } }
+        func requestCancel() { lock.withLock { cancelRequested = true } }
+    }
+    #endif
 
     /// A failed or interrupted run is never reused: Try again, or the app coming back, makes it again.
     static func isSettled(_ result: SpokenNoteCleanResult) -> Bool {
@@ -228,7 +249,7 @@ public struct SpokenNoteCleanRenderer: Sendable {
 
     static func isInterruption(_ error: Error) -> Bool {
         let nsError = error as NSError
-        return nsError.domain == AVFoundationErrorDomain && nsError.code == AVError.Code.operationInterrupted.rawValue
+        return nsError.domain == AVFoundationErrorDomain && nsError.code == -11847 // AVErrorOperationInterrupted: the system stopped the export in the background
     }
 
     static func milliseconds(_ time: CMTime) -> Int {

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Where to cut a spoken note for its version without ums (#4779), and how the two clocks line up.
+/// Where to cut a spoken note for its version with shorter pauses (#4779), and how the two clocks line up.
 ///
 /// A take is never written. These types only decide which stretches of each take's audio go into the note's
 /// `clean/whole-note.m4a`, and map times between that file and the note's recording as made (`whole-note.m4a`).
@@ -203,7 +203,7 @@ public struct SpokenNoteCleanPlacement: Codable, Equatable, Sendable {
 }
 
 /// The two clocks of a note: "recorded" is the joined recording as made (`whole-note.m4a`), "clean" is the version
-/// without ums. Both lookups are binary searches over the kept stretches.
+/// with shorter pauses. Both lookups are binary searches over the kept stretches.
 public struct SpokenNoteCleanMap: Equatable, Sendable {
     struct Piece: Equatable, Sendable {
         let recordedStartMs: Int
@@ -273,7 +273,7 @@ public struct SpokenNoteCleanMap: Equatable, Sendable {
 }
 
 extension SpokenNoteWholeTimeline {
-    /// The note's sentences on the clock of the version without ums. Same segment ids as the recording's timeline; a
+    /// The note's sentences on the clock of the version with shorter pauses. Same segment ids as the recording's timeline; a
     /// sentence cut away entirely ("Um.") starts at the next kept moment and lasts 1 ms.
     public init(note: SpokenNote, layout: SpokenNoteWholeAudioLayout, map: SpokenNoteCleanMap) {
         let recorded = SpokenNoteWholeTimeline(note: note, layout: layout)
