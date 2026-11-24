@@ -187,4 +187,16 @@ final class PaperNoteSlotsTests: XCTestCase {
         XCTAssertEqual(PaperNoteSlots.chooseTitle(.purpose), "Choose a Margin for Purpose")
         XCTAssertEqual(PaperNoteSlots.question(.evidence), "What supports a finding? Mention where it is.")
     }
+
+    /// A Margin moved with no place (#4233) has a zero anchor; the section shows "No place", never "p. 1".
+    func testAMarginWithNoPlaceShowsNoPage() {
+        var placeless = margin("a", .purpose, at: 0)
+        placeless.movedOrigin = MovedMarginOrigin(
+            marginId: "a", itemId: "p1", sessionId: "s", liveMarginId: "live", fromLiveSessionId: "ls",
+            fromLiveSessionTitle: "Walk", markedAt: Date(timeIntervalSince1970: 1), movedAt: Date(timeIntervalSince1970: 2),
+            placeKnown: false)
+        let answer = slots([placeless]).choices[0]
+        XCTAssertNil(answer.page)
+        XCTAssertNotEqual(answer.placeLine, "p. 1")
+    }
 }

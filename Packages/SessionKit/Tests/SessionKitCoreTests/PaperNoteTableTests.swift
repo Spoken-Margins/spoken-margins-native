@@ -153,6 +153,17 @@ final class PaperNoteTableTests: XCTestCase {
         XCTAssertEqual([row["Purpose"], row["Purpose page"]], ["x", ""])
     }
 
+    /// A Margin moved with no place (#4233) has a zero anchor; its page cell stays blank instead of reading "1".
+    func testAMarginWithNoPlaceHasNoPage() {
+        var placeless = margin("a", .purpose, "x", at: 0)
+        placeless.movedOrigin = MovedMarginOrigin(
+            marginId: "a", itemId: "p1", sessionId: "s", liveMarginId: "live", fromLiveSessionId: "ls",
+            fromLiveSessionTitle: "Walk", markedAt: Date(timeIntervalSince1970: 1), movedAt: Date(timeIntervalSince1970: 2),
+            placeKnown: false)
+        let row = cells(PaperNoteTable(papers: [paper([placeless])]))
+        XCTAssertEqual([row["Purpose"], row["Purpose page"]], ["x", ""])
+    }
+
     // MARK: Files
 
     private var awkward: PaperNoteTable {

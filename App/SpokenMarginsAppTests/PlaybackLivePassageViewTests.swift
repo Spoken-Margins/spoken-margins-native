@@ -171,7 +171,9 @@ final class PlaybackLivePassageViewTests: XCTestCase {
         }
         XCTAssertFalse((articleController.state?.shownItems ?? []).isEmpty, "the article's sentences are in the scene")
         XCTAssertTrue((articleController.state?.shownItems ?? []).allSatisfy { $0.sentence != nil }, "and no card among them")
-        XCTAssertEqual(NowClipCardCounter.bodies, 0, "an article draws no card")
+        // Counted by item: the paper's cards can still redraw once after `close()` when their picture decode lands
+        // late, and the global count read 2 in full runs while the article drew none (#4921).
+        XCTAssertEqual(NowClipCardCounter.bodies(forItem: articleModel.selectedItem.id), 0, "an article draws no card")
     }
 
     private func makeModel(target: TargetType, text: String? = nil) -> Gate1AppModel {
@@ -256,6 +258,9 @@ final class PlaybackLivePassageViewTests: XCTestCase {
         }
 
         func close() {
+            // Tear the SwiftUI graph down, not only the window: a hidden host kept alive by this value still runs its
+            // views' tasks, so a card whose picture decoded late redrew into the next case's counts (#4921).
+            host.rootView = AnyView(EmptyView())
             window.isHidden = true
             window.rootViewController = nil
             previousKeyWindow?.makeKeyAndVisible()
