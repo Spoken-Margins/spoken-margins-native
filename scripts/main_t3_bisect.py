@@ -444,7 +444,7 @@ def present_classes(grouped: dict, root: Path) -> dict:
 def make_probe(grouped: dict, wanted: set, red: str, run_id: str, evidence: Path):
     """The probe function. `wanted` is the red run's failing test ids; `probe.failed` maps a commit to the ones its
     probes saw fail."""
-    lane = t3.load_lane_runner()
+    lane = t3.load_lane_t3()
     lane.T3_TIMEOUT = PROBE_TIMEOUT
     count = [0]
 

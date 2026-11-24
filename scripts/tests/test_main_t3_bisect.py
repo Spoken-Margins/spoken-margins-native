@@ -231,6 +231,24 @@ class PresentClassesTests(unittest.TestCase):
             self.assertEqual(B.present_classes(grouped, Path(tmp) / 'missing'), {})
 
 
+class MakeProbeTests(unittest.TestCase):
+    def test_the_real_probe_loads_the_lane_and_gives_each_probe_its_own_clock(self):
+        """The audit on b0d3d2f: make_probe called a loader main_t3 doesn't have, so every real bisection crashed
+        before its first probe while the CommandTests, which replace make_probe, passed."""
+        loaded = []
+        real = B.t3.load_lane_t3
+        B.t3.load_lane_t3 = lambda: loaded.append(real()) or loaded[-1]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                probe = B.make_probe({}, set(), 'a' * 40, '1', Path(tmp))
+        finally:
+            B.t3.load_lane_t3 = real
+        self.assertTrue(callable(probe))
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0].T3_TIMEOUT, B.PROBE_TIMEOUT)
+        self.assertTrue(callable(loaded[0]._run_t3_grouped))
+
+
 class CommandTests(unittest.TestCase):
     """command_bisect end to end with git, gh and the lane replaced by recorders."""
 
