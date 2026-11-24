@@ -237,6 +237,61 @@ class QueueActsAsTheApp(unittest.TestCase):
                                 token)
 
 
+class GuardsRunBeforeTheMacs(unittest.TestCase):
+    """2026-11-20 to 11-24: 157 merge groups failed first in `hosted fast: portable` while their Mac jobs ran beside it,
+    1,569 hosted-Mac minutes, mostly on repository rule tests. hosted-portable.yml's `guards` job runs those tests first
+    in each merge group, every Mac job waits for it and is skipped on its red, and stop-on-guard-red cancels the run."""
+
+    REQUIRED = ('hosted fast: scope', 'hosted fast: portable', 'hosted fast: Mac rest', 'hosted app: build (no tests)')
+
+    @classmethod
+    def setUpClass(cls):
+        cls.jobs = parse(ROOT / '.github/workflows/hosted-portable.yml')['jobs']
+
+    @staticmethod
+    def needs(job):
+        needs = job.get('needs', [])
+        return [needs] if isinstance(needs, str) else list(needs)
+
+    def test_guards_is_a_linux_job_of_the_merge_group_that_runs_the_guard_list(self):
+        guards = self.jobs['guards']
+        self.assertEqual(guards['runs-on'], 'ubuntu-latest')
+        self.assertEqual(guards['if'].strip(), "github.event_name == 'merge_group'")
+        self.assertEqual(self.needs(guards), [], 'it starts at once, beside scope')
+        self.assertNotIn('permissions', guards, 'it runs the merge group\'s code with the read-only token')
+        self.assertLessEqual(guards['timeout-minutes'], 10)
+        runs = [step.get('run', '') for step in guards['steps']]
+        self.assertIn('.venv/bin/python scripts/queue_guards.py', runs)
+
+    def test_every_mac_job_waits_for_guards_and_is_skipped_only_on_its_failure(self):
+        macs = [name for name, job in self.jobs.items() if not str(job.get('runs-on', '')).startswith('ubuntu')]
+        self.assertEqual(sorted(macs), ['app-compile', 'mac-rest', 'sessionkit'])
+        for name in macs:
+            with self.subTest(job=name):
+                job = self.jobs[name]
+                self.assertIn('guards', self.needs(job))
+                condition = ' '.join(job['if'].split())
+                # !cancelled() keeps the job's own condition deciding when guards is skipped (every PR push).
+                self.assertTrue(condition.startswith("!cancelled() && needs.guards.result != 'failure' &&"), condition)
+
+    def test_a_red_guards_job_cancels_the_run(self):
+        stop = self.jobs['stop-on-guard-red']
+        self.assertEqual(self.needs(stop), ['guards'])
+        self.assertEqual(stop['runs-on'], 'ubuntu-latest')
+        self.assertEqual(stop['permissions'], {'actions': 'write'})
+        self.assertIn("needs.guards.result == 'failure'", stop['if'])
+        self.assertIn('gh run cancel', stop['steps'][0]['run'])
+
+    def test_rearm_still_waits_for_every_other_job(self):
+        self.assertEqual(sorted(self.needs(self.jobs['rearm'])), sorted(name for name in self.jobs if name != 'rearm'))
+
+    def test_the_required_check_names_are_all_still_here_and_guards_is_not_one(self):
+        names = {job.get('name') for job in self.jobs.values()}
+        for required in self.REQUIRED:
+            self.assertIn(required, names)
+        self.assertEqual(self.jobs['guards']['name'], 'hosted fast: guards')
+
+
 class ReadersUseTheAppBudget(unittest.TestCase):
     """#5217: GITHUB_TOKEN's 1,000 requests an hour for the repository ran out on 2026-11-23 and the last three main-t3
     runs failed on `commits/<sha>/statuses`. The readers that run in main's context mint the App token (its own, larger

@@ -7,9 +7,10 @@ WORKFLOW = W.load('hosted-portable.yml')
 JOB = WORKFLOW['jobs']['app-compile']
 
 
-def runs(event, app='true', scope='success'):
+def runs(event, app='true', scope='success', guards='success'):
     condition = str(JOB['if']).replace('!cancelled() &&', '')  # the helper evaluates no function calls
-    return W.evaluate_condition(condition, github_event_name=event, needs_scope_result=scope, needs_scope_outputs_app=app)
+    return W.evaluate_condition(condition, github_event_name=event, needs_scope_result=scope, needs_scope_outputs_app=app,
+                                needs_guards_result=guards)
 
 
 class AppCompileJobTests(unittest.TestCase):
@@ -30,6 +31,13 @@ class AppCompileJobTests(unittest.TestCase):
         # needs.scope failing skips this job, which reports success; `hosted fast: scope` is itself required, so a red
         # scope still blocks the group.
         self.assertFalse(runs('merge_group', scope='failure'))
+
+    def test_a_red_guards_job_skips_it_and_any_other_guards_result_builds(self):
+        # #5281: `guards` runs the repository's rule tests first; `portable` runs them too and fails the group.
+        self.assertFalse(runs('merge_group', guards='failure'))
+        for result in ('success', 'skipped', 'cancelled'):
+            self.assertTrue(runs('merge_group', guards=result), result)
+        self.assertTrue(runs('workflow_dispatch', guards='skipped'))
 
     def test_it_is_compile_only_on_a_mac_and_cannot_wait_forever(self):
         self.assertEqual(JOB['runs-on'], 'xcode-27')
