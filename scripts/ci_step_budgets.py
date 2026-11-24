@@ -16,7 +16,8 @@ step's time, and each verify-tests.py step line (`runner-tests: 1180.376s — pa
 cached under artifacts/ci-step-durations/logs/ and never printed.
 
 The rule (`table`): a limit is LIMIT_FACTOR x the p95 of the last WINDOW passing samples of its steps, rounded up to a
-whole minute, never below its FLOOR_SECONDS. Percentiles, not mean plus standard deviations: step durations are
+whole minute, never below its FLOOR_SECONDS and never below the limit already in the table (#5009): the samples are
+the hosted PR-tier runs, which leave the slow tier out (#5145), and the same limit bounds the full step elsewhere. Percentiles, not mean plus standard deviations: step durations are
 right-skewed (a busy runner is slow, never fast), and one slow run widens a standard deviation far more than it moves
 a p95. With fewer than MIN_SAMPLES samples the limit is not derived and the table keeps its previous value.
 
@@ -229,8 +230,15 @@ def derive(samples, previous=None, window=WINDOW):
         step, p95 = max(p95s.items(), key=lambda item: item[1])
         used = by_step[step]
         seconds = max(spec['floor'], int(math.ceil(LIMIT_FACTOR * p95 / 60.0)) * 60)
+        # Raise, never lower (#5009). The samples are only the hosted PR and merge-queue runs, which since #5145 leave
+        # the slow tier out, while the same limit bounds the full step on the Macs, in phone-build and in --plan slow.
+        # A limit set too low turns PRs red with no failing test (the 2026-11-20 incident above); one set too high
+        # costs little, because a step that stops printing is still stopped at its stall time.
+        kept = old.get('seconds') if (old.get('seconds') or 0) > seconds else None
         limits[name] = {
-            'seconds': seconds,
+            'seconds': kept or seconds,
+            **({'derived_seconds': seconds, 'note': f'the samples give {seconds} s; kept {kept} s, since the table '
+                'never lowers a limit (lower it by hand once the samples cover every run it bounds)'} if kept else {}),
             'bounded_by': step,
             'p50': round(percentile([r['seconds'] for r in used], 0.5), 1),
             'p95': round(p95, 1),
@@ -242,7 +250,7 @@ def derive(samples, previous=None, window=WINDOW):
         }
     return {
         'rule': f'{LIMIT_FACTOR} x p95 of the last {WINDOW} passing samples, rounded up to a minute, never below the '
-                f'floor; regenerate with `python3 scripts/ci_step_budgets.py collect && python3 scripts/ci_step_budgets.py table`',
+                f'floor or the previous value; regenerate with `python3 scripts/ci_step_budgets.py collect && python3 scripts/ci_step_budgets.py table`',
         'limits': {name: value for name, value in limits.items() if value},
     }
 
@@ -254,7 +262,8 @@ def table(out=OUT, path=TABLE):
     path.write_text(json.dumps(fresh, indent=1) + '\n')
     for name, value in fresh['limits'].items():
         was = previous.get(name, {}).get('seconds')
-        print(f'{name}: {value["seconds"]} s (was {was}); {value.get("bounded_by")} p50 {value.get("p50")} s, '
+        kept = f', the samples give {value["derived_seconds"]} s' if 'derived_seconds' in value else ''
+        print(f'{name}: {value["seconds"]} s (was {was}{kept}); {value.get("bounded_by")} p50 {value.get("p50")} s, '
               f'p95 {value.get("p95")} s over {value.get("samples")} runs')
 
 
