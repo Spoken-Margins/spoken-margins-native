@@ -18,10 +18,13 @@ import Foundation
 //   would carry the old key and link two installs (Apple agreement 3.3.3B). A reinstall asks for consent again and
 //   attests a fresh key.
 // - A server that no longer knows the key (`unknown_key`) gets one fresh attestation, then the request again.
+// - A key the server keeps refusing (`invalid_assertion` twice running, across launches) is replaced once, at most once
+//   a day, then the request goes again (#4134). A Team ID or App ID change, or a server counter ahead of the phone's,
+//   would otherwise leave the install unchecked for good; the daily bound keeps a broken server from making a key per tap.
 // - A registration that failed after a key was made is remembered for this launch, with a backoff that doubles. While
 //   attestation can't succeed (no entitlement, a development key against the production server) a Share tap would
 //   otherwise orphan a Secure Enclave key and spend a server challenge each time, which Apple advises against (#4135).
-//   During the wait `send` throws `.failed` without asking Apple or the server anything.
+//   During the wait `send` throws `.registrationWaiting` without asking Apple or the server anything.
 // - A send that gave up at the gate limit is abandoned, and Apple's calls ignore cancellation, so it may wake long
 //   after a later send began. It must change nothing: it checks it was not cancelled after every call that can hang
 //   and before each step that acts, and it forgets only the key it used (#4164).
@@ -66,6 +69,38 @@ public final class AppAttestKeyStore: @unchecked Sendable {
     func forget(ifKeyID keyID: String) {
         if defaults.string(forKey: Self.defaultsKey) == keyID { defaults.removeObject(forKey: Self.defaultsKey) }
     }
+
+    // MARK: The bounded re-attest (#4134)
+
+    static let invalidAssertionStreakKey = "appAttest.invalidAssertionStreak.v1"
+    static let assertionReplacedAtKey = "appAttest.assertionReplacedAt.v1"
+
+    /// Attested requests answered `invalid_assertion` in a row, since the last 2xx or replacement. Kept across launches.
+    var invalidAssertionStreak: Int { defaults.integer(forKey: Self.invalidAssertionStreakKey) }
+
+    /// Counts one more `invalid_assertion` and returns the new streak.
+    func noteInvalidAssertion() -> Int {
+        let streak = invalidAssertionStreak + 1
+        defaults.set(streak, forKey: Self.invalidAssertionStreakKey)
+        return streak
+    }
+
+    func clearInvalidAssertionStreak() {
+        if defaults.object(forKey: Self.invalidAssertionStreakKey) != nil {
+            defaults.removeObject(forKey: Self.invalidAssertionStreakKey)
+        }
+    }
+
+    /// When the key was last replaced for `invalid_assertion`, or nil.
+    var assertionReplacedAt: Date? {
+        guard defaults.object(forKey: Self.assertionReplacedAtKey) != nil else { return nil }
+        return Date(timeIntervalSince1970: defaults.double(forKey: Self.assertionReplacedAtKey))
+    }
+
+    func noteAssertionReplacement(at date: Date) {
+        defaults.set(date.timeIntervalSince1970, forKey: Self.assertionReplacedAtKey)
+        clearInvalidAssertionStreak()
+    }
 }
 
 public enum AppAttestFailure: Error, Equatable, Sendable {
@@ -82,6 +117,9 @@ public enum AppAttestFailure: Error, Equatable, Sendable {
     /// Apple has no key for the saved key id (`DCError.invalidKey`): the id came back from a backup or a new phone.
     /// This is the only signing failure that replaces the key; any other leaves the install's identity as it is.
     case keyUnusable
+    /// A registration failed a short while ago and the client is waiting before it makes another key (#4135). Nothing was
+    /// asked of Apple or the server. Told apart from `.failed` so the sender check can say a retry won't help yet (#4134).
+    case registrationWaiting
 }
 
 /// A first-in, first-out mutex for async code. `release` is synchronous so a `defer` can call it.
@@ -136,6 +174,9 @@ public final class AttestedServerClient: @unchecked Sendable {
     private var registrationRetryAfter: Date?
     static let registrationBackoffBase: TimeInterval = 10 * 60
     static let registrationBackoffCap: TimeInterval = 6 * 60 * 60
+    /// `invalid_assertion` answers in a row before the key is replaced, and how long until it may be replaced again (#4134).
+    static let invalidAssertionsBeforeReplacing = 2
+    static let assertionReplacementInterval: TimeInterval = 24 * 60 * 60
 
     /// `consent` has no default on purpose, as in `ShareLinkClient`.
     public init(
@@ -179,6 +220,8 @@ public final class AttestedServerClient: @unchecked Sendable {
 
     private func sendHoldingGate(path: String, body: Data) async throws -> (status: Int, body: Data) {
         var attestedAgain = false
+        // Its own flag: a send may replace a key the server forgot and, separately, one it keeps refusing (#4134).
+        var replacedForAssertion = false
         while true {
             // `bounded` cancels this work when the gate limit passes. Apple's calls ignore that and may return much
             // later, when a newer send owns the gate and the key: an abandoned send does nothing more (#4164).
@@ -203,12 +246,32 @@ public final class AttestedServerClient: @unchecked Sendable {
                 try Self.stillWanted()
                 store.forget(ifKeyID: keyID)
                 attestedAgain = true
+            case 401 where Self.errorCode(response.body) == "invalid_assertion":
+                // A refusal can be one stale request (an abandoned send, a counter race); twice running it is the key.
+                let streak = store.noteInvalidAssertion()
+                guard streak >= Self.invalidAssertionsBeforeReplacing, !replacedForAssertion,
+                      mayReplaceForAssertion() else { return response }
+                try Self.stillWanted()
+                store.forget(ifKeyID: keyID)
+                // Noted before the new key is made, so a registration that fails still counts against the day.
+                store.noteAssertionReplacement(at: now())
+                replacedForAssertion = true
             case 403:
                 throw AppAttestFailure.refused
+            case 200...299:
+                store.clearInvalidAssertionStreak()
+                return response
             default:
                 return response
             }
         }
+    }
+
+    /// At most one replacement for `invalid_assertion` a day. A replacement dated in the future (the clock was set back)
+    /// doesn't hold the next one off for longer than a day.
+    private func mayReplaceForAssertion() -> Bool {
+        guard let last = store.assertionReplacedAt else { return true }
+        return abs(now().timeIntervalSince(last)) >= Self.assertionReplacementInterval
     }
 
     /// `.failed` if this send was abandoned at the gate limit: it then acts on nothing.
@@ -255,7 +318,7 @@ public final class AttestedServerClient: @unchecked Sendable {
             // a second one beside it.
             if let saved = store.keyID { return Task { saved } }
             // A request that joins a registration already running shares its outcome; only a new one waits out a failure.
-            if let retryAfter = registrationRetryAfter, now() < retryAfter { throw AppAttestFailure.failed }
+            if let retryAfter = registrationRetryAfter, now() < retryAfter { throw AppAttestFailure.registrationWaiting }
             let created = Task { try await self.register() }
             registering = created
             return created

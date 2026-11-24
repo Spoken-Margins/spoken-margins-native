@@ -134,7 +134,8 @@ final class ShareLinkSenderCheckClientTests: XCTestCase {
     func testThePermitRefusalsAreToldApart() async throws {
         let preview = try ShareLinkPreviewBuilder.make(title: "T", show: nil, pageURL: nil, enclosureURL: nil, marginTexts: ["Hello."])
         let cases: [(String, ShareLinkFallback)] = [
-            ("sharing_paused", .sharingPaused), ("bad_permit", .busy), ("permit_required", .busy), ("other", .failed)
+            // `bad_permit` twice running (the fake refuses every upload) and `permit_required` won't pass on a retry (#4134).
+            ("sharing_paused", .sharingPaused), ("bad_permit", .cantVerify), ("permit_required", .cantVerify), ("other", .failed)
         ]
         for (code, expected) in cases {
             let client = ShareLinkClient(
@@ -156,7 +157,7 @@ final class ShareLinkSenderCheckClientTests: XCTestCase {
 
     func testAPhoneThatCannotAttestStillMakesTheLinkWithoutAPermit() async throws {
         let recorder = Recorder()
-        let result = try await run(check: .notChecked, recorder: recorder)
+        let result = try await run(check: .notChecked(.cannotAttest), recorder: recorder)
         guard case .link = result else { return XCTFail("\(result)") }
         XCTAssertEqual(recorder.uploads, [[:]])
     }
@@ -202,7 +203,7 @@ final class ShareLinkSenderCheckClientTests: XCTestCase {
             func bump() { lock.withLock { n += 1 } }
         }
         let counter = Counter()
-        let check: @Sendable () async -> ShareLinkSenderCheckOutcome = { counter.bump(); return .notChecked }
+        let check: @Sendable () async -> ShareLinkSenderCheckOutcome = { counter.bump(); return .notChecked(.attestFailed) }
         let preview = try ShareLinkPreviewBuilder.make(title: "T", show: nil, pageURL: nil, enclosureURL: nil, marginTexts: ["Hello."])
         let noConsent = ShareLinkClient(consent: { false }, senderCheck: check, post: { _, _, _, _ in (201, Data()) })
         let first = await noConsent.makeLink(packet: Data([1]), preview: preview, linksState: .on)
@@ -257,22 +258,59 @@ final class ShareLinkSenderCheckLiveTests: XCTestCase {
 
     func testASimulatorIsNotChecked() async {
         let result = await outcome(supported: false, body: "")
-        XCTAssertEqual(result, .notChecked)
+        XCTAssertEqual(result, .notChecked(.cannotAttest))
     }
 
-    /// A fault in attesting must not take links from every sender while the server asks for no permit: Apple's call
-    /// failing (no entitlement yet), the server not accepting the registration, or an answer the app has no line for
-    /// all mean "standing unknown", and the link goes ahead without a permit.
-    func testAFaultInAttestingLeavesTheLinkOnWithoutAPermit() async {
+    /// Each fault has its own reason (#4134), so refuse mode can give each its own line. Apple's call failing (no
+    /// entitlement yet) and the server not accepting the registration may pass later; the attested middleware's 401
+    /// codes, other client errors and 5xx are told apart. Read with refuse mode off, every one of them still means
+    /// "standing unknown", and the link goes ahead without a permit (`ShareLinkFaultTableTests`).
+    func testEachFaultInAttestingHasItsOwnReason() async {
         let apple = await outcome(appleFails: true, body: "")
-        XCTAssertEqual(apple, .notChecked)
+        XCTAssertEqual(apple, .notChecked(.attestFailed))
         let registration = await outcome(registerStatus: 401, body: "")
-        XCTAssertEqual(registration, .notChecked)
-        // 503 is the attest service or the sender ledger switched off: links still work, unattributed.
-        for status in [400, 401, 404, 500, 502, 503] {
-            let other = await outcome(status: status, body: #"{"error":"x"}"#)
-            XCTAssertEqual(other, .notChecked, "\(status)")
+        XCTAssertEqual(registration, .notChecked(.attestFailed))
+        let rows: [(Int, String, ShareLinkUncheckedReason)] = [
+            (401, #"{"error":"clock_skew"}"#, .clockSkew),
+            (401, #"{"error":"unknown_key"}"#, .unknownKey),
+            (401, #"{"error":"invalid_assertion"}"#, .invalidAssertion),
+            (401, #"{"error":"missing_assertion"}"#, .missingAssertion),
+            (401, "not json", .missingAssertion),
+            (401, "", .missingAssertion),
+            (400, #"{"error":"x"}"#, .rejected),
+            (404, #"{"error":"not_found"}"#, .rejected),
+            (413, #"{"error":"too_large"}"#, .rejected),
+            // 503 `disabled` is the attest service or the sender ledger switched off: links still work, unattributed.
+            (503, #"{"error":"disabled"}"#, .operatorDisabled),
+            (503, #"{"error":"busy"}"#, .serverError),
+            (503, "", .serverError),
+            (500, #"{"error":"internal"}"#, .serverError),
+            (502, "<html>bad gateway</html>", .serverError),
+        ]
+        for (status, body, reason) in rows {
+            let other = await outcome(status: status, body: body)
+            XCTAssertEqual(other, .notChecked(reason), "\(status) \(body)")
         }
+    }
+
+    /// A registration that failed is waited out; the taps during the wait say so, not "Apple's call failed".
+    func testATapDuringTheRegistrationWaitIsToldApart() async {
+        let name = "ShareLinkSenderCheckLiveTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let client = AttestedServerClient(
+            provider: Provider(), store: AppAttestKeyStore(defaults: defaults), consent: { true },
+            server: { URL(string: "https://links.example.test\($0)")! }
+        ) { url, _, _ in
+            switch url.path {
+            case "/api/v1/attest/challenge": return (200, Data(#"{"challenge":"\#(Data(repeating: 1, count: 32).base64EncodedString())"}"#.utf8))
+            default: return (500, Data())
+            }
+        }
+        let first = await ShareLinkSenderCheck.check(using: client)
+        let second = await ShareLinkSenderCheck.check(using: client)
+        XCTAssertEqual(first, .notChecked(.attestFailed))
+        XCTAssertEqual(second, .notChecked(.registrationWaiting))
     }
 
     func testEveryOtherEndingIsAFailureTheScreenAlreadySays() async {
