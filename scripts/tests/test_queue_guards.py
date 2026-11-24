@@ -24,22 +24,33 @@ class GuardListTests(unittest.TestCase):
 
 
 class MainTests(unittest.TestCase):
-    def run_main(self, ran, passed):
-        class Result:
-            testsRun = ran
-
-            def wasSuccessful(self):
-                return passed
-        with mock.patch.object(queue_guards, 'suite', return_value=unittest.TestSuite()), \
-                mock.patch.object(queue_guards.unittest, 'TextTestRunner') as runner, \
+    def run_main(self, results):
+        with mock.patch.object(queue_guards.parallel_unittest, 'run_all', return_value=results) as run_all, \
                 mock.patch('sys.stdout', io.StringIO()):
-            runner.return_value.run.return_value = Result()
-            return queue_guards.main([])
+            return queue_guards.main([]), run_all
 
-    def test_a_pass_with_tests_is_0_and_a_failure_or_no_tests_is_1(self):
-        self.assertEqual(self.run_main(5, True), 0)
-        self.assertEqual(self.run_main(5, False), 1)
-        self.assertEqual(self.run_main(0, True), 1)
+    @staticmethod
+    def every(ran=3, ok=True):
+        return {module: {'ran': ran, 'ok': ok} for module in queue_guards.GUARDS}
+
+    def test_each_guard_runs_in_its_own_process_as_portable_runs_it(self):
+        # One process for all of them could fail on state an earlier module left, where `portable` (one module per
+        # process, parallel_unittest.py) passes, and cancel a sound group (audit on 089d17c).
+        code, run_all = self.run_main(self.every())
+        self.assertEqual(code, 0)
+        args, kwargs = run_all.call_args
+        self.assertEqual(sorted(args[0]), sorted(queue_guards.GUARDS))
+        self.assertEqual(Path(kwargs['cwd']), SCRIPTS.parent, 'the module loader finds scripts/tests from the root')
+        self.assertEqual(tuple(kwargs.get('left_out', ())), ())
+
+    def test_a_failed_missing_or_empty_module_is_1(self):
+        failed = self.every()
+        failed[queue_guards.GUARDS[0]]['ok'] = False
+        self.assertEqual(self.run_main(failed)[0], 1)
+        missing = self.every()
+        missing.pop(queue_guards.GUARDS[-1])
+        self.assertEqual(self.run_main(missing)[0], 1)
+        self.assertEqual(self.run_main(self.every(ran=0))[0], 1)
 
     def test_list_prints_the_modules_and_other_arguments_are_refused(self):
         with mock.patch('sys.stdout', io.StringIO()) as out:
