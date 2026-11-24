@@ -62,6 +62,14 @@ public struct ShareLinkURL: Equatable, Sendable {
 /// the usual import review takes it from there.
 public struct ShareLinkPacketDownloader: Sendable {
     public typealias Fetch = @Sendable (_ url: URL, _ maximumBytes: Int) async throws -> (status: Int, body: Data)
+    /// As `Fetch`, and whether the answer carried `X-SM-Link-Opened: 1`: the server keeps opened marks (#5275).
+    public typealias OfferingFetch = @Sendable (_ url: URL, _ maximumBytes: Int) async throws -> (status: Int, body: Data, offersOpened: Bool)
+
+    /// What a download gives back: the opened packet's file, and whether its server offers opened marks.
+    public struct Download: Equatable, Sendable {
+        public let file: URL
+        public let offersOpened: Bool
+    }
 
     public enum Failure: Error, Equatable, Sendable, CaseIterable {
         /// The phone couldn't reach the server (no connection, a timeout, a dropped connection). Worth a Try Again.
@@ -102,10 +110,34 @@ public struct ShareLinkPacketDownloader: Sendable {
     /// The server takes packets up to 20 MB; sealing adds the header, nonce and tag.
     public static let maximumSealedBytes = (20 << 20) + 1024
 
-    private let fetch: Fetch
+    private let fetch: OfferingFetch
 
+    /// A fetch that reads no headers: its server is taken to keep no opened marks.
     public init(fetch: @escaping Fetch) {
-        self.fetch = fetch
+        self.fetch = { url, maximumBytes in
+            let response = try await fetch(url, maximumBytes)
+            return (response.status, response.body, false)
+        }
+    }
+
+    private init(offering: @escaping OfferingFetch) {
+        self.fetch = offering
+    }
+
+    /// A downloader whose fetch reads the server's `X-SM-Link-Opened` header. A static function, not a second
+    /// `init`, so a trailing closure still picks `init(fetch:)` unambiguously.
+    public static func offering(_ fetch: @escaping OfferingFetch) -> ShareLinkPacketDownloader {
+        ShareLinkPacketDownloader(offering: fetch)
+    }
+
+    /// The header the link server sends with a packet when it keeps opened marks (#5275).
+    public static let openedHeader = "X-SM-Link-Opened"
+
+    /// Whether `headers` say the server keeps opened marks. Header names are matched without case.
+    public static func offersOpened(_ headers: [AnyHashable: Any]) -> Bool {
+        headers.contains { name, value in
+            (name as? String)?.caseInsensitiveCompare(openedHeader) == .orderedSame && (value as? String) == "1"
+        }
     }
 
     /// Time allowed for the whole download. The largest packet takes about 170 seconds at 1 Mbps, so the public
@@ -119,20 +151,28 @@ public struct ShareLinkPacketDownloader: Sendable {
         BridgePublicTransport.configuration(resourceTimeout: resourceTimeout)
     }
 
-    public static let live = ShareLinkPacketDownloader(fetch: {
-        try await BridgePublicTransport.fetch($0, $1, configuration: liveConfiguration())
+    public static let live = ShareLinkPacketDownloader.offering({
+        let response = try await BridgePublicTransport.fetchResponse($0, $1, configuration: liveConfiguration())
+        return (response.status, response.body, offersOpened(response.headers))
     })
     #endif
 
     /// Downloads, opens and writes `<id>.spokenmargins` into `directory`, which is created if needed.
     public func download(_ link: ShareLinkURL, into directory: URL) async throws -> URL {
+        try await downloadOffering(link, into: directory).file
+    }
+
+    /// As `download`, and whether the link's server offers opened marks (#5275).
+    public func downloadOffering(_ link: ShareLinkURL, into directory: URL) async throws -> Download {
         // Without the key nothing can open, so don't ask the server for bytes.
         guard let key = link.key else { throw Failure.cutOff }
         let sealed: Data
+        let offersOpened: Bool
         do {
             let response = try await fetch(link.packetURL, Self.maximumSealedBytes)
             guard response.status == 200 else { throw Failure.forStatus(response.status) }
             sealed = response.body
+            offersOpened = response.offersOpened
         } catch let failure as Failure {
             throw failure
         } catch {
@@ -150,6 +190,6 @@ public struct ShareLinkPacketDownloader: Sendable {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let file = directory.appendingPathComponent("\(link.id).spokenmargins")
         try packet.write(to: file, options: .atomic)
-        return file
+        return Download(file: file, offersOpened: offersOpened)
     }
 }

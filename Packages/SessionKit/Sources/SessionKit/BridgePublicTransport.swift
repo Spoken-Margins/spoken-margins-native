@@ -25,6 +25,12 @@ public enum BridgePublicTransport {
 
     // Injectable only inside SessionKit/tests; the app always uses the anonymous configuration.
     static func fetch(_ url: URL, _ maximumBytes: Int, configuration: URLSessionConfiguration) async throws -> (status: Int, body: Data) {
+        let response = try await fetchResponse(url, maximumBytes, configuration: configuration)
+        return (response.status, response.body)
+    }
+
+    /// As `fetch`, and the response's headers, for a caller that reads one (the share link's `X-SM-Link-Opened`, #5275).
+    static func fetchResponse(_ url: URL, _ maximumBytes: Int, configuration: URLSessionConfiguration) async throws -> (status: Int, body: Data, headers: [AnyHashable: Any]) {
         guard BridgeManifestPolicy.production.isTrusted(url) else { throw BridgeRefreshError.untrustedURL }
         let session = URLSession(configuration: configuration, delegate: BridgePublicSessionDelegate(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
@@ -36,6 +42,21 @@ public enum BridgePublicTransport {
             guard data.count < maximumBytes else { throw URLError(.dataLengthExceedsMaximum) }
             data.append(byte)
         }
+        let http = response as? HTTPURLResponse
+        return (http?.statusCode ?? 0, data, http?.allHeaderFields ?? [:])
+    }
+
+    /// One small request of the caller's own (a POST, or a GET with a header) on the same anonymous transport,
+    /// to the pinned host only: the link server's opened marks (#5275).
+    public static func send(_ request: URLRequest) async throws -> (status: Int, body: Data) {
+        try await send(request, configuration: configuration())
+    }
+
+    static func send(_ request: URLRequest, configuration: URLSessionConfiguration) async throws -> (status: Int, body: Data) {
+        guard let url = request.url, BridgeManifestPolicy.production.isTrusted(url) else { throw BridgeRefreshError.untrustedURL }
+        let session = URLSession(configuration: configuration, delegate: BridgePublicSessionDelegate(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let (data, response) = try await session.data(for: request)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
     }
 }
