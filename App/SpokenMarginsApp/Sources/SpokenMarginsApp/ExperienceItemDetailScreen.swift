@@ -1051,7 +1051,7 @@ struct ExperienceItemDetailScreen: View {
         model.selectedItem.interjections
             .filter { $0.status == "active" }
             .sorted { $0.createdAt > $1.createdAt }
-            .map { MarginRow(interjection: $0, itemTitle: model.selectedItem.title, sessionDate: nil) }
+            .map { MarginRow(interjection: $0, itemTitle: model.selectedItem.title, sessionDate: nil, transcriptWaitsForAnswer: MarginRow.waitsForAnswer($0)) }
     }
 
     private var readinessLabel: String {

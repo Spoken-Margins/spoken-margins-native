@@ -95,6 +95,7 @@ struct PlaybackScreen: View {
                                 VStack(alignment: .leading, spacing: 20) {
                                     if model.snapshot.phase == .finished {
                                         Text("Finished").font(.headline).foregroundStyle(AppColors.listeningAccent)
+                                        ArrivalFollowCard()
                                     }
                                     if model.isFirstMarginPromptShowing { FirstMarginPromptCard() }
                                     playbackHeader
@@ -198,6 +199,8 @@ struct PlaybackScreen: View {
                             if selectedPane == .now { PinnedMarginCardView() }
                             // A note read where it is cited: the same slot, never beside a friend's card (#3777).
                             if selectedPane == .now { FootnoteCardPinnedView() }
+                            // The app's line before iOS asks about Speech Recognition; a friend's card keeps the slot first (#4715).
+                            if selectedPane == .now { SpeechAskCardSlot() }
                             if !model.recordingNavigationIsLocked, let feedback = model.playbackFeedbackTag {
                                 PlaybackFeedbackTagView(event: feedback.event, tag: feedback.tag)
                                     .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
@@ -250,22 +253,11 @@ struct PlaybackScreen: View {
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
-                // One meaning for the top-left arrow on every tab: leave the screen. The exception is the Timeline editor
-                // with the keyboard up, where the tab switch is hidden and this is the way back to Now (#4027).
-                let leading = PlaybackLeadingControl.control(
+                PlaybackLeadingToolbar(
                     pane: leadingControlPane, timelineEditorHasFocus: timelineDock.hidesDock,
-                    nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio)
-                if leading == .libraryExit {
-                    ToolbarItem(placement: .topBarLeading) { libraryExitButton }
-                } else if leading == .returnToNow {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button { selectedPane = .now } label: {
-                            Label("Now Playing", systemImage: "arrow.left")
-                        }
-                        .tint(AppColors.listeningAccent)
-                        .accessibilityIdentifier("timeline.nowPlaying.button")
-                    }
-                }
+                    nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio,
+                    returnToNow: { selectedPane = .now }
+                ) { libraryExitButton }
             }
             .scrollDismissesKeyboard(.interactively)
             .trackedSheet(item: $selectedInterjection) { interjection in
@@ -2033,7 +2025,7 @@ private func interjectionPreview(_ interjection: Interjection) -> String {
        !transcript.isEmpty {
         return transcript
     }
-    return TranscriptionFailureWording.marginStatus(transcriptionStatus: interjection.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff) ?? interjection.transcriptionStatus
+    return TranscriptionFailureWording.marginStatus(transcriptionStatus: interjection.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff, speechRecognitionNotYetAsked: SpeechAskController.marginIsWaitingForAnswer(MarginIdentity.make(sessionId: interjection.sessionId, interjectionId: interjection.id))) ?? interjection.transcriptionStatus
 }
 
 private struct LightButtonStyle: ButtonStyle {

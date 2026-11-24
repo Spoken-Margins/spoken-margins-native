@@ -15,6 +15,8 @@ public enum OnboardingStep: String, CaseIterable, Identifiable, Hashable, Sendab
     /// The listener tapped or dismissed the "Tap to add a Margin" prompt (#2852). Not a Help card step: it is
     /// kept here so it is stored and published with the rest, and an older build drops the unknown name.
     case sawFirstMarginPrompt = "saw_first_margin_prompt"
+    /// The listener heard (or saved and saw) their own first Margin (#4711). Not a Help card step; an older build drops it.
+    case heardFirstMargin = "heard_first_margin"
 
     public var id: String { rawValue }
 

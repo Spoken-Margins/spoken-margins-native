@@ -148,10 +148,12 @@ final class MarginCollectionTests: XCTestCase {
             contentsOf: TestInputs.packageURL("Sources/SessionKit/ExperiencePresentation.swift"), encoding: .utf8))
         // `playSharedMarginMoment` lives in the voice-playback extension (moved out of the model file for #3961).
         let sharedMoment = try appSource("Gate1AppModel+MarginVoicePlayback.swift")
-        XCTAssertTrue(rows.contains(#"var id: String { "\(interjection.sessionId)::\(interjection.id)" }"#))
+        // The "session::margin" format now has one builder, `MarginIdentity.make` (#4715), whose format MarginIdentityTests pins.
+        XCTAssertEqual(MarginIdentity.make(sessionId: "session", interjectionId: "same"), "session::same")
+        XCTAssertTrue(rows.contains(#"var id: String { MarginIdentity.make(sessionId: interjection.sessionId, interjectionId: interjection.id) }"#))
         XCTAssertTrue(sharedRows.contains(#"public var id: String { "shared::\(layer.id)::\(interjection.id)" }"#))
         let curation = try appSource("Gate1AppModel+MarginCuration.swift")
-        XCTAssertTrue(curation.contains(#"static func marginIdentity(_ interjection: Interjection) -> String {"# + "\n" + #"        "\(interjection.sessionId)::\(interjection.id)""#))
+        XCTAssertTrue(curation.contains(#"static func marginIdentity(_ interjection: Interjection) -> String {"# + "\n" + #"        MarginIdentity.make(sessionId: interjection.sessionId, interjectionId: interjection.id)"#))
         XCTAssertTrue(sharedMoment.contains(#"let targetID = "shared::\(row.layer.id)::\(row.interjection.id)""#))
     }
 

@@ -86,6 +86,7 @@ struct ExperienceMarginsScreen: View, Equatable {
                 let repair = MarginRowRepair.of(
                     isWritten: row.isWritten,
                     speechRecognitionOff: speechOff,
+                    speechRecognitionNotYetAsked: row.transcriptWaitsForAnswer,
                     transcriptionStatus: row.interjection.transcriptionStatus,
                     contextStatus: row.interjection.anchorContextStatus,
                     recordingMissing: row.interjection.audioStatus == "missing",
@@ -117,6 +118,8 @@ struct ExperienceMarginsScreen: View, Equatable {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    // A re-ask after Not now, when the listener typed in the search field below (#4715).
+                    SpeechAskCardInList(surface: .margins)
                     AppSearchField("Search your notes or a title", text: model.screenBinding(\.marginCollectionQuery.text), identifier: "margins.search.field")
                         .padding(.bottom, 12)
                     scopeRow(inputs)
@@ -133,6 +136,11 @@ struct ExperienceMarginsScreen: View, Equatable {
             .background(AppColors.bone)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("margins.screen")
+            // Typing in the search is reaching for text: a listener who said Not now is asked once more (#4715).
+            .onChange(of: model.marginCollectionQuery.text) { old, new in
+                if old.isEmpty, !new.isEmpty { SpeechAskController.shared.reachedForText(on: .margins) }
+            }
+            .onDisappear { SpeechAskController.shared.surfaceLeft(.margins) }
             .fileShareSheet($markdownFileURL)
             .navigationTitle("Margins")
             .navigationBarTitleDisplayMode(.inline)
