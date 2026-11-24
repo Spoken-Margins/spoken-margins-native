@@ -19,17 +19,22 @@ public struct PlaybackTextReaderTarget: Sendable, Equatable, Identifiable {
     public let range: Range<Int>
     /// The shown text, with surrounding whitespace trimmed.
     public let text: String
+    /// Where `text` starts in the item's text: `range`'s start after the trimmed whitespace.
+    public let textStart: Int
     /// The sentence being read, as Character offsets into `text`; nil when the playhead is unknown or the
     /// chapter has no text.
     public let sentence: Range<Int>?
 
     public var id: String { "\(chapterIndex ?? -1):\(range.lowerBound):\(sentence?.lowerBound ?? -1)" }
 
-    public init(chapterIndex: Int?, chapterTitle: String?, range: Range<Int>, text: String, sentence: Range<Int>?) {
+    public init(
+        chapterIndex: Int?, chapterTitle: String?, range: Range<Int>, text: String, sentence: Range<Int>?, textStart: Int? = nil
+    ) {
         self.chapterIndex = chapterIndex
         self.chapterTitle = chapterTitle
         self.range = range
         self.text = text
+        self.textStart = textStart ?? range.lowerBound
         self.sentence = sentence
     }
 
@@ -122,7 +127,8 @@ public struct PlaybackTextReaderTarget: Sendable, Equatable, Identifiable {
             chapterTitle: chosen.map { chapters[$0].title },
             range: range,
             text: shown,
-            sentence: sentence
+            sentence: sentence,
+            textStart: lower
         )
     }
 

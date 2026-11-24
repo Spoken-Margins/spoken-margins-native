@@ -53,6 +53,22 @@ final class BatchExportRowsTests: XCTestCase {
         XCTAssertFalse(after.contains { $0.id == "session-orphan" })
     }
 
+    /// Export Sessions shows the note's own text switch only when a picked session is on a spoken note (#4782).
+    func testARowSaysWhetherItsSessionIsOnASpokenNote() throws {
+        let store = try openFixtureStore()
+        let template = try XCTUnwrap(try store.loadBatchExportRows().first).session
+        let note = SpokenNoteItem.makeItem(note: SpokenNote(id: "batch-note"), title: "A note", createdAt: Date())
+        try store.saveItem(note)
+        var session = template
+        session.id = "session-on-note"
+        session.itemId = note.id
+        try store.saveSession(session)
+
+        let rows = try store.loadBatchExportRows()
+
+        XCTAssertEqual(rows.filter(\.isSpokenNote).map(\.id), ["session-on-note"])
+    }
+
     /// The boundary (#2507): while the rows are being built, the main actor keeps running. The slow store is a
     /// blocked read in the same `StoreReader` closure, standing in for a Library-size read.
     @MainActor

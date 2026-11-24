@@ -86,11 +86,7 @@ struct YourAISettingsScreen: View {
 
     // MARK: Where your brief arrives
 
-    private var folderStatus: QuickFolderStatus {
-        let name = quickAccess.folderName == QuickAccessFolderState.noFolderName ? nil : quickAccess.folderName
-        return QuickFolderStatus(
-            name: name, path: quickAccess.folderPath, lastCheckedAt: quickAccess.lastCheckedAt, problem: quickAccess.problem)
-    }
+    private var folderStatus: QuickFolderStatus { quickAccess.status() }
 
     private var arrivalSection: some View {
         let status = folderStatus

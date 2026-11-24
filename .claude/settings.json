@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "deny": [
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__add_comment_to_pending_review",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__add_issue_comment",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__add_reply_to_pull_request_comment",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__create_branch",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__create_or_update_file",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__create_pull_request",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__create_repository",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__delete_file",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__fork_repository",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__issue_write",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__merge_pull_request",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__pull_request_review_write",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__push_files",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__request_copilot_review",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__sub_issue_write",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__update_issue_comment",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__update_pull_request",
+      "mcp__72b1b4f3-e213-4ddf-9394-1419583b74e7__update_pull_request_branch"
+    ]
+  }
+}
