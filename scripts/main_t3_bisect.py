@@ -306,6 +306,16 @@ def revert_refusals(commit: dict, paths: list, scope, open_reverts: list, alread
     return reasons
 
 
+def touched_since(culprit_paths: list, main_paths: list) -> list:
+    """A refusal when main changed the culprit's files after the red commit: a fix forward may already have landed, and
+    a revert on top of it would undo the fix too. The bisection can take two hours, so this is a real window."""
+    both = sorted(set(culprit_paths) & set(main_paths))
+    if not both:
+        return []
+    return ['main has changed files this merge touched since the red run (' + ', '.join(both[:3]) +
+            (', ...' if len(both) > 3 else '') + '), so a fix forward may already be in; a person should check']
+
+
 def revert_title(number: int, title: str, red: str) -> str:
     return f'Revert #{number}: {title} (main-t3 red on {red[:7]})'[:200]
 
@@ -497,6 +507,11 @@ def reverted_on_main(merge_sha: str) -> str | None:
     return (found.stdout.strip() or None) if found.returncode == 0 else None
 
 
+def changed_on_main_since(red: str) -> list:
+    out = git('diff', '--name-only', '--no-renames', red, 'origin/main')
+    return [line for line in out.splitlines() if line.strip()]
+
+
 def open_revert_prs() -> list:
     pulls = json.loads(t3.gh('api', f'repos/{t3.repo()}/pulls?state=open&base=main&per_page=100'))
     return [f"#{pr['number']}" for pr in pulls if re.match(r'\s*Revert\b', pr.get('title') or '', re.I)]
@@ -512,6 +527,7 @@ def open_revert(commit: dict, red: str, run_url: str, tests: list, probes: list,
     branch = revert.revert_branch(number)
     auth, env = lfs_credential(token)
     print(f'::add-mask::{auth}', flush=True)
+    pushed, pr_url = False, None
     try:
         git('checkout', '--quiet', '--force', '-B', branch, 'origin/main')
         undone = git_run('revert', '--no-commit', '-m', '1', commit['sha'])
@@ -528,6 +544,7 @@ def open_revert(commit: dict, red: str, run_url: str, tests: list, probes: list,
         git('-c', 'user.name=main-t3 bisect', '-c', 'user.email=noreply@spokenmargins.invalid', 'commit', '--quiet',
             '-m', revert_message(number, title, red, commit['sha'], run_url, tests))
         git('push', '--quiet', '--force', 'origin', f'HEAD:refs/heads/{branch}', env=env)
+        pushed = True
         pending = '(the re-land issue is filed right after this PR opens)'
         labels = ['automerge'] + (['hot-file-ok'] if grown else [])
         pr_url = gh_as(token, 'pr', 'create', '-R', t3.repo(), '--base', 'main', '--head', branch,
@@ -548,6 +565,9 @@ def open_revert(commit: dict, red: str, run_url: str, tests: list, probes: list,
                   flush=True)
         return pr_url, reland, ''
     except (RuntimeError, IndexError) as error:
+        if pushed and not pr_url:
+            # Pushed but no PR: take the branch back down so nothing looks half-reverted.
+            git_run('push', '--quiet', 'origin', f':refs/heads/{branch}', env=env)
         return None, '', str(error)[:300]
     finally:
         git_run('checkout', '--quiet', '--force', '--detach', red)
@@ -650,10 +670,12 @@ def command_bisect(args) -> int:
                 try:
                     fetch_main()
                     commit = culprit_commit(result.sha)
-                    refusals = revert_refusals(commit, changed_paths(result.sha), revert.load_test_scope(ROOT),
+                    paths = changed_paths(result.sha)
+                    refusals = revert_refusals(commit, paths, revert.load_test_scope(ROOT),
                                                open_revert_prs(), reverted_on_main(result.sha), unexplained, token)
-                except (RuntimeError, KeyError, TypeError, ValueError, OSError) as error:
-                    refusals = [f'could not check whether the revert is safe: {str(error)[:200]}']
+                    refusals += touched_since(paths, changed_on_main_since(red))
+                except Exception as error:  # noqa: BLE001 - test-scope.py runs from the red tree; the issue must still go up
+                    refusals = [f'could not check whether the revert is safe: {error!r}'[:250]]
                 if refusals:
                     body += '\n' + not_reverted_section(refusals)
                 area = pr_area(pr)

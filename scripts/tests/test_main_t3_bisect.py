@@ -296,7 +296,8 @@ class CommandTests(unittest.TestCase):
                 'culprit_commit': lambda sha: {'sha': sha, 'parents': ['a' * 40, 'b' * 40],
                                                'subject': 'Merge pull request #100 from x/y', 'body': 'Fix it'},
                 'changed_paths': lambda sha: ['App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift'],
-                'open_revert_prs': lambda: [], 'reverted_on_main': lambda sha: None, 'open_revert': open_revert}
+                'open_revert_prs': lambda: [], 'reverted_on_main': lambda sha: None, 'open_revert': open_revert,
+                'changed_on_main_since': lambda red: ['docs/other.md']}
 
     def test_a_safe_culprit_with_the_revert_token_is_reverted_and_both_issues_say_so(self):
         opened = []
@@ -330,6 +331,27 @@ class CommandTests(unittest.TestCase):
         comments = {c[0][2]: c[1] for c in calls if c[0][:2] == ('issue', 'comment')}
         self.assertIn('does not apply cleanly', comments['9'])
         self.assertNotIn('Revert opened', comments['5'])
+
+    def test_a_culprit_file_changed_on_main_since_the_red_run_is_not_reverted(self):
+        opened = []
+        hooks = self.safe_revert_hooks(opened)
+        hooks['changed_on_main_since'] = lambda red: ['App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift']
+        calls, _ = self.run_command(lambda sha: B.FAIL, revert_hooks=hooks, env={B.REVERT_TOKEN_ENV: 'app-token'})
+        self.assertEqual(opened, [])
+        body = [c for c in calls if c[0][:2] == ('issue', 'create')][0][1]
+        self.assertIn('fix forward may already be in', body)
+
+    def test_a_crash_in_the_safety_check_still_files_the_culprit_issue(self):
+        opened = []
+        hooks = self.safe_revert_hooks(opened)
+
+        def broken(sha):
+            raise AttributeError("module 'test_scope' has no attribute 'build_scripts'")
+        hooks['changed_paths'] = broken
+        calls, _ = self.run_command(lambda sha: B.FAIL, revert_hooks=hooks, env={B.REVERT_TOKEN_ENV: 'app-token'})
+        self.assertEqual(opened, [])
+        body = [c for c in calls if c[0][:2] == ('issue', 'create')][0][1]
+        self.assertIn('could not check whether the revert is safe', body)
 
     def test_two_breaks_are_never_reverted(self):
         foo, bar = 'SpokenMarginsAppTests/Foo/testA', 'SpokenMarginsAppTests/Bar/testB'
@@ -620,6 +642,16 @@ class OpenRevertTests(unittest.TestCase):
         self.assertEqual(self.calls, [])
         self.assertEqual(self.git('branch', '--list', 'revert/pr100', cwd=self.origin), '')
         self.assertEqual(self.git('status', '--porcelain', '--untracked-files=no'), '')
+
+    def test_a_failed_pr_create_takes_the_pushed_branch_back_down(self):
+        def failing(token, *args, stdin=None):
+            self.calls.append((token, args, stdin))
+            raise RuntimeError('gh pr create: HTTP 422')
+        B.gh_as = failing
+        _, (pr_url, _, why) = self.run_revert()
+        self.assertIsNone(pr_url)
+        self.assertIn('422', why)
+        self.assertEqual(self.git('branch', '--list', 'revert/pr100', cwd=self.origin), '')
 
     def test_a_merge_main_already_undid_is_not_reverted_twice(self):
         self.git('revert', '--no-edit', '-m', '1', self.culprit)
