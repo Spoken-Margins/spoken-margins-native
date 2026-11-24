@@ -21,14 +21,15 @@ public struct FriendLinkArrival: Equatable, Sendable {
 
     public static func make(waiting entries: [SharedMarginReview.Entry], signals: [String: FriendLinkSignal],
                             receiptsOn: Bool, ownLinkIDs: Set<String>) -> FriendLinkArrival {
-        guard receiptsOn else { return FriendLinkArrival(linkIDs: [], senderName: nil) }
+        let name = FriendMarginsIntro.singleName(entries.map(\.waitingMargin))
+        guard receiptsOn else { return FriendLinkArrival(linkIDs: [], senderName: name) }
         var ids: Set<String> = []
         for entry in entries {
             guard let id = entry.layer.shareLinkId, let signal = signals[id], signal.offered, !signal.sent,
                   !ownLinkIDs.contains(id) else { continue }
             ids.insert(id)
         }
-        return FriendLinkArrival(linkIDs: ids.sorted(), senderName: FriendMarginsIntro.singleName(entries.map(\.waitingMargin)))
+        return FriendLinkArrival(linkIDs: ids.sorted(), senderName: name)
     }
 
     /// "When you open these Margins, Ana can see that you did."

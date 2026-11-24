@@ -851,6 +851,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         model.shareSheetPresented()
     }
 
+    /// The item being shared, for the sent link's record (#5275).
+    var sharedItemID: String { model.selectedItem.id }
+
     /// The share sheet sent the verified packet (logged as an I4 `share` for its item, #483).
     func recordSystemShareCompleted(packetURL: URL) {
         model.listeningSignals.share(packetURL: packetURL)

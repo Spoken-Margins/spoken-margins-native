@@ -1001,7 +1001,7 @@ struct Build23SenderSharingExperience: View {
         case .link:
             #if SM_SHARE_LINK_CREATION
             guard let packageURL = coordinator.verifiedShareFileURL else { return }
-            linkSender.makeLink(packageURL: packageURL)
+            linkSender.makeLink(packageURL: packageURL, itemID: coordinator.sharedItemID)
             #else
             presentVerifiedSystemShare()
             #endif

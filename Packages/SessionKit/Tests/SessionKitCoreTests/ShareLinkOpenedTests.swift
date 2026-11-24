@@ -277,7 +277,9 @@ final class ShareLinkOpenedTests: XCTestCase {
         let two = FriendLinkArrival.make(waiting: [entry(layer: "l1", link: id), entry(layer: "l2", link: otherID)], signals: signals, receiptsOn: true, ownLinkIDs: [])
         XCTAssertEqual(two.linkIDs, [otherID, id].sorted())
 
-        XCTAssertFalse(FriendLinkArrival.make(waiting: [entry(layer: "l1", link: id)], signals: signals, receiptsOn: false, ownLinkIDs: []).showsNotice)
+        let off = FriendLinkArrival.make(waiting: [entry(layer: "l1", link: id)], signals: signals, receiptsOn: false, ownLinkIDs: [])
+        XCTAssertFalse(off.showsNotice)
+        XCTAssertEqual(off.toldNotText, "Ana won't be told, and you won't see when your own links are opened. Change this in Settings.", "after Don't tell the name stays")
         XCTAssertFalse(FriendLinkArrival.make(waiting: [entry(layer: "l1", link: id)], signals: signals, receiptsOn: true, ownLinkIDs: [id]).showsNotice)
         XCTAssertFalse(FriendLinkArrival.make(waiting: [entry(layer: "l1", link: id)], signals: [id: FriendLinkSignal(importedAt: now, offered: false, token: token, sent: false)], receiptsOn: true, ownLinkIDs: []).showsNotice, "no header, no notice")
         XCTAssertFalse(FriendLinkArrival.make(waiting: [entry(layer: "l1", link: id)], signals: [id: FriendLinkSignal(importedAt: now, offered: true, token: token, sent: true)], receiptsOn: true, ownLinkIDs: []).showsNotice, "returning: already signalled")

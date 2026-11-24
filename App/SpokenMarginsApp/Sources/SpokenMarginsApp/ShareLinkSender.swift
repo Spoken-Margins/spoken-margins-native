@@ -60,6 +60,11 @@ final class ShareLinkSender: ObservableObject {
     private let playChecker = ShareLinkPlayChecker.shared
     private(set) var playCheckLinkID: String?
     private var playCheckObservation: AnyCancellable?
+    /// The item the link is for, captured when Share link is tapped, not when the sheet completes: the listener may
+    /// have moved on by then (#5275).
+    private var linkItemID: String?
+    /// The record kept once the share sheet says the link was sent (#5275). A cancelled sheet keeps nothing.
+    private(set) var pendingSentLink: SentShareLink?
     /// A problem found while the share sheet was open is announced when the sheet closes, once.
     private var announcementWaitsForSheet = false
     private var announcedLinkID: String?
@@ -85,9 +90,11 @@ final class ShareLinkSender: ObservableObject {
         }
     }
 
-    /// Seals and uploads the packet at `packageURL`, the file the sender would otherwise share.
-    func makeLink(packageURL: URL) {
+    /// Seals and uploads the packet at `packageURL`, the file the sender would otherwise share. `itemID` is the item
+    /// the link is for, so the Margins tab can say "Link sent" under it (#5275); the consent path keeps the one given.
+    func makeLink(packageURL: URL, itemID: String? = nil) {
         guard state != .making else { return }
+        if let itemID { linkItemID = itemID }
         // Before anything is read, sealed or sent, and before any key is made: the first link asks (#2842).
         guard ServerSendConsent.hasConsented(to: .shareLinks) else {
             state = .needsConsent
@@ -137,7 +144,8 @@ final class ShareLinkSender: ObservableObject {
             // longer shows, so no sheet opens for it.
             guard requests.accepts(ticket) else { return }
             switch result {
-            case .link(let url, _):
+            case .link(let url, let expiresAt):
+                pendingSentLink = linkItemID.flatMap { SentShareLink(link: url, serverExpiresAt: expiresAt, itemID: $0, createdAt: Date()) }
                 state = .ready(url, companionFile: preview.needsCompanionFile ? packageURL : nil, packet: packageURL)
                 // The share sheet opens at once; the check runs beside it and never delays it (#4454).
                 playCheckLinkID = playChecker.check(link: url, title: preview.source.title, packetBytes: packet.count)
@@ -215,6 +223,14 @@ final class ShareLinkSender: ObservableObject {
         #endif
     }
 
+    /// The share sheet reported the link sent: keep its record, which holds the id and opened-token, never the link
+    /// (#5275).
+    func recordShared() {
+        guard let record = pendingSentLink else { return }
+        pendingSentLink = nil
+        SentLinkStatus.shared.add(record)
+    }
+
     /// The listener tapped the agreeing button on the consent alert: remember it, then make the link they asked for.
     func agreeAndMakeLink(packageURL: URL) {
         ServerSendConsent.record(.shareLinks)
@@ -266,7 +282,10 @@ struct ShareLinkPresentation: ViewModifier {
                 set: { if !$0 { sender.closeSheet() } }
             )) {
                 if case .ready(let url, let file, let packet) = sender.state {
-                    ShareLinkActivityView(link: url, companionFile: file) { onShared(packet) }
+                    ShareLinkActivityView(link: url, companionFile: file) {
+                        sender.recordShared()
+                        onShared(packet)
+                    }
                         .presentationDetents([.medium, .large])
                 }
             }
