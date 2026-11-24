@@ -582,7 +582,7 @@ jobs:
           swift --version
           .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit --leave-out-slow
       - name: Keep the Mac test list
-        if: always() && github.event_name != 'merge_group'
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: mac-core-tests
