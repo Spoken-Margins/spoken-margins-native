@@ -62,7 +62,7 @@ struct SpokenNoteAudioVersionControl: View {
     }
 
     private var secondary: Color {
-        placement == .listeningOptions ? AppColors.watchSecondary : .secondary
+        placement == .listeningOptions ? PlaybackSpokenNoteVersionColors.secondary : AppColors.secondaryText
     }
 
     private struct PlacementStyle: ViewModifier {
@@ -73,30 +73,8 @@ struct SpokenNoteAudioVersionControl: View {
             case .noteScreen:
                 content.frame(maxWidth: .infinity, alignment: .leading)
             case .listeningOptions:
-                // Styled like the mixed audio card beside it.
-                content
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .foregroundStyle(.white)
-                    .background(AppColors.watchControl.opacity(0.72))
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                content.modifier(PlaybackSpokenNoteVersionCard())
             }
-        }
-    }
-}
-
-/// The line on Now under the title, for a spoken note playing with Shorter pauses chosen: progress while the version is
-/// made, how much shorter it is once it plays, or "As recorded for now". Nothing for As recorded.
-struct SpokenNoteAudioVersionLine: View {
-    @ObservedObject var clean: SpokenNoteCleanCoordinator
-    let noteId: String
-
-    var body: some View {
-        if let line = SpokenNoteCleanWords.nowLine(clean.state(noteId: noteId)) {
-            Text(line)
-                .font(.subheadline)
-                .foregroundStyle(AppColors.watchSecondary)
-                .accessibilityIdentifier("playback.noteAudioVersion.line")
         }
     }
 }
