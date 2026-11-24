@@ -69,9 +69,16 @@ struct PlaybackScreen: View {
         }
         // On the always-dark plate the default tint is too dark in light mode (#3733); the tint is set on the button, never a container.
         .tint(AppColors.listeningAccent)
-        .accessibilityLabel("Library")
+        // "Back to Library", not "Library": the bottom row's Library button is on screen too, and a swipe-through heard
+        // "Library" twice (#5036). The bottom button keeps its visible word as its name.
+        .accessibilityLabel("Back to Library")
         .accessibilityHint("Leaves this screen. Playback keeps going.")
         .accessibilityIdentifier("playback.exit.button")
+    }
+
+    /// The first-Margin prompt is on screen: it is due and the Now pane, the only one that draws it, is showing (#5036).
+    private var firstMarginPromptIsInView: Bool {
+        model.isFirstMarginPromptShowing && selectedPane == .now
     }
 
     private var leadingControlPane: PlaybackLeadingControl.Pane {
@@ -318,6 +325,14 @@ struct PlaybackScreen: View {
         // (#3790). The card lives on that pane, so another pane showing never marks it.
         .onChange(of: model.friendListenState, initial: true) { _, _ in
             if selectedPane == .now { model.noteFriendListen() }
+        }
+        // The first-Margin prompt appears above the header while VoiceOver's focus is usually on the play controls: say so
+        // once when it comes into view, without moving focus (#5036). It is drawn only on the Now pane, so the moment it
+        // appears is "due and Now showing". `VoiceOverAnnouncements` decides; VoiceOver off makes the post silent.
+        .onChange(of: firstMarginPromptIsInView) { wasInView, isInView in
+            if let text = VoiceOverAnnouncements.firstMarginPrompt(wasShowing: wasInView, isShowing: isInView) {
+                AccessibilityNotification.Announcement(text).post()
+            }
         }
         .onChange(of: selectedPane) { _, pane in
             // Now's scroll view is built fresh each time, so a drag or overscroll from the last one is stale (#4816).

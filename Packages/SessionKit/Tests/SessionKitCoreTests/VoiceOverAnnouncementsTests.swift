@@ -125,4 +125,17 @@ final class VoiceOverAnnouncementsTests: XCTestCase {
         XCTAssertEqual(Set(titles).count, titles.count)
         XCTAssertFalse(titles.contains(where: \.isEmpty))
     }
+
+    // MARK: First-Margin prompt (#5036)
+
+    func testTheFirstMarginPromptIsAnnouncedWhenItAppears() {
+        XCTAssertEqual(VoiceOverAnnouncements.firstMarginPrompt(wasShowing: false, isShowing: true),
+                       "Add a Margin: say what you're thinking.")
+    }
+
+    func testTheFirstMarginPromptIsSilentOnEveryOtherChange() {
+        XCTAssertNil(VoiceOverAnnouncements.firstMarginPrompt(wasShowing: true, isShowing: true))
+        XCTAssertNil(VoiceOverAnnouncements.firstMarginPrompt(wasShowing: true, isShowing: false))
+        XCTAssertNil(VoiceOverAnnouncements.firstMarginPrompt(wasShowing: false, isShowing: false))
+    }
 }
