@@ -658,7 +658,9 @@ struct ExperienceTimelineRailScreen: View {
                 // The rail shows one session's Margins. A reply whose thread starts with a Margin that has no entry
                 // here (an earlier session's) has nothing to indent under: it stands at its own place, and still
                 // says what it answers.
-                if let rootPosition = place.rootPosition {
+                // A thread that starts with a Margin with no place (#4233) has no place to lend: a reply that has one stands
+                // at its own, so its corner and its "Captured at" line agree.
+                if let rootPosition = place.rootPosition, rootPosition != MarginPlacePresentation.timelineSortPosition {
                     threaded.depth = place.depth
                     threaded.position = rootPosition
                     // The sort key goes by the precise place first, so a reply takes its parent's exactly.
@@ -697,9 +699,14 @@ struct ExperienceTimelineRailScreen: View {
         guard !visited.contains(turn.id) else { return 100 }
         let visited = visited.union([turn.id])
         let sourceIDs = Set(turn.sourceInterjectionIds)
-        return item.interjections
+        let sources = item.interjections.filter { $0.sessionId == turn.sessionId && sourceIDs.contains($0.id) }
+        // A reflection on Margins that all have no place (#4233) sits with them, after every placed entry.
+        if !sources.isEmpty, sources.allSatisfy({ $0.targetType == .item && !$0.hasPlace }) {
+            return Double(MarginPlacePresentation.timelineSortPosition)
+        }
+        return sources
             // A source Margin with no place (#4233) says nothing about where the reflection belongs.
-            .filter { $0.sessionId == turn.sessionId && sourceIDs.contains($0.id) && ($0.targetType != .item || $0.hasPlace) }
+            .filter { $0.targetType != .item || $0.hasPlace }
             .map { margin in
                 if margin.targetType == .item {
                     return preciseSourcePosition(margin, in: item, durationMs: durationMs)

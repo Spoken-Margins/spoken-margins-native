@@ -58,6 +58,15 @@ public struct LiveSessionCollection {
         try Self.encoder.encode(session).write(to: url(for: session.id), options: .atomic)
     }
 
+    /// Every recording a stored live session names, saved sessions and `current.json` included (#4233 Design 2.9.3). A
+    /// Margin moved onto an item shares its recording with the live Margin it came from (and Undo puts that one back), so a
+    /// permanent delete keeps any file in this set, as it keeps one a surviving item Margin names. A session file that
+    /// doesn't read is skipped here as it is everywhere; `current.json` still covers the running session.
+    public func namedAudioPaths() -> Set<String> {
+        let sessions = loadAll() + [LiveSessionStore.load(from: root)].compactMap { $0 }
+        return Set(sessions.flatMap(\.margins).compactMap(\.audioPath))
+    }
+
     public func remove(id: String) {
         try? FileManager.default.removeItem(at: url(for: id))
     }

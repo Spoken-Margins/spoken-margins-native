@@ -18,7 +18,7 @@ These are compiled into or packaged with the app, and some are also stored in th
 
 Runs the voice models on the phone. ONNX Runtime's own third-party components (MIT, BSD, Apache-2.0, zlib, Boost, ISC, public domain and MPL-2.0 for Eigen) are listed in the second file. Built from a copy in the Spoken-Margins organization, because Microsoft's original repository (github.com/microsoft/onnxruntime-swift-package-manager) returned 404 on 2026-11-18 (#4512). The copy's tag 1.24.3 is upstream 1.24.2 with one change: its two ONNX Runtime 1.24.2 archives download from that copy's 1.24.3 release instead of download.onnxruntime.ai, whose certificate was first seen failing on 2026-11-21 (#4913). The archives are byte for byte the published ones; their checksums are unchanged.
 
-### ZIPFoundation 0.9.20
+### ZIPFoundation 0.9.21
 
 - Licence: MIT
 - From: Thomas Zoechling

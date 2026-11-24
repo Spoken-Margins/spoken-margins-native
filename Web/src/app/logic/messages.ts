@@ -10,7 +10,9 @@ import { SearchError } from '../../sources/search.ts';
 
 export const MESSAGES = Object.freeze({
   feedGone: 'Nothing is at that feed address any more. Check the address, or search for the show by name.',
-  feedRefused: 'That feed’s site refused to send it. Try again later, or search for the show by name.',
+  // The app's refused sentence (#4176): a paid show's private RSS link that lapsed is the case a fresh link fixes, and
+  // "try again later" covers a public feed that turns browsers away.
+  feedRefused: 'The feed turned this link down. Try again later, or for a paid show, copy a fresh RSS link from the creator’s page.',
   feedSiteError: 'That feed’s site isn’t answering properly right now. Try again later.',
   notAFeed: 'That address isn’t a podcast or Substack feed. Feed addresses often end in /feed or .rss.',
   tooLarge: 'That feed is too large for the web app to read.',

@@ -217,14 +217,15 @@ struct MarginExportShare {
 extension View {
     /// The share sheet for a Margin's export while `share` is set; closing it clears it and removes the files. One sheet
     /// carries both the note alone and the recording with the note, since two sheets on one view can drop each other.
-    func marginExportShareSheet(_ share: Binding<MarginExportShare?>) -> some View {
+    /// `onFinished` hears how the sheet ended: completed or not, which activity took the file, and any error (#5051).
+    func marginExportShareSheet(_ share: Binding<MarginExportShare?>, onFinished: @escaping (_ completed: Bool, _ activityType: String?, _ failed: Bool) -> Void = { _, _, _ in }) -> some View {
         trackedSheet(isPresented: Binding(get: { share.wrappedValue != nil }, set: {
             guard !$0 else { return }
             share.wrappedValue?.discard()
             share.wrappedValue = nil
         })) {
             if let current = share.wrappedValue {
-                SessionActivityView(activityItems: current.urls, onSuccessfulCompletion: {})
+                SessionActivityView(activityItems: current.urls, onSuccessfulCompletion: {}, onFinished: onFinished)
             }
         }
     }
@@ -346,10 +347,12 @@ private struct SessionActivityView: UIViewControllerRepresentable {
     @Environment(\.dismiss) private var dismiss
     let activityItems: [Any]
     let onSuccessfulCompletion: () -> Void
+    var onFinished: ((_ completed: Bool, _ activityType: String?, _ failed: Bool) -> Void)?
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
-        controller.completionWithItemsHandler = { _, completed, _, _ in
+        controller.completionWithItemsHandler = { activityType, completed, _, error in
+            onFinished?(completed, activityType?.rawValue, error != nil)
             if completed {
                 onSuccessfulCompletion()
             }

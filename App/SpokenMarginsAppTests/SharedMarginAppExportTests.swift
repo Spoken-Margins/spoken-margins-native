@@ -309,7 +309,8 @@ final class SharedMarginAppExportTests: XCTestCase {
         func share(_ name: String, setting lengths: [String: Int]) async throws -> [Int?] {
             model.prepareShareInterjections()
             for (id, ms) in lengths {
-                let index = try XCTUnwrap(model.sharingState.drafts.firstIndex { $0.interjection.id == id })
+                // The keys are drafts' own ids, which are session-scoped (`session::margin`) since #5144.
+                let index = try XCTUnwrap(model.sharingState.drafts.firstIndex { $0.id == id })
                 model.sharingState.drafts[index].leadInMs = ms
             }
             await model.exportSharedInterjections(presentsReadySheet: false)

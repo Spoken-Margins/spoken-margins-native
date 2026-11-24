@@ -302,12 +302,38 @@ class GuardsRunBeforeTheMacs(unittest.TestCase):
         self.assertEqual(self.jobs['guards']['name'], 'hosted fast: guards')
 
 
+class DeployWaitAlertStep(unittest.TestCase):
+    """#5255: a deploy waiting for the owner's approval gave him no alert (deploy-web sat `waiting` all of 2026-11-23).
+    owner-tap-alert.yml's scheduled run also runs scripts/deploy_wait_alert.py, as github-actions[bot]."""
+
+    def setUp(self):
+        self.document = parse(ROOT / '.github/workflows/owner-tap-alert.yml')
+        self.step = next((s for s in self.document['jobs']['alert']['steps']
+                          if 'deploy_wait_alert.py' in (s.get('run') or '')), None)
+
+    def test_step_exists_on_the_schedule_and_runs_the_script(self):
+        self.assertIsNotNone(self.step, 'owner-tap-alert.yml must run scripts/deploy_wait_alert.py')
+        self.assertIn("github.event_name == 'schedule'", self.step['if'])
+        self.assertNotIn('pull_request', self.step['if'])
+        self.assertTrue((ROOT / 'scripts/deploy_wait_alert.py').is_file())
+
+    def test_script_is_in_the_sparse_checkout(self):
+        checkout = self.document['jobs']['alert']['steps'][0]
+        self.assertIn('scripts/deploy_wait_alert.py', checkout['with']['sparse-checkout'].split())
+
+    def test_permissions_and_token_let_the_bot_read_runs_and_write_comments(self):
+        permissions = self.document['permissions']
+        self.assertEqual(permissions.get('actions'), 'read')
+        self.assertEqual(permissions.get('issues'), 'write')
+        self.assertEqual(self.step['env']['GH_TOKEN'].replace(' ', ''), '${{github.token}}')
+
+
 class ReadersUseTheAppBudget(unittest.TestCase):
     """#5217: GITHUB_TOKEN's 1,000 requests an hour for the repository ran out on 2026-11-23 and the last three main-t3
     runs failed on `commits/<sha>/statuses`. The readers that run in main's context mint the App token (its own, larger
     budget) with read-only permissions and fall back to GITHUB_TOKEN. merge-policy.yml runs on pull_request from PR
-    branches, which can't use the main-only environment, so it stays on GITHUB_TOKEN; claude-audit.yml already has its
-    own environment and stays too."""
+    branches, which can't use the main-only environment, so it stays on GITHUB_TOKEN; claude-audit.yml mints in its
+    own environment (ClaudeAuditReadsAsTheApp)."""
 
     CASES = {
         'main-t3.yml': ('decide', 'Decide'),
@@ -347,3 +373,35 @@ class ReadersUseTheAppBudget(unittest.TestCase):
         job = parse(ROOT / '.github/workflows/main-t3.yml')['jobs']['t3']
         self.assertEqual(job['env']['GH_TOKEN'], '${{ github.token }}')
         self.assertNotIn('environment', job)
+
+
+class ClaudeAuditReadsAsTheApp(unittest.TestCase):
+    """#5217: claude-audit read the API with GITHUB_TOKEN, whose 1,000 requests an hour for the repository ran out. It
+    mints the App token and reads with it; writes stay on GITHUB_TOKEN (SM_WRITE_TOKEN). Claude never gets either."""
+
+    def steps(self):
+        return parse(ROOT / '.github/workflows/claude-audit.yml')['jobs']['audit']['steps']
+
+    def test_the_audit_step_reads_as_the_app_and_writes_as_the_workflow(self):
+        steps = self.steps()
+        mint = next(i for i, s in enumerate(steps) if is_app_token_mint_only(s))
+        audit = next(i for i, s in enumerate(steps) if s.get('name') == 'Audit')
+        self.assertLess(mint, audit)
+        self.assertEqual(steps[mint].get('id'), 'app-token')
+        self.assertIs(steps[mint].get('continue-on-error'), True, 'a failed mint must fall back, not fail')
+        permissions = {k for k in steps[mint]['with'] if k.startswith('permission-')}
+        self.assertTrue(permissions, 'the App token must be narrowed')
+        for name in permissions:
+            self.assertEqual(steps[mint]['with'][name], 'read', f'{name}: the App token only reads')
+        env = steps[audit]['env']
+        self.assertEqual(env['GH_TOKEN'].replace(' ', ''), '${{steps.app-token.outputs.token||github.token}}')
+        self.assertEqual(env['SM_WRITE_TOKEN'].replace(' ', ''), '${{github.token}}')
+
+    def test_the_app_token_reaches_no_other_step(self):
+        for step in self.steps():
+            if step.get('name') != 'Audit':
+                self.assertNotIn('app-token', json.dumps(step.get('env', {})) + str(step.get('run', '')))
+
+    def test_the_job_keeps_its_environment(self):
+        self.assertEqual(parse(ROOT / '.github/workflows/claude-audit.yml')['jobs']['audit']['environment'],
+                         'claude-audit')

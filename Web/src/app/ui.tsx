@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useData } from './data.tsx';
 import { useRestoreFocus } from './focus.ts';
 import { NeedsRelayConsent } from './ports.ts';
+import { looksPrivateFeedLink, RELAY_PRIVATE_LINE, relayOnFirstRead, settingsAfterAnswer, whenBlocked } from './logic/relay-consent.ts';
 import { close, expired, pause, remainingMs, resume, start, toastMs } from './logic/toast-timer.ts';
 
 // The pop-up text for the feed relay (#2977, owner 2026-10-30: "you need to use a route through our
@@ -34,7 +35,8 @@ interface UiApi {
    * show, not an event, so it never depends on when it was raised. `onClose` is called when the listener closes it.
    */
   notice(key: string, text: string | undefined, onClose?: () => void): void;
-  askRelay(): Promise<boolean>;
+  /** Shows the consent pop-up; `privateLink` adds the line that names a private-looking link (#4176). */
+  askRelay(privateLink?: boolean): Promise<boolean>;
 }
 
 const UiContext = createContext<UiApi | null>(null);
@@ -42,7 +44,7 @@ const UiContext = createContext<UiApi | null>(null);
 export function UiProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [notices, setNotices] = useState<Record<string, { text: string; onClose?: () => void }>>({});
-  const [asking, setAsking] = useState<((yes: boolean) => void) | null>(null);
+  const [asking, setAsking] = useState<{ answer: (yes: boolean) => void; privateLink: boolean } | null>(null);
   const nextId = useRef(1);
 
   const dismiss = useCallback((id: number) => setToasts((list) => list.filter((t) => t.id !== id)), []);
@@ -68,7 +70,10 @@ export function UiProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const askRelay = useCallback(() => new Promise<boolean>((resolve) => setAsking(() => resolve)), []);
+  const askRelay = useCallback(
+    (privateLink = false) => new Promise<boolean>((resolve) => setAsking({ answer: resolve, privateLink })),
+    [],
+  );
 
   const api = useMemo(() => ({ toast, notice, askRelay }), [toast, notice, askRelay]);
   return (
@@ -122,8 +127,9 @@ export function UiProvider({ children }: { children: ReactNode }) {
       </div>
       {asking && (
         <RelayDialog
+          privateLink={asking.privateLink}
           onAnswer={(yes) => {
-            asking(yes);
+            asking.answer(yes);
             setAsking(null);
           }}
         />
@@ -188,7 +194,7 @@ function InfoToast({ text, action, onDone }: { text: string; action?: ToastActio
   );
 }
 
-function RelayDialog({ onAnswer }: { onAnswer: (yes: boolean) => void }) {
+function RelayDialog({ privateLink, onAnswer }: { privateLink: boolean; onAnswer: (yes: boolean) => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   useRestoreFocus();
   useEffect(() => {
@@ -199,6 +205,7 @@ function RelayDialog({ onAnswer }: { onAnswer: (yes: boolean) => void }) {
     <dialog ref={ref} className="dialog" aria-labelledby="relay-title" onCancel={() => onAnswer(false)}>
       <h2 id="relay-title">{RELAY_TITLE}</h2>
       <p>{RELAY_BODY}</p>
+      {privateLink && <p data-testid="relay-private-line">{RELAY_PRIVATE_LINE}</p>}
       <p className="muted">You can change this any time in Settings.</p>
       <div className="dialog-actions">
         <button type="button" className="button" onClick={() => onAnswer(false)}>
@@ -218,29 +225,36 @@ export function useUi(): UiApi {
   return api;
 }
 
-/** Runs a feed read, asking once for the relay when the browser can't read the feed itself. */
+/**
+ * Wraps a feed read so a feed the browser can't read asks the listener before anything goes through the server.
+ * `options.link` is the address being read: following a private-looking one (a paid show's RSS link) never sends it
+ * through the server without asking, even with the server on, and the pop-up names it (#4176, owner 2026-11-21).
+ * That named yes also covers the show's later refreshes (refresh.tsx), which use the standing server setting.
+ */
 export function useRelay() {
   const { settings, setSetting } = useData();
   const { askRelay } = useUi();
   return useCallback(
-    async <T,>(read: (relayAllowed: boolean) => Promise<T>): Promise<T> => {
+    async <T,>(read: (relayAllowed: boolean) => Promise<T>, options: { link?: string } = {}): Promise<T> => {
+      const privateLink = options.link !== undefined && looksPrivateFeedLink(options.link);
       try {
-        return await read(settings.relayAllowed);
+        return await read(relayOnFirstRead(settings, privateLink));
       } catch (error) {
         if (!(error instanceof NeedsRelayConsent)) throw error;
         // Offline, every feed read fails the way a refused one does. Asking about the server then would
         // be the wrong question, and a "Not now" would be remembered for good.
         if (!navigator.onLine) throw new Error('You’re offline. Connect to the internet and try again.');
-        if (settings.relayAsked) {
+        if (whenBlocked(settings) === 'off') {
           throw new Error('This feed needs our server to read it. Reading feeds through the server is off in Settings.');
         }
-        const yes = await askRelay();
-        await setSetting('relayAsked', true);
-        await setSetting('relayAllowed', yes);
+        const yes = await askRelay(privateLink);
+        const changes = settingsAfterAnswer(settings, yes);
+        if (changes.relayAsked !== undefined) await setSetting('relayAsked', changes.relayAsked);
+        if (changes.relayAllowed !== undefined) await setSetting('relayAllowed', changes.relayAllowed);
         if (!yes) throw new Error('Not followed. This feed can only be read through our server.');
         return read(true);
       }
     },
-    [settings.relayAllowed, settings.relayAsked, setSetting, askRelay],
+    [settings, setSetting, askRelay],
   );
 }

@@ -272,7 +272,12 @@ struct ExperienceMarginDetailView: View {
             .task(id: MarginTidyCardModel.key(for: current.interjection)) {
                 await tidy.refresh(for: current.interjection, using: model)
             }
-            .marginExportShareSheet($exportShare)
+            .marginExportShareSheet($exportShare) { completed, activityType, failed in
+                // Save to Files leaves nothing on screen; say it worked. A cancel or a failure says nothing here (#5051).
+                if let message = ExportSavedConfirmation.message(completed: completed, activityType: activityType, failed: failed) {
+                    model.reportConfirmation(message)
+                }
+            }
             .confirmationDialog("What do you want to export?", isPresented: $showsExportQuestion, titleVisibility: .visible) {
                 Button("Text only") { exportThisMargin(.textOnly) }
                     .accessibilityIdentifier("marginDetail.export.textOnly")

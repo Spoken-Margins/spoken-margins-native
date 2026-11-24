@@ -306,6 +306,9 @@ struct ExperienceAddSourceFlow: View {
                     }
                     .filledActionButton()
                     .disabled(model.sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isResolvingSourceLink)
+                    // The label is swapped for a bare spinner while the link resolves; the name sits on the Button so it
+                    // never goes blank for VoiceOver (#5036).
+                    .accessibilityLabel(model.isResolvingSourceLink ? "Adding to Library" : "Add to Library")
                     .accessibilityIdentifier("sourceLink.import.button")
                 }
                 SourceLinkImportStatusView()
