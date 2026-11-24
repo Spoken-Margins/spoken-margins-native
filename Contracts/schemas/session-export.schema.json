@@ -29,6 +29,39 @@
             "year": { "type": ["integer", "null"] },
             "title": { "type": ["string", "null"] }
           }
+        },
+        "sourceKind": { "type": ["string", "null"], "enum": ["spoken_note", null] },
+        "noteTranscript": {
+          "type": ["object", "null"],
+          "required": ["source"],
+          "properties": {
+            "source": { "enum": ["note", "last_playback"] },
+            "recordingCount": { "type": ["integer", "null"], "minimum": 0 },
+            "recordingsWithWords": { "type": ["integer", "null"], "minimum": 0 },
+            "complete": { "type": ["boolean", "null"] },
+            "recordings": {
+              "type": ["array", "null"],
+              "items": {
+                "type": "object",
+                "required": ["number", "hasWords", "sentences"],
+                "properties": {
+                  "number": { "type": "integer", "minimum": 1 },
+                  "hasWords": { "type": "boolean" },
+                  "sentences": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["text"],
+                      "properties": {
+                        "segmentId": { "type": ["string", "null"] },
+                        "text": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -72,7 +105,8 @@
           "audioPath": { "type": ["string", "null"] },
           "captureKind": { "type": ["string", "null"], "enum": ["audio", "written", null] },
           "page": { "type": ["integer", "null"], "minimum": 1 },
-          "sourceCharOffset": { "type": ["integer", "null"], "minimum": 0 }
+          "sourceCharOffset": { "type": ["integer", "null"], "minimum": 0 },
+          "sourceSegmentId": { "type": ["string", "null"] }
         }
       }
     }
