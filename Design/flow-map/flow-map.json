@@ -1,5 +1,5 @@
 {
- "commit": "32173207",
+ "commit": "6042edce",
  "start": "ExperienceLibraryScreen",
  "groups": [
   "Library",
@@ -8,7 +8,11 @@
   "Now Playing",
   "Settings",
   "Sharing",
-  "Outside the app"
+  "Outside the app",
+  "Messages",
+  "Browser listener",
+  "Website",
+  "TestFlight"
  ],
  "assumptions": [
   "The app opens on the Library tab.",
@@ -33,7 +37,13 @@
    "file": "ExperienceLibraryScreen.swift",
    "line": 4,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   }
   },
   {
    "id": "ExperienceSourcesScreen",
@@ -43,7 +53,16 @@
    "file": "ExperienceSourcesScreen.swift",
    "line": 4,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   },
+   "rulings": [
+    "r01"
+   ]
   },
   {
    "id": "ExperienceMarginsScreen",
@@ -53,7 +72,13 @@
    "file": "ExperienceMarginsScreen.swift",
    "line": 5,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   }
   },
   {
    "id": "FollowSheet",
@@ -63,7 +88,8 @@
    "file": "FollowSheet.swift",
    "line": 1,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "CatalogDrawerView",
@@ -73,7 +99,13 @@
    "file": "CatalogDrawer.swift",
    "line": 261,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   }
   },
   {
    "id": "OPMLImportScreen",
@@ -83,7 +115,8 @@
    "file": "OPMLImportScreen.swift",
    "line": 147,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "ReadLaterScreen",
@@ -93,7 +126,8 @@
    "file": "PKMSettingsViews.swift",
    "line": 274,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "ListeningEditionImportScreen",
@@ -103,7 +137,8 @@
    "file": "PKMSettingsViews.swift",
    "line": 197,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "SettingsScreen",
@@ -113,7 +148,8 @@
    "file": "SettingsScreen.swift",
    "line": 8,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "MarginOutputDestinationScreen",
@@ -123,7 +159,8 @@
    "file": "PKMSettingsViews.swift",
    "line": 111,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "SupertonicLegalView",
@@ -133,7 +170,8 @@
    "file": "SupertonicLegalView.swift",
    "line": 3,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "BundledLicenseDocumentView",
@@ -143,7 +181,8 @@
    "file": "SupertonicLegalView.swift",
    "line": 72,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "SpokenMarginsTermsView",
@@ -153,7 +192,8 @@
    "file": "SpokenMarginsTermsView.swift",
    "line": 3,
    "reachable": true,
-   "note": "Pushed from Settings, and also shown as a sheet before first playback (Gate1RootView.swift:77)."
+   "note": "Pushed from Settings, and also shown as a sheet before first playback (Gate1RootView.swift:77).",
+   "surface": "app"
   },
   {
    "id": "OpenSourceLicensesView",
@@ -163,7 +203,8 @@
    "file": "OpenSourceLicensesView.swift",
    "line": 5,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "OpenSourceLicenseDocumentView",
@@ -173,7 +214,8 @@
    "file": "OpenSourceLicensesView.swift",
    "line": 85,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "ExperienceStorageScreen",
@@ -183,7 +225,8 @@
    "file": "ExperienceStorageScreen.swift",
    "line": 4,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "ExperienceAudioPreparationQueueScreen",
@@ -193,7 +236,8 @@
    "file": "ExperienceAudioPreparationQueueScreen.swift",
    "line": 4,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "HelpScreen",
@@ -203,7 +247,8 @@
    "file": "HelpScreen.swift",
    "line": 4,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "AIDataSharingConsentView",
@@ -213,7 +258,8 @@
    "file": "Gate1RootView.swift",
    "line": 181,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "ExperienceAddSourceFlow",
@@ -223,7 +269,13 @@
    "file": "ExperienceAddSourceFlow.swift",
    "line": 8,
    "reachable": true,
-   "note": "The tile grid: Link or Podcast, Find a Podcast, Paste Text, Import from Files, Quick Folder, Live Session. All six fit at the large detent without scrolling (#3217). Pages are in-sheet content swaps, not pushes."
+   "note": "The tile grid: Link or Podcast, Find a Podcast, Paste Text, Import from Files, Quick Folder, Live Session. All six fit at the large detent without scrolling (#3217). Pages are in-sheet content swaps, not pushes.",
+   "surface": "app",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   }
   },
   {
    "id": "AddSource.link",
@@ -233,7 +285,8 @@
    "file": "ExperienceAddSourceFlow.swift",
    "line": 8,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "AddSource.text",
@@ -243,7 +296,8 @@
    "file": "ExperienceAddSourceFlow.swift",
    "line": 8,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "AddSource.quickFolder",
@@ -253,7 +307,8 @@
    "file": "ExperienceAddSourceFlow.swift",
    "line": 8,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "ExperienceItemDetailScreen",
@@ -263,7 +318,21 @@
    "file": "ExperienceItemDetailScreen.swift",
    "line": 5,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   },
+   "rulings": [
+    "r01",
+    "r07",
+    "r09",
+    "r12",
+    "r16",
+    "r19"
+   ]
   },
   {
    "id": "ItemCollectionSheet",
@@ -273,7 +342,8 @@
    "file": "ItemCollectionSheet.swift",
    "line": 7,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "ExperienceReactionsScreen",
@@ -283,7 +353,8 @@
    "file": "ExperienceReactionsScreen.swift",
    "line": 141,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "PlaybackScreen",
@@ -293,7 +364,27 @@
    "file": "PlaybackScreen.swift",
    "line": 41,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   },
+   "rulings": [
+    "r06",
+    "r07",
+    "r09",
+    "r11",
+    "r13",
+    "r14",
+    "r15",
+    "r16",
+    "r17",
+    "r22",
+    "r27",
+    "r31"
+   ]
   },
   {
    "id": "PlaybackScreen.listeningOptions",
@@ -303,7 +394,8 @@
    "file": "PlaybackScreen.swift",
    "line": 190,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "NativeTextPeekView",
@@ -313,7 +405,8 @@
    "file": "PlaybackNativeTextPeekView.swift",
    "line": 6,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "PastedAssistantResponseView",
@@ -323,7 +416,8 @@
    "file": "PlaybackScreen.swift",
    "line": 1750,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "ExperienceTimelineRailScreen",
@@ -333,7 +427,13 @@
    "file": "ExperienceTimelineRailScreen.swift",
    "line": 4,
    "reachable": true,
-   "note": "Also shown as the Timeline pane inside Now Playing."
+   "note": "Also shown as the Timeline pane inside Now Playing.",
+   "surface": "app",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   }
   },
   {
    "id": "PlaybackTimelineSourceView",
@@ -343,7 +443,8 @@
    "file": "PlaybackTimelineSourceView.swift",
    "line": 5,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "ExperienceRecordingView",
@@ -353,7 +454,16 @@
    "file": "ExperienceRecordingScreen.swift",
    "line": 4,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   },
+   "rulings": [
+    "r06"
+   ]
   },
   {
    "id": "ExperienceWrittenMarginScreen",
@@ -363,7 +473,13 @@
    "file": "ExperienceWrittenMarginScreen.swift",
    "line": 4,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   }
   },
   {
    "id": "ExperienceMarginDetailView",
@@ -373,7 +489,13 @@
    "file": "ExperienceMarginDetailView.swift",
    "line": 5,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   }
   },
   {
    "id": "SharedMarginDetailView",
@@ -383,7 +505,13 @@
    "file": "ExperienceMarginsScreen.swift",
    "line": 397,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   }
   },
   {
    "id": "InterjectionDetailView",
@@ -393,7 +521,8 @@
    "file": "Gate1RootView.swift",
    "line": 309,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "ExportScreen",
@@ -403,7 +532,8 @@
    "file": "ExportScreen.swift",
    "line": 9,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "BatchExportScreen",
@@ -413,7 +543,8 @@
    "file": "BatchExportScreen.swift",
    "line": 8,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "app"
   },
   {
    "id": "Build23SenderSharingExperience",
@@ -423,7 +554,24 @@
    "file": "Build23SenderSharingExperience.swift",
    "line": 6,
    "reachable": true,
-   "note": "Select, review and recipient-preview stages are one sheet; stage changes are not separate screens."
+   "note": "Select, review and recipient-preview stages are one sheet; stage changes are not separate screens.",
+   "surface": "app",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   },
+   "rulings": [
+    "r03",
+    "r04",
+    "r08",
+    "r14",
+    "r19",
+    "r23",
+    "r25",
+    "r29",
+    "r30"
+   ]
   },
   {
    "id": "Build23RecipientSharingExperience",
@@ -433,7 +581,13 @@
    "file": "Build23RecipientSharingExperience.swift",
    "line": 43,
    "reachable": false,
-   "note": "Opens only from outside the app (a packet file, a share link, a packet the share extension queued), or a DEBUG-only button."
+   "note": "Opens only from outside the app (a packet file, a share link, a packet the share extension queued), or a DEBUG-only button.",
+   "surface": "app",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   }
   },
   {
    "id": "FILES",
@@ -443,7 +597,8 @@
    "file": null,
    "line": null,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "system"
   },
   {
    "id": "SHARE_SHEET",
@@ -453,7 +608,13 @@
    "file": null,
    "line": null,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "system",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured: an iOS or browser surface the J12 script and the browser run stop short of."
+   }
   },
   {
    "id": "SAFARI",
@@ -463,7 +624,13 @@
    "file": null,
    "line": null,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "system",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured: an iOS or browser surface the J12 script and the browser run stop short of."
+   }
   },
   {
    "id": "SETTINGS_APP",
@@ -473,7 +640,8 @@
    "file": null,
    "line": null,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "system"
   },
   {
    "id": "NOTIFICATION_PROMPT",
@@ -483,7 +651,8 @@
    "file": null,
    "line": null,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "system"
   },
   {
    "id": "OUTSIDE_APP",
@@ -493,7 +662,8 @@
    "file": null,
    "line": null,
    "reachable": true,
-   "note": ""
+   "note": "",
+   "surface": "system"
   },
   {
    "id": "ImportInboxScreen",
@@ -503,7 +673,575 @@
    "file": "ImportInboxScreen.swift",
    "line": 37,
    "reachable": true,
-   "note": "Failed shares with Retry and Delete, and links waiting for a connection (#4781)."
+   "note": "Failed shares with Retry and Delete, and links waiting for a connection (#4781).",
+   "surface": "app"
+  },
+  {
+   "id": "FollowingFriendItemsScreen",
+   "title": "<friend's name> (their items)",
+   "group": "Following",
+   "kind": "screen",
+   "surface": "app",
+   "file": "FollowingFriendRows.swift",
+   "line": 75,
+   "reachable": true,
+   "note": "Pushed from a Following friend row when the friend sent Margins on more than one item (ExperienceSourcesScreen.swift:283, :315). navigationTitle(friend.name), id sources.friend.screen.",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   },
+   "rulings": [
+    "r01"
+   ]
+  },
+  {
+   "id": "PacketOpenFailureSheet",
+   "title": "Couldn't open the friend's file or link",
+   "group": "Sharing",
+   "kind": "sheet",
+   "surface": "app",
+   "file": "PacketOpenFailureSheet.swift",
+   "line": 7,
+   "reachable": true,
+   "note": "Headline from PacketOpenFailureSheetContent; id packetOpenFailure.sheet. Hosted on the root (PacketOpenFailureSheet.swift:101, applied at CatalogDrawer.swift:899) or inside the first-launch drawer (:121, applied at CatalogDrawer.swift:515). Try again / Close / OK / Report.",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured yet: the J12 scripted journey (flowMapCapture) takes it on a test simulator at the next phone-build cut."
+   }
+  },
+  {
+   "id": "MSG_LINK_BUBBLE",
+   "title": "Messages: the sender's share link",
+   "group": "Messages",
+   "kind": "screen",
+   "surface": "messages",
+   "file": "Packages/SessionKit/Sources/SessionKit/ShareLinkMessage.swift",
+   "line": 11,
+   "reachable": true,
+   "note": "The bubble is one text: 'I left you a voice note on a podcast. Tap the link, then Play. It works in your browser, nothing to install.', a blank line, then https://spokenmargins.proximitytoprogress.com/l/<32 hex>#<key>. The app builds the link on ProductServer.productionHost (ProductServer.swift:15, the old host; ShareLinkUpload.swift:322), not spokenmargins.com. Preview card: the server page carries only <title>Shared Margins — Spoken Margins</title>, no og:title, og:description or og:image (preview.go:46), and the #key never reaches the server, so the card is generic. Inference, not checked on a device: Messages shows 'Shared Margins — Spoken Margins' with the host and no picture. Sent from the app's ShareLinkActivityView (ShareLinkSender.swift:859); an item with no web page adds the .spokenmargins file to the same message.",
+   "anchor": "public static let sentence = \"I left you a voice note on a podcast.",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured: Messages needs a person on a device; no simulator script or browser can draw it."
+   },
+   "rulings": [
+    "r05"
+   ]
+  },
+  {
+   "id": "MSG_FILE_BUBBLE",
+   "title": "Messages: a .spokenmargins file (the friend's replies)",
+   "group": "Messages",
+   "kind": "screen",
+   "surface": "messages",
+   "file": null,
+   "line": null,
+   "reachable": true,
+   "note": "How replies come back from the browser: a file attachment (application/vnd.spokenmargins.package+zip), sent through the browser's share sheet or saved and attached by hand. The web app cannot make a link (receive-only, Web/README.md, #3542). No code in the repo draws this bubble.",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured: Messages needs a person on a device; no simulator script or browser can draw it."
+   }
+  },
+  {
+   "id": "MSG_JOIN_BUBBLE",
+   "title": "Messages: the join link (beta invite)",
+   "group": "Messages",
+   "kind": "screen",
+   "surface": "messages",
+   "file": "Packages/SessionKit/Sources/SessionKit/BetaInviteShare.swift",
+   "line": 14,
+   "reachable": true,
+   "note": "Sent from Settings > Share beta instructions (SettingsScreen.swift:660). The only link is https://spokenmargins.com/join; its card comes from the join page's Open Graph tags: 'Try Spoken Margins', 'Get TestFlight, then tap the invite again.', card.png (Site/join/index.html:7).",
+   "anchor": "public static let joinURL = \"https://spokenmargins.com/join\"",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured: Messages needs a person on a device; no simulator script or browser can draw it."
+   }
+  },
+  {
+   "id": "LINK_SERVER_PAGE",
+   "title": "Shared Margins (link server page, hands off at once)",
+   "group": "Website",
+   "kind": "page",
+   "surface": "site",
+   "file": "research/B4/server/internal/links/preview.go",
+   "line": 46,
+   "reachable": true,
+   "note": "smserver's /l/<id> page on spokenmargins.com and the legacy host (research/B4/deploy/caddy-site.caddy, caddy-legacy-site.caddy). Production runs with -links-web-url https://app.spokenmargins.com (smserver.service:41), so with JavaScript on the page script replaces the address with the web app's /l/<id>#<key> before a friend can read it. Without JavaScript it stays: 'Shared Margins', 'Turn on JavaScript to read these Margins…', 'Get Spoken Margins' (to /join/), 'Report this link'.",
+   "anchor": "<title>Shared Margins — Spoken Margins</title>",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/LINK_SERVER_PAGE.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   },
+   "rulings": [
+    "r05",
+    "r20"
+   ]
+  },
+  {
+   "id": "LINK_SERVER_UNAVAILABLE",
+   "title": "This link isn't available (server page)",
+   "group": "Website",
+   "kind": "page",
+   "surface": "site",
+   "file": "research/B4/server/internal/links/preview.go",
+   "line": 104,
+   "reachable": true,
+   "note": "Expired, removed or unknown: 'This link isn't available. It may have expired, or been removed. Ask your friend to share it again.' Links switched off: 'Shared links are paused'. Server error: 'Something went wrong'. The server answers this instead of the shell (api/links.go:203-216), so the web app never loads. 'Get Spoken Margins' shows unless the browser says it is Android.",
+   "anchor": "<title>{{.Heading}} — Spoken Margins</title>",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/LINK_SERVER_UNAVAILABLE.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   }
+  },
+  {
+   "id": "LINK_SERVER_REPORT",
+   "title": "Report this link (server page, form open)",
+   "group": "Website",
+   "kind": "page",
+   "surface": "site",
+   "file": "research/B4/server/internal/links/preview.go",
+   "line": 52,
+   "reachable": true,
+   "note": "The same server page with ?report: the report form opens and the page does not hand off (share-link-page.mjs:74, :127).",
+   "anchor": "<details id=\"report\"><summary>Report this link</summary>",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/LINK_SERVER_REPORT.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   }
+  },
+  {
+   "id": "WebArrivalOpening",
+   "title": "Opening the Margins…",
+   "group": "Browser listener",
+   "kind": "screen",
+   "surface": "web",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 220,
+   "reachable": true,
+   "note": "First web screen at https://app.spokenmargins.com/l/<id>#<key> (caddy-web.caddy rewrites to link.html; launch-link.ts reads the key, then clears it from the address). Shown while the sealed packet downloads and opens in the browser.",
+   "anchor": "aria-label=\"Opening the Margins\"",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/WebArrivalOpening.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   }
+  },
+  {
+   "id": "WebArrivalFailed",
+   "title": "Link failed (one sentence)",
+   "group": "Browser listener",
+   "kind": "screen",
+   "surface": "web",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 234,
+   "reachable": true,
+   "note": "One sentence per cause (logic/arrival.ts:157-163): 'This link is cut off. Copy the whole link from the message and open it again.', 'This link has expired…', 'Links are switched off for now. Ask your friend to send the Margins as a file.', offline, server, unreadable. Only the cut-off case offers 'Report this link'. No 'Get the app' link here.",
+   "anchor": "data-testid=\"arrival-failed\"",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/WebArrivalFailed.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   }
+  },
+  {
+   "id": "WebArrivalPreview",
+   "title": "From <sender>: the arrival preview",
+   "group": "Browser listener",
+   "kind": "screen",
+   "surface": "web",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 285,
+   "reachable": true,
+   "note": "A packet with timed Margins: 'From Cole', the episode title, show and minutes, 'Welcome. Cole left these Margins for you.', the count line, the one-time 'A Margin is a note…' explanation, a row per Margin with 'Start with this Margin', pinned 'Start with unheard Margins' and 'Start from the beginning', and a footer with the expiry, 'Report this link' and 'Get Spoken Margins for iPhone'.",
+   "anchor": "className=\"arrival arrival-preview\"",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/WebArrivalPreview.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   },
+   "rulings": [
+    "r02",
+    "r10",
+    "r12",
+    "r20",
+    "r26"
+   ]
+  },
+  {
+   "id": "WebArrivalSimple",
+   "title": "From <sender>: one Play (article, no audio, or no Margins)",
+   "group": "Browser listener",
+   "kind": "screen",
+   "surface": "web",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 347,
+   "reachable": true,
+   "note": "The same front door without the Margin list. A Substack post: one 'Play' (its voice is looked up on the tap). An article on an ordinary site: 'Open the article' and 'Open Spoken Margins'. An episode with no audio address: 'Keep Cole's Margins'. Footer as the preview.",
+   "anchor": "<div className=\"arrival\" role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"arrival-title\" data-testid=\"arrival\">",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/WebArrivalSimple.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   },
+   "rulings": [
+    "r10",
+    "r20"
+   ]
+  },
+  {
+   "id": "WebNowPlaying",
+   "title": "Now Playing: Now tab",
+   "group": "Browser listener",
+   "kind": "screen",
+   "surface": "web",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 391,
+   "reachable": true,
+   "note": "Scrubber with Margin ticks, transport, the countdown card to the sender's next Margin with 'Skip to just before Cole' and 'Skip to Cole now' (MarginCue), the playing Margin's card (ArrivedMargin: 'Cole wrote this', 'Skip this Margin'), 'Write a Margin' and 'Record a Margin', 'Margins in this episode' with 'Reply' on each friend's row, and the Share panel at the end.",
+   "anchor": "<div className=\"np-body\" id=\"np-panel\" role=\"tabpanel\" aria-labelledby=\"np-tab-now\">",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/WebNowPlaying.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   },
+   "rulings": [
+    "r02",
+    "r22"
+   ]
+  },
+  {
+   "id": "WebNowPlayingMargins",
+   "title": "Now Playing: Margins tab",
+   "group": "Browser listener",
+   "kind": "screen",
+   "surface": "web",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 359,
+   "reachable": true,
+   "note": "Where a friend's unheard Margins open Now Playing (asserted at link-arrival.spec.ts:106). The Margins control list (Jump to this Margin, autoplay menu 'Play Margins by themselves'), the Next Margin pill and 'All Margins and export'.",
+   "anchor": "<div className=\"np-body np-body-margins\" id=\"np-panel\"",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/WebNowPlayingMargins.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   }
+  },
+  {
+   "id": "WebWriteMargin",
+   "title": "Write a Margin (composer, in place)",
+   "group": "Browser listener",
+   "kind": "sheet",
+   "surface": "web",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 824,
+   "reachable": true,
+   "note": "Opens in place on the Now tab. Answering a friend's Margin, its first row says whom it answers ('↩ Reply to Cole's Margin…') with × to make it independent. 'Cancel', 'Save Margin'.",
+   "anchor": "<label htmlFor=\"margin-text\">Your Margin at {formatClock(at)}</label>",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/WebWriteMargin.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   }
+  },
+  {
+   "id": "WebRecordMargin",
+   "title": "Record a Margin (composer, in place)",
+   "group": "Browser listener",
+   "kind": "sheet",
+   "surface": "web",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 1218,
+   "reachable": true,
+   "note": "Microphone recording in place: 'Cancel', 'Stop and save', 'Write it instead'; after Stop, a words box (placeholder words, optional on-device transcript) and 'Done'. Record stops the friend's clip first so the microphone doesn't hear it.",
+   "anchor": "Your Margin goes at {formatClock(at)} in the episode. Stop saves it.",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/WebRecordMargin.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   }
+  },
+  {
+   "id": "WebShareMargins",
+   "title": "Share your Margins / Share replies with <friend> (Share panel)",
+   "group": "Browser listener",
+   "kind": "panel",
+   "surface": "web",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 651,
+   "reachable": true,
+   "note": "At the end of the Now tab, under 'Margins in this episode' (only once the episode has a Margin). Legend 'Share replies with Cole' (or 'Share your Margins with Cole', or 'Share Margins' with no friend), ticked rows tagged 'Reply' or 'Starred', 'Select all'/'Select none', 'Your name (optional)', 'Share them as a file. Your friend opens it in Spoken Margins and hears each one at its moment.', 'Save as a file' and, where the browser can share files, 'Send'.",
+   "anchor": "<legend>{offer ? offer.title : 'Share Margins'}</legend>",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/WebShareMargins.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   },
+   "rulings": [
+    "r18",
+    "r21"
+   ]
+  },
+  {
+   "id": "WebAppInvite",
+   "title": "Get the iPhone app (one-time card)",
+   "group": "Browser listener",
+   "kind": "panel",
+   "surface": "web",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 729,
+   "reachable": true,
+   "note": "Shown once per browser, right after the first reply leaves (logic/app-invite.ts:56). 'Get the iPhone app', 'Get Spoken Margins for iPhone', 'After installing, tap your friend's link again to open it in the app.', the backup note, and × ('Not now').",
+   "anchor": "<section className=\"app-invite\" aria-labelledby=\"app-invite-heading\">",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/WebAppInvite.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   }
+  },
+  {
+   "id": "WebLibrary",
+   "title": "Web Library tab",
+   "group": "Browser listener",
+   "kind": "screen",
+   "surface": "web",
+   "file": "Web/src/app/screens/Library.tsx",
+   "line": 17,
+   "reachable": true,
+   "note": "Where the web app rests after closing Now Playing, after 'Keep Cole's Margins' or 'Open Spoken Margins', and on a visit with no link. The friend's episode is in it, added under its sender.",
+   "anchor": "export function Library(",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/WebLibrary.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   }
+  },
+  {
+   "id": "WebMarginsTab",
+   "title": "Web Margins tab (Open a link, Open a Margin file)",
+   "group": "Browser listener",
+   "kind": "screen",
+   "surface": "web",
+   "file": "Web/src/app/screens/Margins.tsx",
+   "line": 47,
+   "reachable": true,
+   "note": "Every episode's Margins. 'Open a link' takes a pasted share link and opens it straight into Now Playing (no arrival page); 'Open a Margin file' opens a .spokenmargins file.",
+   "anchor": "<h1 id=\"margins-title\" tabIndex={-1}>",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/WebMarginsTab.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   }
+  },
+  {
+   "id": "BROWSER_SHARE_SHEET",
+   "title": "The browser's share sheet (iOS / Android)",
+   "group": "Outside the app",
+   "kind": "system",
+   "surface": "system",
+   "file": null,
+   "line": null,
+   "reachable": true,
+   "note": "Opened by 'Send' through navigator.share with the file. The friend picks Messages (or Mail, WhatsApp…). A browser that refuses it (Chrome on Android after a slow write, #4095) loses 'Send' and gets 'This browser wouldn't open its share sheet. Tap Save as a file, then send the file to Cole in a message.'",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured: an iOS or browser surface the J12 script and the browser run stop short of."
+   }
+  },
+  {
+   "id": "BROWSER_DOWNLOAD",
+   "title": "Downloaded file (Downloads / Files)",
+   "group": "Outside the app",
+   "kind": "system",
+   "surface": "system",
+   "file": null,
+   "line": null,
+   "reachable": true,
+   "note": "'Save as a file' downloads <title>.spokenmargins. The toast adds 'Send this file to Cole in a message.' The friend must attach it in Messages by hand.",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured: an iOS or browser surface the J12 script and the browser run stop short of."
+   }
+  },
+  {
+   "id": "SOURCE_PAGE",
+   "title": "The article's own web page (new tab)",
+   "group": "Outside the app",
+   "kind": "screen",
+   "surface": "system",
+   "file": null,
+   "line": null,
+   "reachable": true,
+   "note": "From 'Open the article' on an article packet the browser can't play.",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured: an iOS or browser surface the J12 script and the browser run stop short of."
+   }
+  },
+  {
+   "id": "JOIN_PAGE",
+   "title": "Try Spoken Margins (join page)",
+   "group": "Website",
+   "kind": "page",
+   "surface": "site",
+   "file": "Site/join/index.html",
+   "line": 39,
+   "reachable": true,
+   "note": "https://spokenmargins.com/join (Site/join/index.html). 'Get TestFlight. Then tap again.', 'No iPhone or iPad? Use Spoken Margins in your browser.', step 1 'Get TestFlight', step 2 (highlighted orange) 'Open Spoken Margins in TestFlight', step 3 'Tap Install'. Notes for 'Redeem' and 'beta is full'. Has Open Graph tags (line 7).",
+   "anchor": "<h1>Try Spoken Margins</h1>",
+   "sharing": true,
+   "capture": {
+    "status": "pass",
+    "file": "captures/JOIN_PAGE.jpg",
+    "commit": "6042edce",
+    "run": "Headless browser run (WebKit, 390x844, fixtures and local stub servers): npm run capture:flow-map in Web/",
+    "taken": "2026-11-24"
+   },
+   "rulings": [
+    "r24",
+    "r26",
+    "r28"
+   ]
+  },
+  {
+   "id": "APPSTORE_TESTFLIGHT",
+   "title": "App Store: TestFlight",
+   "group": "TestFlight",
+   "kind": "screen",
+   "surface": "testflight",
+   "file": null,
+   "line": null,
+   "reachable": true,
+   "note": "https://apps.apple.com/app/testflight/id899247664. Apple's page: Get, then Open. TestFlight then shows nothing about Spoken Margins until the friend goes back to the join page (the page's own warning, step 2).",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured: TestFlight and the App Store need a person on a device."
+   }
+  },
+  {
+   "id": "TESTFLIGHT_JOIN_WEB",
+   "title": "testflight.apple.com/join page in Safari",
+   "group": "TestFlight",
+   "kind": "screen",
+   "surface": "testflight",
+   "file": null,
+   "line": null,
+   "reachable": true,
+   "note": "https://testflight.apple.com/join/aXR7DWDA when TestFlight is not installed. Apple's page, labels not in the repo (inference: it says to install TestFlight first and offers the App Store).",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured: TestFlight and the App Store need a person on a device."
+   }
+  },
+  {
+   "id": "TESTFLIGHT_INVITE",
+   "title": "TestFlight: Spoken Margins invitation",
+   "group": "TestFlight",
+   "kind": "screen",
+   "surface": "testflight",
+   "file": null,
+   "line": null,
+   "reachable": true,
+   "note": "TestFlight opened by the join link. The join page tells the friend to tap Accept, then Install. If the beta is full, the join page says to listen from the friend's link instead.",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured: TestFlight and the App Store need a person on a device."
+   },
+   "rulings": [
+    "r24"
+   ]
+  },
+  {
+   "id": "TESTFLIGHT_REDEEM",
+   "title": "TestFlight: Redeem code screen",
+   "group": "TestFlight",
+   "kind": "screen",
+   "surface": "testflight",
+   "file": null,
+   "line": null,
+   "reachable": true,
+   "note": "What a friend meets opening TestFlight without the join link. The join page: 'Seeing a \"Redeem\" screen? You do not need a code. Come back to this page and tap step 2.'",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured: TestFlight and the App Store need a person on a device."
+   }
+  },
+  {
+   "id": "TESTFLIGHT_INSTALL",
+   "title": "TestFlight: Install, then Open",
+   "group": "TestFlight",
+   "kind": "screen",
+   "surface": "testflight",
+   "file": null,
+   "line": null,
+   "reachable": true,
+   "note": "After Accept: Install, then Open. Opening the app is a first launch (Terms of Use and first-run steps, J11), not the friend's Margins: they must tap the link again (WebAppInvite says so; the join page does not).",
+   "sharing": true,
+   "capture": {
+    "status": "pending",
+    "why": "Not captured: TestFlight and the App Store need a person on a device."
+   }
   }
  ],
  "edges": [
@@ -1135,7 +1873,8 @@
    "anchor": "sourceRequest = request",
    "present_line": 156,
    "condition": "",
-   "notes": "The control lives in Build23RecipientSharingExperience (not in this file set); its callback sets sourceRequest. Initial route: podcast/other->linkOrPodcast, text->pastedText, pdf/epub->importFromFiles (Gate1RootView.swift:167). On dismiss the import resumes. Opens on the page for the missing source type, not the type picker."
+   "notes": "The control lives in Build23RecipientSharingExperience (not in this file set); its callback sets sourceRequest. Initial route: podcast/other->linkOrPodcast, text->pastedText, pdf/epub->importFromFiles (Gate1RootView.swift:167). On dismiss the import resumes. Opens on the page for the missing source type, not the type picker.",
+   "sharing": true
   },
   {
    "id": "e050",
@@ -1149,7 +1888,8 @@
    "anchor": "Button(\"Create recipient test session\"",
    "present_line": null,
    "condition": "DEBUG build and coordinator.verifiedShareFileURL != nil",
-   "notes": "Uncertain: inferred that createRecipientTestSessionFromLastSharedPackage stages a package import review, which drives the .sheet(item: $model.spokenMarginsPackageImportReview) at Gate1RootView.swift:99. Not verified in the model."
+   "notes": "Uncertain: inferred that createRecipientTestSessionFromLastSharedPackage stages a package import review, which drives the .sheet(item: $model.spokenMarginsPackageImportReview) at Gate1RootView.swift:99. Not verified in the model.",
+   "sharing": true
   },
   {
    "id": "e052",
@@ -2031,7 +2771,12 @@
    "anchor": "MarginAddButtons(record: model.beginInterjection,",
    "present_line": null,
    "condition": "Hidden while returning from skim or imported commentary; disabled without active session",
-   "notes": "beginInterjection starts recording; Gate1RootView swaps body to ExperienceRecordingView while snapshot.isRecording or isRequestingRecordingPermission (root swap)."
+   "notes": "beginInterjection starts recording; Gate1RootView swaps body to ExperienceRecordingView while snapshot.isRecording or isRequestingRecordingPermission (root swap).",
+   "sharing": true,
+   "rulings": [
+    "r06",
+    "r13"
+   ]
   },
   {
    "id": "e119",
@@ -2045,7 +2790,8 @@
    "anchor": "write: model.beginWrittenMargin,",
    "present_line": null,
    "condition": "Same as Add a Margin",
-   "notes": "Root swap in Gate1RootView when writtenMarginDraft != nil."
+   "notes": "Root swap in Gate1RootView when writtenMarginDraft != nil.",
+   "sharing": true
   },
   {
    "id": "e120",
@@ -2059,7 +2805,12 @@
    "anchor": "Button(action: model.openPlaybackShare) {",
    "present_line": null,
    "condition": "Session finished",
-   "notes": "openExport sets screen = .export -> ExportScreen (root swap). Retargeted 2026-11-24 (#5280): Dock Share now calls openPlaybackShare -> openMarginItemExport/openReplyBackExport, the Share Margins sheet (#1507, #147), not ExportScreen. Anchor also matches the finished-state Share at line 406 (same action)."
+   "notes": "openExport sets screen = .export -> ExportScreen (root swap). Retargeted 2026-11-24 (#5280): Dock Share now calls openPlaybackShare -> openMarginItemExport/openReplyBackExport, the Share Margins sheet (#1507, #147), not ExportScreen. Anchor also matches the finished-state Share at line 406 (same action).",
+   "sharing": true,
+   "rulings": [
+    "r14",
+    "r17"
+   ]
   },
   {
    "id": "e121",
@@ -2157,7 +2908,8 @@
    "anchor": "Button(\"Add a Margin\", action: model.beginInterjection)",
    "present_line": null,
    "condition": "Guided tour stage practiceInterjection, not recording",
-   "notes": "Root swap to recording screen."
+   "notes": "Root swap to recording screen.",
+   "sharing": true
   },
   {
    "id": "e128",
@@ -2213,7 +2965,8 @@
    "anchor": "showDetails: { selectedSharedMargin = row }",
    "present_line": 54,
    "condition": "Podcast/native audio on its source clock",
-   "notes": ""
+   "notes": "",
+   "sharing": true
   },
   {
    "id": "e133",
@@ -2241,7 +2994,8 @@
    "anchor": "showDetails: { selectedSharedMargin = row }",
    "present_line": 67,
    "condition": "",
-   "notes": ""
+   "notes": "",
+   "sharing": true
   },
   {
    "id": "e135",
@@ -2311,7 +3065,8 @@
    "anchor": "Button(\"Shared Margin details\", systemImage: \"info.circle\")",
    "present_line": 158,
    "condition": "Shared Margin rows only",
-   "notes": "Context menu attached at PlaybackTimelineListView.swift:18. A plain tap on a Shared Margin row plays it in place (#158)."
+   "notes": "Context menu attached at PlaybackTimelineListView.swift:18. A plain tap on a Shared Margin row plays it in place (#158).",
+   "sharing": true
   },
   {
    "id": "e140",
@@ -2423,7 +3178,8 @@
    "anchor": "Button { model.openMarginItemExport(itemID: group.itemID) }",
    "present_line": null,
    "condition": "Not the Shared filter",
-   "notes": "openMarginItemExport reads every session of the item once and keeps the shareable Margins of all of them (ItemShareCandidates, #4688), sets exportSessionId to the newest session with a sendable Margin, and calls prepareShareInterjections -> isSharingInterjectionsPresented = true; sheet is in Gate1RootView.swift:95 (Build23SenderSharingHost wrapping Build23SenderSharingExperience). Fails with a message if the item has no Margins."
+   "notes": "openMarginItemExport reads every session of the item once and keeps the shareable Margins of all of them (ItemShareCandidates, #4688), sets exportSessionId to the newest session with a sendable Margin, and calls prepareShareInterjections -> isSharingInterjectionsPresented = true; sheet is in Gate1RootView.swift:95 (Build23SenderSharingHost wrapping Build23SenderSharingExperience). Fails with a message if the item has no Margins.",
+   "sharing": true
   },
   {
    "id": "e148",
@@ -2449,9 +3205,10 @@
    "file": "ExperienceMarginsScreen.swift",
    "line": 578,
    "anchor": "Button { selectedMargin = row } label:",
-   "present_line": 66,
+   "present_line": 202,
    "condition": "Not the Shared filter",
-   "notes": ""
+   "notes": "",
+   "sharing": true
   },
   {
    "id": "e150",
@@ -2477,9 +3234,10 @@
    "file": "ExperienceMarginsScreen.swift",
    "line": 830,
    "anchor": "Button { selectedSharedMargin = row } label:",
-   "present_line": 69,
+   "present_line": 205,
    "condition": "Shared filter selected",
-   "notes": ""
+   "notes": "",
+   "sharing": true
   },
   {
    "id": "e152",
@@ -2491,9 +3249,10 @@
    "file": "ExperienceMarginsScreen.swift",
    "line": 578,
    "anchor": "Button { selectedMargin = row } label:",
-   "present_line": 66,
+   "present_line": 202,
    "condition": "Shared filter selected; own Margin in a thread",
-   "notes": ""
+   "notes": "",
+   "sharing": true
   },
   {
    "id": "e153",
@@ -2507,7 +3266,8 @@
    "anchor": "Button(\"Reply\", systemImage: \"arrowshape.turn.up.left.fill\")",
    "present_line": null,
    "condition": "Margin's item is in the Library and has a reply place",
-   "notes": "Sheet dismisses first; onDisappear (line 483) calls replyToSharedMargin, which starts/seeks the item, sets screen = .playback and begins voice recording. Model screen switch (Gate1AppModel.screen), not a NavigationStack push. Lands on the recording screen over Now Playing."
+   "notes": "Sheet dismisses first; onDisappear (line 483) calls replyToSharedMargin, which starts/seeks the item, sets screen = .playback and begins voice recording. Model screen switch (Gate1AppModel.screen), not a NavigationStack push. Lands on the recording screen over Now Playing.",
+   "sharing": true
   },
   {
    "id": "e154",
@@ -2521,7 +3281,8 @@
    "anchor": "Button(\"Reply in writing\", systemImage: \"square.and.pencil\")",
    "present_line": null,
    "condition": "Margin's item is in the Library and has a reply place",
-   "notes": "As Reply, but opens the written Margin composer on Now Playing (beginWrittenMargin). Composer presentation lives in another file."
+   "notes": "As Reply, but opens the written Margin composer on Now Playing (beginWrittenMargin). Composer presentation lives in another file.",
+   "sharing": true
   },
   {
    "id": "e155",
@@ -2535,7 +3296,8 @@
    "anchor": "Button(\"Open it with the shared controls\", systemImage: \"doc.text\")",
    "present_line": null,
    "condition": "Shared Margin is matched to a Library item",
-   "notes": "Sets shouldOpenItem and dismisses; onDisappear (line 482) calls model.openItem. Model screen switch (Gate1AppModel.screen), not a NavigationStack push."
+   "notes": "Sets shouldOpenItem and dismisses; onDisappear (line 482) calls model.openItem. Model screen switch (Gate1AppModel.screen), not a NavigationStack push.",
+   "sharing": true
   },
   {
    "id": "e156",
@@ -2563,7 +3325,8 @@
    "anchor": "Button(\"Hear what it answers\", systemImage: \"play.fill\")",
    "present_line": null,
    "condition": "Margin is a reply whose parent is in the Library",
-   "notes": "Local parent -> playMarginMoment (screen = .playback). Imported parent -> playSharedMarginMoment; I did not confirm that path changes screen. Embedded in SharedMarginDetailView and ExperienceMarginDetailView sheets, which stay open (no dismiss), so Now Playing may sit behind the sheet."
+   "notes": "Local parent -> playMarginMoment (screen = .playback). Imported parent -> playSharedMarginMoment; I did not confirm that path changes screen. Embedded in SharedMarginDetailView and ExperienceMarginDetailView sheets, which stay open (no dismiss), so Now Playing may sit behind the sheet.",
+   "sharing": true
   },
   {
    "id": "e158",
@@ -2577,7 +3340,8 @@
    "anchor": "Button(\"Share this Margin\", systemImage: \"square.and.arrow.up\")",
    "present_line": null,
    "condition": "Margin is active and on the source (ItemShareSessionSelection.isShareable)",
-   "notes": "Closes the details, then openMarginShare opens the friend sheet with only this Margin, on its review (#3211). Makes a packet, never a Markdown file."
+   "notes": "Closes the details, then openMarginShare opens the friend sheet with only this Margin, on its review (#3211). Makes a packet, never a Markdown file.",
+   "sharing": true
   },
   {
    "id": "e158b",
@@ -2701,9 +3465,10 @@
    "file": "Build23SenderSharingExperience.swift",
    "line": 97,
    "anchor": "Button(\"Share without episode matching\"",
-   "present_line": 107,
+   "present_line": 172,
    "condition": "Episode matching failed for a podcast (offersShareWithoutMatching)",
-   "notes": "Builds the verified packet, then presents the system share sheet once preview is ready (onChange at line 86)."
+   "notes": "Builds the verified packet, then presents the system share sheet once preview is ready (onChange at line 86).",
+   "sharing": true
   },
   {
    "id": "e168",
@@ -2715,9 +3480,10 @@
    "file": "Build23SenderSharingExperience.swift",
    "line": 212,
    "anchor": "Button(\"Share \\(includedCount)\", systemImage: \"square.and.arrow.up\") {",
-   "present_line": 107,
+   "present_line": 172,
    "condition": "Review stage",
-   "notes": "shareVerifiedPackage builds the verified packet, then presents the system share sheet (UIActivityViewController) with the .spokenmargins file. Before this, on the select stage: include the Margins, then Review N (stage change)."
+   "notes": "shareVerifiedPackage builds the verified packet, then presents the system share sheet (UIActivityViewController) with the .spokenmargins file. Before this, on the select stage: include the Margins, then Review N (stage change).",
+   "sharing": true
   },
   {
    "id": "e169",
@@ -2729,9 +3495,10 @@
    "file": "Build23SenderSharingExperience.swift",
    "line": 224,
    "anchor": "snapshot.previewState == .building ? \"Getting ready…\" : \"Share",
-   "present_line": 107,
+   "present_line": 172,
    "condition": "Recipient preview stage, preview ready",
-   "notes": ""
+   "notes": "",
+   "sharing": true
   },
   {
    "id": "e170",
@@ -2743,9 +3510,10 @@
    "file": "Build23SenderSharingComponents.swift",
    "line": 291,
    "anchor": "Button(\"Share your Margins\", systemImage: \"square.and.arrow.up\"",
-   "present_line": 107,
+   "present_line": null,
    "condition": "Recipient preview ready",
-   "notes": ""
+   "notes": "",
+   "sharing": true
   },
   {
    "id": "e171",
@@ -2757,9 +3525,10 @@
    "file": "Build23SenderSharingExperience.swift",
    "line": 848,
    "anchor": "Button(\"Open system share sheet\"",
-   "present_line": 107,
+   "present_line": 172,
    "condition": "Share stage, system sheet closed",
-   "notes": ""
+   "notes": "",
+   "sharing": true
   },
   {
    "id": "e172",
@@ -2768,12 +3537,13 @@
    "control": "open a .spokenmargins packet file (Files, Mail, AirDrop, Messages)",
    "control_kind": "entry",
    "presentation": "entry",
-   "file": "SpokenMarginsApp.swift",
-   "line": 234,
-   "anchor": ".onOpenURL(perform: open)",
+   "file": "Gate1AppModel.swift",
+   "line": 1911,
+   "anchor": "stageSpokenMarginsPackageImportInBackground(from: url); return",
    "present_line": null,
    "condition": "",
-   "notes": "Entry from outside the app via .onOpenURL -> model.handleIncomingURL (Gate1AppModel.swift:2340). Gate1AppModel.swift:2351 -> stageSpokenMarginsPackageImport -> coordinator sets review (SpokenMarginsPackageImportCoordinator.swift:160) -> model.spokenMarginsPackageImportReview -> sheet at Gate1RootView.swift:99. If the packet was already imported, opens the item instead (coordinator line 143)."
+   "notes": "Entry from outside the app via .onOpenURL -> model.handleIncomingURL (Gate1AppModel.swift:2340). Gate1AppModel.swift:2351 -> stageSpokenMarginsPackageImport -> coordinator sets review (SpokenMarginsPackageImportCoordinator.swift:160) -> model.spokenMarginsPackageImportReview -> sheet at Gate1RootView.swift:99. If the packet was already imported, opens the item instead (coordinator line 143).",
+   "sharing": true
   },
   {
    "id": "e173",
@@ -2782,12 +3552,13 @@
    "control": "tap a share link (https on the share host)",
    "control_kind": "entry",
    "presentation": "entry",
-   "file": "SpokenMarginsApp.swift",
-   "line": 234,
-   "anchor": ".onOpenURL(perform: open)",
+   "file": "Gate1AppModel.swift",
+   "line": 1902,
+   "anchor": "if ShareLinkURL.isOnShareHost(url) { openShareLink(url); return }",
    "present_line": null,
    "condition": "",
-   "notes": "Entry from outside the app via .onOpenURL -> model.handleIncomingURL (Gate1AppModel.swift:2340). Gate1AppModel.swift:2342 -> openShareLink (Gate1AppModel+PackageImport.swift:51) -> ShareLinkOpener downloads and unseals (ShareLinkOpener.swift:32) -> stageSpokenMarginsPackageImport -> same review sheet. Failure shows a message only. Whether it arrives via universal link or Safari is not determined here."
+   "notes": "Entry from outside the app via .onOpenURL -> model.handleIncomingURL (Gate1AppModel.swift:2340). Gate1AppModel.swift:2342 -> openShareLink (Gate1AppModel+PackageImport.swift:51) -> ShareLinkOpener downloads and unseals (ShareLinkOpener.swift:32) -> stageSpokenMarginsPackageImport -> same review sheet. Failure shows a message only. Whether it arrives via universal link or Safari is not determined here.",
+   "sharing": true
   },
   {
    "id": "e174",
@@ -2871,7 +3642,8 @@
    "anchor": "let outcome = await stageSpokenMarginsPackage(",
    "present_line": null,
    "condition": "",
-   "notes": "Called via importPendingSourceLinkHandoffs (.task at SpokenMarginsApp.swift:161, and from Gate1AppModel+ImportInbox.swift:99). Other call times (app activation) not traced."
+   "notes": "Called via importPendingSourceLinkHandoffs (.task at SpokenMarginsApp.swift:161, and from Gate1AppModel+ImportInbox.swift:99). Other call times (app activation) not traced.",
+   "sharing": true
   },
   {
    "id": "e180",
@@ -2913,7 +3685,8 @@
    "anchor": "try environment.showImportedItem(itemId, store)",
    "present_line": null,
    "condition": "",
-   "notes": "Recipient sheet sends .confirmImport (Build23RecipientSharingExperience.swift:244 -> Build23SharingSeams.swift:533) -> confirmSpokenMarginsPackageImport -> coordinator.confirm; on success showImportedItem sets screen = .item and review = nil closes the sheet. Trigger is not in my files."
+   "notes": "Recipient sheet sends .confirmImport (Build23RecipientSharingExperience.swift:244 -> Build23SharingSeams.swift:533) -> confirmSpokenMarginsPackageImport -> coordinator.confirm; on success showImportedItem sets screen = .item and review = nil closes the sheet. Trigger is not in my files.",
+   "sharing": true
   },
   {
    "id": "e184",
@@ -2927,7 +3700,11 @@
    "anchor": "Button(action: share) {",
    "present_line": null,
    "condition": "The listener has Margins on the item",
-   "notes": "share() asks model.itemShareStart(); on .share, openItemShareSheet() -> openPlaybackShareStartingWithFriendAnswers() opens the player's Share sheet (Gate1RootView.swift), or the reply sheet on a friend's item the listener answered. With nothing to send it shows the Nothing to share yet alert instead (#4229)."
+   "notes": "share() asks model.itemShareStart(); on .share, openItemShareSheet() -> openPlaybackShareStartingWithFriendAnswers() opens the player's Share sheet (Gate1RootView.swift), or the reply sheet on a friend's item the listener answered. With nothing to send it shows the Nothing to share yet alert instead (#4229).",
+   "sharing": true,
+   "rulings": [
+    "r19"
+   ]
   },
   {
    "id": "e185",
@@ -2941,7 +3718,11 @@
    "anchor": "Button(\"Share Margins\", systemImage: \"square.and.arrow.up\", action: share)",
    "present_line": null,
    "condition": "The listener has Margins on the item",
-   "notes": "share() asks model.itemShareStart(); on .share, openItemShareSheet() -> openPlaybackShareStartingWithFriendAnswers() opens the player's Share sheet (Gate1RootView.swift), or the reply sheet on a friend's item the listener answered. With nothing to send it shows the Nothing to share yet alert instead (#4229)."
+   "notes": "share() asks model.itemShareStart(); on .share, openItemShareSheet() -> openPlaybackShareStartingWithFriendAnswers() opens the player's Share sheet (Gate1RootView.swift), or the reply sheet on a friend's item the listener answered. With nothing to send it shows the Nothing to share yet alert instead (#4229).",
+   "sharing": true,
+   "rulings": [
+    "r19"
+   ]
   },
   {
    "id": "e186",
@@ -2998,6 +3779,1194 @@
    "present_line": null,
    "condition": "a shared link failed for a reason other than the network",
    "notes": "Same route as the article banner (#4781)."
+  },
+  {
+   "id": "s001",
+   "from": "PlaybackScreen",
+   "to": "Build23SenderSharingExperience",
+   "control": "Share (square.and.arrow.up) on the finished card",
+   "control_kind": "button",
+   "presentation": "sheet",
+   "file": "PlaybackScreen.swift",
+   "line": 406,
+   "anchor": "Button(action: model.openPlaybackShare) {",
+   "present_line": null,
+   "condition": "The item has finished playing.",
+   "notes": "Same action as the pinned Share; id playback.finished.share.button.",
+   "sharing": true
+  },
+  {
+   "id": "s002",
+   "from": "ExperienceMarginsScreen",
+   "to": "Build23SenderSharingExperience",
+   "control": "'Share replies with <friend>' (or 'Share your Margins with <friend>') under the item heading",
+   "control_kind": "button",
+   "presentation": "sheet",
+   "file": "ExperienceMarginsScreen.swift",
+   "line": 356,
+   "anchor": "Button { model.openReplyBackExport(itemID: group.itemID) } label: {",
+   "present_line": null,
+   "condition": "The listener made a Margin on this item since importing a friend's packet (ReplyBackOffer).",
+   "notes": "Opens the reply variant on its review (#3221, #3792). id margins.sendReplies.<itemID>.",
+   "sharing": true,
+   "rulings": [
+    "r08"
+   ]
+  },
+  {
+   "id": "s003",
+   "from": "Build23SenderSharingExperience",
+   "to": "SHARE_SHEET",
+   "control": "Share link (link)",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": "Build23SenderSharingExperience.swift",
+   "line": 239,
+   "anchor": "share(.link)",
+   "present_line": null,
+   "condition": "Build has SM_SHARE_LINK_CREATION and the server's links switch is on; after the first consent.",
+   "notes": "Link share sheet is ShareLinkActivityView, presented at ShareLinkSender.swift:264 (another file). Button drawn for review (id build23.sender.review.share) and recipient preview (build23.sender.preview.share).",
+   "sharing": true,
+   "rulings": [
+    "r03",
+    "r29"
+   ]
+  },
+  {
+   "id": "s004",
+   "from": "Build23SenderSharingExperience",
+   "to": "SHARE_SHEET",
+   "control": "Share link, then 'Share as Link' in the 'Share as a link?' alert",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": "ShareLinkSender.swift",
+   "line": 255,
+   "anchor": "Button(ShareLinkConsentCopy.accept) {",
+   "present_line": 264,
+   "condition": "First link from this install (sender state needsConsent).",
+   "notes": "Alert at ShareLinkSender.swift:251; 'Not Now' resets with no onward move. Tap count: 2 (Share link + Share as Link).",
+   "sharing": true,
+   "rulings": [
+    "r23",
+    "r30"
+   ]
+  },
+  {
+   "id": "s005",
+   "from": "Build23SenderSharingExperience",
+   "to": "SHARE_SHEET",
+   "control": "Send as a file (review)",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": "Build23SenderSharingExperience.swift",
+   "line": 295,
+   "anchor": "share(.file)",
+   "present_line": 172,
+   "condition": "Links on: the file is the second choice under Share link.",
+   "notes": "id build23.sender.review.share.file. File share sheet is SharedSpokenMarginsPackageActivityView at line 172.",
+   "sharing": true,
+   "rulings": [
+    "r04"
+   ]
+  },
+  {
+   "id": "s006",
+   "from": "Build23SenderSharingExperience",
+   "to": "SHARE_SHEET",
+   "control": "Send as a file (recipient preview)",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": "Build23SenderSharingExperience.swift",
+   "line": 303,
+   "anchor": "sendPreviewedFile()",
+   "present_line": 172,
+   "condition": "Links on, on the recipient preview once the packet is ready.",
+   "notes": "id build23.sender.share.present.",
+   "sharing": true,
+   "rulings": [
+    "r04"
+   ]
+  },
+  {
+   "id": "s007",
+   "from": "OUTSIDE_APP",
+   "to": "ExperienceItemDetailScreen",
+   "control": "open a friend's .spokenmargins file or share link that needs no choice (opens directly)",
+   "control_kind": "entry",
+   "presentation": "entry",
+   "file": "SharedPacketImportSheet.swift",
+   "line": 27,
+   "anchor": "model.openSharedPacketDirectlyIfReady()",
+   "present_line": null,
+   "condition": "SpokenMarginsPackageImportReview.opensDirectly (#3291); waits while a Margin is being recorded or written.",
+   "notes": "The common friend route today. j16 ('Open a Margin packet a friend sent') targets Build23RecipientSharingExperience with final_cost 1, which is the exception path; consider retargeting j16 to ExperienceItemDetailScreen with cost 0.",
+   "sharing": true
+  },
+  {
+   "id": "s008",
+   "from": "OUTSIDE_APP",
+   "to": "Build23RecipientSharingExperience",
+   "control": "open a friend's file that needs a choice (already imported, a Listening Map, or the episode is missing)",
+   "control_kind": "entry",
+   "presentation": "entry",
+   "file": "SharedPacketImportSheet.swift",
+   "line": 25,
+   "anchor": ".trackedSheet(item: sheetReview) { _ in sheet() }",
+   "present_line": 25,
+   "condition": "The review does not open directly.",
+   "notes": "The sheet content is Build23RecipientSharingHost (Gate1RootView.swift:94/142).",
+   "sharing": true
+  },
+  {
+   "id": "s009",
+   "from": "OUTSIDE_APP",
+   "to": "PacketOpenFailureSheet",
+   "control": "tap a share link that can't be read or fetched",
+   "control_kind": "entry",
+   "presentation": "entry",
+   "file": "Gate1AppModel+PackageImport.swift",
+   "line": 144,
+   "anchor": "packetOpenFailures.present(",
+   "present_line": null,
+   "condition": "Unparsed share-host URL (144) or a failed fetch (162); a failed file stage also presents it (369).",
+   "notes": "Presenter is PacketOpenFailureSheet.swift:101 (root) or :121 (drawer).",
+   "sharing": true
+  },
+  {
+   "id": "s010",
+   "from": "PacketOpenFailureSheet",
+   "to": "ExperienceItemDetailScreen",
+   "control": "Try again",
+   "control_kind": "button",
+   "presentation": "screen swap",
+   "file": "PacketOpenFailureSheet.swift",
+   "line": 56,
+   "anchor": "Button(action: tryAgain) {",
+   "present_line": 101,
+   "condition": "The failure has a retry (a link fetch).",
+   "notes": "Target inferred: a retry that succeeds opens the item directly like any friend link. id packetOpenFailure.tryAgain.",
+   "sharing": true
+  },
+  {
+   "id": "s011",
+   "from": "CatalogDrawerView",
+   "to": "ExperienceItemDetailScreen",
+   "control": "Paste the link (first-launch friend link card)",
+   "control_kind": "button",
+   "presentation": "screen swap",
+   "file": "FirstLaunchFriendLinkCardView.swift",
+   "line": 46,
+   "anchor": "drawer.pasteIntoFriendLinkCard(content)",
+   "present_line": null,
+   "condition": "First launch, the drawer is up, the clipboard holds a friend's share link.",
+   "notes": "Inferred target: the link opens through openShareLink (SpokenMarginsApp.swift openFriendLink) and opens directly. id catalog.friendLink.paste.",
+   "sharing": true
+  },
+  {
+   "id": "s012",
+   "from": "ExperienceItemDetailScreen",
+   "to": "PlaybackScreen",
+   "control": "'Skip to <friend>'s Margins · N min' (or 'Skip to <friend>'s replies · N min')",
+   "control_kind": "button",
+   "presentation": "screen swap",
+   "file": "ItemStartControls.swift",
+   "line": 64,
+   "anchor": "Button(action: onSecondChoice) {",
+   "present_line": null,
+   "condition": "A friend's Margins on this item are unheard (ItemListeningChoices). The same button reads 'Listen without them' or 'Play from the start' when the Margins sit behind the saved place.",
+   "notes": "id item.reviewNewMargins.button (else item.listenWithout.button). J12 testFriendArrivalToFirstMarginSeconds taps it. The sender meets 'Skip to <friend>'s replies' on the replies packet (J12 step 7).",
+   "sharing": true,
+   "rulings": [
+    "r11",
+    "r16"
+   ]
+  },
+  {
+   "id": "s013",
+   "from": "ExperienceLibraryScreen",
+   "to": "PlaybackScreen",
+   "control": "Continue on the row, then 'Hear new Margins first' in 'New Margins to hear'",
+   "control_kind": "button",
+   "presentation": "screen swap",
+   "file": "NewMarginsOffer.swift",
+   "line": 18,
+   "anchor": "Button(\"Hear new Margins first\") {",
+   "present_line": 12,
+   "condition": "The item has a friend's unheard Margins behind the place Continue resumes.",
+   "notes": "Dialog attached at ExperienceLibraryScreen.swift:179 (also LibraryCollectionScreen.swift:79). id newMarginsOffer.review. Tap count 2.",
+   "sharing": true,
+   "rulings": [
+    "r07"
+   ]
+  },
+  {
+   "id": "s014",
+   "from": "ExperienceItemDetailScreen",
+   "to": "PlaybackScreen",
+   "control": "Play, then 'Hear new Margins first' in 'New Margins to hear'",
+   "control_kind": "button",
+   "presentation": "screen swap",
+   "file": "NewMarginsOffer.swift",
+   "line": 18,
+   "anchor": "Button(\"Hear new Margins first\") {",
+   "present_line": 12,
+   "condition": "Play on the item screen with a friend's unheard Margins behind the place.",
+   "notes": "Dialog attached at ExperienceItemDetailScreen.swift:303.",
+   "sharing": true,
+   "rulings": [
+    "r07"
+   ]
+  },
+  {
+   "id": "s015",
+   "from": "ExperienceLibraryScreen",
+   "to": "PlaybackScreen",
+   "control": "Continue on the row, then 'Listen without them' in 'New Margins to hear'",
+   "control_kind": "button",
+   "presentation": "screen swap",
+   "file": "NewMarginsOffer.swift",
+   "line": 27,
+   "anchor": "Button(\"Listen without them\")",
+   "present_line": 12,
+   "condition": "As above; 'Play from the start' (line 24) replaces it when the place is at the end.",
+   "notes": "id newMarginsOffer.skip. Optional: could be folded into the edge above.",
+   "sharing": true
+  },
+  {
+   "id": "s016",
+   "from": "ExperienceItemDetailScreen",
+   "to": "SHARE_SHEET",
+   "control": "'Tell <friend> you got it' (paperplane)",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": "FriendMarginsIntroViews.swift",
+   "line": 86,
+   "anchor": "ShareLink(item: content.message) {",
+   "present_line": null,
+   "condition": "The friend's newest packet on this item answers one of the listener's own Margins (#3902).",
+   "notes": "ReplyReceiptButton, drawn in FriendMarginsSummary and in the imported card (Build23ImportedMarginPresentation.swift:125). The sender meets it on the replies packet.",
+   "sharing": true
+  },
+  {
+   "id": "s017",
+   "from": "ExperienceItemDetailScreen",
+   "to": "SAFARI",
+   "control": "Report this link (flag)",
+   "control_kind": "link",
+   "presentation": "external",
+   "file": "Build23ImportedMarginPresentation.swift",
+   "line": 253,
+   "anchor": "Link(destination: reportURL) {",
+   "present_line": null,
+   "condition": "The imported Margins came from a share link; inside 'About this file'.",
+   "notes": "id build23.imported.layer.<id>.report.",
+   "sharing": true
+  },
+  {
+   "id": "s018",
+   "from": "ExperienceMarginsScreen",
+   "to": "ExperienceItemDetailScreen",
+   "control": "'<N> new from <friend>' row (person.2.fill)",
+   "control_kind": "row",
+   "presentation": "screen swap",
+   "file": "ExperienceMarginsScreen.swift",
+   "line": 315,
+   "anchor": "if let itemID = news.itemID { model.openItemFromTap(id: itemID) }",
+   "present_line": null,
+   "condition": "A friend's Margins are unheard and on one item; with several items it switches to the Shared filter instead (in place).",
+   "notes": "id margins.newFromFriends (#4105).",
+   "sharing": true
+  },
+  {
+   "id": "s019",
+   "from": "ExperienceMarginsScreen",
+   "to": "ExperienceItemDetailScreen",
+   "control": "Shared list item heading (title with chevron)",
+   "control_kind": "row",
+   "presentation": "screen swap",
+   "file": "ExperienceMarginsScreen.swift",
+   "line": 672,
+   "anchor": "Button { model.openItemFromTap(id: itemID) } label: {",
+   "present_line": null,
+   "condition": "Shared filter; the item is in the Library.",
+   "notes": "id margins.shared.openItem.<itemID>.",
+   "sharing": true
+  },
+  {
+   "id": "s020",
+   "from": "ExperienceSourcesScreen",
+   "to": "ExperienceItemDetailScreen",
+   "control": "Friend row ('3 Margins on 1 episode')",
+   "control_kind": "row",
+   "presentation": "screen swap",
+   "file": "ExperienceSourcesScreen.swift",
+   "line": 313,
+   "anchor": "model.openItemFromTap(id: item.id)",
+   "present_line": null,
+   "condition": "The friend sent Margins on one item.",
+   "notes": "id sources.friend.",
+   "sharing": true,
+   "rulings": [
+    "r01"
+   ]
+  },
+  {
+   "id": "s021",
+   "from": "ExperienceSourcesScreen",
+   "to": "FollowingFriendItemsScreen",
+   "control": "Friend row ('N Margins on M episodes')",
+   "control_kind": "row",
+   "presentation": "push",
+   "file": "ExperienceSourcesScreen.swift",
+   "line": 315,
+   "anchor": "openFriend = friend",
+   "present_line": 283,
+   "condition": "The friend sent Margins on more than one item.",
+   "notes": "id sources.friend.",
+   "sharing": true,
+   "rulings": [
+    "r01"
+   ]
+  },
+  {
+   "id": "s022",
+   "from": "FollowingFriendItemsScreen",
+   "to": "ExperienceItemDetailScreen",
+   "control": "Item row",
+   "control_kind": "row",
+   "presentation": "screen swap",
+   "file": "FollowingFriendRows.swift",
+   "line": 92,
+   "anchor": "Button { model.openItemFromTap(id: item.id) } label: {",
+   "present_line": null,
+   "condition": "",
+   "notes": "id sources.friend.item.",
+   "sharing": true
+  },
+  {
+   "id": "s023",
+   "from": "MSG_LINK_BUBBLE",
+   "to": "LINK_SERVER_PAGE",
+   "control": "Tap the link (or its preview card)",
+   "control_kind": "link",
+   "presentation": "browser",
+   "file": "Packages/SessionKit/Sources/SessionKit/ShareLinkMessage.swift",
+   "line": 15,
+   "anchor": "\"\\(sentence)\\n\\n\\(link.absoluteString)\"",
+   "present_line": null,
+   "condition": "The app is not installed (or the friend chose the browser)",
+   "notes": "Safari or the default browser opens the link's server page, which hands off at once (next edge).",
+   "sharing": true
+  },
+  {
+   "id": "s024",
+   "from": "MSG_LINK_BUBBLE",
+   "to": "LINK_SERVER_UNAVAILABLE",
+   "control": "Tap the link",
+   "control_kind": "link",
+   "presentation": "browser",
+   "file": "research/B4/server/internal/api/links.go",
+   "line": 213,
+   "anchor": "s.linkUnavailablePage(w, r, http.StatusGone, links.UnavailableGone)",
+   "present_line": null,
+   "condition": "The link expired (30 days), was taken down, is unknown, or links are switched off",
+   "notes": "The server answers the plain unavailable page; the web app never loads.",
+   "sharing": true
+  },
+  {
+   "id": "s025",
+   "from": "MSG_LINK_BUBBLE",
+   "to": "ExperienceItemDetailScreen",
+   "control": "Tap the link",
+   "control_kind": "link",
+   "presentation": "app",
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SpokenMarginsApp.swift",
+   "line": 234,
+   "anchor": ".onOpenURL(perform: open)",
+   "present_line": null,
+   "condition": "The app is installed (applinks for /l/* on spokenmargins.com and spokenmargins.proximitytoprogress.com) and the file needs no choice",
+   "notes": "Universal link (Site/.well-known/apple-app-site-association, SpokenMarginsApp.entitlements:7-8). open() -> Gate1AppModel.handleIncomingURL -> openShareLink (Gate1AppModel.swift:1902) downloads and unseals /l/<id>/packet, stages the import; opensDirectly imports it and sets model.screen = .item (Gate1AppModel+PackageImport.swift:380). A friend's file comes before the first-run drawer (SpokenMarginsApp.swift:212).",
+   "sharing": true
+  },
+  {
+   "id": "s026",
+   "from": "MSG_LINK_BUBBLE",
+   "to": "Build23RecipientSharingExperience",
+   "control": "Tap the link",
+   "control_kind": "link",
+   "presentation": "app",
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SpokenMarginsPackageImportCoordinator.swift",
+   "line": 248,
+   "anchor": "staged.opensDirectly = SharedPacketArrival.route(",
+   "present_line": null,
+   "condition": "App installed, and the listener must choose (own source, Listening Map, shown on an earlier launch)",
+   "notes": "",
+   "sharing": true
+  },
+  {
+   "id": "s027",
+   "from": "MSG_LINK_BUBBLE",
+   "to": "PacketOpenFailureSheet",
+   "control": "Tap the link",
+   "control_kind": "link",
+   "presentation": "app",
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+PackageImport.swift",
+   "line": 162,
+   "anchor": "packetOpenFailures.present(content, retry: content.isRetryable ? tryAgain : nil, endsOpen: true)",
+   "present_line": null,
+   "condition": "App installed, and the link is cut off, expired, or the server is unreachable",
+   "notes": "",
+   "sharing": true
+  },
+  {
+   "id": "s028",
+   "from": "LINK_SERVER_PAGE",
+   "to": "WebArrivalOpening",
+   "control": "(no tap) the page moves on by itself",
+   "control_kind": "auto",
+   "presentation": "replace",
+   "file": "research/B4/server/internal/links/share-link-page.mjs",
+   "line": 130,
+   "anchor": "location.replace(playing);",
+   "present_line": null,
+   "condition": "JavaScript on, the server started with -links-web-url (production: https://app.spokenmargins.com), and no ?report",
+   "notes": "Goes to https://app.spokenmargins.com/l/<id>#<key>; a link with its key cut off goes too, and the web app says it is cut off.",
+   "sharing": true
+  },
+  {
+   "id": "s029",
+   "from": "LINK_SERVER_PAGE",
+   "to": "JOIN_PAGE",
+   "control": "\"Get Spoken Margins\"",
+   "control_kind": "link",
+   "presentation": "browser",
+   "file": "research/B4/server/internal/links/preview.go",
+   "line": 51,
+   "anchor": "<p><a href=\"{{.InstallURL}}\" rel=\"noreferrer noopener\">Get Spoken Margins</a></p>",
+   "present_line": null,
+   "condition": "Only seen without JavaScript or with no web app configured",
+   "notes": "Install URL is /join/ in production (smserver.service:41).",
+   "sharing": true,
+   "rulings": [
+    "r20"
+   ]
+  },
+  {
+   "id": "s030",
+   "from": "LINK_SERVER_UNAVAILABLE",
+   "to": "JOIN_PAGE",
+   "control": "\"Get Spoken Margins\"",
+   "control_kind": "link",
+   "presentation": "browser",
+   "file": "research/B4/server/internal/links/preview.go",
+   "line": 106,
+   "anchor": "{{if .InstallURL}}<p><a href=\"{{.InstallURL}}\" rel=\"noreferrer noopener\">Get Spoken Margins</a></p>{{end}}",
+   "present_line": null,
+   "condition": "Browser does not say it is Android (OffersIPhoneInstall)",
+   "notes": "",
+   "sharing": true,
+   "rulings": [
+    "r20"
+   ]
+  },
+  {
+   "id": "s031",
+   "from": "WebArrivalOpening",
+   "to": "WebArrivalPreview",
+   "control": "(no tap) the packet opens",
+   "control_kind": "auto",
+   "presentation": "replace",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 118,
+   "anchor": "status: 'ready',",
+   "present_line": null,
+   "condition": "Packet opened, and it has timed Margins the browser can play",
+   "notes": "",
+   "sharing": true
+  },
+  {
+   "id": "s032",
+   "from": "WebArrivalOpening",
+   "to": "WebArrivalSimple",
+   "control": "(no tap) the packet opens",
+   "control_kind": "auto",
+   "presentation": "replace",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 267,
+   "anchor": "const preview = !article && !unplayable && read.margins.length > 0;",
+   "present_line": null,
+   "condition": "Packet opened, but it is an article, an episode with no audio address, or has no Margins",
+   "notes": "",
+   "sharing": true
+  },
+  {
+   "id": "s033",
+   "from": "WebArrivalOpening",
+   "to": "WebArrivalFailed",
+   "control": "(no tap) the link fails",
+   "control_kind": "auto",
+   "presentation": "replace",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 127,
+   "anchor": "setState({ status: 'failed', message: failureWords(error) });",
+   "present_line": null,
+   "condition": "Key missing or cut off, expired, links off, offline, server error, unreadable packet",
+   "notes": "A link with no key fails at once (Arrival.tsx:99-101) without asking the server.",
+   "sharing": true
+  },
+  {
+   "id": "s034",
+   "from": "WebArrivalFailed",
+   "to": "LINK_SERVER_REPORT",
+   "control": "\"Report this link\"",
+   "control_kind": "link",
+   "presentation": "new_tab",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 244,
+   "anchor": "Report this link",
+   "present_line": null,
+   "condition": "Cut-off link only",
+   "notes": "Opens <server>/l/<id>?report in a new tab.",
+   "sharing": true
+  },
+  {
+   "id": "s035",
+   "from": "WebArrivalPreview",
+   "to": "WebNowPlayingMargins",
+   "control": "\"Start with unheard Margins\"",
+   "control_kind": "button",
+   "presentation": "fullscreen",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 329,
+   "anchor": "{LABELS.startWithUnheard}",
+   "present_line": null,
+   "condition": "Some Margin is unheard",
+   "notes": "Primary button. Plays from the lead-in before the first unheard Margin; the tap also starts the sound.",
+   "sharing": true
+  },
+  {
+   "id": "s036",
+   "from": "WebArrivalPreview",
+   "to": "WebNowPlayingMargins",
+   "control": "\"Start from the beginning\"",
+   "control_kind": "button",
+   "presentation": "fullscreen",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 339,
+   "anchor": "{LABELS.startFromBeginning}",
+   "present_line": null,
+   "condition": "",
+   "notes": "Plays from 0. Now Playing opens on its Margins tab while the friend's Margins are unheard (link-arrival.spec.ts:106); the countdown is on Now.",
+   "sharing": true
+  },
+  {
+   "id": "s037",
+   "from": "WebArrivalPreview",
+   "to": "WebNowPlayingMargins",
+   "control": "\"Start with this Margin\" (on a row)",
+   "control_kind": "button",
+   "presentation": "fullscreen",
+   "file": "Web/src/app/screens/MarginsTab.tsx",
+   "line": 186,
+   "anchor": "{LABELS.rowStart[props.context]}",
+   "present_line": null,
+   "condition": "",
+   "notes": "Label from Contracts/fixtures/margins-control-center/cases.json labels.rowStart.arrival.",
+   "sharing": true
+  },
+  {
+   "id": "s038",
+   "from": "WebArrivalPreview",
+   "to": "JOIN_PAGE",
+   "control": "\"Get Spoken Margins for iPhone\"",
+   "control_kind": "link",
+   "presentation": "new_tab",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 319,
+   "anchor": "<a href={GET_APP_LINK.href} target=\"_blank\" rel=\"noopener noreferrer\">",
+   "present_line": null,
+   "condition": "",
+   "notes": "https://spokenmargins.com/join (logic/arrival.ts:173-175). Footer link, below the Margin list.",
+   "sharing": true,
+   "rulings": [
+    "r20"
+   ]
+  },
+  {
+   "id": "s039",
+   "from": "WebArrivalPreview",
+   "to": "LINK_SERVER_REPORT",
+   "control": "\"Report this link\"",
+   "control_kind": "link",
+   "presentation": "new_tab",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 314,
+   "anchor": "Report this link",
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "sharing": true
+  },
+  {
+   "id": "s040",
+   "from": "WebArrivalSimple",
+   "to": "WebNowPlaying",
+   "control": "\"Play\"",
+   "control_kind": "button",
+   "presentation": "fullscreen",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 386,
+   "anchor": "{unplayable ? `Keep ${possessive(who)} Margins` : 'Play'}",
+   "present_line": null,
+   "condition": "A playable packet with no Margin list (a Substack post)",
+   "notes": "",
+   "sharing": true
+  },
+  {
+   "id": "s041",
+   "from": "WebArrivalSimple",
+   "to": "WebLibrary",
+   "control": "\"Keep Cole's Margins\"",
+   "control_kind": "button",
+   "presentation": "replace",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 386,
+   "anchor": "{unplayable ? `Keep ${possessive(who)} Margins` : 'Play'}",
+   "present_line": null,
+   "condition": "The episode has no audio address the browser can find",
+   "notes": "Stores the Margins, then the Library tab.",
+   "sharing": true
+  },
+  {
+   "id": "s042",
+   "from": "WebArrivalSimple",
+   "to": "WebLibrary",
+   "control": "\"Open Spoken Margins\"",
+   "control_kind": "button",
+   "presentation": "replace",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 370,
+   "anchor": "Open Spoken Margins",
+   "present_line": null,
+   "condition": "An article on an ordinary site",
+   "notes": "",
+   "sharing": true
+  },
+  {
+   "id": "s043",
+   "from": "WebArrivalSimple",
+   "to": "SOURCE_PAGE",
+   "control": "\"Open the article\"",
+   "control_kind": "link",
+   "presentation": "new_tab",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 365,
+   "anchor": "Open the article",
+   "present_line": null,
+   "condition": "An article with a web address",
+   "notes": "",
+   "sharing": true
+  },
+  {
+   "id": "s044",
+   "from": "WebArrivalSimple",
+   "to": "JOIN_PAGE",
+   "control": "\"Get Spoken Margins for iPhone\"",
+   "control_kind": "link",
+   "presentation": "new_tab",
+   "file": "Web/src/app/screens/Arrival.tsx",
+   "line": 409,
+   "anchor": "<a href={GET_APP_LINK.href} target=\"_blank\" rel=\"noopener noreferrer\">",
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "sharing": true,
+   "rulings": [
+    "r20"
+   ]
+  },
+  {
+   "id": "s045",
+   "from": "WebNowPlayingMargins",
+   "to": "WebNowPlaying",
+   "control": "\"Now\" tab",
+   "control_kind": "tab",
+   "presentation": "tab",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 520,
+   "anchor": "id=\"np-tab-now\"",
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "sharing": true
+  },
+  {
+   "id": "s046",
+   "from": "WebNowPlaying",
+   "to": "WebNowPlayingMargins",
+   "control": "\"Margins\" tab",
+   "control_kind": "tab",
+   "presentation": "tab",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 523,
+   "anchor": "id=\"np-tab-margins\"",
+   "present_line": null,
+   "condition": "",
+   "notes": "Shows the unheard count.",
+   "sharing": true
+  },
+  {
+   "id": "s047",
+   "from": "WebNowPlayingMargins",
+   "to": "WebMarginsTab",
+   "control": "\"All Margins and export\"",
+   "control_kind": "button",
+   "presentation": "replace",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 386,
+   "anchor": "All Margins and export",
+   "present_line": null,
+   "condition": "",
+   "notes": "Closes Now Playing and opens the Margins tab.",
+   "sharing": true
+  },
+  {
+   "id": "s048",
+   "from": "WebNowPlaying",
+   "to": "WebWriteMargin",
+   "control": "\"Write a Margin\"",
+   "control_kind": "button",
+   "presentation": "in_place",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 477,
+   "anchor": "Write a Margin",
+   "present_line": null,
+   "condition": "",
+   "notes": "While a friend's Margin is the reply parent, the composer starts as a reply to it.",
+   "sharing": true
+  },
+  {
+   "id": "s049",
+   "from": "WebNowPlaying",
+   "to": "WebRecordMargin",
+   "control": "\"Record a Margin\"",
+   "control_kind": "button",
+   "presentation": "in_place",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 481,
+   "anchor": "Record a Margin",
+   "present_line": null,
+   "condition": "",
+   "notes": "Asks for the microphone the first time.",
+   "sharing": true
+  },
+  {
+   "id": "s050",
+   "from": "WebNowPlaying",
+   "to": "WebRecordMargin",
+   "control": "\"Reply\" on a friend's row",
+   "control_kind": "button",
+   "presentation": "in_place",
+   "file": "Web/src/app/screens/Margins.tsx",
+   "line": 244,
+   "anchor": "aria-label={replyMarginName(margin)}",
+   "present_line": null,
+   "condition": "A friend's Margin in 'Margins in this episode'",
+   "notes": "Accessible name 'Reply to Cole's Margin at 0:30'. Moves the episode to that Margin's moment and opens Record answering it.",
+   "sharing": true
+  },
+  {
+   "id": "s051",
+   "from": "WebRecordMargin",
+   "to": "WebWriteMargin",
+   "control": "\"Write it instead\"",
+   "control_kind": "button",
+   "presentation": "in_place",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 1112,
+   "anchor": "Write it instead",
+   "present_line": null,
+   "condition": "",
+   "notes": "Keeps the reply choice.",
+   "sharing": true
+  },
+  {
+   "id": "s052",
+   "from": "WebWriteMargin",
+   "to": "WebShareMargins",
+   "control": "\"Save Margin\"",
+   "control_kind": "button",
+   "presentation": "in_place",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 841,
+   "anchor": "Save Margin",
+   "present_line": null,
+   "condition": "",
+   "notes": "Saves; the card 'Your Margin is saved' says what Share does, and the Share panel lists it ticked as a 'Reply'. The panel is at the end of the Now tab, so the friend scrolls to it.",
+   "sharing": true
+  },
+  {
+   "id": "s053",
+   "from": "WebRecordMargin",
+   "to": "WebShareMargins",
+   "control": "\"Stop and save\", then \"Done\"",
+   "control_kind": "button",
+   "presentation": "in_place",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 1225,
+   "anchor": "Stop and save",
+   "present_line": null,
+   "condition": "",
+   "notes": "Stop saves the voice Margin; Done closes the words box.",
+   "sharing": true
+  },
+  {
+   "id": "s054",
+   "from": "WebShareMargins",
+   "to": "BROWSER_SHARE_SHEET",
+   "control": "\"Send\"",
+   "control_kind": "button",
+   "presentation": "system_sheet",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 622,
+   "anchor": "const outcome = await sendFile((data) => navigator.share(data), file, episode.title);",
+   "present_line": null,
+   "condition": "The browser can share files (navigator.canShare), and has not refused once",
+   "notes": "Writes the packet with the typed name, then navigator.share.",
+   "sharing": true,
+   "rulings": [
+    "r18"
+   ]
+  },
+  {
+   "id": "s055",
+   "from": "WebShareMargins",
+   "to": "BROWSER_DOWNLOAD",
+   "control": "\"Save as a file\"",
+   "control_kind": "button",
+   "presentation": "download",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 633,
+   "anchor": "downloadFile(file);",
+   "present_line": null,
+   "condition": "",
+   "notes": "Toast: 'Saved 1 Margin as <file>. Send this file to Cole in a message.' (logic/reply-back.ts:247-249).",
+   "sharing": true,
+   "rulings": [
+    "r18"
+   ]
+  },
+  {
+   "id": "s056",
+   "from": "WebShareMargins",
+   "to": "WebAppInvite",
+   "control": "(no tap) appears after the first reply leaves",
+   "control_kind": "auto",
+   "presentation": "in_place",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 596,
+   "anchor": "if (inviteAfterShare(browserStorage(), { wasReply: offer !== undefined, outcome, inApp: bridge !== undefined })) setInvite(true);",
+   "present_line": null,
+   "condition": "Shared or saved, it was a reply, first time in this browser, not in the Android app",
+   "notes": "",
+   "sharing": true
+  },
+  {
+   "id": "s057",
+   "from": "WebAppInvite",
+   "to": "JOIN_PAGE",
+   "control": "\"Get Spoken Margins for iPhone\"",
+   "control_kind": "link",
+   "presentation": "new_tab",
+   "file": "Web/src/app/screens/NowPlaying.tsx",
+   "line": 737,
+   "anchor": "<a className=\"button\" href={words.button.href} target=\"_blank\" rel=\"noopener noreferrer\">",
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "sharing": true,
+   "rulings": [
+    "r20"
+   ]
+  },
+  {
+   "id": "s058",
+   "from": "BROWSER_SHARE_SHEET",
+   "to": "MSG_FILE_BUBBLE",
+   "control": "Pick Messages, then send",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": null,
+   "line": null,
+   "anchor": "",
+   "present_line": null,
+   "condition": "",
+   "notes": "Apple's or Android's sheet; not in the repo.",
+   "sharing": true
+  },
+  {
+   "id": "s059",
+   "from": "BROWSER_DOWNLOAD",
+   "to": "MSG_FILE_BUBBLE",
+   "control": "Attach the saved file in Messages by hand",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": "Web/src/app/logic/reply-back.ts",
+   "line": 249,
+   "anchor": "return `Send this file to ${friendNames(offer.friendLabels)} in a message.`;",
+   "present_line": null,
+   "condition": "",
+   "notes": "The page only tells the friend to do it.",
+   "sharing": true
+  },
+  {
+   "id": "s060",
+   "from": "MSG_FILE_BUBBLE",
+   "to": "ExperienceItemDetailScreen",
+   "control": "Tap the file (the sender, in Messages)",
+   "control_kind": "link",
+   "presentation": "app",
+   "file": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SpokenMarginsApp.swift",
+   "line": 214,
+   "anchor": "|| (url.isFileURL && url.pathExtension.lowercased() == SpokenMarginsPackageArchive.fileExtension) {",
+   "present_line": null,
+   "condition": "The sender has the app (com.spokenmargins.package, LSHandlerRank Owner, project.yml:180-185)",
+   "notes": "Imports and opens the item: 'Replies from <friend>', '2 replies to your Margins', and 'Skip to <friend>'s replies' plays each reply after the Margin it answers (J12 step 7). Whether Messages opens the file straight in the app or via Quick Look and the share sheet is not checked here.",
+   "sharing": true
+  },
+  {
+   "id": "s061",
+   "from": "MSG_JOIN_BUBBLE",
+   "to": "JOIN_PAGE",
+   "control": "Tap the link (or its preview card)",
+   "control_kind": "link",
+   "presentation": "browser",
+   "file": "Site/join/index.html",
+   "line": 7,
+   "anchor": "<meta property=\"og:title\" content=\"Try Spoken Margins\">",
+   "present_line": null,
+   "condition": "",
+   "notes": "The card is drawn from these tags.",
+   "sharing": true
+  },
+  {
+   "id": "s062",
+   "from": "JOIN_PAGE",
+   "to": "APPSTORE_TESTFLIGHT",
+   "control": "\"Get TestFlight\" (step 1)",
+   "control_kind": "link",
+   "presentation": "app_store",
+   "file": "Site/join/index.html",
+   "line": 45,
+   "anchor": "href=\"https://apps.apple.com/app/testflight/id899247664\"",
+   "present_line": null,
+   "condition": "TestFlight not installed",
+   "notes": "",
+   "sharing": true
+  },
+  {
+   "id": "s063",
+   "from": "APPSTORE_TESTFLIGHT",
+   "to": "JOIN_PAGE",
+   "control": "Get, then switch back to Safari",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": "Site/join/index.html",
+   "line": 47,
+   "anchor": "<h2>Come back here. Tap again.</h2>",
+   "present_line": null,
+   "condition": "",
+   "notes": "The page's own instruction; nothing in TestFlight sends the friend back.",
+   "sharing": true
+  },
+  {
+   "id": "s064",
+   "from": "JOIN_PAGE",
+   "to": "TESTFLIGHT_INVITE",
+   "control": "\"Open Spoken Margins in TestFlight\" (step 2)",
+   "control_kind": "link",
+   "presentation": "testflight",
+   "file": "Site/join/index.html",
+   "line": 48,
+   "anchor": "href=\"https://testflight.apple.com/join/aXR7DWDA\"",
+   "present_line": null,
+   "condition": "TestFlight installed",
+   "notes": "testflight.apple.com/join opens the TestFlight app on the invitation.",
+   "sharing": true,
+   "rulings": [
+    "r24"
+   ]
+  },
+  {
+   "id": "s065",
+   "from": "JOIN_PAGE",
+   "to": "TESTFLIGHT_JOIN_WEB",
+   "control": "\"Open Spoken Margins in TestFlight\" (step 2)",
+   "control_kind": "link",
+   "presentation": "browser",
+   "file": "Site/join/index.html",
+   "line": 48,
+   "anchor": "href=\"https://testflight.apple.com/join/aXR7DWDA\"",
+   "present_line": null,
+   "condition": "TestFlight not installed yet (step 1 skipped)",
+   "notes": "",
+   "sharing": true,
+   "rulings": [
+    "r24"
+   ]
+  },
+  {
+   "id": "s066",
+   "from": "TESTFLIGHT_JOIN_WEB",
+   "to": "APPSTORE_TESTFLIGHT",
+   "control": "Apple's install-TestFlight link",
+   "control_kind": "link",
+   "presentation": "app_store",
+   "file": null,
+   "line": null,
+   "anchor": "",
+   "present_line": null,
+   "condition": "",
+   "notes": "Apple's page; label not in the repo.",
+   "sharing": true
+  },
+  {
+   "id": "s067",
+   "from": "JOIN_PAGE",
+   "to": "WebLibrary",
+   "control": "\"Use Spoken Margins in your browser\"",
+   "control_kind": "link",
+   "presentation": "browser",
+   "file": "Site/join/index.html",
+   "line": 41,
+   "anchor": "<a href=\"https://app.spokenmargins.com/\">Use Spoken Margins in your browser</a>",
+   "present_line": null,
+   "condition": "No iPhone or iPad",
+   "notes": "The web app's root, not the friend's link.",
+   "sharing": true,
+   "rulings": [
+    "r28"
+   ]
+  },
+  {
+   "id": "s068",
+   "from": "TESTFLIGHT_INVITE",
+   "to": "TESTFLIGHT_INSTALL",
+   "control": "\"Accept\"",
+   "control_kind": "button",
+   "presentation": "testflight",
+   "file": "Site/join/index.html",
+   "line": 50,
+   "anchor": "In TestFlight, tap <strong>Accept</strong>, then <strong>Install</strong>. Done.",
+   "present_line": null,
+   "condition": "",
+   "notes": "Apple's screen; the words come from the join page's step 3.",
+   "sharing": true
+  },
+  {
+   "id": "s069",
+   "from": "TESTFLIGHT_INVITE",
+   "to": "MSG_LINK_BUBBLE",
+   "control": "Go back to the friend's link",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": "Site/join/index.html",
+   "line": 54,
+   "anchor": "TestFlight says this beta is full? You can still listen from the link your friend sent. No app needed.",
+   "present_line": null,
+   "condition": "The beta is full",
+   "notes": "",
+   "sharing": true
+  },
+  {
+   "id": "s070",
+   "from": "TESTFLIGHT_REDEEM",
+   "to": "JOIN_PAGE",
+   "control": "Back to the join page, tap step 2",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": "Site/join/index.html",
+   "line": 53,
+   "anchor": "Seeing a \"Redeem\" screen? You do not need a code.",
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "sharing": true
+  },
+  {
+   "id": "s071",
+   "from": "TESTFLIGHT_INSTALL",
+   "to": "ExperienceLibraryScreen",
+   "control": "\"Install\", then \"Open\"",
+   "control_kind": "button",
+   "presentation": "app",
+   "file": null,
+   "line": null,
+   "anchor": "",
+   "present_line": null,
+   "condition": "",
+   "notes": "A first launch: Terms of Use and first-run steps (J11), then the Library. The friend's Margins are not there until they tap the link again (MSG_LINK_BUBBLE -> ExperienceItemDetailScreen).",
+   "sharing": true
+  },
+  {
+   "id": "s072",
+   "from": "WebMarginsTab",
+   "to": "WebNowPlaying",
+   "control": "\"Open a link\", paste, \"Open\"",
+   "control_kind": "button",
+   "presentation": "fullscreen",
+   "file": "Web/src/app/screens/Margins.tsx",
+   "line": 55,
+   "anchor": "Open a link",
+   "present_line": null,
+   "condition": "A pasted share link",
+   "notes": "Opens straight into Now Playing, with no arrival page (Web/README.md).",
+   "sharing": true
+  },
+  {
+   "id": "s073",
+   "from": "SHARE_SHEET",
+   "to": "MSG_LINK_BUBBLE",
+   "control": "Messages (then pick the friend and Send)",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": null,
+   "line": null,
+   "anchor": "",
+   "present_line": null,
+   "condition": "",
+   "notes": "Apple's share sheet; picking the friend is not counted (as j06). The link text is ShareLinkMessage.sentence.",
+   "sharing": true
+  },
+  {
+   "id": "s074",
+   "from": "SHARE_SHEET",
+   "to": "MSG_FILE_BUBBLE",
+   "control": "Messages (then pick the friend and Send), with the file",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": null,
+   "line": null,
+   "anchor": "",
+   "present_line": null,
+   "condition": "",
+   "notes": "Apple's share sheet sending the .spokenmargins file.",
+   "sharing": true
+  },
+  {
+   "id": "s075",
+   "from": "ExperienceLibraryScreen",
+   "to": "MSG_LINK_BUBBLE",
+   "control": "Switch to Messages and tap the link again",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": null,
+   "line": null,
+   "anchor": "",
+   "present_line": null,
+   "condition": "Just installed from TestFlight: the browser listener has no Open in app (no universal link on its host).",
+   "notes": "The one-time 'Get the iPhone app' card says to tap the link again after installing; the join page does not.",
+   "sharing": true
   }
  ],
  "retired_edges": {
@@ -3196,6 +5165,504 @@
    "final_cost": 1,
    "final": "Speak, then tap Save & resume. Saying “stop margin” can end it with no tap instead (Settings, on by default, #3940), but listening is best effort: the first Margin before Speech Recognition is allowed has no phrase.",
    "note": "The entry is one action: a Back Tap, the Action Button or a Home Screen tap that runs the Record a Margin shortcut (#4923); recording starts with no tap. Setting up Back Tap once is not counted. With a live session running (a Kindle book read by Speak Screen) the route is the live session's recording screen instead: see job L19 in docs/design/live-sessions/live-sessions.json and its Kindle comparison in SITUATIONS.md."
+  },
+  {
+   "id": "s01",
+   "name": "Send Margins by link",
+   "legs": [
+    {
+     "person": "sender",
+     "start": "PlaybackScreen",
+     "via_edges": [
+      "s003",
+      "s073"
+     ],
+     "target": "MSG_LINK_BUBBLE",
+     "final_cost": 1,
+     "final": "Pick the friend and tap Send in Messages."
+    },
+    {
+     "person": "friend",
+     "handoff": "A link in Messages",
+     "start": "MSG_LINK_BUBBLE",
+     "via": [],
+     "target": "WebArrivalPreview",
+     "final_cost": 0,
+     "final": "The browser listener opens on the sender's Margins."
+    }
+   ],
+   "note": "The sender is on Now Playing with Margins recorded. The friend has no app: the link opens the browser listener."
+  },
+  {
+   "id": "s02",
+   "name": "Send Margins as a file",
+   "legs": [
+    {
+     "person": "sender",
+     "start": "PlaybackScreen",
+     "via_edges": [
+      "s005",
+      "s074"
+     ],
+     "target": "MSG_FILE_BUBBLE",
+     "final_cost": 1,
+     "final": "Pick the friend and tap Send in Messages."
+    },
+    {
+     "person": "friend",
+     "handoff": "A .spokenmargins file in Messages",
+     "start": "MSG_FILE_BUBBLE",
+     "via": [],
+     "target": "ExperienceItemDetailScreen",
+     "final_cost": 0,
+     "final": "The app opens the item with the sender's Margins."
+    }
+   ],
+   "note": "The friend has the app. Whether Messages shows Quick Look before the app opens is not checked (needs a device)."
+  },
+  {
+   "id": "s03",
+   "name": "A friend's first listen in a browser",
+   "legs": [
+    {
+     "person": "sender",
+     "start": "PlaybackScreen",
+     "via_edges": [
+      "s003",
+      "s073"
+     ],
+     "target": "MSG_LINK_BUBBLE",
+     "final_cost": 1,
+     "final": "Pick the friend and tap Send in Messages."
+    },
+    {
+     "person": "friend",
+     "handoff": "A link in Messages",
+     "start": "MSG_LINK_BUBBLE",
+     "via": [
+      "WebArrivalPreview"
+     ],
+     "target": "WebNowPlayingMargins",
+     "final_cost": 0,
+     "final": "The first Margin plays at its moment."
+    }
+   ],
+   "note": "No install. 'Start with unheard Margins' plays the episode with the Margins on."
+  },
+  {
+   "id": "s04",
+   "name": "A friend's first listen in the app",
+   "legs": [
+    {
+     "person": "sender",
+     "start": "PlaybackScreen",
+     "via_edges": [
+      "s003",
+      "s073"
+     ],
+     "target": "MSG_LINK_BUBBLE",
+     "final_cost": 1,
+     "final": "Pick the friend and tap Send in Messages."
+    },
+    {
+     "person": "friend",
+     "handoff": "A link in Messages",
+     "start": "MSG_LINK_BUBBLE",
+     "via": [
+      "WebArrivalPreview",
+      "JOIN_PAGE",
+      "TESTFLIGHT_INVITE",
+      "TESTFLIGHT_INSTALL",
+      "ExperienceLibraryScreen",
+      "MSG_LINK_BUBBLE",
+      "ExperienceItemDetailScreen"
+     ],
+     "target": "PlaybackScreen",
+     "final_cost": 0,
+     "final": "The sender's first Margin plays after its lead-in."
+    }
+   ],
+   "note": "A first-time friend with TestFlight already installed. Without it, Get TestFlight from the join page adds the App Store hop. The browser listener has no Open in app, so after installing the friend taps the link again."
+  },
+  {
+   "id": "s05",
+   "name": "Reply from the browser, and the sender gets it",
+   "legs": [
+    {
+     "person": "friend",
+     "start": "WebNowPlaying",
+     "via": [
+      "WebRecordMargin",
+      "WebShareMargins",
+      "BROWSER_SHARE_SHEET"
+     ],
+     "target": "MSG_FILE_BUBBLE",
+     "final_cost": 1,
+     "final": "Pick the sender and tap Send."
+    },
+    {
+     "person": "sender",
+     "handoff": "A replies file in Messages",
+     "start": "MSG_FILE_BUBBLE",
+     "via": [],
+     "target": "ExperienceItemDetailScreen",
+     "final_cost": 0,
+     "final": "The item says 'Replies from <friend>'."
+    }
+   ],
+   "note": "The web listener cannot make links (receive-only, 2026-11-05), so a reply goes back as a file."
+  },
+  {
+   "id": "s06",
+   "name": "Reply in the app, and the sender hears it",
+   "legs": [
+    {
+     "person": "friend",
+     "start": "PlaybackScreen",
+     "via_edges": [
+      "e118"
+     ],
+     "target": "ExperienceRecordingView",
+     "final_cost": 1,
+     "final": "Speak, then Save & resume: a Margin made during the friend's Margin is a reply."
+    },
+    {
+     "person": "friend",
+     "start": "PlaybackScreen",
+     "via_edges": [
+      "e120",
+      "s005",
+      "s074"
+     ],
+     "target": "MSG_FILE_BUBBLE",
+     "final_cost": 1,
+     "final": "Pick the sender and tap Send."
+    },
+    {
+     "person": "sender",
+     "handoff": "A replies file in Messages",
+     "start": "MSG_FILE_BUBBLE",
+     "target": "PlaybackScreen",
+     "final_cost": 0,
+     "final": "'Skip to <friend>'s replies': each reply plays after the Margin it answers.",
+     "via_edges": [
+      "s012"
+     ]
+    }
+   ],
+   "note": "J12 steps 6 and 7. Share on Now Playing opens 'Share replies with <friend>' with the replies picked."
+  }
+ ],
+ "rulings": [
+  {
+   "id": "r01",
+   "date": "2026-10-17",
+   "summary": "A friend's link lands in the Library as a card with no Import step, listed under the sender in Following.",
+   "quote": "A friend's shared link lands in the Library as a card, with no Import",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 189,
+   "anchor": "A friend's shared link lands in the Library as a card, with no Import"
+  },
+  {
+   "id": "r02",
+   "date": "2026-10-19",
+   "summary": "A share link opens in any browser and plays; the web listener comes before Android.",
+   "quote": "def. a head of android",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 222,
+   "anchor": "The web listener comes before Android, and after share links."
+  },
+  {
+   "id": "r03",
+   "date": "2026-10-20",
+   "summary": "Share links never carry the full source text; an item with no web address sends the file alongside the link.",
+   "quote": "it was suggested we could just have them send the .spokenmargins file in the message which solves it for me",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 234,
+   "anchor": "Share links never carry the full source text."
+  },
+  {
+   "id": "r04",
+   "date": "2026-10-20",
+   "summary": "Full-text sharing goes only by direct file (AirDrop, Messages, Files), never through the server.",
+   "quote": "Full-text sharing stays in direct file export",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 236,
+   "anchor": "Full-text sharing stays in direct file export"
+  },
+  {
+   "id": "r05",
+   "date": "2026-10-20",
+   "summary": "The share page's preview is sealed: link unfurls show only a generic title.",
+   "quote": "I do love privacy. sounds good",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 243,
+   "anchor": "The share page's preview is sealed too"
+  },
+  {
+   "id": "r06",
+   "date": "2026-10-25",
+   "summary": "A Margin recorded during a friend's Margin (or within 20 s after) is a reply, switchable to independent; no Reply button on the card.",
+   "quote": "I think I prefer number one with the margin you record during someone else's becoming a reply, and then the option to toggle that as a independent margin.",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 298,
+   "anchor": "A Margin recorded during a friend's Margin is a reply, and he can swit"
+  },
+  {
+   "id": "r07",
+   "date": "2026-10-31",
+   "summary": "A friend's Margins arrive inside the episode, with no front door; the big button plays the episode with them on.",
+   "quote": "Cole sent you 7 Margins",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 327,
+   "anchor": "A friend's Margins arrive inside the episode, not ahead of it."
+  },
+  {
+   "id": "r08",
+   "date": "2026-11-02",
+   "summary": "Sending replies back starts with the replies picked; the listener's other new Margins are offered unpicked.",
+   "quote": "additional margins should be optionally sent as well.",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 349,
+   "anchor": "Sending replies back offers the listener's other new Margins too."
+  },
+  {
+   "id": "r09",
+   "date": "2026-11-02",
+   "summary": "Mark complete never leads a friend's item; it stays in the ⋯ menu and at the end.",
+   "quote": "Mark complete never leads a friend's item before the friend's Margins",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 357,
+   "anchor": "Mark complete never leads a friend's item before the friend's Margins"
+  },
+  {
+   "id": "r10",
+   "date": "2026-11-02",
+   "summary": "The browser page is the front door, and 'Margin' is the word for friends too.",
+   "quote": "Start on the plan with my three picks?",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 358,
+   "anchor": "The rebuild's three picks."
+  },
+  {
+   "id": "r11",
+   "date": "2026-11-02",
+   "summary": "Every lead-in has a visible countdown and a skip a newcomer can see.",
+   "quote": "The 20-second lead-in doesn't count against the friend's 10-second bud",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 362,
+   "anchor": "The 20-second lead-in doesn't count against the friend's 10-second bud"
+  },
+  {
+   "id": "r12",
+   "date": "2026-11-02",
+   "summary": "'Margin' is explained to a friend in two versions, by whether any Margin is written.",
+   "quote": " is explained in two versions, by whether any of the sender's Margins are written.** Written Margins are read aloud by the on-device voice, so ",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 365,
+   "anchor": "\"Margin\" is explained in two versions, by whether any of the sender's"
+  },
+  {
+   "id": "r13",
+   "date": "2026-11-02",
+   "summary": "After a friend's last Margin there are no new buttons: no Reply, no Mark complete; the reply is the player's own Add a Margin.",
+   "quote": "Reply to Cole",
+   "protects": "removal",
+   "file": "docs/decisions.md",
+   "line": 367,
+   "anchor": "After a friend's last Margin, no new buttons: the reply is a Margin ma"
+  },
+  {
+   "id": "r14",
+   "date": "2026-11-03",
+   "summary": "The player's Share keeps its name ('Send to <friend>' was rejected) and opens with the friend's answers picked and changeable.",
+   "quote": "Send to Cole",
+   "protects": "rename",
+   "file": "docs/decisions.md",
+   "line": 371,
+   "anchor": "A friend sends their answering Margins back through the player's own S"
+  },
+  {
+   "id": "r15",
+   "date": "2026-11-03",
+   "summary": "While a friend's Margin plays, its card sits in a fixed slot at the top of Now.",
+   "quote": "shifts everything down and it looks odd",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 372,
+   "anchor": "While a friend's Margin plays, its card sits in a fixed slot at the to"
+  },
+  {
+   "id": "r16",
+   "date": "2026-11-05",
+   "summary": "Approved words for a friend's card: '<friend>'s first Margin in 11 min', 'Skip to just before <friend>', 'Skip to <friend> now'.",
+   "quote": "\"A friend's pinned card: use 'Cole's first Margin in 11 min', then 'Sk",
+   "protects": "rename",
+   "file": "docs/decisions.md",
+   "line": 387,
+   "anchor": "\"A friend's pinned card: use 'Cole's first Margin in 11 min', then 'Sk"
+  },
+  {
+   "id": "r17",
+   "date": "2026-11-05",
+   "summary": "The Share button on the playback dock, beside More, opens the Share sheet on its review (he added it).",
+   "quote": "Share button on the playback dock: add it beside More? It opens the Share sheet on its review step.",
+   "protects": "removal",
+   "file": "docs/decisions.md",
+   "line": 388,
+   "anchor": "\"Share button on the playback dock: add it beside More? It opens the S"
+  },
+  {
+   "id": "r18",
+   "date": "2026-11-05",
+   "summary": "The web app is receive-only for links: it opens and reports them, and sends replies as files.",
+   "quote": "The web app is receive-only for share links.",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 398,
+   "anchor": "The web app is receive-only for share links."
+  },
+  {
+   "id": "r19",
+   "date": "2026-11-06",
+   "summary": "Share means a person, Export means yourself: Share Margins stays beside Export. (Inference from git history: a 2026-11-12 change that turned the item menu's share row into Export preceded #4229, 'no button that lets me share it'.)",
+   "quote": "Share Margins",
+   "protects": "removal",
+   "file": "docs/decisions.md",
+   "line": 426,
+   "anchor": "Share means a person, Export means yourself (#3211)."
+  },
+  {
+   "id": "r20",
+   "date": "2026-11-06",
+   "summary": "The link page keeps its install link, worded 'Get Spoken Margins', pointing at the TestFlight invite.",
+   "quote": "Get Spoken Margins",
+   "protects": "rename",
+   "file": "docs/decisions.md",
+   "line": 428,
+   "anchor": "A share link's server page keeps its install link, now worded \"Get Spo"
+  },
+  {
+   "id": "r21",
+   "date": "2026-11-06",
+   "summary": "Approved web card after a friend saves an answer: 'Your Margin is saved. Share sends it to {sender}.'",
+   "quote": "Your Margin is saved. Share sends it to {sender}. You pick which of your Margins go.",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 432,
+   "anchor": "The web card after a friend saves an answer (#2168)."
+  },
+  {
+   "id": "r22",
+   "date": "2026-11-06",
+   "summary": "A Margin ends and the episode plays on; moving to the next Margin always takes a press.",
+   "quote": "Hear only … Margins",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 442,
+   "anchor": "A Margin ends and the episode plays on; nothing teleports the listener"
+  },
+  {
+   "id": "r23",
+   "date": "2026-11-07",
+   "summary": "The 'Share as a link?' consent alert keeps its draft text.",
+   "quote": "number 1 seems fine",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 451,
+   "anchor": "Server consent alert text and Terms: keep the draft, keep section A, w"
+  },
+  {
+   "id": "r24",
+   "date": "2026-11-08",
+   "summary": "The join page's invite and the link page's invite are the same one, for the external friends beta.",
+   "quote": " And on the build: ",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 485,
+   "anchor": "Build 36 is on the external friends beta, and he has tested share link"
+  },
+  {
+   "id": "r25",
+   "date": "2026-11-09",
+   "summary": "Sharing sends the audio to someone who also has Spoken Margins; exporting gets the text out.",
+   "quote": "Share means a person, Export means yourself",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 520,
+   "anchor": "Sharing sends the audio to someone who also has Spoken Margins; export"
+  },
+  {
+   "id": "r26",
+   "date": "2026-11-09",
+   "summary": "No 'ask your friend for the invite' line on the link page.",
+   "quote": "ask for an invite",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 528,
+   "anchor": "No \"ask for an invite\" line on the link page (#3783)."
+  },
+  {
+   "id": "r27",
+   "date": "2026-11-12",
+   "summary": "The starred flag and the private share note sync encrypted and stay out of packets.",
+   "quote": "A. Sync them, encrypted. Cost: they were kept off packets on purpose, but they are your own notes.",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 551,
+   "anchor": "Private curation fields (the private share note, the starred flag): as"
+  },
+  {
+   "id": "r28",
+   "date": "2026-11-12",
+   "summary": "The join page may link to the web listener, saying nothing about share links.",
+   "quote": "4170 yes",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 562,
+   "anchor": "The web listener may be linked from the join page (#4170, 2026-11-12)."
+  },
+  {
+   "id": "r29",
+   "date": "2026-11-17",
+   "summary": "Share link may read the publisher once, in the background, to check the link plays.",
+   "quote": "OK for one background read of the publisher?",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 592,
+   "anchor": "Sharing a link may read the publisher once, in the background, to chec"
+  },
+  {
+   "id": "r30",
+   "date": "2026-11-21",
+   "summary": "The consent text says what the server keeps for a sender with a report.",
+   "quote": "our server forgets the code after 90 days without use",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 624,
+   "anchor": "The consent text says what the server keeps for a sender with a report"
+  },
+  {
+   "id": "r31",
+   "date": "2026-11-22",
+   "summary": "A friend's silent Margin is a place to jump to, never spoken.",
+   "quote": "Make a silent Margin a place Skim and the Margins tab can jump to, with no voice. I like this better.",
+   "protects": "behaviour",
+   "file": "docs/decisions.md",
+   "line": 676,
+   "anchor": "A silent Margin becomes a place to jump to, with no voice (#4447, #493"
   }
  ]
 }
