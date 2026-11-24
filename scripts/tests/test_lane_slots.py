@@ -21,6 +21,8 @@ FAKE_XCODEBUILD = '''#!/usr/bin/env python3
 import json, os, sys, time
 record = os.environ["FAKE_RECORD"]
 start = time.time()
+if os.environ.get("FAKE_STARTED"):  # a marker per run, named by pid, so a test can wait until the build is running
+    open(os.path.join(os.environ["FAKE_STARTED"], str(os.getpid())), "w").close()
 time.sleep(float(os.environ.get("FAKE_SECONDS", "1.5")))
 with open(record, "a") as handle:
     handle.write(json.dumps({"start": start, "end": time.time(), "argv": sys.argv[1:], "cwd": os.getcwd()}) + "\\n")
@@ -33,6 +35,7 @@ class BuildSlotTests(unittest.TestCase):
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)  # a cleanup, not tearDown: it must run after the tests' own cleanups
         self.dir = Path(self.temporary.name)
         fake = self.dir / 'xcodebuild'
         fake.write_text(FAKE_XCODEBUILD)
@@ -40,9 +43,6 @@ class BuildSlotTests(unittest.TestCase):
         self.record = self.dir / 'record.jsonl'
         self.env = {**os.environ, 'SM_LANE_STATE_DIR': str(self.dir / 'state'), 'SM_LANE_XCODEBUILD': str(fake),
                     'FAKE_RECORD': str(self.record), 'SM_BUILD_CACHE': 'off'}  # links nothing in this checkout
-
-    def tearDown(self):
-        self.temporary.cleanup()
 
     def wrapper(self, *args, cwd=None, env=None):
         return subprocess.Popen([sys.executable, str(SCRIPTS / 'xcodebuild-lane'), *args], cwd=cwd or SCRIPTS.parent,
@@ -137,20 +137,65 @@ class BuildSlotTests(unittest.TestCase):
             self.assertNotIn('waiting', err)  # both slots free again: no queue, however busy the Mac is
 
     def test_a_killed_holder_frees_its_slot(self):
-        holders = [self.wrapper('build', env={**self.env, 'FAKE_SECONDS': '30'}) for _ in range(2)]
-        deadline = time.monotonic() + 15
-        state = self.dir / 'state'
-        while time.monotonic() < deadline and sum(
-                bool(p.read_text()) for p in state.glob('*.lock')) < 2:
-            time.sleep(0.1)
+        # #5120: the kill used to land as soon as both lock notes were written, which is the moment the wrapper forks
+        # xcodebuild. The likely cause (inferred, not reproduced on Linux): on macOS a child forked while killpg runs
+        # may miss the signal (Linux re-checks group signals in fork), and that orphaned fake xcodebuild held the
+        # holder's pipes for its whole 30 s run, against a 30 s ceiling. So: kill only once both fake builds are running, give them a run far longer than
+        # any ceiling here, and name a process that outlives the kill instead of timing out on it.
+        started = self.dir / 'started'
+        started.mkdir()
+        env = {**self.env, 'FAKE_SECONDS': '600', 'FAKE_STARTED': str(started)}
+        holders = [self.wrapper('build', env=env) for _ in range(2)]
+        self.addCleanup(self.end_groups, holders)  # whatever happens below, no 600 s fake build is left running
+        deadline = time.monotonic() + 60
+        while len(list(started.iterdir())) < 2:
+            if time.monotonic() > deadline or any(holder.poll() is not None for holder in holders):
+                self.fail(f'both holders should be building before the kill: {len(list(started.iterdir()))} of 2 '
+                          f'started, exit codes {[holder.poll() for holder in holders]}')
+            time.sleep(0.05)
         for holder in holders:
             os.killpg(holder.pid, signal.SIGKILL)  # the wrapper and its xcodebuild, as a crash would
-            holder.communicate(timeout=30)
+        for holder in holders:
+            try:
+                holder.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                alive = [pid for pid in self.fake_build_pids(started) if self.running(pid)]
+                for pid in alive:  # it left the holder's group, so end_groups can't reach it
+                    with contextlib.suppress(ProcessLookupError, PermissionError):
+                        os.kill(pid, signal.SIGKILL)
+                self.fail(f'holder {holder.pid} was killed but its output stayed open for 30 s; '
+                          f'fake xcodebuild pids still running: {alive or "none"}')
         quick = self.wrapper('build', env={**self.env, 'FAKE_SECONDS': '0.1'})
+        self.addCleanup(self.end_groups, [quick])  # a quick build left waiting on a held slot must not outlive the test
         _, err = quick.communicate(timeout=30)
         self.assertEqual(quick.returncode, 0)
         self.assertIn('build slot 1/2 acquired', err)
         self.assertNotIn('waiting', err)  # the killed holders' slots were free at once
+
+    @staticmethod
+    def fake_build_pids(started):
+        return [int(marker.name) for marker in started.iterdir()]
+
+    @staticmethod
+    def running(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    @staticmethod
+    def end_groups(processes):
+        """Kill each wrapper's process group (it leads its own session) and reap it, whatever the test's outcome."""
+        for process in processes:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(process.pid, signal.SIGKILL)
+            with contextlib.suppress(subprocess.TimeoutExpired, ValueError, OSError):
+                process.communicate(timeout=5)
+            for stream in (process.stdout, process.stderr):
+                stream.close()
 
 
 class HolderNoteTests(unittest.TestCase):

@@ -5,7 +5,8 @@ import SwiftUI
 ///
 /// A UI test can't lock the simulator to photograph the real Lock Screen, so this lays out the real card,
 /// `Gate2LiveActivityView`, at the narrowest Lock Screen width and the text size the launch asks for, and prints
-/// its measured size under it. The paused card with a next chapter is the tallest; the playing one follows.
+/// its measured size under it. The paused card with skims and a next chapter is the tallest; the header-only
+/// playing card follows.
 /// A card wider than the dashed outline would cut a control off on a 375 pt phone.
 struct LiveActivityTourPreview: View {
     /// The Live Activity's width on a 375 pt-wide phone, the narrowest iOS 26 runs on (LiveActivityLayoutTests).
@@ -40,9 +41,13 @@ struct LiveActivityTourPreview: View {
         .environment(\.colorScheme, .dark)
     }
 
-    /// The same long title and chapters as LiveActivityLayoutTests, so the screenshot shows the case it measures.
+    /// The same long title and chapters as LiveActivityLayoutTests, so the screenshot shows the case it measures, and
+    /// the command sets the Lock Screen really gets: its policy keeps only start and finish Margin and the two skims
+    /// (`Gate2CompactControlController.swift:108-119`). Paused carries both skims, the tallest real card; playing has
+    /// none, the header-only card the owner saw squash the Margin control (#4764).
     static func state(status: String) -> Gate2LiveActivityAttributes.ContentState {
-        Gate2LiveActivityAttributes.ContentState(
+        let skims = status == "paused"
+        return Gate2LiveActivityAttributes.ContentState(
             title: "The Long Title of an Episode That Runs Past One Line",
             chapterTitle: "Chapter 4: A Chapter Title Long Enough to Need Shrinking",
             nextChapterTitle: "Chapter 5: What Comes Next",
@@ -52,11 +57,9 @@ struct LiveActivityTourPreview: View {
             phase: "itemPlayback",
             progressPercent: 42,
             isRecording: false,
-            availableCommands: [
-                "skimBackward", "skipBack", "togglePlayPause", "skipForward", "skimForward", "beginInterjection",
-            ],
-            skimForwardDestinationMs: 3_725_000,
-            skimBackwardDestinationMs: 3_605_000
+            availableCommands: skims ? ["skimBackward", "skimForward", "beginInterjection"] : ["beginInterjection"],
+            skimForwardDestinationMs: skims ? 3_725_000 : nil,
+            skimBackwardDestinationMs: skims ? 3_605_000 : nil
         )
     }
 }

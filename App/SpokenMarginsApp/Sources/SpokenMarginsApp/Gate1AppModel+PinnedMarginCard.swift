@@ -87,6 +87,12 @@ extension Gate1AppModel {
             targetLeadInMs: next.prompt.interjection.senderLeadInMs)
     }
 
+    /// The friend's Margin an ordinary countdown card is about (no Margin moment), so the card's line can say how its
+    /// place may be off (#4175). Nil while a moment holds the card.
+    var pinnedCardUpNextPrompt: ImportedCommentaryPrompt? {
+        marginMoment == nil ? nextSharedMargin?.prompt : nil
+    }
+
     /// What the open source is called on the card: from the open item's own stored facts (the Library row's), else from
     /// whether it plays as media. Never hard-coded to "episode" (#3597).
     var sourceNoun: SourceNoun {
