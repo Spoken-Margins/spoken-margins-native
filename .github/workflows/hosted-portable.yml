@@ -42,6 +42,10 @@
 # then `mac-rest`, or `sessionkit` with the variable off) stop or leave the queue (#2596): a PR the cheap job
 # already fails has no use for a hosted-Mac slot, and the org has five of them.
 #
+# The slow tier (#5145, owner 2026-11-23): every plan here runs with --leave-out-slow, which leaves out the tests in
+# scripts/slow_tier.py (slow on these runners, no failure in 30 days, none a packet, database or owner-data guard) and
+# names them in the log. main-slow.yml runs exactly those on main nightly and before the phone builds.
+#
 # Dispatch it by hand on any branch with `gh workflow run hosted-portable.yml --ref <branch>`.
 #
 # No secrets, a read-only token, no pull_request_target, no Git LFS (the voice models stay pointers; the
@@ -84,10 +88,13 @@ jobs:
     # same guard as every other job keeps the rule in one place). Always true for workflow_dispatch.
     # And, for a PR, only once the lane takes hosted results (LANE_HOSTED_FAST, above).
     name: 'hosted fast: portable'
-    # Waits for `scope` (about 20 seconds) only to learn whether the change is docs-only.
+    # Waits for `scope` (about 20 seconds) only to learn whether the change is docs-only. A merge group always runs:
+    # the queue merges every entry ahead of a green head on that head's result (HEADGREEN grouping), so a skip here
+    # merged untested PRs ahead of a docs-only head on 2026-11-23 (#5179). Groups are few and this job is Linux.
     needs: scope
     if: >-
-      !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.docs_only != 'true' &&
+      !cancelled() && needs.scope.result == 'success' &&
+      (github.event_name == 'merge_group' || needs.scope.outputs.docs_only != 'true') &&
       (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on'))
     runs-on: ubuntu-latest
@@ -170,7 +177,7 @@ jobs:
       - name: Portable fast plan
         env:
           PR_QUICK: ${{ github.event_name == 'pull_request' && '--pr-quick' || '' }}
-        run: .venv/bin/python scripts/verify-tests.py --plan fast-portable $PR_QUICK
+        run: .venv/bin/python scripts/verify-tests.py --plan fast-portable $PR_QUICK --leave-out-slow
       # #4937: the pipeline harness. It runs this tree's workflows, queue scripts, merge policy and VPS backstop through
       # about 400 timed combinations (black-box Mac jobs that pass, fail, hang or never start; same-second label bursts in
       # both orders; download outages; token refusals; dropped schedules) and fails on a stuck, silent, looping or
@@ -271,19 +278,25 @@ jobs:
         id: scope
         env:
           BASE: ${{ inputs.base }}
-          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          QUEUE_TRUNK: ${{ github.event.merge_group.base_ref }}
           EVENT: ${{ github.event_name }}
         run: |
-          # A merge group: everything the group adds to main's tip (its base_sha), not only the last PR's diff, so a
-          # group whose head entry is docs-only still runs the Mac checks for a Swift PR ahead of it (the queue merges
-          # the whole group on the head's result). A PR: the merge commit's parent 1 is the base, parent 2 the PR's
+          # A merge group: everything the group adds to the trunk itself (refs/heads/main, fetched here), not only the
+          # last PR's diff, so a group whose head entry is docs-only still runs the Mac checks for a Swift PR ahead of
+          # it (the queue merges the whole group on the head's result). Not merge_group.base_sha: that is the commit
+          # the entry was built on, which for any entry behind another is the previous entry's queue commit, not
+          # main's tip, so its diff held only the last PR (#5179, 2026-11-23). The rule is read from that same trunk
+          # commit. A PR: the merge commit's parent 1 is the base, parent 2 the PR's
           # head (the changed-files rule of the Mac rest job). A dispatch with a base: the dispatched commit against
           # that base's tip. A dispatch without a base has no diff to look at, so the Mac checks run.
           list="$RUNNER_TEMP/changed-files.txt"
           rule="$RUNNER_TEMP/test-scope.py"
-          if [ -n "$QUEUE_BASE" ]; then
-            git diff --name-only --no-renames "$QUEUE_BASE" HEAD > "$list" || rm -f "$list"
-            git show "$QUEUE_BASE:scripts/test-scope.py" > "$rule" 2> /dev/null || rm -f "$rule"
+          if [ "$EVENT" = merge_group ]; then
+            trunk="${QUEUE_TRUNK#refs/heads/}"
+            trunk="refs/remotes/origin/${trunk:-main}"
+            git fetch --no-tags origin "+refs/heads/${trunk#refs/remotes/origin/}:$trunk" &&
+              git diff --name-only --no-renames "$(git merge-base HEAD "$trunk")" HEAD > "$list" || rm -f "$list"
+            git show "$trunk:scripts/test-scope.py" > "$rule" 2> /dev/null || rm -f "$rule"
           # Not a dispatch: a dispatch on the trunk checks out its tip, a merge commit whose HEAD^2 is the last merged PR,
           # and that PR's files are not a diff to test (a seeding dispatch must run every step, #4664).
           elif [ "$EVENT" != workflow_dispatch ] && git rev-parse --verify --quiet HEAD^2 > /dev/null; then
@@ -308,12 +321,15 @@ jobs:
             echo "app=true" | tee -a "$GITHUB_OUTPUT"
           fi
           grep -q '^app=' "$GITHUB_OUTPUT" || echo "app=true" >> "$GITHUB_OUTPUT"
-          # Docs-only: every changed path is one the old paths-ignore list skipped. No list says false.
+          # Docs-only: every changed path is one the old paths-ignore list skipped. No list says false. The Site/
+          # folders that hold code with tests are not docs (Site/quiz/, #5048): a change there runs the portable plan,
+          # whose runner tests in the merge group include test_quiz_page.
           if [ -s "$list" ] && python3 -c '
           import sys
           docs = ("docs/", "research/", "Design/", "references/", "Site/", "Contracts/docs/")
+          code = ("Site/quiz/",)
           paths = [p.strip() for p in open(sys.argv[1]) if p.strip()]
-          sys.exit(0 if paths and all(p.endswith(".md") or p.startswith(docs) for p in paths) else 1)
+          sys.exit(0 if paths and all(p.endswith(".md") or (p.startswith(docs) and not p.startswith(code)) for p in paths) else 1)
           ' "$list"; then
             echo "docs_only=true" | tee -a "$GITHUB_OUTPUT"
           else
@@ -372,7 +388,7 @@ jobs:
       - name: SessionKit build and SessionKitCoreTests
         run: |
           swift --version
-          .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit
+          .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit --leave-out-slow
       - name: Keep the step logs
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -572,7 +588,7 @@ jobs:
       - name: SessionKit build and SessionKitCoreTests
         run: |
           swift --version
-          .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit
+          .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit --leave-out-slow
       - name: Keep the Mac test list
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -597,13 +613,17 @@ jobs:
       # merge base with the base, both sides of a rename. A dispatch without a base runs every step.
       - name: Changed files
         env:
-          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          QUEUE_TRUNK: ${{ github.event.merge_group.base_ref }}
           EVENT: ${{ github.event_name }}
           DISPATCH_BASE: ${{ inputs.base }}
         run: |
-          # A merge group: everything the group adds to main's tip, as in the `scope` job.
-          if [ -n "$QUEUE_BASE" ]; then
-            git diff --name-only --no-renames "$QUEUE_BASE" HEAD > "$RUNNER_TEMP/changed-files.txt"
+          # A merge group: everything the group adds to the trunk itself, as in the `scope` job (not base_sha, the
+          # previous queue entry's commit, #5179).
+          if [ "$EVENT" = merge_group ]; then
+            trunk="${QUEUE_TRUNK#refs/heads/}"
+            trunk="refs/remotes/origin/${trunk:-main}"
+            git fetch --no-tags origin "+refs/heads/${trunk#refs/remotes/origin/}:$trunk"
+            git diff --name-only --no-renames "$(git merge-base HEAD "$trunk")" HEAD > "$RUNNER_TEMP/changed-files.txt"
             echo "CHANGED_ARGS=--changed-files $RUNNER_TEMP/changed-files.txt" >> "$GITHUB_ENV"
             echo "$(grep -c . "$RUNNER_TEMP/changed-files.txt" || true) changed files in the merge group"
           # A dispatch with no base is not a merge to read a diff from: on the trunk it checks out the tip, a merge commit
@@ -619,7 +639,7 @@ jobs:
       - name: Mac rest of the fast plan
         run: |
           swift --version
-          .venv/bin/python scripts/verify-tests.py --plan fast-mac-rest $CHANGED_ARGS
+          .venv/bin/python scripts/verify-tests.py --plan fast-mac-rest $CHANGED_ARGS --leave-out-slow
       - name: Keep the step logs
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

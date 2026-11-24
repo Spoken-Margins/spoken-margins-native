@@ -90,6 +90,7 @@ extension Gate1AppModel {
         followingLibraryEpisodes = result.3
         followingRuleInputs = result.4
         followingShowRevision += 1
+        ListeningRulesState.shared.noteEntriesRevision(followingShowRevision)
         if needsMarkers, !followingLookedLoaded, let followed = result.2 {
             followingLookedLoaded = true
             let settled = FollowingLookedMarkers.afterFirstLoad(inMemory: followingLooked, saved: result.1, followed: followed)

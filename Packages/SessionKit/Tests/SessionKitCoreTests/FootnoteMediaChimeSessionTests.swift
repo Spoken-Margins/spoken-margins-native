@@ -4,7 +4,7 @@ import XCTest
 
 /// #3777: the media player's footnote session for an item playing its prepared audio as one file, and the two driver
 /// rules the player's real seeks need (a landing just short of the target, and a listener's jump). The timelines are
-/// built as `SupertonicPreparedAudioAssembler.writePCM` builds them (see `FootnoteMediaChimeDriverTests`), with a fixed
+/// built with `AssembledNarrationTimeline`, as `SupertonicPreparedAudioAssembler.writePCM` builds them, with a fixed
 /// silence after each chunk so the tone's lead-in can be measured.
 final class FootnoteMediaChimeSessionTests: XCTestCase {
     private typealias Session = FootnoteMediaChimeSession
@@ -21,30 +21,22 @@ final class FootnoteMediaChimeSessionTests: XCTestCase {
 
     private func timeline(_ text: String, silenceMs: Int) -> TranscriptTimeline {
         let plan = NarrationChunkPlanner.articlePlan(text, asides: true).chunks
-        let projection = NarrationChunkPlanner.silencedSpeech(source: text, endingWith: text)
-            ?? SpeechTextNormalizer.normalizeWithSourceOffsets(text)
-        let source = Array(text)
+        let article = Item(id: item, title: "T", mediaType: "article", text: text, externalReference: nil, status: "ready")
+        let projection = PreparedSpeechText(item: article, document: nil)!.assemblyProjection(asides: true)
         let ordered = plan.enumerated()
             .filter { if case .definition? = $0.element.footnote { return false } else { return true } }
             .sorted { ($0.element.startOffset, $0.offset) < ($1.element.startOffset, $1.offset) }
             .map(\.element)
-        var segments: [MediaTimelineSegment] = []
+        var timeline = AssembledNarrationTimeline(projection: projection, sourceText: text)
         var cursor = 0
         for chunk in ordered {
             let start = cursor
             cursor += 1_000
-            let pieces = NarrationTimelinePieces.pieces(
-                spokenRange: chunk.startOffset..<(chunk.startOffset + chunk.sourceLength),
-                startMs: start, endMs: cursor, projection: projection, source: source)
-            for piece in pieces {
-                segments.append(MediaTimelineSegment(
-                    id: "seg-\(segments.count)", startMs: piece.startMs, endMs: piece.endMs,
-                    startChar: piece.startChar, endChar: piece.endChar,
-                    text: pieces.count == 1 ? chunk.text : "piece"))
-            }
+            timeline.append(startOffset: chunk.startOffset, sourceLength: chunk.sourceLength, text: chunk.text,
+                            startMs: start, endMs: cursor)
             cursor += silenceMs
         }
-        return TranscriptTimeline(segments: segments, chapters: [], durationMs: cursor)
+        return TranscriptTimeline(segments: timeline.segments, chapters: [], durationMs: cursor)
     }
 
     private func makeSession(silenceMs: Int = 800) throws -> Session {

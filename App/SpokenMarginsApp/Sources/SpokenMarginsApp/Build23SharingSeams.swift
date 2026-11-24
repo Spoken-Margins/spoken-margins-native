@@ -78,6 +78,22 @@ struct Build23SharingMarginSnapshot: Identifiable, Equatable {
     var placementNote: String? = nil
     /// False for a moved Margin with no place on its item (#4233): a packet can't carry it, so its switch stays off.
     var hasPlace = true
+    /// "Before your Margin" (#4171): nil for anything but a placed Margin on an episode or audio file.
+    var leadIn: Build23LeadInSnapshot? = nil
+}
+
+/// The sender's "Before your Margin" row on one Margin's card (#4171, PR 4b). The rules are `SenderLeadInPreview`'s.
+struct Build23LeadInSnapshot: Equatable {
+    /// The length the packet would carry, in ms.
+    let ms: Int
+    /// What the menu lists, in ms.
+    let choicesMs: [Int]
+    /// False while the Margin's moment is still being found: the preview would pause that sample.
+    let previewIsAvailable: Bool
+    let isPlaying: Bool
+    let previewFailed: Bool
+    /// What follows the chime when the Margin goes as words; nil for a voice.
+    let afterRunUpCaption: String?
 }
 
 extension Build23SharingMarginSnapshot {
@@ -142,6 +158,9 @@ struct Build23SharingSnapshot: Equatable {
     let needsAutoCleanDecision: Bool
     /// The sheet was opened as "Share replies with <friend>" (#3792, #3906): its review is a receipt, not an editor.
     let isReplyBack: Bool
+    /// The sheet opened with only the starred Margins selected (#4173 PR 4). It holds for the whole sheet, even after the
+    /// listener changes the selection or goes back to Choose; a reply sheet or a one-Margin share never sets it.
+    let startedFromStars: Bool
     let previewState: Build23SharingPreviewState
     let verifiedPreview: Build23VerifiedRecipientPreview?
     let errorMessage: String?
@@ -152,6 +171,14 @@ struct Build23SharingSnapshot: Equatable {
 }
 
 extension Build23SharingSnapshot {
+    static let starredReviewCaption = "Starting with the Margins you starred."
+
+    /// The line under the Review heading (#4173 PR 4), so a listener who sees "Margin 1 of 2" knows why. Nil unless the
+    /// sheet started from stars.
+    var reviewCaption: String? {
+        startedFromStars ? Self.starredReviewCaption : nil
+    }
+
     /// Whether the first-run cleanup question shows when the sheet opens (#3792): only when it can be true.
     var asksAutoCleanQuestion: Bool {
         ShareAutoCleanQuestion.asks(
@@ -243,6 +270,12 @@ enum Build23SenderAction: Equatable {
     case setRepresentation(id: String, choice: ShareMarginRepresentationChoice)
     /// Asks the friend's phone to read a text Margin aloud, or not to (#3427).
     case setReadAloud(id: String, readAloud: Bool)
+    /// How much of the episode the friend hears before this Margin (#4171).
+    case setLeadIn(id: String, ms: Int)
+    /// "Hear it as your friend will": starts this Margin's preview, or stops it when it is playing (#4171).
+    case toggleLeadInPreview(id: String)
+    /// Stops this Margin's preview if it is the one playing; its card went away.
+    case stopLeadInPreview(id: String)
     case setAnchorBefore(id: String, text: String)
     case setAnchorAfter(id: String, text: String)
     case setReviewedWords(id: String, text: String)
@@ -302,6 +335,13 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     @Published private(set) var pendingRecipientSourceRequest: Build23RecipientSourceRequest?
 
     private let model: Gate1AppModel
+    /// Plays "Hear it as your friend will" (#4171). One for the sheet, so only one Margin's preview plays.
+    private let leadInPreview = LeadInPreviewPlayer()
+    /// Whether the main player was playing when the preview started, so its resuming (AirPods, the Lock Screen) is seen.
+    private var mainPlaybackActiveAtPreview = false
+    /// The item read before a preview starts; a Stop or another start cancels it.
+    private var leadInPreviewStart: Task<Void, Never>?
+    private var leadInPreviewStartID: String?
     /// The sheet's heading: "Share replies with Ana" (or "Share your Margins with Ana" when none is a reply) when it was opened to share replies back (#3221, #3906).
     var senderHeading: String { model.sharingState.replyBackTitle ?? "Share Margins" }
     /// Recovers a private-feed packet's episode from the recipient's own feed (#454).
@@ -364,6 +404,10 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         model.objectWillChange
             .sink { [weak self] in self?.scheduleModelChange(inputChanged: false, checksPlayback: true) }
             .store(in: &modelChangeCancellables)
+        // The preview's Play and Stop are on the card.
+        leadInPreview.objectWillChange
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &modelChangeCancellables)
     }
 
     static func isPlaying(itemID: String, in snapshot: SessionSnapshot) -> Bool {
@@ -385,6 +429,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             self.inputChangePending = false
             if self.playbackCheckPending {
                 self.playbackCheckPending = false
+                self.stopLeadInPreviewIfMainPlaybackResumed()
                 let playing = Self.isPlaying(itemID: self.model.selectedItem.id, in: self.model.snapshot)
                 if playing != self.playsThisItem {
                     self.playsThisItem = playing
@@ -399,7 +444,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         let state = model.sharingState
         // The steps read the stored Margin each time, not the copy the draft took when the sheet opened, so a step clears
         // by itself when the sample lands (#3839).
-        let stored = Dictionary(model.selectedItem.interjections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let stored = Dictionary(model.selectedItem.interjections.map { ($0.sessionScopedId, $0) }, uniquingKeysWith: { first, _ in first })
         let isNativeAudio = model.selectedItem.isNativeAudio
         let playing = Self.isPlaying(itemID: model.selectedItem.id, in: model.snapshot)
         var waiting: [ShareReviewSteps.Margin] = []
@@ -409,6 +454,18 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 stored[draft.id] ?? draft.interjection, isNativeAudio: isNativeAudio, playingThisItem: playing,
                 hasVoice: originalVoiceURL != nil)
             if draft.isIncluded { waiting.append(reviewMargin) }
+            let marginPositionMs = (stored[draft.id] ?? draft.interjection).anchor.mediaTimeMs
+            let leadIn = SenderLeadInPreview.showsRow(
+                isNativeAudio: isNativeAudio, hasPlace: draft.interjection.hasPlace, marginPositionMs: marginPositionMs)
+                ? Build23LeadInSnapshot(
+                    ms: SenderLeadIn.clamped(draft.leadInMs),
+                    choicesMs: SenderLeadInPreview.choicesMs(current: draft.leadInMs),
+                    previewIsAvailable: SenderLeadInPreview.previewIsAvailable(reviewMargin),
+                    isPlaying: leadInPreview.playingMarginID == draft.id,
+                    previewFailed: leadInPreview.failedMarginID == draft.id,
+                    afterRunUpCaption: SenderLeadInPreview.afterRunUpCaption(
+                        goesAsWords: draft.representationChoice == .textOnly, readAloud: draft.readAloud))
+                : nil
             return Build23SharingMarginSnapshot(
                 id: draft.id,
                 reviewedText: draft.approvedTranscript,
@@ -438,7 +495,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 steps: ShareReviewSteps.cardSteps(reviewMargin),
                 waitingBadge: ShareReviewSteps.waitingBadge(reviewMargin),
                 placementNote: ShareReviewSteps.cardNote(reviewMargin),
-                hasPlace: draft.interjection.hasPlace
+                hasPlace: draft.interjection.hasPlace,
+                leadIn: leadIn
             )
         }
         let hasReviewedSelection = margins.contains {
@@ -474,6 +532,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             autoCleanSelectedEnabled: state.autoCleanSelectedEnabled,
             needsAutoCleanDecision: state.needsAutoCleanDecision,
             isReplyBack: state.replyBackTitle != nil,
+            startedFromStars: state.openedFrom == .starred,
             previewState: previewState,
             verifiedPreview: verifiedPreview,
             errorMessage: state.errorMessage,
@@ -630,9 +689,27 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         case .selectMargin(let id):
             selectedMarginID = id
         case .setRepresentation(let id, let choice):
+            // The preview was playing the version just replaced.
+            if leadInPreview.playingMarginID == id { leadInPreview.stop() }
+            leadInPreview.clearFailure(marginID: id)
             mutatePackage { model.setShareDraftRepresentation(id, choice: choice) }
         case .setReadAloud(let id, let readAloud):
             mutatePackage { model.setShareDraftReadAloud(id, readAloud: readAloud) }
+        case .setLeadIn(let id, let ms):
+            // The preview was playing the length just replaced.
+            if leadInPreview.playingMarginID == id { leadInPreview.stop() }
+            leadInPreview.clearFailure(marginID: id)
+            mutatePackage { model.setShareDraftLeadIn(id, ms: ms) }
+        case .toggleLeadInPreview(let id):
+            if leadInPreview.playingMarginID == id {
+                leadInPreviewStart?.cancel()
+                leadInPreview.stop()
+            } else {
+                startLeadInPreview(id)
+            }
+        case .stopLeadInPreview(let id):
+            if leadInPreviewStartID == id { leadInPreviewStart?.cancel() }
+            if leadInPreview.playingMarginID == id { leadInPreview.stop() }
         case .setAnchorBefore(let id, let text):
             mutatePackage { model.setShareDraftAnchorBefore(id, value: text) }
         case .setAnchorAfter(let id, let text):
@@ -677,6 +754,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         case .returnFromSystemShare:
             stage = .review
         case .cancel:
+            leadInPreviewStart?.cancel()
+            leadInPreview.stop()
             model.cancelBulkSharePreparation()
             model.isSharingInterjectionsPresented = false
             discardPreview(resetTo: .select)
@@ -840,7 +919,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     @discardableResult
     private func refreshDraftsFromStoredMargins() -> Bool {
         guard stage == .select || stage == .review else { return false }
-        let stored = Dictionary(model.selectedItem.interjections.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let stored = Dictionary(model.selectedItem.interjections.map { ($0.sessionScopedId, $0) }, uniquingKeysWith: { first, _ in first })
         var drafts = model.sharingState.drafts
         var changed = false
         for index in drafts.indices {
@@ -869,6 +948,44 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         objectWillChange.send()
     }
 
+    /// "Hear it as your friend will" (#4171): the episode from where the friend's review would start, the chime, then the
+    /// version chosen under "Your friend gets". It pauses the main player if it's playing, and leaves it paused.
+    private func startLeadInPreview(_ id: String) {
+        guard let draft = model.sharingState.drafts.first(where: { $0.id == id }),
+              let marginPositionMs = draft.interjection.anchor.mediaTimeMs,
+              snapshot.margins.first(where: { $0.id == id })?.leadIn?.previewIsAvailable == true else { return }
+        let plan = SenderLeadInPreview.Plan(marginPositionMs: marginPositionMs, leadInMs: draft.leadInMs)
+        let voiceURL: URL? = switch draft.representationChoice {
+        case .original: model.originalAudioURL(forShareDraft: draft.id)
+        case .cleaned: draft.cleanedAudioURL
+        case .textOnly: nil
+        }
+        let itemID = model.selectedItem.id
+        leadInPreviewStart?.cancel()
+        leadInPreviewStartID = id
+        leadInPreviewStart = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let episodeURL = await self.model.senderPreviewEpisodeURL(itemId: itemID)
+            // The sheet moved on while the item was read: a Stop, another Margin's preview, another item, or closing.
+            guard !Task.isCancelled, self.model.selectedItem.id == itemID else { return }
+            self.model.hangTelemetry.labels.scoped("leadInPreviewStart") {
+                if episodeURL != nil { self.model.pauseForSenderPreview() }
+                self.mainPlaybackActiveAtPreview = self.model.snapshot.status.isPlaybackActive
+                self.leadInPreview.start(marginID: id, episodeURL: episodeURL, plan: plan, voiceURL: voiceURL)
+            }
+        }
+    }
+
+    /// The main player keeps its remote commands while the preview plays, so AirPods or the Lock Screen can start it
+    /// again. The two never play over each other: the main player starting stops the preview (audit on #5108).
+    private func stopLeadInPreviewIfMainPlaybackResumed() {
+        let active = model.snapshot.status.isPlaybackActive
+        defer { mainPlaybackActiveAtPreview = active }
+        guard active, !mainPlaybackActiveAtPreview, leadInPreview.playingMarginID != nil else { return }
+        leadInPreviewStart?.cancel()
+        leadInPreview.stop()
+    }
+
     private func currentDraftFingerprint() -> String {
         let state = model.sharingState
         var fields = [
@@ -885,6 +1002,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 draft.approvedTranscript,
                 draft.representationChoice.rawValue,
                 String(draft.readAloud),
+                String(draft.leadInMs),
                 draft.anchorBefore,
                 draft.anchorAfter,
                 draft.cleanedAudioURL?.path ?? "",

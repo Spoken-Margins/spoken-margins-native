@@ -89,11 +89,10 @@ extension Gate1AppModel {
         }
     }
 
-    /// Takes automatic Quick Folder files back out of the seen set, so the next refresh tries them again. With
-    /// `holdUntilForeground`, they also wait until the app next comes forward, so the refresh that ends this import
-    /// doesn't start the next try at once and spend all three tries in a few seconds.
+    /// With `holdUntilForeground`, automatic Quick Folder files wait until the app next comes forward. Since #4274 nothing
+    /// passes `automatic: true` (the inbox that did is gone, and there is no seen set to take files out of); the automatic
+    /// route goes with the inbox planner in #4274's PR 4.
     private func releaseAutomaticQuickFolderFiles(_ files: [QuickAccessFile], holdUntilForeground: Bool) {
         if holdUntilForeground { for file in files { linkListArrival.hold(file.id) } }
-        quickAccess.inboxSeenFileIds = quickAccess.inboxSeenFileIds?.subtracting(files.map(\.id))
     }
 }

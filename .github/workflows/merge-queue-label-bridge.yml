@@ -12,16 +12,27 @@
 #      push merges straight to main, which the queue rule refuses, so they must stop (this PR does not change
 #      lane.yml).
 #
-# Token. Events caused by GITHUB_TOKEN start no workflow runs, except workflow_dispatch and repository_dispatch
+# Token (#4915, after the 2026-11-23 failures). The bridge queues as the GitHub App `spoken-margins-agent`: the job
+# mints a token for this repository from the `agent-identity` environment (variable SM_APP_ID, secret
+# SM_APP_PRIVATE_KEY), the same way package-watch.yml does. Two reasons. (1) The secret MERGE_QUEUE_TOKEN, a personal
+# access token, has no `workflow` scope, so GitHub refused to queue every PR that edits a workflow file (#5189, #5106,
+# #5151: "refusing to allow a Personal Access Token to create or update workflow ... without `workflow` scope
+# (enablePullRequestAutoMerge)"); the App token asks for `workflows: write`, which the App already uses to push
+# workflow edits. (2) Queue merges showed as the owner's; they now show as the App.
+# Events caused by GITHUB_TOKEN start no workflow runs, except workflow_dispatch and repository_dispatch
 # (docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow, "Triggering a
-# workflow from a workflow"). A PR enqueued by GITHUB_TOKEN may therefore get merge groups whose `merge_group`
-# checks never start, which would hold the queue; that is not documented either way. So the step uses the secret
-# MERGE_QUEUE_TOKEN (a fine-grained token or App token with pull requests and contents write) when it exists, and
-# GITHUB_TOKEN otherwise. The trial must show a bridge-queued PR's merge-group checks starting before the switch.
-# The same rule means a label added with GITHUB_TOKEN (by another workflow) starts no run here; the 15-minute
-# sweep queues those. The sweep never takes a PR out: a PR set to merge without the label may be the owner's own
-# Merge tap. A label removed with GITHUB_TOKEN therefore leaves the PR queued; take it out with `gh pr merge
-# --disable-auto` or by hand.
+# workflow from a workflow"), so a PR enqueued by GITHUB_TOKEN may get merge groups whose `merge_group` checks never
+# start. An App installation token is not GITHUB_TOKEN, so its merge groups run. Fallbacks, in order: the App token;
+# MERGE_QUEUE_TOKEN when the App token can't be minted (the mint step may fail without failing the job); GITHUB_TOKEN.
+# FALLBACK_GH_TOKEN keeps the "could not queue" comment working when the queueing token is refused (#4937).
+# The environment: `agent-identity` allows main only, and the rule is matched against GITHUB_REF, which is the default
+# branch for `pull_request_target` and `schedule` and the dispatched ref for `workflow_dispatch` (dispatch it on main;
+# the VPS backstop does). `deployment: false` keeps the job from making a deployment, so PRs show no deployment entry
+# for every bridge run; it works because the environment has no custom protection rule (docs.github.com/en/actions/
+# how-tos/deploy/configure-and-manage-deployments/control-deployments).
+# A label added with GITHUB_TOKEN (by another workflow) starts no run here; the sweep queues those. The sweep never
+# takes a PR out: a PR set to merge without the label may be the owner's own Merge tap. A label removed with
+# GITHUB_TOKEN therefore leaves the PR queued; take it out with `gh pr merge --disable-auto` or by hand.
 #
 # `pull_request_target`, not `pull_request`: the script comes from main and nothing from the PR is checked out or run.
 #
@@ -32,7 +43,8 @@
 # when any PR's check finishes would queue a PR whose merge group just failed, or one taken out by hand, before
 # merge_queue_dequeued.py has taken `automerge` off it (ci_model scenario d showed the second failing group).
 #
-# Cost and catch: one Linux job of seconds per `automerge` label change, title edit or draft, plus a seconds-long
+# Cost and catch: one Linux job of seconds per `automerge` label change, title edit or draft, one more per push to or
+# opening of an unarmed PR (the `new-head` job, #5162), plus a seconds-long
 # sweep every 15 minutes (only with MERGE_QUEUE on; otherwise each run is a skipped job). Its real cost is the merge
 # group runs each queueing starts (Linux, plus a Mac for a Swift diff). The `needs-fix` guard bounds that to one group
 # per arming: a PR whose group failed gets `needs-fix` and loses `automerge` (merge_queue_dequeued.py), and is not
@@ -78,6 +90,10 @@ jobs:
       cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Main only, no deployment record (the header says why each trigger passes the main-only rule).
+    environment:
+      name: agent-identity
+      deployment: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -85,9 +101,23 @@ jobs:
           persist-credentials: false
           sparse-checkout: scripts/merge_queue_label_bridge.py
           sparse-checkout-cone-mode: false
+      - name: Act as the spoken-margins-agent App
+        id: app-token
+        # A failed mint falls back to MERGE_QUEUE_TOKEN below instead of failing the run.
+        continue-on-error: true
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.SM_APP_ID }}
+          private-key: ${{ secrets.SM_APP_PRIVATE_KEY }}
+          # No owner or repositories: the action then scopes the token to this repository alone.
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+          # Queueing a PR that edits .github/workflows/ needs it (#5189).
+          permission-workflows: write
       - name: Queue or unqueue
         env:
-          GH_TOKEN: ${{ secrets.MERGE_QUEUE_TOKEN || github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.MERGE_QUEUE_TOKEN || github.token }}
           # For the "could not queue" comment only, when GH_TOKEN is refused (#4937): an expired queue token then
           # still leaves a note on the PR instead of only a red run.
           FALLBACK_GH_TOKEN: ${{ github.token }}
@@ -104,3 +134,24 @@ jobs:
           else
             python3 scripts/merge_queue_label_bridge.py --repo "$GH_REPO" --sweep
           fi
+
+  # The required `merge policy` check is a check run merge_policy.py makes through the API, and GitHub files it in the
+  # first GitHub Actions check suite made for the head SHA (#5162). When that first suite is this workflow's run and
+  # its only job was skipped (an unarmed PR's `opened` or `synchronize`), the suite reads "skipped", and GitHub then
+  # refuses to queue the PR with "Required status check 'merge policy' is expected" although the check passed: on
+  # 2026-11-23 eleven armed PRs (#5147, #5155 among them) sat green and unqueued, and every one had its check in a
+  # skipped bridge suite. This job runs exactly when `bridge` skips on a new head, so this workflow's suite always
+  # ends `success` there. It does nothing else: no checkout, no token use.
+  new-head:
+    name: merge queue label bridge (new head)
+    if: >-
+      vars.MERGE_QUEUE == 'on' && github.event_name == 'pull_request_target' &&
+      (github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize' ||
+       github.event.action == 'ready_for_review') &&
+      !contains(github.event.pull_request.labels.*.name, 'automerge')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Nothing to queue
+        run: echo "Not armed with automerge; this job only keeps the check suite from reading skipped (#5162)."

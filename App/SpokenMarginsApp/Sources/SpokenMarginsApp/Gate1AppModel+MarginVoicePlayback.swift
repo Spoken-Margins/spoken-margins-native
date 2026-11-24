@@ -450,11 +450,15 @@ extension Gate1AppModel: MarginVoicePlayerHost {
         guard let store, let itemID = snapshot.itemId, let position = snapshot.currentMediaTimeMs,
               let played = (try? store.loadInterjections(sessionId: sessionID))?.first(where: { $0.id == id }),
               played.itemId == itemID,
-              played.isInlineSpokenMargin, let playedMs = played.anchor.mediaTimeMs else { return }
+              played.isInlineSpokenMargin, played.hasPlace, let playedMs = played.anchor.mediaTimeMs else { return }
         let spoken = inlineSpokenMargins(itemId: itemID, store: store)
         let playedIdentity = Self.marginIdentity(played)
         // The Margin just recorded over this one (#1672) sits at its place; the listener just made it, so it doesn't play next.
-        let anchors = spoken.map { MarginMomentAnchor(marginId: Self.marginIdentity($0), mediaTimeMs: $0.anchor.mediaTimeMs ?? 0) }
+        // Only Margins with a place and a time can follow (#4233): a missing time is never read as 0:00.
+        let anchors = spoken.compactMap { margin -> MarginMomentAnchor? in
+            guard margin.hasPlace, let ms = margin.anchor.mediaTimeMs else { return nil }
+            return MarginMomentAnchor(marginId: Self.marginIdentity(margin), mediaTimeMs: ms)
+        }
             .filter { !recordedOver.contains($0.marginId) }
         guard anchors.contains(where: { $0.marginId != playedIdentity && $0.mediaTimeMs > position }) else { return }
         var voiceURLs: [String: URL] = [:]

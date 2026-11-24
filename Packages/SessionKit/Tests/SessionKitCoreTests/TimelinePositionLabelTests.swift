@@ -7,31 +7,52 @@ final class TimelinePositionLabelTests: XCTestCase {
 
     func testAMediaChapterWithAnExactStartShowsTheClockUnderAnHour() {
         let label = TimelinePositionLabel.label(kind: .media, startMs: 450_000, percent: 7)
-        XCTAssertEqual(label, .init(corner: "7:30", spoken: "7 minutes, 30 seconds", chapterDetail: "Chapter · 7:30"))
+        XCTAssertEqual(label, .init(corner: "7:30", spoken: "7 minutes, 30 seconds"))
     }
 
     func testAMediaChapterWithAnExactStartOverAnHourKeepsTheHours() {
         let label = TimelinePositionLabel.label(kind: .media, startMs: 4_050_000, percent: 65)
-        XCTAssertEqual(label, .init(corner: "1:07:30", spoken: "1 hour, 7 minutes, 30 seconds", chapterDetail: "Chapter · 1:07:30"),
+        XCTAssertEqual(label, .init(corner: "1:07:30", spoken: "1 hour, 7 minutes, 30 seconds"),
                        "not 67:30, and not the percentage the chapter also carries")
     }
 
     func testAMediaChapterPlacedOnlyByAFractionShowsThePercentAndSaysAbout() {
         let label = TimelinePositionLabel.label(kind: .media, startMs: nil, percent: 65)
-        XCTAssertEqual(label, .init(corner: "65%", spoken: "65 percent", chapterDetail: "Chapter · about 65%"))
+        XCTAssertEqual(label, .init(corner: "65%", spoken: "65 percent"))
         XCTAssertFalse(label.corner.contains(":"), "no time is made from a percentage")
     }
 
     func testATextItemShowsPercentagesAndNeverATimeEvenIfOneIsGiven() {
         XCTAssertEqual(TimelinePositionLabel.label(kind: .text, startMs: nil, percent: 56),
-                       .init(corner: "56%", spoken: "56 percent", chapterDetail: "Chapter · 56%"))
+                       .init(corner: "56%", spoken: "56 percent"))
         XCTAssertEqual(TimelinePositionLabel.label(kind: .text, startMs: 500_000, percent: 56),
-                       .init(corner: "56%", spoken: "56 percent", chapterDetail: "Chapter · 56%"), "no time leaks into any field")
+                       .init(corner: "56%", spoken: "56 percent"), "no time leaks into any field")
     }
 
     func testANegativeStartIsNotAnExactTime() {
         XCTAssertEqual(TimelinePositionLabel.label(kind: .media, startMs: -500, percent: 40),
-                       .init(corner: "40%", spoken: "40 percent", chapterDetail: "Chapter · about 40%"))
+                       .init(corner: "40%", spoken: "40 percent"))
+    }
+
+    // MARK: a chapter card's label (#4778): the place shows once, in the corner, so a rough one keeps its "about"
+
+    func testAChapterLabelWithAnExactMediaStartIsTheClock() {
+        XCTAssertEqual(TimelinePositionLabel.chapterLabel(kind: .media, startMs: 4_050_000, percent: 65),
+                       .init(corner: "1:07:30", spoken: "1 hour, 7 minutes, 30 seconds"))
+    }
+
+    func testAChapterLabelPlacedOnlyByAFractionOnMediaSaysAbout() {
+        XCTAssertEqual(TimelinePositionLabel.chapterLabel(kind: .media, startMs: nil, percent: 65),
+                       .init(corner: "about 65%", spoken: "about 65 percent"))
+        XCTAssertEqual(TimelinePositionLabel.chapterLabel(kind: .media, startMs: -500, percent: 40),
+                       .init(corner: "about 40%", spoken: "about 40 percent"), "a negative start is not an exact time")
+    }
+
+    func testAChapterLabelOnTextIsThePercentWithNoAbout() {
+        XCTAssertEqual(TimelinePositionLabel.chapterLabel(kind: .text, startMs: nil, percent: 56),
+                       .init(corner: "56%", spoken: "56 percent"))
+        XCTAssertEqual(TimelinePositionLabel.chapterLabel(kind: .text, startMs: 500_000, percent: 56),
+                       .init(corner: "56%", spoken: "56 percent"))
     }
 
     func testAVeryLargeStartDoesNotOverflow() {

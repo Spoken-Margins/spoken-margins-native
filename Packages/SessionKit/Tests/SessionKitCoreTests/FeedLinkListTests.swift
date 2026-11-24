@@ -64,6 +64,28 @@ final class FeedLinkListTests: XCTestCase {
             ("(https://feeds.example.com/a.xml)", "https://feeds.example.com/a.xml", "https://feeds.example.com/a.xml"),
             ("Café Écoute https://feeds.example.com/caf%C3%A9.xml", "Café Écoute", "https://feeds.example.com/caf%C3%A9.xml"),
             ("Show A https://podcasts.apple.com/us/podcast/a/id1 https://feeds.example.com/a.xml", "Show A", "https://feeds.example.com/a.xml"),
+            // #4858: a name stuck to its link with no space, the owner's second try at the Shortcut.
+            ("Hard Forkhttps://feeds.example.com/a.xml", "Hard Fork", "https://feeds.example.com/a.xml"),
+            ("Hard Fork:https://feeds.example.com/a.xml", "Hard Fork", "https://feeds.example.com/a.xml"),
+            ("Hard ForkHTTPS://FEEDS.EXAMPLE.COM/a.xml", "Hard Fork", "HTTPS://FEEDS.EXAMPLE.COM/a.xml"),
+            ("Hard Forkhttp://feeds.example.com/a.xml", "Hard Fork", "http://feeds.example.com/a.xml"),
+            ("Hard ForkHtTp://feeds.example.com/a.xml", "Hard Fork", "HtTp://feeds.example.com/a.xml"),
+            ("Re:Think https://feeds.example.com/a.xml", "Re:Think", "https://feeds.example.com/a.xml"),
+            ("Hard Fork:<https://feeds.example.com/a.xml>", "Hard Fork", "https://feeds.example.com/a.xml"),
+            ("Show Ahttps://podcasts.apple.com/us/podcast/a/id1", nil, nil),
+            ("example.com/go?to=https://feeds.example.com/a.xml", nil, nil),
+            // A plain link whose query holds another link is one link word and is not split.
+            ("Show A https://feeds.example.com/a.xml?u=https://other.example.com/b", "Show A", "https://feeds.example.com/a.xml?u=https://other.example.com/b"),
+            // A glued word is read only when no word is a feed link by itself.
+            ("Junkhttps://feeds.example.com/x.xml Show A https://feeds.example.com/a.xml", "Junkhttps://feeds.example.com/x.xml Show A", "https://feeds.example.com/a.xml"),
+            // Names with a colon, a dash, quotes, a trailing <link>, a bare web address, a tab or a non-breaking space inside.
+            ("Show: The Sequel https://feeds.example.com/a.xml", "Show: The Sequel", "https://feeds.example.com/a.xml"),
+            ("Show - Extra https://feeds.example.com/a.xml", "Show - Extra", "https://feeds.example.com/a.xml"),
+            ("The \"Quoted\" Show https://feeds.example.com/a.xml", "The \"Quoted\" Show", "https://feeds.example.com/a.xml"),
+            ("Show A <https://feeds.example.com/a.xml>", "Show A", "https://feeds.example.com/a.xml"),
+            ("daringfireball.net https://feeds.example.com/a.xml", "daringfireball.net", "https://feeds.example.com/a.xml"),
+            ("Show\u{00A0}A\thttps://feeds.example.com/a.xml", "Show A", "https://feeds.example.com/a.xml"),
+            (String(repeating: "Long ", count: 60) + "https://feeds.example.com/a.xml", String(repeating: "Long ", count: 60).trimmingCharacters(in: .whitespaces), "https://feeds.example.com/a.xml"),
             ("Show A https://podcasts.apple.com/us/podcast/a/id1", nil, nil),
             ("Show A https://itunes.apple.com/us/podcast/id1", nil, nil),
             ("Show A https://geo.itunes.apple.com/us/podcast/id1", nil, nil),

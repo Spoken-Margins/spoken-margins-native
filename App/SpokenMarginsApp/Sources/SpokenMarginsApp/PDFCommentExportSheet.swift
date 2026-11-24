@@ -1,5 +1,6 @@
 import SwiftUI
 import SessionKit
+import UniformTypeIdentifiers
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -10,6 +11,10 @@ import UIKit
 struct PDFCommentExportSheet: View {
     @StateObject private var export: PDFCommentExportModel
     @Environment(\.dismiss) private var dismiss
+    /// The Files picker for "Choose the PDF" (#4338, PR 6).
+    @State private var choosesFile = false
+    /// The Margin whose "Tidy version to review" was tapped (#4339).
+    @State private var reviewing: PDFCommentTidyReview?
     /// Called with the number of comments once the share sheet reports the file was sent.
     let onExported: (Int) -> Void
 
@@ -47,6 +52,10 @@ struct PDFCommentExportSheet: View {
             EmptyView()
             #endif
         }
+        .fileImporter(isPresented: $choosesFile, allowedContentTypes: [.pdf]) { result in
+            // A cancelled picker reports nothing to do; a failure to hand over the file leaves the card as it was.
+            if case .success(let url) = result { export.chooseFile(at: url) }
+        }
         .interactiveDismissDisabled(export.state.phase == .exporting && export.shareFile == nil)
         .accessibilityIdentifier("pdfExport.sheet")
     }
@@ -68,7 +77,7 @@ struct PDFCommentExportSheet: View {
             refusal(PDFCommentExportState.lockedMessage, identifier: "pdfExport.locked")
         case .unreadable:
             refusal(PDFCommentExportState.unreadableMessage(document: export.document), identifier: "pdfExport.unreadable")
-        case .ready, .exporting, .writeFailed:
+        case .ready, .exporting, .writeFailed, .originalMissing, .wrongFile:
             list
         }
     }
@@ -91,6 +100,17 @@ struct PDFCommentExportSheet: View {
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
                     .listRowBackground(Color.clear)
+                if let message = export.state.fileCardMessage, let title = export.state.chooseFileTitle {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label(message, systemImage: "doc.badge.plus")
+                        Button(title) { choosesFile = true }
+                            .filledActionButton()
+                            .accessibilityIdentifier("pdfExport.chooseFile.button")
+                    }
+                    .padding(.vertical, 4)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier(export.state.phase == .originalMissing ? "pdfExport.originalMissing" : "pdfExport.wrongFile")
+                }
                 if export.state.phase == .writeFailed {
                     VStack(alignment: .leading, spacing: 8) {
                         Label(PDFCommentExportState.writeFailedMessage(document: export.document), systemImage: "exclamationmark.triangle")
@@ -122,9 +142,40 @@ struct PDFCommentExportSheet: View {
         }
         .disabled(export.state.phase == .exporting)
         .accessibilityIdentifier("pdfExport.list")
+        .trackedSheet(item: $reviewing, onDismiss: {
+            // However the review closed, read the Margins' words again: an approved tidy version is what the comment says.
+            Task { await export.reloadWords() }
+        }) { review in
+            PDFCommentTidyReviewSheet(margin: review.margin)
+        }
+    }
+
+    /// "Tidy version to review": opens the Tidy version card for that Margin. The rest of the row still includes or
+    /// leaves out the comment.
+    private func tidyReviewButton(_ row: PDFCommentExportState.Row) -> some View {
+        Button {
+            if let margin = export.margin(id: row.id) { reviewing = PDFCommentTidyReview(margin: margin) }
+        } label: {
+            Label(PDFCommentExportState.tidyToReviewWords, systemImage: PDFCommentExportState.tidyToReviewSystemImage)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(AppColors.accent)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!export.state.canReviewTidy)
+        .accessibilityHint("Shows the tidy version to use or keep your own words")
+        .accessibilityIdentifier("pdfExport.row.\(row.id).tidy")
     }
 
     private func rowView(_ row: PDFCommentExportState.Row) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            includeButton(row)
+            if row.tidyToReview { tidyReviewButton(row) }
+        }
+    }
+
+    private func includeButton(_ row: PDFCommentExportState.Row) -> some View {
         Button {
             export.toggle(row.id)
         } label: {
@@ -151,7 +202,7 @@ struct PDFCommentExportSheet: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!row.status.canBeIncluded)
+        .disabled(!row.status.canBeIncluded || !export.state.isEditable)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(row.pageLabel.map { "\($0). " } ?? "")\(row.text). \(row.status.words)")
         .accessibilityValue(row.status.canBeIncluded ? (row.isIncluded ? "Included" : "Not included") : "")
@@ -163,7 +214,7 @@ struct PDFCommentExportSheet: View {
     @ViewBuilder
     private var exportButton: some View {
         switch export.state.phase {
-        case .ready, .exporting, .writeFailed:
+        case .ready, .exporting, .writeFailed, .originalMissing, .wrongFile:
             Button {
                 export.export()
             } label: {
@@ -182,6 +233,68 @@ struct PDFCommentExportSheet: View {
         case .loading, .locked, .unreadable:
             EmptyView()
         }
+    }
+}
+
+/// The Margin a "Tidy version to review" row opens (#4339).
+struct PDFCommentTidyReview: Identifiable {
+    let margin: Interjection
+    var id: String { margin.id }
+}
+
+/// The Tidy version card for one Margin, opened from the export sheet's "Tidy version to review" (#4338's Design,
+/// #4339). It is the details screen's card, with the author's words above it; an answer closes it, and the export sheet
+/// then reads the words again. Only this Margin may go to the on-device model; the list itself never asks it.
+struct PDFCommentTidyReviewSheet: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var tidy = MarginTidyCardModel()
+    /// False until the first request comes back, so the sheet never says "Nothing to tidy" before it has asked.
+    @State private var asked = false
+    let margin: Interjection
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text(margin.transcript ?? "")
+                        .font(.system(.body, design: .serif))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("pdfExport.tidy.words")
+                } header: {
+                    Text("Your words")
+                }
+                Section {
+                    if tidy.showsCard(for: margin) {
+                        MarginTidyCard(margin: margin, card: tidy) { dismiss() }
+                    } else if !asked {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text("Nothing to tidy in this Margin.")
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                } footer: {
+                    Text("Until you use the tidy version, the comment carries your own words.")
+                }
+            }
+            .navigationTitle("Tidy version")
+            .navigationBarTitleDisplayMode(.inline)
+            .miniPlayerKeepOut()
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .accessibilityIdentifier("pdfExport.tidy.done.button")
+                }
+            }
+            .task(id: MarginTidyCardModel.key(for: margin)) {
+                await tidy.refresh(for: margin, using: model)
+                asked = true
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .accessibilityIdentifier("pdfExport.tidy.sheet")
     }
 }
 

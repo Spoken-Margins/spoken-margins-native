@@ -278,10 +278,12 @@ def extract(root: Path = ROOT) -> dict:
             needs = job.get('needs') or []
             jobs[job_id] = {
                 'id': job_id,
-                # A job that posts its own check run under another name says so in `SM_REPORTS_CHECK` (merge-policy.yml,
+                # A job that posts its own check under another name says so in `SM_REPORTS_CHECK` (merge-policy.yml,
                 # #4986): the job is named `merge policy run`, the check the ruleset requires is `merge policy`.
                 'check': str((job.get('env') or {}).get('SM_REPORTS_CHECK') or job.get('name') or job_id),
-                # The job writes that check run itself, so a cancel kills it before it can mark it (#4986).
+                'job_name': str(job.get('name') or job_id),
+                # The job writes that check itself, as a commit status (#5162), so a cancel kills it before it can post
+                # the verdict and the status stays pending (#4986).
                 'own_check': bool((job.get('env') or {}).get('SM_REPORTS_CHECK')),
                 'if': None if job.get('if') is None else str(job['if']).strip(),
                 'needs': [needs] if isinstance(needs, str) else list(needs),
@@ -640,6 +642,17 @@ def scenarios() -> list[Scenario]:
 
 # --- the simulator --------------------------------------------------------------------------------------------------
 
+def docs_only_rule(text: str) -> str:
+    """The Python the scope job of hosted-portable.yml (given as text) runs with `python3 -c` on the changed-file list
+    to decide docs_only. Raises when the step no longer has one, so a reworded step fails the model, not its verdict."""
+    steps = ((yaml.safe_load(text) or {}).get('jobs') or {}).get('scope', {}).get('steps') or []
+    run = next((step.get('run', '') for step in steps if step.get('id') == 'scope'), '')
+    match = re.search(r"python3 -c '\n(.*?)\n' \"\$list\"", run, re.S)
+    if not match:
+        raise ValueError('the scope step has no python3 -c docs-only check')
+    return match.group(1)
+
+
 class Tree:
     """The repository's own decision code, loaded from one tree (the working tree or an unpacked ref)."""
 
@@ -647,6 +660,7 @@ class Tree:
         self.root = root
         self._modules = {}
         self._scopes = {}
+        self._docs_only, self._docs_rule = {}, None
         self.model = extract(root)
 
     def module(self, name: str, rel: str):
@@ -668,6 +682,27 @@ class Tree:
             ts = self.module('test_scope', 'scripts/test-scope.py')
             self._scopes[key] = ts.classify(list(key), {}, root=self.root)
         return self._scopes[key]
+
+    def docs_only(self, paths: list[str]) -> bool:
+        """The scope job's docs-only verdict, from the Python the workflow itself runs (exit 0 is docs-only). #5048: a
+        copy of its rule here would have kept saying Site/quiz/ is docs after the workflow stopped."""
+        key = tuple(paths)
+        if key not in self._docs_only:
+            if self._docs_rule is None:
+                self._docs_rule = compile(docs_only_rule(self.yaml_text('hosted-portable.yml')), 'docs-only', 'exec')
+            with tempfile.NamedTemporaryFile('w', suffix='.txt') as listing:
+                listing.write(''.join(f'{path}\n' for path in paths))
+                listing.flush()
+                argv, sys.argv = sys.argv, ['-c', listing.name]
+                try:
+                    exec(self._docs_rule, {'__name__': '__main__'})
+                    code = 0
+                except SystemExit as stop:
+                    code = stop.code
+                finally:
+                    sys.argv = argv
+            self._docs_only[key] = code == 0
+        return self._docs_only[key]
 
     def raw(self, file: str) -> dict:
         """The workflow file as parsed YAML, for a step's env or run text."""
@@ -1049,11 +1084,7 @@ def changed_paths(world, ctx):
 def b_scope(world, run, job, ctx, cause):
     ts = world.tree.module('test_scope', 'scripts/test-scope.py')
     mac, _ = ts.mac_checks_required(changed_paths(world, ctx))
-    text = world.tree.yaml_text('hosted-portable.yml')
-    match = re.search(r'docs = (\(.*?\))', text)
-    docs = ast.literal_eval(match.group(1)) if match else ()
-    paths = changed_paths(world, ctx)
-    docs_only = bool(paths) and all(p.endswith('.md') or p.startswith(docs) for p in paths)
+    docs_only = world.tree.docs_only(changed_paths(world, ctx))
     return 'success', {'mac': 'true' if mac else 'false', 'docs_only': 'true' if docs_only else 'false'}
 
 

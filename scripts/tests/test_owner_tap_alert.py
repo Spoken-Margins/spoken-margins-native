@@ -157,6 +157,17 @@ class GateChecks(unittest.TestCase):
                                            run('merge policy', conclusion='failure')], [])
         self.assertEqual((state, names), ('failed', ['hosted fast: portable']))
 
+    def test_the_gate_as_a_commit_status_is_skipped_too(self):
+        # #5162: `merge policy` is a commit status now. A pending or failed one must not hold back the audit or the
+        # alert it waits for, or each waits on the other forever.
+        for state in ('pending', 'failure', 'error'):
+            with self.subTest(state=state):
+                self.assertEqual(alert.checks_state([run('hosted fast: portable')],
+                                                    [{'context': 'merge policy', 'state': state}]), ('ok', []))
+        self.assertEqual(alert.checks_state([run('hosted fast: portable')],
+                                            [{'context': 'merge policy', 'state': 'pending'},
+                                             {'context': 'main-t3', 'state': 'failure'}]), ('failed', ['main-t3']))
+
 
 class AlertBody(unittest.TestCase):
     def test_mentions_owner_and_carries_marker_for_the_full_head(self):

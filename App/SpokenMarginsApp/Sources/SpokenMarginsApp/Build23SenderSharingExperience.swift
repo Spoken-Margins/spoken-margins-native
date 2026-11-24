@@ -703,6 +703,15 @@ struct Build23SenderSharingExperience: View {
                 .screenTitle()
                 .accessibilityIdentifier("build23.sender.stage.review")
 
+            // Directly under the heading, so it sits above the phone's navigator and the iPad's "Included Margins" list.
+            if let caption = snapshot.reviewCaption {
+                Text(caption)
+                    .font(.footnote)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("build23.sender.review.starredCaption")
+            }
+
             reviewComposition(snapshot)
 
             DisclosureGroup("Details") {
