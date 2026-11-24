@@ -186,7 +186,7 @@ final class ShareInterjectionDraftTests: XCTestCase {
         let _: WritableKeyPath<ShareInterjectionDraft, Int?> = \.cleanedAudioDurationMs
         let _: WritableKeyPath<ShareInterjectionDraft, Int> = \.renderGeneration
         let _: KeyPath<ShareInterjectionDraft, [InterjectionCleanupDecision]?> = \.cleanup?.decisions
-        XCTAssertEqual(original.id, "margin")
+        XCTAssertEqual(original.id, "session::margin", "a draft is named by its pass and Margin id (#4688)")
         XCTAssertTrue(original.isIncluded)
         XCTAssertEqual(original.approvedTranscript, "um Keep going.")
         XCTAssertNil(original.cleanup)
@@ -305,6 +305,10 @@ final class ShareInterjectionDraftTests: XCTestCase {
         other.id = "another"
         other.podcastAnchorEvidence = nil
         XCTAssertFalse(draft.refreshAnchorEvidence(from: other), "another Margin's evidence is never taken")
+        var otherPass = stored
+        otherPass.sessionId = "another pass"
+        otherPass.podcastAnchorEvidence = nil
+        XCTAssertFalse(draft.refreshAnchorEvidence(from: otherPass), "another pass's Margin with the same id is another Margin (#4688)")
     }
 
     // MARK: Words arriving (#3839)
@@ -417,6 +421,9 @@ final class ShareInterjectionDraftTests: XCTestCase {
         var other = arrived(draft.interjection)
         other.id = "another"
         XCTAssertFalse(draft.adoptArrivedWords(from: other, hasVoice: true, itemTitle: "Episode"))
+        var otherPass = arrived(draft.interjection)
+        otherPass.sessionId = "another pass"
+        XCTAssertFalse(draft.adoptArrivedWords(from: otherPass, hasVoice: true, itemTitle: "Episode"), "same id, another pass (#4688)")
         XCTAssertFalse(draft.adoptArrivedWords(from: draft.interjection, hasVoice: true, itemTitle: "Episode"), "still pending")
     }
 

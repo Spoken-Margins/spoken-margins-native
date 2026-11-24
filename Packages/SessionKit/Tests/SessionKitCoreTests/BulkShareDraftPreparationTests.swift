@@ -35,7 +35,7 @@ final class BulkShareDraftPreparationTests: XCTestCase {
             discardStaleCopy: { _ in XCTFail("nothing is stale") }
         )
         host.preparation = preparation
-        host.run.start(ids: ["a"], host: host)
+        host.run.start(ids: [a], host: host)
         try await waitUntil("the run completes") { host.log.contains(.completed) }
 
         let result = try XCTUnwrap(host.bulkShareDrafts.first)
@@ -46,14 +46,14 @@ final class BulkShareDraftPreparationTests: XCTestCase {
         XCTAssertEqual(result.representationChoice, .cleaned)
         XCTAssertEqual(result.cleanedAudioDurationMs, 1_234)
         let cleaned = try XCTUnwrap(result.cleanedAudioURL)
-        XCTAssertEqual(cleaned.lastPathComponent, "cleaned-a.m4a")
+        XCTAssertEqual(cleaned.lastPathComponent, "cleaned-session--a.m4a", "named by pass and Margin, so two passes' ij-001 never share a copy (#4688)")
         XCTAssertTrue(cleaned.path.hasPrefix(folder.path), "the copy goes in the folder the host gave")
         XCTAssertEqual(try String(contentsOf: cleaned, encoding: .utf8), "cleaned")
         XCTAssertFalse(result.isAnalyzingPauses)
         XCTAssertFalse(result.isPreparingCleanup)
         XCTAssertNil(result.preparationMessage)
         XCTAssertEqual(result.renderGeneration, 1)
-        XCTAssertEqual(host.bulkAutomaticallyCleanedDraftIDs, ["a"])
+        XCTAssertEqual(host.bulkAutomaticallyCleanedDraftIDs, [a])
         XCTAssertEqual(renders.values.count, 1)
         XCTAssertTrue(try XCTUnwrap(renders.values.first).contains("acoustic"), "the render gets the pauses the analysis found")
         XCTAssertTrue(host.failures.isEmpty)
@@ -101,7 +101,7 @@ final class BulkShareDraftPreparationTests: XCTestCase {
                 },
                 discardStaleCopy: { _ in XCTFail("nothing is stale") }
             )
-            host.run.start(ids: ["a"], host: host)
+            host.run.start(ids: [a], host: host)
             try await waitUntil(row.name) { host.log.contains(.completed) }
 
             let result = try XCTUnwrap(host.bulkShareDrafts.first, row.name)
@@ -153,7 +153,7 @@ final class BulkShareDraftPreparationTests: XCTestCase {
                 try? FileManager.default.removeItem(at: url)
             }
         )
-        host.run.start(ids: ["a"], host: host)
+        host.run.start(ids: [a], host: host)
         try await waitUntil("the render is out") { await gate.isParked }
         XCTAssertTrue(try XCTUnwrap(host.bulkShareDrafts.first).isPreparingCleanup)
 
@@ -167,7 +167,7 @@ final class BulkShareDraftPreparationTests: XCTestCase {
         await gate.open()
         try await waitUntil("the stale copy is deleted") { !discarded.values.isEmpty }
         let copy = try XCTUnwrap(discarded.values.first)
-        XCTAssertTrue(copy.hasSuffix("cleaned-a.m4a"))
+        XCTAssertTrue(copy.hasSuffix("cleaned-session--a.m4a"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: copy))
         XCTAssertNil(try XCTUnwrap(host.bulkShareDrafts.first).cleanedAudioURL)
         XCTAssertTrue(host.log.isEmpty, "a cancelled run counts nothing and never completes")
@@ -191,7 +191,7 @@ final class BulkShareDraftPreparationTests: XCTestCase {
                 try? FileManager.default.removeItem(at: url)
             }
         )
-        host.run.start(ids: ["a"], host: host)
+        host.run.start(ids: [a], host: host)
         try await waitUntil("the render is out") { await gate.isParked }
         host.bulkShareDrafts[0].renderGeneration += 1
 
@@ -219,14 +219,14 @@ final class BulkShareDraftPreparationTests: XCTestCase {
             render: { _, _, _ in renders.add("render"); return 10 },
             discardStaleCopy: { _ in XCTFail("no copy was written") }
         )
-        host.run.start(ids: ["a"], host: host)
+        host.run.start(ids: [a], host: host)
         try await waitUntil("the analysis is out") { gate.isParked }
         XCTAssertTrue(try XCTUnwrap(host.bulkShareDrafts.first).isAnalyzingPauses)
 
         host.run.invalidateAndCancel()
         BulkShareDraftPreparation.rollBackInFlightDrafts(host: host)
         gate.open()
-        try await waitUntil("the late result has come back to the host") { host.returned == ["a"] }
+        try await waitUntil("the late result has come back to the host") { host.returned == [a] }
 
         let result = try XCTUnwrap(host.bulkShareDrafts.first)
         XCTAssertTrue(result.acousticPauseDecisions.isEmpty, "the late analysis is not applied")
@@ -266,7 +266,7 @@ final class BulkShareDraftPreparationTests: XCTestCase {
         var byHand = draft("b")
         _ = byHand.recordEdit(hasOriginalAudio: true, renderCleanedAudio: false) { $0.automaticCleanupEnabled = true }
         let host = Host(folder: folder, drafts: [cleaned, byHand])
-        host.bulkAutomaticallyCleanedDraftIDs = ["a", "gone"]
+        host.bulkAutomaticallyCleanedDraftIDs = [a, "gone"]
 
         BulkShareDraftPreparation.undoAutomaticCleanup(host: host)
 
@@ -288,6 +288,9 @@ final class BulkShareDraftPreparationTests: XCTestCase {
     }
 
     // MARK: Helpers
+
+    /// The draft id of `draft("a")`: drafts are keyed by session and Margin id (#4688).
+    private let a = Interjection.sessionScopedId(sessionId: "session", id: "a")
 
     private func draft(_ id: String) -> ShareInterjectionDraft {
         let text = "um Keep going."

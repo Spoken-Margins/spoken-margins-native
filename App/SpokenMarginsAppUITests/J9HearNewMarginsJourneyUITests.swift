@@ -367,11 +367,14 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
         XCTContext.runActivity(named: "J9 large text, step 3: The lead-in card fits, and its buttons can be tapped") { _ in
             XCTAssertTrue(element("review.comingUp").waitForExistence(timeout: 8), "No lead-in before the friend's Margin")
             assertCardFits(stage: "lead-in", buttons: ["marginMoment.end"], oneOf: ["marginCard.next", "marginMoment.playNow"])
+            // #4171: "Start a minute earlier" is left off at accessibility3 and above, so the stacked card keeps its budget.
+            XCTAssertFalse(app.buttons["marginCard.startEarlier"].exists, "Start a minute earlier is drawn at the largest text size")
         }
 
         XCTContext.runActivity(named: "J9 large text, step 4: The playing card fits, with one button to skip the Margin") { _ in
             XCTAssertTrue(element("review.playing").waitForExistence(timeout: 25), "The friend's Margin never started playing")
             assertCardFits(stage: "playing", buttons: ["marginMoment.skip"], oneOf: [])
+            XCTAssertFalse(app.buttons["marginCard.startEarlier"].exists, "Start a minute earlier is drawn at the largest text size")
         }
     }
 

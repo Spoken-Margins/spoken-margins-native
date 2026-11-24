@@ -155,6 +155,8 @@ public enum AppSemanticColorRGB {
         light: .init(red: 0.37, green: 0.43, blue: 0.40),
         dark: .init(red: 0.66, green: 0.72, blue: 0.68)
     )
+    /// The filled primary button's fill, under a white label. A fill only, never a tint: as a `.bordered` tint it is
+    /// 1.9:1 in dark mode (#4953), and `AppColorUsageGuardTests.classifiedTintTokens` leaves it out on purpose.
     public static let primaryAction = AppDynamicRGB(
         light: .init(red: 0.08, green: 0.32, blue: 0.22),
         dark: .init(red: 0.12, green: 0.36, blue: 0.23)
@@ -585,6 +587,14 @@ public enum AppColorContrastAudit {
             foreground: white.composited(over: plate, alpha: 0.86),
             background: white.composited(over: plate, alpha: 0.12),
             minimumRatio: 4.5
+        ))
+        // The Lock Screen card's start-Margin circle: a ring of white at 0.86 on its own fill of white at 0.16. It is a
+        // control edge, not text, so it needs the non-text ratio; it keeps the circle visible on a dimmed screen (#4764).
+        pairs.append(.init(
+            name: "live activity Margin ring at 0.86 on white at 0.16 over live activity plate",
+            foreground: white.composited(over: plate, alpha: 0.86),
+            background: white.composited(over: plate, alpha: 0.16),
+            minimumRatio: 3
         ))
         return pairs
     }()
