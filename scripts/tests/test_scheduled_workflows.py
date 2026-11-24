@@ -25,6 +25,9 @@ ON_EVENTS = {
     'lane-conflicts.yml': 'pull_request',
 }
 FIVE = set(ON_EVENTS) | {'main-t3.yml'}
+# Started by the cloud session's own workflow_dispatch, never by an event that would run branch code with its App token
+# (#4915); its cron is 20 minutes and the VPS dispatches it on the same interval.
+BACKSTOPPED = FIVE | {'open-cloud-prs.yml'}
 
 
 def triggers(workflow):
@@ -117,15 +120,15 @@ class ScheduleGuardTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertIn(event, triggers(parse(ROOT / '.github/workflows' / name)))
 
-    def test_the_backstop_covers_exactly_the_five_and_each_can_be_dispatched(self):
-        self.assertEqual(set(backstop.WORKFLOWS), FIVE)
+    def test_the_backstop_covers_exactly_the_five_and_the_pr_opener_and_each_can_be_dispatched(self):
+        self.assertEqual(set(backstop.WORKFLOWS), BACKSTOPPED)
         for name in backstop.WORKFLOWS:
             self.assertIn('workflow_dispatch', triggers(parse(ROOT / '.github/workflows' / name)), name)
 
     def test_the_backstop_interval_is_the_one_each_workflow_used_to_ask_for(self):
         self.assertEqual(backstop.WORKFLOWS, {'claude-audit.yml': 15, 'merge-stall.yml': 15,
                                               'merge-queue-label-bridge.yml': 15, 'lane-conflicts.yml': 60,
-                                              'main-t3.yml': 180})
+                                              'main-t3.yml': 180, 'open-cloud-prs.yml': 20})
 
 
 if __name__ == '__main__':
