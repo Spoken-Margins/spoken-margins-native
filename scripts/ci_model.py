@@ -278,10 +278,12 @@ def extract(root: Path = ROOT) -> dict:
             needs = job.get('needs') or []
             jobs[job_id] = {
                 'id': job_id,
-                # A job that posts its own check run under another name says so in `SM_REPORTS_CHECK` (merge-policy.yml,
+                # A job that posts its own check under another name says so in `SM_REPORTS_CHECK` (merge-policy.yml,
                 # #4986): the job is named `merge policy run`, the check the ruleset requires is `merge policy`.
                 'check': str((job.get('env') or {}).get('SM_REPORTS_CHECK') or job.get('name') or job_id),
-                # The job writes that check run itself, so a cancel kills it before it can mark it (#4986).
+                'job_name': str(job.get('name') or job_id),
+                # The job writes that check itself, as a commit status (#5162), so a cancel kills it before it can post
+                # the verdict and the status stays pending (#4986).
                 'own_check': bool((job.get('env') or {}).get('SM_REPORTS_CHECK')),
                 'if': None if job.get('if') is None else str(job['if']).strip(),
                 'needs': [needs] if isinstance(needs, str) else list(needs),

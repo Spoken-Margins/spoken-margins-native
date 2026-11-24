@@ -675,6 +675,11 @@ struct Build23MarginEditor: View {
                     cleanedURL: margin.cleanedVoiceURL
                 )
 
+                // Directly under the Listen control, only for a placed Margin on an episode or audio file (#4171).
+                if let leadIn = margin.leadIn {
+                    Build23LeadInRow(marginID: margin.id, leadIn: leadIn, send: send)
+                }
+
                 if margin.isPreparing {
                     Build23StatusLabel(icon: "hourglass", title: ShareCleanupWords.cleaning, tint: AppColors.evergreen)
                 } else if margin.canPrepareCleanup {
@@ -1144,6 +1149,65 @@ struct Build23InlineTranscriptEditor: View {
     }
 }
 
+/// "Before your Margin" (#4171, PR 4b of the Design): how much of the episode the friend hears first, and a preview
+/// that plays it the way the friend will. The words and the rules are `SenderLeadInPreview`'s.
+@MainActor
+struct Build23LeadInRow: View {
+    let marginID: String
+    let leadIn: Build23LeadInSnapshot
+    let send: (Build23SenderAction) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(SenderLeadInPreview.rowLabel)
+                .font(.headline)
+
+            Picker(
+                SenderLeadInPreview.rowLabel,
+                selection: Binding(
+                    get: { leadIn.ms },
+                    set: { send(.setLeadIn(id: marginID, ms: $0)) }
+                )
+            ) {
+                ForEach(leadIn.choicesMs, id: \.self) { ms in
+                    Text(SenderLeadInPreview.choiceLabel(ms)).tag(ms)
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("build23.sender.leadIn.\(marginID)")
+
+            Text(SenderLeadInPreview.caption)
+                .font(.footnote)
+                .foregroundStyle(AppColors.secondaryText)
+
+            Button(
+                leadIn.isPlaying ? SenderLeadInPreview.stopButton : SenderLeadInPreview.previewButton,
+                systemImage: leadIn.isPlaying ? "stop.fill" : "play.circle"
+            ) {
+                send(.toggleLeadInPreview(id: marginID))
+            }
+            .buttonStyle(.bordered)
+            .tint(leadIn.isPlaying ? AppColors.plum : AppColors.evergreen)
+            .disabled(!leadIn.previewIsAvailable && !leadIn.isPlaying)
+            .accessibilityIdentifier("build23.sender.leadIn.preview.\(marginID)")
+
+            if !leadIn.previewIsAvailable {
+                Text(SenderLeadInPreview.momentPendingCaption)
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+            } else if leadIn.previewFailed {
+                FailureMessageLabel(SenderLeadInPreview.failureCaption)
+                    .font(.subheadline)
+            } else if let after = leadIn.afterRunUpCaption {
+                Text(after)
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+            }
+        }
+        .onDisappear { send(.stopLeadInPreview(id: marginID)) }
+    }
+}
+
 /// One button that plays the version the sender has selected (#3839). Switching the picker is how they compare; there
 /// is no button with Words only.
 @MainActor
@@ -1196,6 +1260,25 @@ private final class Build23AudioPreviewPlayer: NSObject, ObservableObject, AVAud
     @Published private(set) var errorMessage: String?
 
     private var audioPlayer: AVAudioPlayer?
+    nonisolated(unsafe) private var previewToken: NSObjectProtocol?
+
+    override init() {
+        super.init()
+        // "Hear it as your friend will" starting stops this, and the reverse (#4171).
+        previewToken = NotificationCenter.default.addObserver(
+            forName: .shareReviewPreviewDidStart, object: nil, queue: .main
+        ) { [weak self] note in
+            let starter = note.object.map { ObjectIdentifier($0 as AnyObject) }
+            MainActor.assumeIsolated {
+                guard let self, starter != ObjectIdentifier(self) else { return }
+                self.stop()
+            }
+        }
+    }
+
+    deinit {
+        if let previewToken { NotificationCenter.default.removeObserver(previewToken) }
+    }
 
     func toggle(url: URL) {
         if activeURL == url, isPlaying {
@@ -1205,6 +1288,9 @@ private final class Build23AudioPreviewPlayer: NSObject, ObservableObject, AVAud
 
         do {
             audioPlayer?.stop()
+            // The same session setup as "Hear it as your friend will": a cold launch would otherwise play this muted
+            // on Silent (audit on #5108).
+            try LeadInPreviewPlayer.activatePlaybackSession()
             let nextPlayer = try AVAudioPlayer(contentsOf: url)
             nextPlayer.delegate = self
             nextPlayer.prepareToPlay()
@@ -1215,6 +1301,7 @@ private final class Build23AudioPreviewPlayer: NSObject, ObservableObject, AVAud
             activeURL = url
             isPlaying = true
             errorMessage = nil
+            NotificationCenter.default.post(name: .shareReviewPreviewDidStart, object: self)
         } catch {
             audioPlayer = nil
             activeURL = nil
