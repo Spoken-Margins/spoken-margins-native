@@ -19,6 +19,7 @@ struct FindInTextSheet: View {
                 content
             }
             .background(AppColors.listeningBackground.ignoresSafeArea())
+            .searchKeyboardDoneBar()
             .navigationTitle(FindInTextPresentation.buttonLabel)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -39,12 +40,12 @@ struct FindInTextSheet: View {
         if FindInTextPresentation.buttonState(isRecordedAudio: model.selectedItem.isNativeAudio,
                                               text: model.selectedItem.text) == .preparing {
             Text(FindInTextPresentation.preparingText)
-                .font(.subheadline).foregroundStyle(.secondary)
+                .font(.subheadline).foregroundStyle(AppColors.secondaryText)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(16)
             Spacer()
         } else if let empty = FindInTextPresentation.emptyText(query: search.query, result: search.result) {
             Text(empty)
-                .font(.subheadline).foregroundStyle(.secondary)
+                .font(.subheadline).foregroundStyle(AppColors.secondaryText)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(16)
                 .accessibilityIdentifier("playback.findInText.empty")
             Spacer()
@@ -58,13 +59,14 @@ struct FindInTextSheet: View {
                         .listRowBackground(Color.clear)
                 }
                 if let cap = FindInTextPresentation.capText(for: search.result) {
-                    Text(cap).font(.footnote).foregroundStyle(.secondary)
+                    Text(cap).font(.footnote).foregroundStyle(AppColors.secondaryText)
                         .listRowBackground(Color.clear)
                         .accessibilityIdentifier("playback.findInText.cap")
                 }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .scrollDismissesKeyboard(.interactively)
         }
     }
 
@@ -89,10 +91,10 @@ private struct FindInTextRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let heading = FindInTextPresentation.heading(for: match) {
-                Text(heading).font(.footnote.weight(.semibold)).foregroundStyle(.secondary).lineLimit(1)
+                Text(heading).font(.footnote.weight(.semibold)).foregroundStyle(AppColors.secondaryText).lineLimit(1)
             }
             if let note = match.notReadAloudDescription {
-                Text(note).font(.footnote).foregroundStyle(Color.orange)
+                Text(note).font(.footnote).foregroundStyle(AppColors.warningText)
             }
             excerpt.lineLimit(2)
         }
