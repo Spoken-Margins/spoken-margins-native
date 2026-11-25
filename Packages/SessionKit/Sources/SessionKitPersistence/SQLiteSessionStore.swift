@@ -325,6 +325,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         case "rule_suggestion_state": return columns(RuleSuggestionState.self, item: { _ in nil })
         case "item_collection": return columns(ItemCollection.self, item: { _ in nil })
         case LibraryFolderRecord.recordKind: return columns(LibraryFolderRecord.self, item: { _ in nil })
+        case PaperSourceRecord.recordKind: return columns(PaperSourceRecord.self, item: { _ in nil })
         case "follow_list": return columns(FollowList.self, item: { _ in nil })
         case "follow_list_link": return columns(ListLink.self, item: { _ in nil })
         case "listening_rule": return columns(ListeningRule.self, item: { _ in nil })
@@ -1607,6 +1608,36 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
 
     public func deleteItemCollection(id: String) throws {
         try deleteRecord(kind: "item_collection", id: id)
+    }
+
+    /// A followed reading list (#4341). Its own record kind with no item_id: no table or index changes and schema 5 stays,
+    /// an older build never queries the kind, and deleting an item never deletes one.
+    public func savePaperSource(_ record: PaperSourceRecord) throws {
+        try save(kind: PaperSourceRecord.recordKind, id: record.id, sessionId: nil, itemId: nil, value: record)
+    }
+
+    /// In the order they were followed.
+    public func loadPaperSources() throws -> [PaperSourceRecord] {
+        let records: [PaperSourceRecord] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;",
+            [PaperSourceRecord.recordKind]
+        )
+        return records.sorted { ($0.followedAt, $0.id) < ($1.followedAt, $1.id) }
+    }
+
+    public func deletePaperSource(id: String) throws {
+        try deleteRecord(kind: PaperSourceRecord.recordKind, id: id)
+    }
+
+    /// The read and the save in one transaction: a delete waits for it or goes first, never between.
+    @discardableResult
+    public func updatePaperSource(id: String, _ change: (inout PaperSourceRecord) throws -> Void) throws -> PaperSourceRecord? {
+        try withTransaction {
+            guard var record = try loadPaperSources().first(where: { $0.id == id }) else { return nil }
+            try change(&record)
+            try savePaperSource(record)
+            return record
+        }
     }
 
     /// A Library folder's own details (#3769), beside its `ItemCollection` under the same ID. A new record kind with no
@@ -3119,3 +3150,5 @@ extension SQLiteSessionStore: CommunityMapUploadRepository {
 
 /// SQLite serializes its own connection, so a streamed reply's cursor can be saved off the main thread (#2509).
 extension SQLiteSessionStore: ConcurrentSessionRepository {}
+
+extension SQLiteSessionStore: PaperSourceStoring {}
