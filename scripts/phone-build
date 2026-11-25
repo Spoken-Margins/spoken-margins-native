@@ -7,6 +7,13 @@ Usage:
   scripts/phone-build --if-changed    coalesce changed tips to hourly (or sooner after integration PASS)
   scripts/phone-build --plan-only     rewrite latest's test-plan.md against the build installed now
   scripts/phone-build --source hosted take the GitHub-hosted build instead of building here (#2357)
+  scripts/phone-build --no-tests      build origin/main's tip here now, running no tests and skipping the main-t3 gate
+
+--no-tests is the owner's "just build it" button (scripts/phone-build-now.command, his Desktop shortcut, 2026-11-25).
+It always builds on this Mac, builds the exact commit (the tip, or --commit), and runs no host tests, simulator build
+or slow tier and asks main-t3 nothing. The disk, memory and one-build-at-a-time guards still apply, and the signed
+app still gets every check of the .app itself. build.json and the test plan say "NO TESTS RUN" so nobody reads the
+build as tested.
 
 Where the build comes from (#2357): `--source mac` (the default) builds here, as below. `--source hosted`, or
 SM_PHONE_SOURCE=hosted, or the word `hosted` in ~/SpokenMargins-phone/source (so the launchd job switches
@@ -2147,7 +2154,10 @@ def worktree_of_root(src: Path) -> bool:
     return mine is not None and common(src) == mine
 
 
-def build(sha: str) -> int:
+NO_TESTS_CHECKS = 'NO TESTS RUN: the owner asked for a build of this commit with no tests (--no-tests)'
+
+
+def build(sha: str, no_tests: bool = False) -> int:
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     work = phone_dir() / '.work' / f'{stamp}-{sha[:7]}'
     cache = phone_dir() / '.cache'
@@ -2178,8 +2188,10 @@ def build(sha: str) -> int:
         run_logged(['bash', str(src / 'scripts/setup-worktree.sh')], src, log)
         lane = [sys.executable, str(PUBLIC / 'scripts' / 'xcodebuild-lane')]
         project = ['-project', 'SpokenMarginsNative.xcodeproj', '-scheme', 'SpokenMarginsApp']
-        checks = runner_tested(sha)
-        if not checks:
+        checks = NO_TESTS_CHECKS if no_tests else runner_tested(sha)
+        if no_tests:
+            say('no tests: building without host tests, the simulator build or the slow tier (--no-tests)')
+        elif not checks:
             say('no lane host-test evidence for this commit; running host tests and the simulator build here first')
             # The hot-file ratchet is a merge rule, not a build check: an unmerged PR that grows a hot file still
             # goes on the phone (#2175, #2180 audit). The lane judges it, with the PR's labels, before merging.
@@ -2213,7 +2225,8 @@ def build(sha: str) -> int:
             checks += f'; main-slow\'s tests (--plan {plan}) ran on this exact commit before the build and passed'
         else:
             checks += '; main-slow passed on this exact commit'
-        checks += '; main-t3 (every app test) passed on this exact commit'  # take_or_build builds nothing else (#4575)
+        if not no_tests:
+            checks += '; main-t3 (every app test) passed on this exact commit'  # take_or_build builds nothing else (#4575)
         say(f'checks: {checks}')
         # The phone-only settings are the commit's own list, the same file the hosted build passes (#3354). A
         # commit from before the file gets this checkout's list, and its app isn't checked for keys it predates.
@@ -2328,6 +2341,8 @@ def main(argv) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--commit', help='build this commit instead of the trunk\'s tip')
     parser.add_argument('--if-changed', action='store_true', help='coalesce changed tips to hourly, or after integration PASS')
+    parser.add_argument('--no-tests', action='store_true',
+                        help='build here now with no tests and no main-t3 gate (the owner\'s Desktop shortcut)')
     parser.add_argument('--plan-only', action='store_true', help="rewrite latest's test-plan.md and stop")
     parser.add_argument('--source', choices=SOURCES,
                         help='mac builds here; hosted downloads the GitHub-hosted build (default: SM_PHONE_SOURCE, '
@@ -2358,7 +2373,7 @@ def main(argv) -> int:
         try:
             return take_or_build(args, sha, tip)
         finally:
-            note_trunk(tip, (args.source or source()) == 'hosted')
+            note_trunk(tip, not args.no_tests and (args.source or source()) == 'hosted')
 
 
 def is_ancestor(older: str, newer: str) -> bool:
@@ -2407,6 +2422,16 @@ def t3_pick(sha: str, explicit: bool, tip: str = '') -> tuple[str | None, str]:
 
 def take_or_build(args, sha: str, tip: str) -> int:
     """Under the lock: take the hosted build, or build `sha` here."""
+    no_tests = getattr(args, 'no_tests', False) is True  # a test's Mock args has every attribute
+    if no_tests:
+        reason = guard_reason()
+        if reason:
+            say(f'skipped: {reason}')
+            return EXIT_SKIPPED
+        clear_work()
+        (phone_dir() / 'last-start.json').write_text(json.dumps({
+            'sha': sha, 'at': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}) + '\n')
+        return build(sha, no_tests=True)
     if (args.source or source()) == 'hosted':
         return take_hosted(sha if args.commit else None, args.if_changed, tip)
     if args.if_changed:
