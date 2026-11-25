@@ -413,5 +413,39 @@ final class ShareLinkOpenedTests: XCTestCase {
         await status.runChecks(defaults: defaults)
         XCTAssertEqual(recorder.count, 1, "the ten-minute rule holds after a failure")
     }
+
+    /// The audit on 749d23f: a link sent before the file is read (a relaunch straight into playback, then Share) wrote
+    /// only itself over the file, and the earlier links lost "Link sent" and "· Opened" and stopped being known as
+    /// the sender's own.
+    @MainActor
+    func testALinkSentBeforeTheFileIsReadKeepsTheEarlierLinks() async throws {
+        let file = scratchFile()
+        try file.save([record(id, opened: true), record(otherID, item: "second-item")])
+        let recorder = Recorder()
+        let status = SentLinkStatus(file: file, client: ShareLinkOpenedClient(host: "h.example", transport: recorder.transport()), now: { [now] in now })
+        let third = "fedcba9876543210fedcba9876543210"
+        status.add(record(third, item: "other-item"))
+        await status.waitForSaves()
+        XCTAssertEqual(Set(file.load(now: now).map(\.id)), [id, otherID, third], "the write keeps what was on disk")
+        XCTAssertEqual(status.knownLinkIDs, [id, otherID, third])
+
+        let relaunched = SentLinkStatus(file: file, client: ShareLinkOpenedClient(host: "h.example", transport: recorder.transport()), now: { [now] in now })
+        await relaunched.load()
+        XCTAssertEqual(relaunched.line(forItem: "item", receiptsOn: true)?.text, "Link sent today · Opened")
+        XCTAssertEqual(relaunched.knownLinkIDs, [id, otherID, third])
+        XCTAssertEqual(recorder.count, 0)
+    }
+
+    /// The same link sent again before the read: the new record wins over the stale disk copy.
+    @MainActor
+    func testALinkResentBeforeTheReadReplacesItsDiskCopy() async throws {
+        let file = scratchFile()
+        try file.save([record(id, made: now.addingTimeInterval(-2 * day))])
+        let status = SentLinkStatus(file: file, client: ShareLinkOpenedClient(host: "h.example", transport: Recorder().transport()), now: { [now] in now })
+        status.add(record(id))
+        await status.waitForSaves()
+        XCTAssertEqual(file.load(now: now).map(\.createdAt), [now])
+        XCTAssertEqual(status.records.map(\.createdAt), [now])
+    }
     #endif
 }

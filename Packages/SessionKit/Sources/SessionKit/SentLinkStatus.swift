@@ -28,15 +28,17 @@ public final class SentLinkStatus: ObservableObject {
     /// The ids of every live link this app sent, so the app never signals its own link as opened.
     public var linkIDs: Set<String> { Set(records.map(\.id)) }
 
-    /// Reads the file once, off the main thread. Records added before it finishes are kept.
+    /// Reads the file once, off the main thread. Records added before it finishes are kept, and win over the disk copy
+    /// of the same link, because they are newer. Every write waits for this read (``save()``), so a link sent before the
+    /// file was read never overwrites the records already on disk.
     public func load() async {
         if let loading { return await loading.value }
         let file = file, now = now()
         let task = Task { @MainActor [weak self] in
             let fromDisk = await Task.detached(priority: .utility) { file.load(now: now) }.value
             guard let self else { return }
-            let added = self.records.filter { record in !fromDisk.contains { $0.id == record.id } }
-            self.records = fromDisk + added
+            let added = self.records
+            self.records = fromDisk.filter { record in !added.contains { $0.id == record.id } } + added
             self.loaded = true
         }
         loading = task
@@ -82,11 +84,15 @@ public final class SentLinkStatus: ObservableObject {
         save()
     }
 
-    /// Writes the records in order, off the main thread.
+    /// Writes the records in order, off the main thread. Each write first waits for the file to be read, then takes its
+    /// snapshot, so the write holds what was on disk plus what changed since. A snapshot taken before the read would
+    /// write only the new records over the older ones (#5275 audit on 749d23f).
     private func save() {
-        let snapshot = records, file = file, previous = saving
-        saving = Task {
+        let file = file, previous = saving
+        saving = Task { @MainActor [self] in
             await previous?.value
+            await self.load()
+            let snapshot = self.records
             await Task.detached(priority: .utility) { try? file.save(snapshot) }.value
         }
     }
