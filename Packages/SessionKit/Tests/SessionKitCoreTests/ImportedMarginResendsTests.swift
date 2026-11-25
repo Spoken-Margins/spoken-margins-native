@@ -225,6 +225,59 @@ final class ImportedMarginResendsTests: XCTestCase {
         XCTAssertEqual(try graph().threads.values.map(\.count), [3])
     }
 
+    // MARK: A friend with no name (#5337)
+    // A friend who never set a name sends no label, only their phone's random sender id. Each replies packet carries
+    // every reply so far; without the id as the sender, each one added all the earlier replies again, and catch-up
+    // replayed them.
+
+    private let otherPhone = "99887766554433221100ffeeddccbbaa"
+
+    func testANamelessFriendsCumulativeRepliesAddOnlyTheNewReply() throws {
+        let link = MarginReplyLink.replying(to: id("O", "O-1"), parentConversationId: nil)
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)]))
+        _ = try send(packet("R1", from: nil, [("reply one", 60_000)], links: [link], person: "Ben"), senderId: sender)
+        let first = try XCTUnwrap(margins().first { $0.approvedTranscript == "reply one" })
+        let heardAt = clock
+        _ = try store.markImportedCommentaryInterjectionHeard(id: first.id, at: heardAt)
+
+        let round2 = packet("R2", from: nil, [("reply one", 60_000), ("reply two", 90_000)], links: [link], person: "Ben")
+        guard case .imported(_, let ids) = try send(round2, senderId: sender) else { return XCTFail("reply two is new") }
+        XCTAssertEqual(ids.count, 1, "only reply two arrives")
+        let round3 = packet("R3", from: nil, [("reply one", 60_000), ("reply two", 90_000), ("reply three", 120_000)], links: [link], person: "Ben")
+        _ = try send(round3, senderId: sender)
+
+        let replies = try margins().filter { $0.approvedTranscript.hasPrefix("reply") }
+        XCTAssertEqual(replies.map(\.approvedTranscript).sorted(), ["reply one", "reply three", "reply two"], "each reply held once")
+        XCTAssertEqual(replies.first { $0.approvedTranscript == "reply one" }?.firstHeardAt, heardAt, "the heard reply stays heard")
+        XCTAssertEqual(replies.filter(\.isNewToListener).map(\.approvedTranscript).sorted(), ["reply three", "reply two"])
+        // Reply one is known by all three packets.
+        XCTAssertEqual(try identities(of: "reply one").map(\.packageDigest), ["R1", "R2", "R3"])
+        // The same packet opened again adds nothing.
+        XCTAssertFalse(try send(round3, senderId: sender).isImported)
+    }
+
+    func testAFriendWhoClearsTheirNameIsStillTheSameSender() throws {
+        _ = try send(packet("O", from: "Ben", [("one", 60_000)]), senderId: sender)
+        XCTAssertTrue(try send(packet("U", from: nil, [("one", 60_000), ("two", 90_000)], person: "Ben"), senderId: sender).isImported)
+        XCTAssertEqual(try margins().map(\.approvedTranscript).sorted(), ["one", "two"])
+    }
+
+    func testANamelessPacketWithoutASenderIdIsStillImportedWhole() throws {
+        _ = try send(packet("O", from: nil, [("one", 60_000)], person: "Ben"), senderId: sender)
+        _ = try send(packet("U", from: nil, [("one", 60_000)], person: "Ben"))
+        XCTAssertEqual(try margins().count, 2, "nothing ties a packet with no label and no id to anyone")
+    }
+
+    func testAnotherPhonesSenderIdDoesNotMergeANamelessFriendsMargins() throws {
+        _ = try send(packet("O", from: nil, [("one", 60_000)], person: "Ben"), senderId: sender)
+        // The same words and place from someone else's capture: another token, so another Margin.
+        _ = try send(packet("U", from: nil, [("one", 60_000)], person: "Mallory"), senderId: otherPhone)
+        XCTAssertEqual(try margins().count, 2)
+        // Even under Ben's id, Mallory's capture is not Ben's Margin: the token decides, never the id alone.
+        _ = try send(packet("V", from: nil, [("one", 60_000)], person: "Mallory"), senderId: sender)
+        XCTAssertEqual(try margins().count, 3)
+    }
+
     // MARK: Storage
 
     func testAMarginThatArrivedOnceHasNoPacketAliases() throws {

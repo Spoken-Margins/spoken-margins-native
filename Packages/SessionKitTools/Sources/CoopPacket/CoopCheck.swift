@@ -154,7 +154,8 @@ enum CoopCheck {
             replyLinks: packet.contents.conversations.first?.linksByPackageScopedId[margin.packageScopedId],
             shareProvenance: representation.flatMap { MarginShareProvenance.token(representationID: $0.id) }
         )
-        return ImportedMarginResends.copyKey(packageDigest: packet.digest, sender: packet.contents.manifest.senderDisplayLabel, margin: imported)
+        return ImportedMarginResends.copyKey(packageDigest: packet.digest, sender: packet.contents.manifest.senderDisplayLabel,
+                                             senderId: packet.contents.senderIdentities.first?.senderId, margin: imported)
     }
 
     /// How many of each Margin the packets carry at most: a sender who said the same thing twice at one
@@ -268,7 +269,7 @@ enum CoopCheck {
         outcome.margins = Set(allNames)
         outcome.threads = graph.threads
         for (layer, margin) in margins {
-            let key = ImportedMarginResends.copyKey(packageDigest: layer.packageDigest, sender: layer.displayLabel, margin: margin)
+            let key = ImportedMarginResends.copyKey(packageDigest: layer.packageDigest, sender: layer.displayLabel, senderId: layer.senderId, margin: margin)
             outcome.copies[key, default: 0] += 1
         }
         for (reference, state) in graph.states {
