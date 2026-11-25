@@ -359,14 +359,14 @@ class EndToEnd(unittest.TestCase):
 
 class Grading(unittest.TestCase):
     class Api:
-        def __init__(self, head_checks=None, playwright='success'):
+        def __init__(self, head_checks=None, playwright='success', portable='success', web_status='completed'):
             self.head_checks = head_checks if head_checks is not None else [
                 {'name': 'hosted fast: portable', 'conclusion': 'success'},
                 {'name': 'hosted web: build and Playwright', 'conclusion': 'success'},
                 {'name': 'hosted fast: Mac rest', 'conclusion': 'success'},
                 {'name': 'owner-tap-alert', 'conclusion': 'success'},
                 {'name': 'hosted app: build (no tests)', 'conclusion': 'skipped'}]
-            self.playwright = playwright
+            self.playwright, self.portable, self.web_status = playwright, portable, web_status
 
         def get(self, path):
             if path.startswith('commits/'):
@@ -374,12 +374,14 @@ class Grading(unittest.TestCase):
             if path.startswith('actions/runs?'):
                 return {'workflow_runs': [
                     {'id': 1, 'status': 'completed', 'path': '.github/workflows/hosted-portable.yml'},
-                    {'id': 2, 'status': 'completed', 'path': '.github/workflows/hosted-web.yml'}]}
+                    {'id': 2, 'status': self.web_status, 'path': '.github/workflows/hosted-web.yml'}]}
             if path.startswith('actions/runs/2/'):
+                if self.web_status != 'completed':
+                    return {'jobs': []}
                 return {'jobs': [{'name': 'hosted web: build and Playwright', 'status': 'completed',
                                   'conclusion': self.playwright, 'labels': ['xcode-27']}]}
             return {'jobs': [
-                {'name': 'hosted fast: portable', 'status': 'completed', 'conclusion': 'success',
+                {'name': 'hosted fast: portable', 'status': 'completed', 'conclusion': self.portable,
                  'labels': ['ubuntu-latest']},
                 {'name': 'owner-tap-alert', 'status': 'completed', 'conclusion': 'skipped',
                  'labels': ['ubuntu-latest']},
@@ -387,11 +389,24 @@ class Grading(unittest.TestCase):
                 {'name': 'hosted app: build (no tests)', 'status': 'completed', 'conclusion': 'failure',
                  'labels': ['xcode-27']}]}
 
+    RECORD = {'head_sha': HEAD, 'shadow': 'b' * 40, 'checks': ['hosted-portable.yml', 'hosted-web.yml']}
+
+    def test_a_job_the_head_already_failed_is_not_graded(self):
+        api = self.Api(head_checks=[{'name': 'hosted fast: portable', 'conclusion': 'failure'}], portable='failure')
+        self.assertEqual(cr.grade_checks(api, self.RECORD), ('ungraded', []))
+
+    def test_a_workflow_still_running_is_pending_not_pass(self):
+        self.assertEqual(cr.grade_checks(self.Api(web_status='in_progress'), self.RECORD), ('pending', []))
+
+    def test_an_undispatched_workflow_is_ungraded(self):
+        self.assertEqual(cr.grade_checks(self.Api(), dict(self.RECORD, checks=['hosted-portable.yml'])),
+                         ('ungraded', []))
+
     def test_only_the_graded_jobs_the_pr_itself_ran_count(self):
-        self.assertEqual(cr.grade_checks(self.Api(), {'head_sha': HEAD, 'shadow': 'b' * 40}), ('pass', []))
+        self.assertEqual(cr.grade_checks(self.Api(), self.RECORD), ('pass', []))
 
     def test_a_failed_playwright_run_on_a_mac_fails_the_case(self):
-        self.assertEqual(cr.grade_checks(self.Api(playwright='failure'), {'head_sha': HEAD, 'shadow': 'b' * 40}),
+        self.assertEqual(cr.grade_checks(self.Api(playwright='failure'), self.RECORD),
                          ('fail', ['hosted web: build and Playwright']))
 
     def test_a_head_with_no_checks_of_its_own_is_ungraded_not_failed(self):
@@ -404,7 +419,7 @@ class Grading(unittest.TestCase):
                                            'sort': 'small', 'outcome': 'proposed', 'shadow': 'b' * 40,
                                            'kept': [1.0, 1.0]}, 'c')}
         text = cr.report(api, cr.records([start, case]), now=NOW)
-        self.assertIn('ungraded because the PR head ran none of the graded checks itself: 1', text)
+        self.assertIn('ungraded (the PR head passed none of the graded checks, or a dispatch failed): 1', text)
         self.assertIn('Too few cases to grade', text)
         self.assertIn('passed 0 (0%)', text)
 

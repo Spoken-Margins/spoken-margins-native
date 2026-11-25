@@ -67,7 +67,7 @@ RECORD_AT_END = re.compile(r'<!-- conflict-resolver (\{[^\n]*\}) -->\s*\Z')
 SHADOW_PREFIX = 'resolver-shadow/'
 CHECK_WORKFLOWS = ('hosted-portable.yml', 'hosted-web.yml')
 # The jobs of those that test the merged tree the same way on a PR and on a dispatch with no base; nothing else grades.
-GRADED_JOBS = ('hosted fast: portable', 'hosted web: build and Playwright')
+GRADED_JOBS = {'hosted fast: portable': 'hosted-portable.yml', 'hosted web: build and Playwright': 'hosted-web.yml'}
 # Paths whose PRs always go back to a thread: the owner's merge tap (.github/, the lane runner) and the database and
 # packet code (owner calls on compatibility). Any PR that touches one, in any file, is never resolved.
 PROTECTED = ('.github/', 'scripts/lane-runner.py')
@@ -793,7 +793,7 @@ def report(api, recs, now=None, conflict_comments=None):
             f'{"" if now >= end else ", still running"}).\n\n'
             f'{rate}Cases: {len(cases)} ({", ".join(f"{k} {v}" for k, v in sorted(sorts.items()))}). '
             f'Can combine (small or medium): {len(combine)}; passed {passed} ({share:.0%}); checks still pending {pending}; '
-            f'ungraded because the PR head ran none of the graded checks itself: {ungraded}; '
+            f'ungraded (the PR head passed none of the graded checks, or a dispatch failed): {ungraded}; '
             f'not graded because the job failed: {len(broken)}.\n\n'
             f'{verdict}\n\n| PR | sort | outcome | checks on proposed merge | words kept main / PR | pass | failing jobs |\n'
             f'|---|---|---|---|---|---|---|\n' + '\n'.join(rows))
@@ -809,10 +809,13 @@ def grade_checks(api, record):
     not skipped). A head with none of its own (GitHub runs no pull_request checks while a PR conflicts) is
     'ungraded', not failed.
     """
+    # Only jobs the head passed: a job the PR already fails says nothing about the merge.
     scope = {c['name'] for c in api.get(f'commits/{record["head_sha"]}/check-runs?per_page=100').get('check_runs', [])
-             if c.get('conclusion') in ('success', 'failure') and c['name'] in GRADED_JOBS}
+             if c.get('conclusion') == 'success' and c['name'] in GRADED_JOBS}
     if not scope:
         return 'ungraded', []
+    if any(GRADED_JOBS[name] not in (record.get('checks') or []) for name in scope):
+        return 'ungraded', []  # its workflow was never dispatched (an API outage): the job's fault, not the merge's
     runs = [r for r in api.get(f'actions/runs?head_sha={record["shadow"]}&per_page=50').get('workflow_runs', [])
             if Path(r.get('path', '')).name in CHECK_WORKFLOWS]
     graded = []
@@ -825,10 +828,11 @@ def grade_checks(api, record):
         return 'missing', []  # the PR ran it, the proposed merge didn't: it can't pass
     if any(j.get('status') != 'completed' for j in graded):
         return 'pending', []
-    failing = sorted({j['name'] for j in graded if j.get('conclusion') != 'success'})
     missing = sorted(scope - {j['name'] for j in graded})
-    if missing and all(r.get('status') == 'completed' for r in runs):
-        return 'missing', missing
+    if missing:
+        # A run still queued, or still on its first job, lists its later jobs only once they start.
+        return ('missing', missing) if all(r.get('status') == 'completed' for r in runs) else ('pending', [])
+    failing = sorted({j['name'] for j in graded if j.get('conclusion') != 'success'})
     return ('fail' if failing else 'pass'), failing
 
 
