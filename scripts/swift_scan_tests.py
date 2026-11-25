@@ -63,6 +63,7 @@ CONTRACTS = ('checks contracts, fixtures or catalog data, not a rule on the Swif
              'step validates the tree')
 NOT_SCANS = {
     'test_main_t3': PIPELINE,
+    'test_conflict_resolver': PIPELINE,
     'test_check_build29_database': ('checks that Build 29 opens the database, on its own fixtures; it reads only '
                                     'SessionKit\'s Package.resolved, which sends a PR to the Mac checks'),
     'test_sm_build_cache': PIPELINE,

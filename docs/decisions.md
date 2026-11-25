@@ -737,6 +737,7 @@ These came in the project chat, so most have no comment of his to link. Each cit
   5. "Grade the trial on outcomes: do the PR's checks pass on its proposed merge, and are both sides' changes kept? If fewer than about half its 'can combine' cases pass, it doesn't go live."
   6. "#5318 already lets the Mac worker take conflict hand-offs without the finisher's hour. When the resolver goes live, point `lane_conflicts.py`'s hand-off at the resolver instead."
   - How it is carried out: #5320 holds the build. Its workflow change is his merge tap. Until it goes live, conflicts go to the owning thread and then to the Mac worker (#5318).
+  - 2026-11-25: Cole approved the shadow trial's PR, #5323, in the project chat: "Start the trial on 5323." The 12 hours start at the workflow's first run after it merges, which posts a "trial started" record on #5320.
 
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
