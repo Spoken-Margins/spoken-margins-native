@@ -23,8 +23,11 @@ public struct PublisherAudioPlayback: Equatable, Sendable {
     /// The recording `item` plays instead of on-device speech, or nil when it plays as it always did:
     /// the record needs a usable map and a web address, and the item must be an article with text
     /// whose own audio (if any) is generated narration, never a recording the listener owns.
-    public static func plan(for item: Item, record: PublisherAudio?) -> PublisherAudioPlayback? {
-        guard let (record, timeline) = usableRecording(for: item, record: record) else { return nil }
+    /// A listener who chose the app's voice for this article (`choice.prefersAppVoice`, #4640) gets nil: the article
+    /// plays exactly as it would with no record.
+    public static func plan(for item: Item, record: PublisherAudio?, choice: PublisherAudioChoice? = nil) -> PublisherAudioPlayback? {
+        guard !prefersAppVoice(choice, itemId: item.id),
+              let (record, timeline) = usableRecording(for: item, record: record) else { return nil }
         return PublisherAudioPlayback(
             recording: record,
             timeline: timeline,
@@ -38,8 +41,13 @@ public struct PublisherAudioPlayback: Equatable, Sendable {
 
     /// Whether `item` plays a recording, from the fields a Library summary carries, so a caller that only needs the
     /// answer need not decode the article's text (#2506). Always the same answer as `plan(for:record:) != nil`.
-    public static func playsRecording(summary item: LibraryItemSummary, record: PublisherAudio?) -> Bool {
-        usableRecording(for: item, record: record) != nil
+    public static func playsRecording(summary item: LibraryItemSummary, record: PublisherAudio?, choice: PublisherAudioChoice? = nil) -> Bool {
+        !prefersAppVoice(choice, itemId: item.id) && usableRecording(for: item, record: record) != nil
+    }
+
+    private static func prefersAppVoice(_ choice: PublisherAudioChoice?, itemId: String) -> Bool {
+        guard let choice, choice.itemId == itemId else { return false }
+        return choice.prefersAppVoice
     }
 
     /// The conditions `plan(for:record:)` checks, read from `LibraryItemFields` so an `Item` and a summary share them.

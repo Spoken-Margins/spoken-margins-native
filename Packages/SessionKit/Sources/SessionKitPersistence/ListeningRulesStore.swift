@@ -105,6 +105,78 @@ public actor ListeningRulesStore {
         return try store.loadListeningRules()
     }
 
+    // MARK: Show less and suggestions (#4046 PR 12)
+
+    public func marks() throws -> [ShowLessMark] {
+        try store.loadShowLessMarks()
+    }
+
+    /// "Show less like this". Marking the same episode again replaces its one mark.
+    public func markShowLess(_ mark: ShowLessMark) throws -> [ShowLessMark] {
+        try store.saveShowLessMark(mark)
+        return try store.loadShowLessMarks()
+    }
+
+    /// "Undo Show less", from either menu or the toast: takes the episode's mark, whichever menu wrote it.
+    public func unmarkShowLess(entryId: String?, itemId: String?) throws -> [ShowLessMark] {
+        let marks = try store.loadShowLessMarks()
+        if let mark = ShowLessMarking.existing(entryId: entryId, itemId: itemId, in: marks) {
+            try store.deleteShowLessMark(entryId: mark.entryId, itemId: mark.itemId)
+        }
+        return try store.loadShowLessMarks()
+    }
+
+    public func suggestionStates() throws -> [RuleSuggestionState] {
+        try store.loadRuleSuggestionStates()
+    }
+
+    /// "Not now": quiet for `RuleSuggester.snoozeDays` days.
+    public func putOff(key: String, now: Date = Date()) throws -> [RuleSuggestionState] {
+        try store.saveRuleSuggestionState(.snoozed(key: key, now: now))
+        return try store.loadRuleSuggestionStates()
+    }
+
+    /// "Don’t suggest this": forever.
+    public func refuse(key: String) throws -> [RuleSuggestionState] {
+        try store.saveRuleSuggestionState(.refused(key: key))
+        return try store.loadRuleSuggestionStates()
+    }
+
+    /// Takes back "Not now" or "Don’t suggest this" (the toast's Undo).
+    public func clearState(key: String) throws -> [RuleSuggestionState] {
+        try store.deleteRuleSuggestionState(key: key)
+        return try store.loadRuleSuggestionStates()
+    }
+
+    /// **Turn on**: saves the suggested rule, on, unless the guard refuses it; then it is saved switched off and the refusal
+    /// says why. A second tap with the same id finds its rule already there.
+    public func turnOn(_ suggestion: RuleSuggestion, id: String = UUID().uuidString, now: Date = Date()) throws -> Change {
+        let existing = try store.loadListeningRules()
+        if existing.contains(where: { $0.id == id }) { return Change(rules: existing, changedRuleID: id) }
+        guard ListeningRuleWords.hasRoom(forRulesAlreadyKept: existing.count) else {
+            return Change(rules: existing, isFull: true)
+        }
+        var rule = RuleSuggestionWords.rule(for: suggestion, id: id, now: now)
+        let refusal = try refusal(for: rule)
+        if refusal != nil { rule.isOn = false }
+        try store.saveListeningRule(rule)
+        return Change(rules: try store.loadListeningRules(), refusal: refusal, changedRuleID: id)
+    }
+
+    /// Rules that arrived in a list file (#4046 PR 13), already switched off and deduplicated by the importer. Saved up to
+    /// the most rules allowed; answers with the rules saved.
+    public func importRules(_ incoming: [ListeningRule]) throws -> [ListeningRule] {
+        var kept = try store.loadListeningRules().count
+        var saved: [ListeningRule] = []
+        for var rule in incoming where ListeningRuleWords.hasRoom(forRulesAlreadyKept: kept) {
+            rule.isOn = false
+            try store.saveListeningRule(rule)
+            saved.append(rule)
+            kept += 1
+        }
+        return saved
+    }
+
     /// The followed shows with their stored episodes and the lists, read here so the guard sees what the store holds now.
     private func refusal(for rule: ListeningRule) throws -> ListeningRuleScreens.Refusal? {
         guard rule.action == .skip else { return nil }

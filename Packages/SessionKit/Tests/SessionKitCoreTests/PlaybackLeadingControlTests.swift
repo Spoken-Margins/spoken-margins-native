@@ -97,4 +97,30 @@ final class PlaybackLeadingControlTests: XCTestCase {
         XCTAssertTrue(header.isVisible)
         XCTAssertTrue(NowHeaderVisibility().isVisible, "a new screen starts with its header in view, as before")
     }
+    /// #5311: the bar keeps a hidden copy of the Library arrow on Now (#4739). It shared the header arrow's identifier,
+    /// so the J14 scripts' lookup found the hidden copy, which has no point to tap, and failed. Only a drawn arrow may
+    /// carry the shared identifier, on every pane and either header state.
+    func testOnlyADrawnLibraryArrowCarriesTheSharedIdentifier() {
+        let shared = PlaybackLeadingControl.Slot.libraryExitIdentifier
+        XCTAssertEqual(shared, "playback.exit.button", "the identifier the J14 scripts tap")
+        for pane in [PlaybackLeadingControl.Pane.now, .timeline, .margins] {
+            for focus in [false, true] {
+                for headerVisible in [false, true] {
+                    let slot = PlaybackLeadingControl.slot(
+                        pane: pane, timelineEditorHasFocus: focus, nowHeaderIsVisible: headerVisible)
+                    guard slot.kind == .libraryExit else { continue }
+                    let label = "\(pane), focus \(focus), header \(headerVisible ? "visible" : "gone")"
+                    if slot.isShown {
+                        XCTAssertEqual(slot.libraryExitIdentifier, shared, label)
+                    } else {
+                        XCTAssertNotEqual(slot.libraryExitIdentifier, shared, label)
+                        XCTAssertFalse(slot.libraryExitIdentifier.isEmpty, label)
+                    }
+                }
+            }
+        }
+        let hiddenOnNow = PlaybackLeadingControl.slot(pane: .now, timelineEditorHasFocus: false, nowHeaderIsVisible: true)
+        XCTAssertFalse(hiddenOnNow.isShown, "Now with its header in view is the case the scripts meet")
+        XCTAssertNotEqual(hiddenOnNow.libraryExitIdentifier, shared)
+    }
 }

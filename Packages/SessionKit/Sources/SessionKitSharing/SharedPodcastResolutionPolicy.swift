@@ -78,9 +78,22 @@ public enum SharedPodcastResolutionPolicy {
             }
         }
         if result.status == .playable {
+            result = preferringThePacketsEdition(result, item: item)
             result = namingTheEpisodeAsThePacketDoes(result, item: item)
         }
         return (result, diagnostic)
+    }
+
+    /// A lookup that found the episode in several editions (MP3, Opus) and chose one the packet doesn't name takes the
+    /// one it does name, when exactly one candidate is that file (#5286). The packet's Margins were made on that file.
+    static func preferringThePacketsEdition(_ result: LinkResolutionResult, item: SharedItemIdentity) -> LinkResolutionResult {
+        guard item.itemType == .podcast, item.enclosureURL != nil,
+              !PodcastEnclosureIdentity.sameFile(result.selectedCandidate?.audioURL, item.enclosureURL) else { return result }
+        let packetFile = result.candidates.filter { PodcastEnclosureIdentity.sameFile($0.audioURL, item.enclosureURL) }
+        guard packetFile.count == 1 else { return result }
+        var result = result
+        result.selectedCandidate = packetFile[0]
+        return result
     }
 
     /// A packet whose page link is the audio file itself resolves as a bare file, and the resolver names that item

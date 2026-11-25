@@ -47,7 +47,6 @@ final class HearItLandTests: XCTestCase {
             ("app in the background", .init(appInForeground: false)),
             ("recording again", .init(recordingAgain: true)),
             ("another sheet up", .init(anotherSheetUp: true)),
-            ("the speech card showing", .init(speechCardShowing: true)),
         ]
         for (name, around) in cases {
             XCTAssertEqual(plan(around: around), .none, name)
@@ -55,7 +54,7 @@ final class HearItLandTests: XCTestCase {
     }
 
     func testSurroundingsDoNotHideTheWrittenCard() {
-        let busy = HearItLand.Surroundings(appInForeground: false, recordingAgain: true, anotherSheetUp: true, speechCardShowing: true)
+        let busy = HearItLand.Surroundings(appInForeground: false, recordingAgain: true, anotherSheetUp: true)
         XCTAssertEqual(plan(.written, around: busy), .showWritten)
     }
 

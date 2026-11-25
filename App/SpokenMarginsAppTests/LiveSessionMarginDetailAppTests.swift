@@ -147,6 +147,42 @@ final class LiveSessionMarginDetailAppTests: XCTestCase {
         XCTAssertEqual(deleted, 1, "Delete Margin deletes, once")
     }
 
+    /// #5304: on main 282b4c8 the row was a `NavigationLink` with a simultaneous tap gesture under the screen's primitive
+    /// button style, and tapping it never pushed the move sheet. Activating Move must push "Moving this Margin", with no
+    /// Choose…, for a written and a spoken Margin.
+    func testMoveToAnItemPushesTheMoveSheetForThisMargin() async throws {
+        for margin in [written(), spoken()] {
+            let session = LiveSession(id: "live-1", title: "Staff meeting", startedAt: now, margins: [margin])
+            var made = 0
+            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+            let previous = scene.windows.first { $0.isKeyWindow }
+            let view = LiveSessionMarginDetailView(
+                margin: margin, sessionTitle: "Staff meeting", position: "1:05 in",
+                keepHeardPlace: {}, declineHeardPlace: {}, saveText: { _ in }, delete: {},
+                makeMove: {
+                    made += 1
+                    return LiveMarginMoveSheetModel(
+                        session: session, marginIds: [margin.id], loadChoices: { [] },
+                        makePlan: { _, _ in throw SessionKitError.persistenceFailed("not moved in this test") })
+                })
+            let host = UIHostingController(rootView: view)
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            let tree = MountedTree(window: window, previousKeyWindow: previous)
+            defer { tree.close() }
+            _ = try await tree.waitForNode("Move to an Item… (\(margin.id))") { $0.identifier == "marginDetail.move.button" }
+            XCTAssertFalse(tree.nodes().contains { $0.identifier == "liveMove.screen" }, "the move sheet waits for the tap")
+            XCTAssertTrue(tree.activate { $0.identifier == "marginDetail.move.button" }, "Move refused the activation")
+            _ = try await tree.waitForNode("Moving this Margin (\(margin.id))") {
+                $0.identifier == "liveMove.moving.label" && $0.label == "Moving this Margin"
+            }
+            XCTAssertFalse(tree.nodes().contains { $0.identifier == "liveMove.choose.button" }, "one Margin has no Choose…")
+            XCTAssertEqual(made, 1, "the move sheet's state is made once, for this Margin")
+        }
+    }
+
     private static func tap(_ title: String, in alert: UIAlertController) throws {
         typealias Handler = @convention(block) (UIAlertAction) -> Void
         let action = try XCTUnwrap(alert.actions.first { $0.title == title }, "no \(title) in \(alert.actions.compactMap(\.title))")

@@ -1,6 +1,7 @@
 import Foundation
 import SessionKit
 import SessionKitAudio
+import SessionKitFeeds
 
 /// The question Continue asks before it starts an item that has new shared Margins (#474): the item, and the Margins
 /// the question is about. Read once when Continue is tapped, so the dialog's message and its two answers don't read
@@ -115,9 +116,9 @@ extension Gate1AppModel {
     /// What starting an item does before its session begins, for every way of starting it: the imported audio bridges, the
     /// community map, the publisher voiceover lookup, and opening audio that is still being prepared. False when a
     /// recording in progress blocks the start.
-    func prepareToStartItem(id: String) -> Bool {
+    func prepareToStartItem(id: String, trigger: VoiceoverLookupDecision.Trigger = .play) -> Bool {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_item") else { return false }
-        prepareImportedLocalAudioBridges(itemId: id); fetchCommunityMapIfNeeded(itemId: id); listenerStartedItem(itemId: id)
+        prepareImportedLocalAudioBridges(itemId: id); fetchCommunityMapIfNeeded(itemId: id); listenerStartedItem(itemId: id, trigger: trigger)
         if [.waiting, .preparing].contains(libraryItems.first(where: { $0.id == id })?.startupAudioState) {
             scheduleStartupAudioPreparationIfNeeded(itemId: id)
             diagnostics["startupAudioPlayback:\(id)"] = "started_without_waiting_for_opening_buffer"

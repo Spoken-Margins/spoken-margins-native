@@ -32,8 +32,8 @@ public actor ListLinkChecker {
     public static let maximumFiles = 25
     static let accept = "text/x-opml, text/xml, application/xml, text/plain;q=0.5, */*;q=0.1"
 
-    private let session: URLSession
-    private let limits: OPMLLimits
+    let session: URLSession
+    let limits: OPMLLimits
 
     public init(session: URLSession, limits: OPMLLimits = OPMLLimits()) {
         self.session = session

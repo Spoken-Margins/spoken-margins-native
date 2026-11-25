@@ -223,8 +223,9 @@ public enum PlayerItemMargin {
                 // reports none, so the player keeps no run for it (`PlayerRunRecorder`).
                 let textLength = item.text?.count ?? 0
                 if original.phase == .itemPlayback,
-                   let record = try? (repository as? any PublisherAudioRepository)?.loadPublisherAudio(itemId: itemId),
-                   let plan = PublisherAudioPlayback.plan(for: item, record: record) {
+                   let store = repository as? any PublisherAudioRepository,
+                   let record = try? store.loadPublisherAudio(itemId: itemId),
+                   let plan = PublisherAudioPlayback.plan(for: item, record: record, choice: try? store.loadPublisherAudioChoice(itemId: itemId)) {
                     timeMs = clamped(plan.playingMedia.durationMs)
                     let offset = PreparedNarrationFallback.textOffset(mediaTimeMs: timeMs, timeline: plan.timeline)
                     moved.position = Position(charOffset: max(0, min(offset, textLength)), chapterId: nil)
