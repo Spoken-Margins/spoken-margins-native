@@ -79,17 +79,14 @@ final class ShareLinkSender: ObservableObject {
     /// The text the share sheet hands over (#5264): the sentence for this share, then the link. Kept current here, on
     /// the main actor, whenever it could change; the sheet's item source reads it at the moment a destination is
     /// picked, so a finished check reaches the send and nothing ever waits on the check.
-    let messageBox = ShareLinkMessageBox()
-    /// What the packet of the link being made says (kind, the Margins going, audio or page), and whether it is a Spoken Note.
-    private var messageFacts: ShareLinkMessage.Facts?
-    private var messageItem: ShareLinkMessage.SharedKind?
-    /// The verdict of the screen's previous link, used while the newest link's own check reads as unknown. Only plays
-    /// or cannot is carried; `reset()` clears it because the selection changed.
-    private var carried = ShareLinkMessage.CarriedVerdict()
+    var messageBox: ShareLinkMessageBox { message.box }
+    /// Keeps `messageBox` current from the link, the packet's facts and the check's outcomes as they are published.
+    private let message: ShareLinkMessageWriter
     private static let companionLine = "This has no public web page, so the file goes in the same message as the link."
 
     init() {
         showsTakedownNotice = noticeStore.isPending
+        message = ShareLinkMessageWriter(outcomes: ShareLinkPlayChecker.shared.$outcomes.eraseToAnyPublisher())
         playCheckObservation = playChecker.$outcomes.sink { [weak self] outcomes in
             self?.playOutcomesChanged(outcomes)
         }
@@ -121,9 +118,7 @@ final class ShareLinkSender: ObservableObject {
         }
         // Before the new link replaces it: the screen's current link's verdict carries over until the new one's own
         // check says plays or cannot (#5264).
-        carried.newLink(replacing: playCheckLinkID.flatMap { playChecker.outcomes[$0] })
-        // The box keeps the previous link's text until the new link exists; nothing reads it while no sheet is open.
-        messageLink = nil
+        message.newLink(replacingLinkID: playCheckLinkID)
         state = .making
         let ticket = requests.begin()
         let bridge = self.bridge
@@ -139,8 +134,7 @@ final class ShareLinkSender: ObservableObject {
             case .success(let made):
                 let facts: ShareLinkMessage.Facts
                 (packet, preview, facts) = made
-                messageFacts = facts
-                messageItem = ShareLinkMessage.SharedKind(itemType: facts.itemType, isSpokenNote: isSpokenNote)
+                message.prepared(facts: facts, isSpokenNote: isSpokenNote)
                 companionNote = preview.needsCompanionFile ? Self.companionLine : nil
             case .failure(let fallback):
                 state = .useFile(fallback)
@@ -176,8 +170,7 @@ final class ShareLinkSender: ObservableObject {
                 // the sheet never sees an empty or stale text. The check runs beside the sheet and never delays it (#4454).
                 playCheckLinkID = playChecker.check(link: url, title: preview.source.title, packetBytes: packet.count)
                 announcedLinkID = nil
-                messageLink = url
-                updateMessage()
+                message.linkReady(url, linkID: playCheckLinkID)
                 state = .ready(url, companionFile: preview.needsCompanionFile ? packageURL : nil, packet: packageURL)
                 playOutcomesChanged(playChecker.outcomes)
             case .useFile(let fallback):
@@ -210,7 +203,7 @@ final class ShareLinkSender: ObservableObject {
     func reset() {
         requests.cancel()
         // The selection changed, so the previous link's verdict is about something else (#5264).
-        carried.clear()
+        message.selectionChanged()
         // A line that took "Share link" away stays for as long as this sheet is open: going back to the selection
         // doesn't make a refusal pass (#4134). A new sheet is a new sender and tries once more.
         if !shareLinkAfterwards.allowsShareLink {
@@ -239,21 +232,7 @@ final class ShareLinkSender: ObservableObject {
         }
     }
 
-    /// The link the box's text is for.
-    private var messageLink: URL?
-
-    /// Writes the box from what is known now. Called whenever the link or its check's outcome changes.
-    private func updateMessage() {
-        guard let link = messageLink, let facts = messageFacts, let item = messageItem else { return }
-        let outcome = playCheckLinkID.flatMap { playChecker.outcomes[$0] }
-        let playability = carried.playability(newest: outcome)
-        messageBox.text = ShareLinkMessage.text(
-            for: link, item: item, notes: facts.notes, hasAudioOrPage: facts.hasAudioOrPage, playability: playability
-        )
-    }
-
     private func playOutcomesChanged(_ outcomes: [String: ShareLinkPlayCheck.Outcome]) {
-        updateMessage()
         guard let id = playCheckLinkID, let outcome = outcomes[id] else {
             playCheckLine = nil
             return
@@ -944,6 +923,67 @@ final class ShareLinkMessageBox: Sendable {
     var text: String {
         get { storage.withLock { $0 } }
         set { storage.withLock { $0 = newValue } }
+    }
+}
+
+/// Writes the share text into its box (#5264): the sentence for the link the screen made, from the packet's facts and
+/// the check's outcome, kept current as outcomes are published.
+///
+/// It reads outcomes only from the values its subscription delivers, never from the checker's property: a `@Published`
+/// subscriber runs in the property's `willSet`, when the property still holds the old value, so reading it there
+/// leaves the text one outcome behind and a check that finishes while the sheet is open never reaches the send.
+@MainActor
+final class ShareLinkMessageWriter {
+    let box: ShareLinkMessageBox
+    private var latest: [String: ShareLinkPlayCheck.Outcome] = [:]
+    private var subscription: AnyCancellable?
+    private var facts: ShareLinkMessage.Facts?
+    private var kind: ShareLinkMessage.SharedKind?
+    private var link: URL?
+    private var linkID: String?
+    /// The verdict of the screen's previous link, used while the newest link's own check reads as unknown.
+    private var carried = ShareLinkMessage.CarriedVerdict()
+
+    init(box: ShareLinkMessageBox = ShareLinkMessageBox(), outcomes: AnyPublisher<[String: ShareLinkPlayCheck.Outcome], Never>) {
+        self.box = box
+        subscription = outcomes.sink { [weak self] outcomes in
+            self?.latest = outcomes
+            self?.write()
+        }
+    }
+
+    /// A new link is about to be made on the same selection; `previous` is the link the screen shows now. Its verdict
+    /// carries over, and the box keeps the old text until the new link exists (nothing reads it while no sheet is open).
+    func newLink(replacingLinkID previous: String?) {
+        carried.newLink(replacing: previous.flatMap { latest[$0] })
+        link = nil
+        linkID = nil
+    }
+
+    /// The packet the link is made from has been read.
+    func prepared(facts: ShareLinkMessage.Facts, isSpokenNote: Bool) {
+        self.facts = facts
+        kind = ShareLinkMessage.SharedKind(itemType: facts.itemType, isSpokenNote: isSpokenNote)
+    }
+
+    /// The link exists. Called before the sheet opens, so the sheet never sees an empty or stale text.
+    func linkReady(_ url: URL, linkID: String?) {
+        link = url
+        self.linkID = linkID
+        write()
+    }
+
+    /// The selection changed, so the previous link's verdict is about something else.
+    func selectionChanged() {
+        carried.clear()
+    }
+
+    private func write() {
+        guard let link, let facts, let kind else { return }
+        let playability = carried.playability(newest: linkID.flatMap { latest[$0] })
+        box.text = ShareLinkMessage.text(
+            for: link, item: kind, notes: facts.notes, hasAudioOrPage: facts.hasAudioOrPage, playability: playability
+        )
     }
 }
 
