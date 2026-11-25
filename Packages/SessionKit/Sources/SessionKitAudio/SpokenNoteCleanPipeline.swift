@@ -55,7 +55,9 @@ public struct SpokenNoteCleanPipeline: Sendable {
         for take in requested {
             try Task.checkCancellation()
             let url = noteFolder.appendingPathComponent(take.audioFileName)
+            // Without ums also names the Margins cleanup's policy, so a change there makes its cuts again.
             let takeFingerprint = "\(take.audioFileName)-\(take.durationMs)-rule\(SpokenNoteCleanPolicy.ruleVersion)"
+                + (version == .withoutUms ? "-\(DeterministicInterjectionCleanup.policyVersion)" : "")
             let cutURL = SpokenNoteCleanFiles.cutURL(takeId: take.id, inNoteFolder: noteFolder, version: version)
             let cut: SpokenNoteTakeCut
             if let saved = SpokenNoteCleanFiles.read(SpokenNoteCutFile.self, from: cutURL), saved.takeFingerprint == takeFingerprint,

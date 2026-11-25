@@ -180,7 +180,11 @@ final class SpokenNoteCleanCoordinator: ObservableObject {
     }
 
     private func cancelJob() {
-        job?.work.cancel()
+        if let job {
+            job.work.cancel()
+            // A cancelled job's progress isn't this version's state any more; it is asked again at the next play.
+            if case .making = states[Self.key(job.noteId, job.version)] { states[Self.key(job.noteId, job.version)] = nil }
+        }
         job = nil
     }
 
