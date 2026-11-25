@@ -1063,6 +1063,13 @@ final class Gate1FlowUITests: XCTestCase {
     private func pausePlaybackIfNeeded() {
         let playPause = element("playback.play.button")
         XCTAssertTrue(playPause.waitForExistence(timeout: 8))
+        // The label reads "Pause" from .starting on (activePlaybackIsPlaying uses status.isPlaybackActive), but "Play"
+        // in any state before the start reaches the engine. The old first wait accepted that "Play" at once, the loop
+        // then saw "Play" and called the source paused, and nothing was tapped. Inferred, not confirmed from a run
+        // (#5346): #5310's pause still left the root-tabs journey without its mini player at 30b7c83, which a start
+        // that ran on and finished would explain. So give a start the chance to read "Pause" before taking "Play" as
+        // paused. A source that is really paused costs this wait's ceiling, never a wrong answer.
+        _ = waitUntil(playPause, "label == %@", "Pause", timeout: 10)
         _ = XCTWaiter().wait(
             for: [XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "label == %@ OR label == %@", "Play", "Pause"),
