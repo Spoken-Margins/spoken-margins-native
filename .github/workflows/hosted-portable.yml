@@ -618,7 +618,9 @@ jobs:
       - name: Python tools
         run: bash scripts/bootstrap-python-tools.sh
       # Before BlackHole, as the `sessionkit` job ran them (#2596). The second plan's build is then incremental.
+      # #5281: a merge group builds only (the `Mac build` step below); these tests run on main in main-slow.yml.
       - name: SessionKit build and SessionKitCoreTests
+        if: github.event_name != 'merge_group'
         run: |
           swift --version
           .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit --leave-out-slow
@@ -634,6 +636,7 @@ jobs:
       # BlackHole gives Core Audio one. brew refuses to run as root; the cask's installer asks for sudo itself,
       # which is passwordless on hosted runners. verify-tests.py checks the output starts before the audio tests.
       - name: Install BlackHole (virtual audio output)
+        if: github.event_name != 'merge_group'
         run: |
           brew install --cask blackhole-2ch
           brew install switchaudio-osx
@@ -669,7 +672,17 @@ jobs:
           else
             echo "Not a merge commit: every fast-mac-rest step runs."
           fi
+      # #5281: the merge queue's Mac job builds and runs no Mac tests. A green group needed about 24 minutes, and this
+      # job's two test plans were 25 of them on the Mac (14 for SessionKitCoreTests, which Linux runs too, 10 for the
+      # rest). The build still compiles SessionKit and every test target with the Mac's Swift, and the shipped build's
+      # packet and database checks still run when the diff reaches them. --plan main-mac runs the tests on main.
+      - name: Mac build (merge queue, no tests)
+        if: github.event_name == 'merge_group'
+        run: |
+          swift --version
+          .venv/bin/python scripts/verify-tests.py --plan mac-build $CHANGED_ARGS
       - name: Mac rest of the fast plan
+        if: github.event_name != 'merge_group'
         run: |
           swift --version
           .venv/bin/python scripts/verify-tests.py --plan fast-mac-rest $CHANGED_ARGS --leave-out-slow
