@@ -85,7 +85,7 @@ final class ShareLinkSender: ObservableObject {
     private var messageItem: ShareLinkMessage.SharedKind?
     /// The verdict of the screen's previous link, used while the newest link's own check reads as unknown. Only plays
     /// or cannot is carried; `reset()` clears it because the selection changed.
-    private var carriedPlayability: ShareLinkMessage.Playability?
+    private var carried = ShareLinkMessage.CarriedVerdict()
     private static let companionLine = "This has no public web page, so the file goes in the same message as the link."
 
     init() {
@@ -121,10 +121,7 @@ final class ShareLinkSender: ObservableObject {
         }
         // Before the new link replaces it: the screen's current link's verdict carries over until the new one's own
         // check says plays or cannot (#5264).
-        if let id = playCheckLinkID {
-            let previous = ShareLinkMessage.Playability(playChecker.outcomes[id])
-            if previous != .unknown { carriedPlayability = previous }
-        }
+        carried.newLink(replacing: playCheckLinkID.flatMap { playChecker.outcomes[$0] })
         // The box keeps the previous link's text until the new link exists; nothing reads it while no sheet is open.
         messageLink = nil
         state = .making
@@ -213,7 +210,7 @@ final class ShareLinkSender: ObservableObject {
     func reset() {
         requests.cancel()
         // The selection changed, so the previous link's verdict is about something else (#5264).
-        carriedPlayability = nil
+        carried.clear()
         // A line that took "Share link" away stays for as long as this sheet is open: going back to the selection
         // doesn't make a refusal pass (#4134). A new sheet is a new sender and tries once more.
         if !shareLinkAfterwards.allowsShareLink {
@@ -249,7 +246,7 @@ final class ShareLinkSender: ObservableObject {
     private func updateMessage() {
         guard let link = messageLink, let facts = messageFacts, let item = messageItem else { return }
         let outcome = playCheckLinkID.flatMap { playChecker.outcomes[$0] }
-        let playability = ShareLinkMessage.Playability.current(newest: outcome, carried: carriedPlayability)
+        let playability = carried.playability(newest: outcome)
         messageBox.text = ShareLinkMessage.text(
             for: link, item: item, notes: facts.notes, hasAudioOrPage: facts.hasAudioOrPage, playability: playability
         )

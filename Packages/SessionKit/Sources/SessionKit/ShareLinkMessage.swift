@@ -137,6 +137,29 @@ public enum ShareLinkMessage {
         }
     }
 
+    /// The verdict a sender screen carries from one link to the next (#5264). A new link starts with no answer of its
+    /// own, so the previous link's plays or cannot is used until the new check says plays or cannot. A change of
+    /// selection clears it, because the previous link was about something else.
+    public struct CarriedVerdict: Equatable, Sendable {
+        public private(set) var value: Playability?
+
+        public init() {}
+
+        /// A new link is being made on the same selection; `previous` is the outcome of the link the screen shows now.
+        public mutating func newLink(replacing previous: ShareLinkPlayCheck.Outcome?) {
+            let verdict = Playability(previous)
+            if verdict != .unknown { value = verdict }
+        }
+
+        public mutating func clear() {
+            value = nil
+        }
+
+        public func playability(newest: ShareLinkPlayCheck.Outcome?) -> Playability {
+            Playability.current(newest: newest, carried: value)
+        }
+    }
+
     /// The sentence for one share. It can't fail and reads nothing but its arguments.
     public static func chooseSentence(item: SharedKind, notes: Notes, hasAudioOrPage: Bool, playability: Playability) -> String {
         let plays: Bool

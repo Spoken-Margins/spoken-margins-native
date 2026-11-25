@@ -166,6 +166,23 @@ final class ShareLinkMessageTests: XCTestCase {
         XCTAssertEqual(Message.Playability.current(newest: .checking, carried: .unknown), .unknown)
     }
 
+    /// The sender screen's carried verdict: set from the shown link when a new one is made, kept over an unknown,
+    /// cleared when the selection changes.
+    func testTheCarriedVerdictFollowsTheScreensLinks() {
+        var carried = Message.CarriedVerdict()
+        XCTAssertEqual(carried.playability(newest: nil), .unknown)
+        carried.newLink(replacing: .problem(.article))
+        XCTAssertEqual(carried.playability(newest: .checking), .cannot, "the new link's check hasn't answered")
+        XCTAssertEqual(carried.playability(newest: .plays), .plays, "the new link's own answer wins")
+        carried.newLink(replacing: .notChecked(.didNotFinish))
+        XCTAssertEqual(carried.value, .cannot, "an unknown never replaces a carried answer")
+        carried.newLink(replacing: .plays)
+        XCTAssertEqual(carried.value, .plays)
+        carried.clear()
+        XCTAssertNil(carried.value)
+        XCTAssertEqual(carried.playability(newest: .checking), .unknown)
+    }
+
     /// The key is the link's `#` part. Losing it, or any other part of the address, would send a link that opens nothing.
     func testTheTextCarriesTheWholeAddressAfterTheSentence() throws {
         let key = ShareLinkSealing.Key.random()
