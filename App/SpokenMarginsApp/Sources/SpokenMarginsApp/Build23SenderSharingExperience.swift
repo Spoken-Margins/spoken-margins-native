@@ -47,10 +47,11 @@ struct Build23SenderSharingExperience: View {
         #endif
     }
 
-    /// Whether the main Share button makes a link. False in a build without links, and while the server says no.
+    /// Whether the main Share button makes a link. False in a build without links, while the server says no, and when this
+    /// build is below the server's minimum (#4134).
     private var sharesLink: Bool {
         #if SM_SHARE_LINK_CREATION
-        isLinkOffered
+        isLinkOffered && linkSender.shareLinkAfterwards != .hidden
         #else
         false
         #endif
@@ -59,6 +60,15 @@ struct Build23SenderSharingExperience: View {
     private var isMakingLink: Bool {
         #if SM_SHARE_LINK_CREATION
         linkSender.state == .making
+        #else
+        false
+        #endif
+    }
+
+    /// "Share link" can't be tapped: a link is being made, or the line on show is a refusal a retry won't pass (#4134).
+    private var linkButtonBlocked: Bool {
+        #if SM_SHARE_LINK_CREATION
+        isMakingLink || !linkSender.shareLinkAfterwards.allowsShareLink
         #else
         false
         #endif
@@ -215,7 +225,7 @@ struct Build23SenderSharingExperience: View {
             .accessibilityIdentifier("build23.sender.select.continue")
         case .review where sharesLink:
             linkShareButton(isWorking: Build23ShareRequestPolicy.showsMakingLink(isMakingLink: isMakingLink, pendingShare: pendingShare))
-                .disabled(!snapshot.canAdvance || isMakingLink)
+                .disabled(!snapshot.canAdvance || linkButtonBlocked)
                 .accessibilityIdentifier("build23.sender.review.share")
         case .review:
             Button("Share \(includedCount)", systemImage: "square.and.arrow.up") {
@@ -226,7 +236,7 @@ struct Build23SenderSharingExperience: View {
             .accessibilityIdentifier("build23.sender.review.share")
         case .recipientPreview where sharesLink:
             linkShareButton(isWorking: Build23ShareRequestPolicy.showsMakingLink(isMakingLink: isMakingLink, pendingShare: pendingShare))
-                .disabled(snapshot.previewState != .ready || isMakingLink)
+                .disabled(snapshot.previewState != .ready || linkButtonBlocked)
                 .accessibilityIdentifier("build23.sender.preview.share")
         case .recipientPreview:
             Button(
@@ -271,7 +281,8 @@ struct Build23SenderSharingExperience: View {
             playCheckLine: linkSender.playCheckLine,
             playCheckLinkID: linkSender.playCheckLinkID
         )
-        if sharesLink, lines.hasLines {
+        // Below the minimum build the button is hidden, and the update line shows anyway (#4134).
+        if sharesLink || linkSender.shareLinkAfterwards == .hidden, lines.hasLines {
             lines
         }
         #endif
@@ -944,9 +955,20 @@ struct Build23SenderSharingExperience: View {
         isSystemSharePresented = true
     }
 
-    /// Share the way the main button does: a link when this build makes them and the server allows it, else the file.
+    /// Share the way the main button does: a link when this build makes them, the server allows it and no refusal on
+    /// show has taken "Share link" away (#4134), else the file.
     private func shareVerifiedPackage() {
-        share(sharesLink ? .link : .file)
+        share(linkAllowedNow ? .link : .file)
+    }
+
+    /// Whether a share asked for now may make a link. Every path that picks the link reads this, so a refusal that
+    /// disabled "Share link" can't leave another Share button doing nothing (#4134 audit).
+    private var linkAllowedNow: Bool {
+        #if SM_SHARE_LINK_CREATION
+        linkSender.shareLinkAfterwards.makesLink(offered: sharesLink)
+        #else
+        false
+        #endif
     }
 
     /// Makes the packet if it isn't ready, then sends it the way the listener asked.
@@ -1000,6 +1022,11 @@ struct Build23SenderSharingExperience: View {
             presentVerifiedSystemShare()
         case .link:
             #if SM_SHARE_LINK_CREATION
+            // A refusal that arrived while the packet was being made took "Share link" away: send the file, never nothing.
+            guard linkAllowedNow else {
+                presentVerifiedSystemShare()
+                return
+            }
             guard let packageURL = coordinator.verifiedShareFileURL else { return }
             linkSender.makeLink(packageURL: packageURL, itemID: coordinator.sharedItemID)
             #else

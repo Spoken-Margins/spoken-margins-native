@@ -1,4 +1,5 @@
 import SessionKit
+import SessionKitFeeds
 import SwiftUI
 
 /// Following (#1865): one row per followed show, newest episode first, with "N new", a play button for the
@@ -32,6 +33,13 @@ struct ExperienceSourcesScreen: View, Equatable {
     /// The chip that is selected: a list's id, or nil for All. It lives here, not in `Gate1AppModel`, lasts while the
     /// app runs, and returns to All at launch and when its list is deleted (Default 15 of #4046).
     @State private var selectedListID: String?
+    /// List links and rule suggestions (#4046 PR 7, 12): the chips' link mark and the cards above the rows.
+    @ObservedObject private var linksState = ListLinksState.shared
+    @ObservedObject private var suggestionsState = RuleSuggestionsState.shared
+    /// The list a chip's **Share list** is sharing, when it has rules to offer first (PR 5, 13).
+    @State private var sharingList: FollowList?
+    /// A list's address pasted from the empty state: the Follow sheet opens on its preview (#4046 PR 7a).
+    @State private var followSheetListURL: URL?
     /// The show whose "Lists for <show>" sheet is open.
     @State private var listsSheetShow: FeedSubscription?
     /// The Lists screen is pushed from the toolbar's Lists button, and a list's own screen from a chip's Edit list (PR 3).
@@ -120,6 +128,11 @@ struct ExperienceSourcesScreen: View, Equatable {
                 if !listsState.lists.isEmpty, !inputs.showsEmptyState {
                     listChipRow(lists: listsState.lists)
                 }
+                // The change card and the strongest suggestion, under the chips (#4046 PR 7b, 12).
+                if !inputs.showsEmptyState, FollowingListCards.hasCards {
+                    FollowingListCards(model: model, subscriptions: inputs.subscriptions)
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                }
                 // An item's Follow can find several feeds; the choice shows here too, not only on the follow screen.
                 if inputs.hasFollowCandidates {
                     VStack(alignment: .leading, spacing: 10) { FollowCandidateChoices() }
@@ -153,8 +166,14 @@ struct ExperienceSourcesScreen: View, Equatable {
                         // A copied link is followed at once; otherwise the sheet opens ready for a link.
                         if case .follow = model.clipboardFollowDecision {
                             Task {
-                                // Several feeds behind one link: the choice is on the sheet.
-                                if case .needsChoice = await model.followFromClipboard() { isShowingFollowSheet = true }
+                                // Several feeds behind one link: the choice is on the sheet. A list opens its preview there.
+                                switch await model.followFromClipboard() {
+                                case .needsChoice: isShowingFollowSheet = true
+                                case .list(let url):
+                                    followSheetListURL = url
+                                    isShowingFollowSheet = true
+                                case .followed, .stopped: break
+                                }
                             }
                         } else {
                             isShowingFollowSheet = true
@@ -212,23 +231,35 @@ struct ExperienceSourcesScreen: View, Equatable {
             .onChange(of: listsState.lists) { _, lists in
                 selectedListID = FollowingByList.resolvedSelection(selectedListID, in: lists)
             }
-            .task { if !isEdgeSwipePreview { await model.reloadFollowLists() } }
+            .task {
+                guard !isEdgeSwipePreview else { return }
+                await model.reloadFollowLists()
+                await model.reloadListLinks()
+                await model.reloadRuleSuggestions()
+            }
+            .trackedSheet(item: $sharingList) { list in
+                ShareFollowListSheet(model: model, list: list, subscriptions: feed.inputs.subscriptions)
+            }
             .accessibilityIdentifier("sources.screen")
             .navigationTitle("Following")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // Plain icon buttons, at most two: Following's title centres like the other tabs' only then (#4955). Refresh is the pull-down.
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    // Hidden while the listener follows nothing, so the empty Following tab is unchanged.
-                    if !inputs.showsEmptyState {
+                // One `ToolbarItem` per button, as Library and Margins do, never a `ToolbarItemGroup`: with the group, "Following"
+                // sat at the leading edge while the other tabs centre their titles, even with only Lists and plus (#4955).
+                // Refresh is the pull-down.
+                // Hidden while the listener follows nothing, so the empty Following tab is unchanged.
+                if !inputs.showsEmptyState {
+                    ToolbarItem(placement: .topBarTrailing) {
                         Button(action: { isShowingLists = true }) {
-                            Image(systemName: "list.bullet").minimumTapTarget()
+                            Label(FollowListWords.listsTitle, systemImage: "list.bullet").labelStyle(.iconOnly)
                         }
                         .accessibilityLabel(FollowListWords.listsTitle)
                         .accessibilityIdentifier("sources.lists.button")
                     }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button(action: { isShowingFollowSheet = true }) {
-                        Image(systemName: "plus").minimumTapTarget()
+                        Label("Follow a show", systemImage: "plus").labelStyle(.iconOnly)
                     }
                     .accessibilityLabel("Follow a show")
                     .accessibilityHint("Follow a feed, browse podcasts and writers, or import from another app.")
@@ -244,6 +275,7 @@ struct ExperienceSourcesScreen: View, Equatable {
                 .miniPlayerKeepOut()
             }
             .trackedSheet(isPresented: $isShowingFollowSheet, onDismiss: {
+                followSheetListURL = nil
                 guard opensCatalogAfterFollowSheet else { return }
                 opensCatalogAfterFollowSheet = false
                 catalogDrawer.present()
@@ -251,7 +283,7 @@ struct ExperienceSourcesScreen: View, Equatable {
                 FollowSheet(browse: {
                     opensCatalogAfterFollowSheet = true
                     isShowingFollowSheet = false
-                })
+                }, initialListURL: followSheetListURL)
                 .environmentObject(model)
                 .environmentObject(catalogDrawer)
             }
@@ -413,17 +445,20 @@ struct ExperienceSourcesScreen: View, Equatable {
                 .accessibilityIdentifier("sources.list.chip.all")
                 ForEach(FollowListName.chipOrder(lists)) { list in
                     let isSelected = selectedListID == list.id
+                    let updates = ListLinkScreens.updatingListIDs(linksState.links).contains(list.id)
                     Button { selectedListID = list.id } label: {
-                        CatalogSubjectChipLabel(title: list.name, isSelected: isSelected)
+                        CatalogSubjectChipLabel(title: list.name, isSelected: isSelected, trailingSymbol: updates ? "link" : nil)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(list.name)
+                    .accessibilityLabel(updates ? ListLinkWords.chipAccessibilityLabel(listName: list.name) : list.name)
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
                     .accessibilityIdentifier("sources.list.chip.\(list.id)")
                     .contextMenu {
+                        Button(ListLinkWords.shareList, systemImage: "square.and.arrow.up") { shareList(list) }
                         Button("Edit list", systemImage: "pencil") { editingList = FollowListEditTarget(id: list.id) }
                     }
                     .accessibilityActions {
+                        Button(ListLinkWords.shareList) { shareList(list) }
                         Button("Edit list") { editingList = FollowListEditTarget(id: list.id) }
                     }
                 }
@@ -431,6 +466,16 @@ struct ExperienceSourcesScreen: View, Equatable {
         }
         .accessibilityIdentifier("sources.list.chips")
         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+    }
+
+    /// **Share list** from a chip: straight to the share sheet, or the rules switch first when the list has rules to offer.
+    private func shareList(_ list: FollowList) {
+        let rules = ListeningRulesState.shared
+        if rules.loaded, OPMLExporter.shareableRuleCount(list, subscriptions: feed.inputs.subscriptions, rules: rules.rules) == 0 {
+            Task { await model.shareFollowList(list, includeRules: false) }
+        } else {
+            sharingList = list
+        }
     }
 
     /// "Quiet (2)", a button that opens and closes the group. The count and the chevron say what it holds.
@@ -730,22 +775,29 @@ struct FollowingShowRowView: View {
 }
 
 /// The status on a show row's last line: "Adding…" or "In Library". "In Library" is one `Text` with the glyph inline, so a
-/// narrow column can only break it at the space, never inside "Library" (#4723).
+/// narrow column can only break it at the space, never inside "Library" (#4723). Both states are exactly one caption line
+/// tall, so neither changes the row's height (#5295).
 struct FollowingShowStatusView: View {
     let status: FollowingRowStatus
     let showID: String
+    /// The room left for the mini spinner beside "Adding…".
+    private static let spinnerWidth: CGFloat = 16
 
     var body: some View {
         switch status {
         case .adding:
-            HStack(spacing: 4) {
-                ProgressView().controlSize(.mini)
-                Text("Adding…")
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("sources.show.\(showID).adding")
+            // The mini spinner is an overlay on the text's leading padding, not a stack item, so the view's height and
+            // first-text baseline are exactly the caption Text's, the same as In Library. As a stack item the spinner
+            // grew the row by about 11 pt while the episode was added (#5295).
+            Text("Adding…")
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
+                .padding(.leading, Self.spinnerWidth + 4)
+                .overlay(alignment: .leading) {
+                    ProgressView().controlSize(.mini).fixedSize()
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("sources.show.\(showID).adding")
         case .inLibrary:
             Text("\(Image(systemName: "checkmark.circle")) In Library")
                 .font(.caption)
@@ -906,6 +958,9 @@ struct SourceInboxRow: View {
     var skippedWord: String? = nil
     /// A pick rule matched it: the star and the word "Pick" sit after the date.
     var isPick = false
+    /// The Show screen's rows offer **Show less like this** (#4046 PR 12); a marked episode stays listed with a "Show less"
+    /// label and its menu offers **Undo Show less**.
+    var offersShowLess = false
     @State private var confirmsUnfollow = false
 
     /// A Quick Folder link list adds many links, so there is no one item to queue (#4044).
@@ -1023,6 +1078,20 @@ struct SourceInboxRow: View {
             Button(action: playNow) { Label("Play now", systemImage: "play.fill") }
         }
         Button(action: dismiss) { Label(dismissTitle, systemImage: dismissSystemImage) }
+        if offersShowLess, case .followedSource(let entry) = candidate, let subscription {
+            let marked = isShowLess
+            Button {
+                Task {
+                    if marked {
+                        await model.unmarkShowLess(entryId: entry.id, itemId: nil)
+                    } else {
+                        await model.markShowLess(ShowLessMarking.mark(entry: entry, subscription: subscription))
+                    }
+                }
+            } label: {
+                Label(ShowLessWords.menuTitle(isMarked: marked), systemImage: ShowLessWords.symbol)
+            }
+        }
         if let subscription {
             Button { model.toggleMuteSource(id: subscription.id) } label: {
                 Label(FollowingRowActions.muteTitle(showTitle: subscriptionTitle), systemImage: "speaker.slash")
@@ -1046,6 +1115,12 @@ struct SourceInboxRow: View {
         .accessibilityLabel("More actions")
         .accessibilityHint(title)
         .accessibilityIdentifier("\(identifier).more")
+    }
+
+    /// Marked Show less, from this screen or the episode's Item screen.
+    private var isShowLess: Bool {
+        guard offersShowLess, case .followedSource(let entry) = candidate else { return false }
+        return model.showLessMark(entryId: entry.id, itemId: nil) != nil
     }
 
     /// The followed show this entry came from; nil for a Quick Folder file.
@@ -1101,7 +1176,10 @@ struct SourceInboxRow: View {
 
     private var accessibilityLabel: String {
         let base = row?.accessibilityLabel ?? "\(title). \(provenance)"
-        let extras = [isPick ? "Pick." : nil, skippedWord.map { ListeningRuleScreens.skippedLine(word: $0) + "." }].compactMap { $0 }
+        let extras = [
+            isPick ? "Pick." : nil, isShowLess ? ShowLessWords.label + "." : nil,
+            skippedWord.map { ListeningRuleScreens.skippedLine(word: $0) + "." },
+        ].compactMap { $0 }
         return ([base] + extras).joined(separator: " ")
     }
 
@@ -1138,6 +1216,14 @@ struct SourceInboxRow: View {
                         .layoutPriority(1)
                         .padding(.leading, dynamicTypeSize.isAccessibilitySize ? 0 : 6)
                         .accessibilityIdentifier("\(identifier).pick")
+                }
+                if isShowLess {
+                    Label(ShowLessWords.label, systemImage: ShowLessWords.symbol)
+                        .labelStyle(.titleAndIcon)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                        .padding(.leading, dynamicTypeSize.isAccessibilitySize ? 0 : 6)
+                        .accessibilityIdentifier("\(identifier).showLess")
                 }
             }
             .font(.caption)

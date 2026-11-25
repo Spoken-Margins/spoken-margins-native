@@ -19,6 +19,9 @@ label into the queue's own commands. merge-queue-label-bridge.yml runs it from m
   and carries a `setup-retry not-before=<time>` marker in the notifier's comment. Until that time the sweep and an
   edit leave it unqueued (one line says so); after it, the sweep queues it once, as for any armed PR. A person adding
   `automerge` again is never held, since that is "fixed, go". The notifier writes the marker, this reads it.
+- A commit that failed a test in two merge groups holding nothing but the trunk and itself (the notifier's
+  `own-failure` marker, #5281) is not queued again even on a re-arm: `automerge` comes off, `needs-fix` stays, and one
+  comment says to push a fix. A new push is a new commit with no markers.
 - Label removed: auto-merge off, and the GraphQL `dequeuePullRequest` mutation if the PR is in the queue.
 - Sweep: queues every armed PR, re-reading each one just before acting so a PR stopped after the list was read
   (label removed, retitled, `needs-fix` added) is not queued again. It never takes a PR out: a PR set to merge
@@ -75,12 +78,18 @@ AUTO_OFF = re.compile(r"(not|n't) (been )?(enabled|set|configured|turned on)|(no
 # tests check the two agree. SETUP_RETRY_MINUTES is the notifier's delay, kept here only so that a test can compare.
 SETUP_RETRY = re.compile(r'<!-- merge-queue-dequeued setup-retry not-before=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) -->')
 SETUP_RETRY_MINUTES = 30
+# The notifier's marker (merge_queue_dequeued.py OWN_FAILURE_MARKER, #5281): this commit failed a test in a merge group
+# that held nothing but the trunk and this PR. OWN_FAILURE_LIMIT of them hold the commit out of the queue, even on a
+# re-arm, until a new push. The notifier's tests check the copies agree.
+OWN_FAILURE = re.compile(r'<!-- merge-queue-dequeued own-failure head=([0-9a-f]{40}) -->')
+OWN_FAILURE_LIMIT = 2
+HELD_MARKER = '<!-- merge-queue-label-bridge held-commit={head} -->'
 TRUSTED_LOGIN = 'github-actions[bot]'
 # A marker further ahead than the notifier's delay plus this slack is not the notifier's: ignored, whoever wrote it.
 SETUP_RETRY_SLACK = datetime.timedelta(minutes=15)
 CHECK_ACTIONS = ('edited', 'converted_to_draft', 'opened', 'reopened', 'synchronize', 'ready_for_review')
 
-PR_FIELDS = 'id number isDraft title state labels(first: 50) { nodes { name } } autoMergeRequest { enabledAt } ' \
+PR_FIELDS = 'id number isDraft title state headRefOid labels(first: 50) { nodes { name } } autoMergeRequest { enabledAt } ' \
             'mergeQueueEntry { id }'
 PR_QUERY = '''query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) { %s } }
@@ -274,6 +283,29 @@ def setup_retry_hold(github, number):
     return latest if latest is not None and now < latest else None
 
 
+def held_commit(github, pr):
+    """Whether the PR's head commit failed OWN_FAILURE_LIMIT merge groups that held nothing but the trunk and it.
+    Read only on a re-arm of a PR that carries `needs-fix`, so the sweep spends no reads on it."""
+    head = pr.get('headRefOid')
+    if not head:
+        return False
+    read = getattr(github, 'trusted_comments', github.comments)
+    return OWN_FAILURE.findall(read(pr['number'])).count(head) >= OWN_FAILURE_LIMIT
+
+
+def hold_commit(github, pr, out):
+    """Leave the PR out of the queue: `needs-fix` stays, `automerge` comes off so that adding it after a push is a fresh
+    re-arm, and one comment per commit says why."""
+    number, head = pr['number'], pr['headRefOid']
+    github.remove_label(number, LABEL)
+    marker = HELD_MARKER.format(head=head)
+    if marker not in github.comments(number):
+        github.comment(number, f'{marker}\nNot queued: commit `{head[:7]}` failed a merge group that held nothing but '
+                               f'main and this PR {OWN_FAILURE_LIMIT} times, so the failure is in this commit. `{LABEL}` '
+                               f'came off and `{FIX_LABEL}` stays. Push a fix, then add `{LABEL}` again.')
+    print(f'#{number}: commit {head[:7]} failed alone {OWN_FAILURE_LIMIT} times; held until a new push', file=out)
+
+
 def queue(github, pr, out=sys.stdout, rearmed=False):
     """Queue one armed PR. True when it is queued, set to merge, or rightly left alone."""
     number = pr['number']
@@ -294,6 +326,9 @@ def queue(github, pr, out=sys.stdout, rearmed=False):
     if FIX_LABEL in labels(pr):
         if not rearmed:
             print(f'#{number}: carries `{FIX_LABEL}`, not queued until `{LABEL}` is added again', file=out)
+            return True
+        if held_commit(github, pr):
+            hold_commit(github, pr, out)
             return True
         github.remove_label(number, FIX_LABEL)
         print(f'#{number}: `{LABEL}` added again, `{FIX_LABEL}` removed', file=out)

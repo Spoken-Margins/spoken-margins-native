@@ -433,7 +433,8 @@ final class StoreReadMeterTests: XCTestCase {
         "loadLastSentReadAloud",              // only a Margin shared as text carries a choice, so a healthy Library mostly misses (it filters inside SQLite)
         "loadLastSentLeadIns",                // only a Margin shared at a length other than 20 s carries one, so a healthy Library mostly misses (it filters inside SQLite)
         "latestPendingSummaryTurnId",         // no summary is waiting in a healthy Library; a miss is the common answer
-        "holdsImportedListeningMap"           // few layers carry a friend's map; a miss is the common answer (it still reads the item's layers inside SQLite)
+        "holdsImportedListeningMap",         // few layers carry a friend's map; a miss is the common answer (it still reads the item's layers inside SQLite)
+        "loadPublisherAudioChoice"            // only an item whose listener chose the app voice over its recording has one; a miss is the common answer (#4640)
     ]
 
     /// Answered from memory, not SQLite: nothing for the meter to see.

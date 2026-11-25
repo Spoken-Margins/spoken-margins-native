@@ -74,6 +74,25 @@ final class FeedParserEnclosureOnlyTests: XCTestCase {
         XCTAssertEqual(parsed.items[2].id, "4")
     }
 
+    /// #4640 audit: `size_in_bytes` is only a hint. A string, a fraction or a number too big for `Int` drops the
+    /// size and keeps the feed, as before the size was read.
+    func testAJSONFeedWithAnUnreadableAttachmentSizeStillParses() throws {
+        for size in [#""5000000""#, "5000000.5", "99999999999999999999999", "null", "-1"] {
+            let json = Data("""
+            {"version":"https://jsonfeed.org/version/1.1","title":"T","items":[
+            {"id":"1","title":"Episode","url":"https://example.com/1","attachments":[{"url":"https://example.com/1.mp3","mime_type":"audio/mpeg","size_in_bytes":\(size)}]}]}
+            """.utf8)
+            let parsed = try FeedParser().parse(data: json)
+            XCTAssertEqual(parsed.items.map(\.title), ["Episode"], size)
+            XCTAssertEqual(parsed.items.first?.audioURL, "https://example.com/1.mp3", size)
+        }
+        let readable = Data("""
+        {"version":"https://jsonfeed.org/version/1.1","title":"T","items":[
+        {"id":"1","title":"Episode","url":"https://example.com/1","attachments":[{"url":"https://example.com/1.mp3","mime_type":"audio/mpeg","size_in_bytes":5000000}]}]}
+        """.utf8)
+        XCTAssertEqual(try FeedParser().parse(data: readable).items.first?.enclosureLengthBytes, 5_000_000)
+    }
+
     private static func fixture(_ name: String) throws -> Data {
         try TestInputs.data(.contracts, "fixtures/feeds/\(name)")
     }
