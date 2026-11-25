@@ -1,4 +1,5 @@
 import Combine
+import os
 import SwiftUI
 import SessionKit
 import SessionKitSharing
@@ -75,6 +76,16 @@ final class ShareLinkSender: ObservableObject {
     /// A problem found while the share sheet was open is announced when the sheet closes, once.
     private var announcementWaitsForSheet = false
     private var announcedLinkID: String?
+    /// The text the share sheet hands over (#5264): the sentence for this share, then the link. Kept current here, on
+    /// the main actor, whenever it could change; the sheet's item source reads it at the moment a destination is
+    /// picked, so a finished check reaches the send and nothing ever waits on the check.
+    let messageBox = ShareLinkMessageBox()
+    /// What the packet of the link being made says (kind, the Margins going, audio or page), and whether it is a Spoken Note.
+    private var messageFacts: ShareLinkMessage.Facts?
+    private var messageItem: ShareLinkMessage.SharedKind?
+    /// The verdict of the screen's previous link, used while the newest link's own check reads as unknown. Only plays
+    /// or cannot is carried; `reset()` clears it because the selection changed.
+    private var carriedPlayability: ShareLinkMessage.Playability?
     private static let companionLine = "This has no public web page, so the file goes in the same message as the link."
 
     init() {
@@ -99,20 +110,29 @@ final class ShareLinkSender: ObservableObject {
         return links.isOn
     }
 
-    /// Seals and uploads the packet at `packageURL`, the file the sender would otherwise share.
-    func makeLink(packageURL: URL) {
+    /// Seals and uploads the packet at `packageURL`, the file the sender would otherwise share. `isSpokenNote` says
+    /// whether the shared item is a Spoken Note, which the packet's item type alone can't tell (#5264).
+    func makeLink(packageURL: URL, isSpokenNote: Bool) {
         guard state != .making, shareLinkAfterwards.allowsShareLink else { return }
         // Before anything is read, sealed or sent, and before any key is made: the first link asks (#2842).
         guard ServerSendConsent.hasConsented(to: .shareLinks) else {
             state = .needsConsent
             return
         }
+        // Before the new link replaces it: the screen's current link's verdict carries over until the new one's own
+        // check says plays or cannot (#5264).
+        if let id = playCheckLinkID {
+            let previous = ShareLinkMessage.Playability(playChecker.outcomes[id])
+            if previous != .unknown { carriedPlayability = previous }
+        }
+        // The box keeps the previous link's text until the new link exists; nothing reads it while no sheet is open.
+        messageLink = nil
         state = .making
         let ticket = requests.begin()
         let bridge = self.bridge
         Task {
             // The packet is read, sealed and posted off the main thread: it can be 20 MB.
-            let prepared = await Task.detached(priority: .userInitiated) { () -> Result<(Data, ShareLinkPreview), ShareLinkFallback> in
+            let prepared = await Task.detached(priority: .userInitiated) { () -> Result<(Data, ShareLinkPreview, ShareLinkMessage.Facts), ShareLinkFallback> in
                 Self.prepare(packageURL: packageURL)
             }.value
             guard requests.accepts(ticket) else { return }
@@ -120,7 +140,10 @@ final class ShareLinkSender: ObservableObject {
             let preview: ShareLinkPreview
             switch prepared {
             case .success(let made):
-                (packet, preview) = made
+                let facts: ShareLinkMessage.Facts
+                (packet, preview, facts) = made
+                messageFacts = facts
+                messageItem = ShareLinkMessage.SharedKind(itemType: facts.itemType, isSpokenNote: isSpokenNote)
                 companionNote = preview.needsCompanionFile ? Self.companionLine : nil
             case .failure(let fallback):
                 state = .useFile(fallback)
@@ -152,10 +175,13 @@ final class ShareLinkSender: ObservableObject {
             guard requests.accepts(ticket) else { return }
             switch result {
             case .link(let url, _):
-                state = .ready(url, companionFile: preview.needsCompanionFile ? packageURL : nil, packet: packageURL)
-                // The share sheet opens at once; the check runs beside it and never delays it (#4454).
+                // The check starts first so its id is known, then the text is written, all before the sheet opens:
+                // the sheet never sees an empty or stale text. The check runs beside the sheet and never delays it (#4454).
                 playCheckLinkID = playChecker.check(link: url, title: preview.source.title, packetBytes: packet.count)
                 announcedLinkID = nil
+                messageLink = url
+                updateMessage()
+                state = .ready(url, companionFile: preview.needsCompanionFile ? packageURL : nil, packet: packageURL)
                 playOutcomesChanged(playChecker.outcomes)
             case .useFile(let fallback):
                 // No link, so nothing goes with it: the file share beside the button is the way.
@@ -186,6 +212,8 @@ final class ShareLinkSender: ObservableObject {
     /// check's line, which is about the link that was made, goes too.
     func reset() {
         requests.cancel()
+        // The selection changed, so the previous link's verdict is about something else (#5264).
+        carriedPlayability = nil
         // A line that took "Share link" away stays for as long as this sheet is open: going back to the selection
         // doesn't make a refusal pass (#4134). A new sheet is a new sender and tries once more.
         if !shareLinkAfterwards.allowsShareLink {
@@ -214,7 +242,21 @@ final class ShareLinkSender: ObservableObject {
         }
     }
 
+    /// The link the box's text is for.
+    private var messageLink: URL?
+
+    /// Writes the box from what is known now. Called whenever the link or its check's outcome changes.
+    private func updateMessage() {
+        guard let link = messageLink, let facts = messageFacts, let item = messageItem else { return }
+        let outcome = playCheckLinkID.flatMap { playChecker.outcomes[$0] }
+        let playability = ShareLinkMessage.Playability.current(newest: outcome, carried: carriedPlayability)
+        messageBox.text = ShareLinkMessage.text(
+            for: link, item: item, notes: facts.notes, hasAudioOrPage: facts.hasAudioOrPage, playability: playability
+        )
+    }
+
     private func playOutcomesChanged(_ outcomes: [String: ShareLinkPlayCheck.Outcome]) {
+        updateMessage()
         guard let id = playCheckLinkID, let outcome = outcomes[id] else {
             playCheckLine = nil
             return
@@ -239,19 +281,21 @@ final class ShareLinkSender: ObservableObject {
     }
 
     /// The listener tapped the agreeing button on the consent alert: remember it, then make the link they asked for.
-    func agreeAndMakeLink(packageURL: URL) {
+    func agreeAndMakeLink(packageURL: URL, isSpokenNote: Bool) {
         ServerSendConsent.record(.shareLinks)
         state = .idle
-        makeLink(packageURL: packageURL)
+        makeLink(packageURL: packageURL, isSpokenNote: isSpokenNote)
     }
 
-    /// The packet's bytes and the preview read from it. The audio the read extracts is only for the read, and goes.
-    nonisolated private static func prepare(packageURL: URL) -> Result<(Data, ShareLinkPreview), ShareLinkFallback> {
+    /// The packet's bytes, the preview read from it and the facts the sentence needs, from one read of the archive.
+    /// The audio the read extracts is only for the read, and goes.
+    nonisolated private static func prepare(packageURL: URL) -> Result<(Data, ShareLinkPreview, ShareLinkMessage.Facts), ShareLinkFallback> {
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("share-link-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
         do {
             let packet = try Data(contentsOf: packageURL)
-            return .success((packet, try ShareLinkPacketPreview.preview(ofPackageAt: packageURL, scratch: scratch)))
+            let read = try ShareLinkPacketPreview.read(ofPackageAt: packageURL, scratch: scratch)
+            return .success((packet, read.preview, read.facts))
         } catch ShareLinkPreviewBuilder.Failure.nothingToSay {
             return .failure(.nothingToSay)
         } catch {
@@ -266,6 +310,8 @@ final class ShareLinkSender: ObservableObject {
 struct ShareLinkPresentation: ViewModifier {
     @ObservedObject var sender: ShareLinkSender
     let packageURL: URL?
+    /// Whether the shared item is a Spoken Note, for the sentence beside the link (#5264).
+    let isSpokenNote: Bool
     /// The link's share sheet sent it: the same share signal the file sheet records (#483).
     let onShared: (URL) -> Void
 
@@ -276,7 +322,7 @@ struct ShareLinkPresentation: ViewModifier {
                 set: { if !$0, sender.state == .needsConsent { sender.reset() } }
             )) {
                 Button(ShareLinkConsentCopy.accept) {
-                    if let packageURL { sender.agreeAndMakeLink(packageURL: packageURL) } else { sender.reset() }
+                    if let packageURL { sender.agreeAndMakeLink(packageURL: packageURL, isSpokenNote: isSpokenNote) } else { sender.reset() }
                 }
                 .accessibilityIdentifier("build23.sender.share.link.consent.agree")
                 Button(ShareLinkConsentCopy.decline, role: .cancel) { sender.reset() }
@@ -288,8 +334,8 @@ struct ShareLinkPresentation: ViewModifier {
                 get: { if case .ready = sender.state { return true } else { return false } },
                 set: { if !$0 { sender.closeSheet() } }
             )) {
-                if case .ready(let url, let file, let packet) = sender.state {
-                    ShareLinkActivityView(link: url, companionFile: file) { onShared(packet) }
+                if case .ready(_, let file, let packet) = sender.state {
+                    ShareLinkActivityView(message: sender.messageBox, companionFile: file) { onShared(packet) }
                         .presentationDetents([.medium, .large])
                 }
             }
@@ -889,9 +935,42 @@ struct ShareLinkPlayCheckLineView: View {
     }
 }
 
+/// The share text, readable from any thread (#5264). The sender writes it on the main actor; the share sheet's item
+/// source reads it when iOS asks, and reading waits on nothing but the lock.
+final class ShareLinkMessageBox: Sendable {
+    private let storage = OSAllocatedUnfairLock(initialState: "")
+
+    init(text: String = "") {
+        storage.withLock { $0 = text }
+    }
+
+    var text: String {
+        get { storage.withLock { $0 } }
+        set { storage.withLock { $0 = newValue } }
+    }
+}
+
 #if canImport(UIKit)
+/// The share sheet's text item. It hands over the box's current text both as the placeholder and for whichever
+/// destination is picked, so the sentence chosen from a check that finished while the sheet was open reaches the send.
+final class ShareLinkMessageItemSource: NSObject, UIActivityItemSource {
+    let box: ShareLinkMessageBox
+
+    init(box: ShareLinkMessageBox) {
+        self.box = box
+    }
+
+    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
+        box.text
+    }
+
+    func activityViewController(_ activityViewController: UIActivityViewController, itemForActivityType activityType: UIActivity.ActivityType?) -> Any? {
+        box.text
+    }
+}
+
 struct ShareLinkActivityView: UIViewControllerRepresentable {
-    let link: URL
+    let message: ShareLinkMessageBox
     /// The `.spokenmargins` file for an item with no web address: the same share, so one message holds both.
     let companionFile: URL?
     var onShared: () -> Void = {}
@@ -902,7 +981,7 @@ struct ShareLinkActivityView: UIViewControllerRepresentable {
 
     /// The sheet itself, apart from SwiftUI's context so a test can check what it carries and what it reports.
     func makeController() -> UIActivityViewController {
-        let controller = UIActivityViewController(activityItems: Self.activityItems(link: link, companionFile: companionFile), applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: Self.activityItems(message: message, companionFile: companionFile), applicationActivities: nil)
         controller.completionWithItemsHandler = { _, completed, _, _ in
             if completed { onShared() }
         }
@@ -911,10 +990,11 @@ struct ShareLinkActivityView: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 
-    /// What the sheet carries (#3787): one text holding the sentence and the link, then the companion file if there is
-    /// one. A test reads this; `UIActivityViewController` doesn't give its items back.
-    static func activityItems(link: URL, companionFile: URL?) -> [Any] {
-        var items: [Any] = [ShareLinkMessage.text(for: link)]
+    /// What the sheet carries (#3787): one text holding the sentence and the link, served by an item source that reads
+    /// the sender's box when asked (#5264), then the companion file if there is one. A test reads this;
+    /// `UIActivityViewController` doesn't give its items back.
+    static func activityItems(message: ShareLinkMessageBox, companionFile: URL?) -> [Any] {
+        var items: [Any] = [ShareLinkMessageItemSource(box: message)]
         if let companionFile { items.append(SpokenMarginsPackageActivityItem(packageURL: companionFile)) }
         return items
     }
