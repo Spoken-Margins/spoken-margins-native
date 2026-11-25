@@ -17,11 +17,14 @@ struct FriendLinkOpenedNotice: View {
                 .foregroundStyle(AppColors.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
             if let dontTellTitle {
-                Button(dontTellTitle, action: onDontTell)
-                    .font(.footnote)
-                    .buttonStyle(.borderless)
-                    .frame(minHeight: 44)
-                    .accessibilityIdentifier("item.friendIntro.dontTell")
+                Button(action: onDontTell) {
+                    Text(dontTellTitle)
+                        .font(.footnote)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("item.friendIntro.dontTell")
             }
         }
         .accessibilityElement(children: .contain)

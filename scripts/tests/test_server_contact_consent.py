@@ -96,6 +96,18 @@ CONTACTS = {
         "none needed: the listener tapped a link they were sent; the request names that link only",
         None, 0,
     ),
+    KIT + "SessionKit/ShareLinkOpenedClient.swift": (
+        "none needed in this file: it makes the two opened-mark requests (#5275) and decides nothing. Its two callers are listed below with the switch each one checks",
+        None, 0,
+    ),
+    KIT + "SessionKit/FriendLinkSignals.swift": (
+        "the friend's mark: a line at arrival says the sender will see the open, with a Don't tell button, and Settings > Show when links are opened stops it. Unlike the map switches, this one starts ON (#5275 Design, Default 6, the owner's to veto). Nothing is sent with it off",
+        "guard receiptsOn", 1,
+    ),
+    KIT + "SessionKit/SentLinkStatus.swift": (
+        "the sender's check: only for links made after the Share as link consent, which names this; the same switch, read when a run starts and before each request",
+        "ShareLinkOpenedPolicy.isOn(defaults)", 2,
+    ),
 }
 
 # The settings switches that carry the opt-ins above must start off.
