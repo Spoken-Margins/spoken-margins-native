@@ -579,6 +579,7 @@ extension Gate1AppModel {
 
     /// The conductor's seek (to the Margin on "Play it now", or back to the start of the lead-in).
     func seekMarginMomentSource(toPosition position: Int) {
+        marginCapture.forgetSharedReply() // every conductor jump ends the reply window (#5238)
         if marginMomentClock.isNarratedText {
             seekText(toCharOffset: marginMomentClock.textOffset(forPosition: position))
         } else {
@@ -645,7 +646,8 @@ extension Gate1AppModel {
             title: "\(row.collectionLabel)'s Margin",
             isApproximate: position.isApproximate
         )
-        marginMomentConductor?.onVoiceStarted = { [weak self] in if $0 == targetID { self?.markSharedMarginHeard(row.interjection) } }
+        let earlier = marginMomentConductor?.onVoiceStarted // the reply window's hook (#5238)
+        marginMomentConductor?.onVoiceStarted = { [weak self] in earlier?($0); if $0 == targetID { self?.markSharedMarginHeard(row.interjection) } }
         // Their voice gets the same chime as the automatic prompt, unless the layer is muted (#932).
         marginMomentConductor?.chimedMarginIds = row.layer.isMuted ? [] : [targetID]
         marginMomentConductor?.onChimeStarted = { [weak self] in self?.diagnostics["marginMoment.chime"] = "played:\($0)" }

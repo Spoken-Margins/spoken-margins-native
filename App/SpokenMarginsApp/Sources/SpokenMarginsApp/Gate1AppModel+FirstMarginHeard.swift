@@ -55,7 +55,9 @@ extension Gate1AppModel {
     /// The conductor's audio-session, unavailable and voice-ended callbacks, moved out of `startMarginMoment` (hot-file ratchet).
     func configureMarginMomentCallbacks(_ conductor: MarginMomentConductor, itemId: String) {
         conductor.prepareAudioSession = { [weak self] in try self?.prepareMarginMomentVoice() }
+        conductor.onVoiceStarted = { [weak self] in self?.openMomentReplyWindow(marginId: $0, itemId: itemId) } // #5238
         conductor.onVoiceEnded = { [weak self] margin, reachedEnd in
+            self?.closeMomentReplyWindow()
             self?.marginMomentVoiceEnded(margin, itemId: itemId, reachedEnd: reachedEnd)
         }
         conductor.onVoiceUnavailable = { [weak self] (marginId: String, reason: String) in
