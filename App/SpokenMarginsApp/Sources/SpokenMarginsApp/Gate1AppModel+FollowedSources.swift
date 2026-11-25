@@ -28,6 +28,7 @@ extension Gate1AppModel {
         let reader = StoreReader(store)
         if let latest = try await reader.latestFeedSubscriptions() {
             feedSubscriptions = latest
+            await reconcileNotForMeHides(with: latest) // a followed source is never hidden (#4285)
             return latest
         }
         return try await reader.feedSubscriptions()
@@ -562,7 +563,9 @@ extension Gate1AppModel {
         }
     }
 
-    func unfollowSource(id: String) {
+    /// `then` runs after the unfollow has landed and the list is published, and only when it landed (#4285: a hide is
+    /// written there, after the show has left the list the hide reconcile reads).
+    func unfollowSource(id: String, then: (@MainActor () async -> Void)? = nil) {
         guard let coordinator = followedSourceCoordinator else { return }
         // The show leaves its follow lists with it (#4046). The member is read before the subscription goes.
         let member = feedSubscriptions.first { $0.id == id }.map { FollowListEditing.member(for: $0) }
@@ -570,6 +573,7 @@ extension Gate1AppModel {
             let unfollowed: Void? = try? await coordinator.unfollow(subscriptionId: id)
             if unfollowed != nil, let member { await self?.removeFromFollowLists(member) }
             await self?.publishFeedSubscriptionsAfterChange()
+            if unfollowed != nil { await then?() }
             await self?.performFollowedSourceRefresh(force: false, trigger: .localChange)
         }
     }

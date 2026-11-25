@@ -32,6 +32,18 @@ public enum PlaybackLeadingControl: Equatable, Sendable {
     public struct Slot: Equatable, Sendable {
         public let kind: SlotKind
         public let isShown: Bool
+
+        /// The identifier the Library arrow carries on screen, in the Now header or in the bar.
+        public static let libraryExitIdentifier = "playback.exit.button"
+        /// The identifier of the bar's copy while it is hidden. On Now the header draws the arrow and the bar keeps an
+        /// invisible copy (#4739); with the same identifier, a UI test's lookup found the invisible copy first, which has
+        /// no point to tap, and every J14 script that left the player failed (#5311). A hidden copy is never the one to tap.
+        public static let hiddenLibraryExitIdentifier = "playback.exit.button.hiddenInBar"
+
+        /// The identifier for the bar's Library arrow in this slot: the shared one only while it is drawn.
+        public var libraryExitIdentifier: String {
+            isShown ? Self.libraryExitIdentifier : Self.hiddenLibraryExitIdentifier
+        }
     }
 
     /// The bar's content must never depend on scroll state: the item came and went as the Now header scrolled in and out,
