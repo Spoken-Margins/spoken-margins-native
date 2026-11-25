@@ -138,7 +138,7 @@ extension Gate1AppModel {
     /// recording in progress blocks the start.
     func prepareToStartItem(id: String, trigger: VoiceoverLookupDecision.Trigger = .play) -> Bool {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_item") else { return false }
-        prepareImportedLocalAudioBridges(itemId: id); fetchCommunityMapIfNeeded(itemId: id); listenerStartedItem(itemId: id, trigger: trigger)
+        prepareImportedLocalAudioBridges(itemId: id); listenerStartedItem(itemId: id, trigger: trigger)
         if [.waiting, .preparing].contains(libraryItems.first(where: { $0.id == id })?.startupAudioState) {
             scheduleStartupAudioPreparationIfNeeded(itemId: id)
             diagnostics["startupAudioPlayback:\(id)"] = "started_without_waiting_for_opening_buffer"
