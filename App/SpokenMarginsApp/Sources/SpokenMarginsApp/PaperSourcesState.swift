@@ -177,6 +177,9 @@ final class PaperSourcesState: ObservableObject {
 
     // MARK: Follow
 
+    /// The line under the field when a pasted link is a list of shows rather than a reading list.
+    static let showListLinkLine = "That's a list of shows. Paste it on Following's + to add it."
+
     enum FollowResult: Equatable {
         case followed
         /// The line under the field (none when the app already said why); the field keeps the text.
@@ -199,6 +202,8 @@ final class PaperSourcesState: ObservableObject {
             case .followed: return .followed
             case .needsChoice: return .problem(Gate1AppModel.chooseFeedMessage)
             case .stopped(let line): return .problem(line)
+            // A link to a list of shows (#4046) opens its "Add <list>" preview from Following's plus, not here.
+            case .list: return .problem(Self.showListLinkLine)
             }
         case .rejected(let line):
             return .problem(line)
