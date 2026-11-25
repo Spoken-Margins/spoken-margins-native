@@ -66,6 +66,8 @@ CONFLICT_MARKER = re.compile(r'<!-- lane-conflict head=([0-9a-f]{7}) base=([0-9a
 RECORD_AT_END = re.compile(r'<!-- conflict-resolver (\{[^\n]*\}) -->\s*\Z')
 SHADOW_PREFIX = 'resolver-shadow/'
 CHECK_WORKFLOWS = ('hosted-portable.yml', 'hosted-web.yml')
+# The jobs of those that test the merged tree the same way on a PR and on a dispatch with no base; nothing else grades.
+GRADED_JOBS = ('hosted fast: portable', 'hosted web: build and Playwright')
 # Paths whose PRs always go back to a thread: the owner's merge tap (.github/, the lane runner) and the database and
 # packet code (owner calls on compatibility). Any PR that touches one, in any file, is never resolved.
 PROTECTED = ('.github/', 'scripts/lane-runner.py')
@@ -791,7 +793,7 @@ def report(api, recs, now=None, conflict_comments=None):
             f'{"" if now >= end else ", still running"}).\n\n'
             f'{rate}Cases: {len(cases)} ({", ".join(f"{k} {v}" for k, v in sorted(sorts.items()))}). '
             f'Can combine (small or medium): {len(combine)}; passed {passed} ({share:.0%}); checks still pending {pending}; '
-            f'ungraded because the PR head ran none of the Linux checks itself: {ungraded}; '
+            f'ungraded because the PR head ran none of the graded checks itself: {ungraded}; '
             f'not graded because the job failed: {len(broken)}.\n\n'
             f'{verdict}\n\n| PR | sort | outcome | checks on proposed merge | words kept main / PR | pass | failing jobs |\n'
             f'|---|---|---|---|---|---|---|\n' + '\n'.join(rows))
@@ -800,34 +802,34 @@ def report(api, recs, now=None, conflict_comments=None):
 def grade_checks(api, record):
     """('pass' | 'fail' | 'pending' | 'missing' | 'ungraded', failing job names) for a proposed merge.
 
-    The grade must measure the merge and nothing else (two audits, #5323). So a job is graded only when (1) the PR's own
-    checks ran it (passed or failed, not skipped) on its head, and (2) it ran on hosted Linux. A dispatch with no base
-    runs more than a PR does: hosted-portable's app build and Mac jobs test all of main, not the PR's scope. A head
-    with no such job of its own (GitHub runs no pull_request checks while a PR conflicts) is 'ungraded', not failed.
+    The grade must measure the merge and nothing else (three audits on #5323). So only the jobs in GRADED_JOBS count:
+    the ones that test the merged tree and run the same way on a PR as on a dispatch with no base. Housekeeping jobs
+    (owner-tap-alert, retry tallies) and the jobs a dispatch adds (the app build, the Mac rest, which test all of main)
+    never count, whatever runner they use. Of those, a job counts only when the PR's own head ran it (passed or failed,
+    not skipped). A head with none of its own (GitHub runs no pull_request checks while a PR conflicts) is
+    'ungraded', not failed.
     """
     scope = {c['name'] for c in api.get(f'commits/{record["head_sha"]}/check-runs?per_page=100').get('check_runs', [])
-             if c.get('conclusion') in ('success', 'failure')}
+             if c.get('conclusion') in ('success', 'failure') and c['name'] in GRADED_JOBS}
+    if not scope:
+        return 'ungraded', []
     runs = [r for r in api.get(f'actions/runs?head_sha={record["shadow"]}&per_page=50').get('workflow_runs', [])
             if Path(r.get('path', '')).name in CHECK_WORKFLOWS]
     graded = []
     for run in runs:
         graded += [j for j in api.get(f'actions/runs/{run["id"]}/jobs?per_page=100').get('jobs', [])
-                   if j.get('name') in scope and on_linux(j)]
+                   if j.get('name') in scope]
     if not graded:
-        if not runs:
-            return 'missing', []  # nothing ran on the proposed merge: it can't pass
-        if any(r.get('status') != 'completed' for r in runs):
+        if runs and any(r.get('status') != 'completed' for r in runs):
             return 'pending', []
-        return 'ungraded', []  # the PR's head ran none of these jobs on Linux itself: nothing to compare
+        return 'missing', []  # the PR ran it, the proposed merge didn't: it can't pass
     if any(j.get('status') != 'completed' for j in graded):
         return 'pending', []
     failing = sorted({j['name'] for j in graded if j.get('conclusion') != 'success'})
+    missing = sorted(scope - {j['name'] for j in graded})
+    if missing and all(r.get('status') == 'completed' for r in runs):
+        return 'missing', missing
     return ('fail' if failing else 'pass'), failing
-
-
-def on_linux(job):
-    labels = job.get('labels') or []
-    return bool(labels) and all(str(label).startswith('ubuntu') for label in labels)
 
 
 def count_handoffs(api, start, end):

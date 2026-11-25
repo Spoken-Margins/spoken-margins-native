@@ -359,27 +359,40 @@ class EndToEnd(unittest.TestCase):
 
 class Grading(unittest.TestCase):
     class Api:
-        def __init__(self, head_checks=None):
+        def __init__(self, head_checks=None, playwright='success'):
             self.head_checks = head_checks if head_checks is not None else [
                 {'name': 'hosted fast: portable', 'conclusion': 'success'},
+                {'name': 'hosted web: build and Playwright', 'conclusion': 'success'},
                 {'name': 'hosted fast: Mac rest', 'conclusion': 'success'},
+                {'name': 'owner-tap-alert', 'conclusion': 'success'},
                 {'name': 'hosted app: build (no tests)', 'conclusion': 'skipped'}]
+            self.playwright = playwright
 
         def get(self, path):
             if path.startswith('commits/'):
                 return {'check_runs': self.head_checks}
             if path.startswith('actions/runs?'):
-                return {'workflow_runs': [{'id': 1, 'status': 'completed',
-                                           'path': '.github/workflows/hosted-portable.yml'}]}
+                return {'workflow_runs': [
+                    {'id': 1, 'status': 'completed', 'path': '.github/workflows/hosted-portable.yml'},
+                    {'id': 2, 'status': 'completed', 'path': '.github/workflows/hosted-web.yml'}]}
+            if path.startswith('actions/runs/2/'):
+                return {'jobs': [{'name': 'hosted web: build and Playwright', 'status': 'completed',
+                                  'conclusion': self.playwright, 'labels': ['xcode-27']}]}
             return {'jobs': [
                 {'name': 'hosted fast: portable', 'status': 'completed', 'conclusion': 'success',
+                 'labels': ['ubuntu-latest']},
+                {'name': 'owner-tap-alert', 'status': 'completed', 'conclusion': 'skipped',
                  'labels': ['ubuntu-latest']},
                 {'name': 'hosted fast: Mac rest', 'status': 'completed', 'conclusion': 'failure', 'labels': ['xcode-27']},
                 {'name': 'hosted app: build (no tests)', 'status': 'completed', 'conclusion': 'failure',
                  'labels': ['xcode-27']}]}
 
-    def test_only_linux_jobs_the_pr_itself_ran_are_graded(self):
+    def test_only_the_graded_jobs_the_pr_itself_ran_count(self):
         self.assertEqual(cr.grade_checks(self.Api(), {'head_sha': HEAD, 'shadow': 'b' * 40}), ('pass', []))
+
+    def test_a_failed_playwright_run_on_a_mac_fails_the_case(self):
+        self.assertEqual(cr.grade_checks(self.Api(playwright='failure'), {'head_sha': HEAD, 'shadow': 'b' * 40}),
+                         ('fail', ['hosted web: build and Playwright']))
 
     def test_a_head_with_no_checks_of_its_own_is_ungraded_not_failed(self):
         api = self.Api(head_checks=[])
@@ -391,7 +404,7 @@ class Grading(unittest.TestCase):
                                            'sort': 'small', 'outcome': 'proposed', 'shadow': 'b' * 40,
                                            'kept': [1.0, 1.0]}, 'c')}
         text = cr.report(api, cr.records([start, case]), now=NOW)
-        self.assertIn('ungraded because the PR head ran none of the Linux checks itself: 1', text)
+        self.assertIn('ungraded because the PR head ran none of the graded checks itself: 1', text)
         self.assertIn('Too few cases to grade', text)
         self.assertIn('passed 0 (0%)', text)
 
