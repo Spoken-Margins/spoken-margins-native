@@ -71,7 +71,9 @@ CHECK_WORKFLOWS = ('hosted-portable.yml', 'hosted-web.yml')
 PROTECTED = ('.github/', 'scripts/lane-runner.py')
 PROTECTED_PARTS = ('SessionKitPersistence', 'SessionKitSharing')  # any folder starting so, tests included
 GENERATED = re.compile(r'_baseline\.json$')
-DOC = re.compile(r'(^|/)(docs|Design)/|\.md$')
+DOC = re.compile(r'\.md$')  # prose only; additions to code or data, docs/ included, need judgment
+WEB = re.compile(r'^(Web/|research/B4/server/internal/links/)')  # what hosted-web.yml's `changes` job tests
+BASELINE_KEY = ('function', 'api', 'class')  # scripts/main_thread_reads.py keys its rows so
 # The proposal's sizes (notes/conflict-resolver, 2026-11-24): at most this many hunks, this many lines a side.
 SIZES = (('small', 3, 3), ('medium', 5, 10))
 CONTEXT_LINES = 15
@@ -267,10 +269,22 @@ def mechanical(path, hunk):
         kept = [k for k in b if k in o and k in t]
         added = [k for k in o if k not in b] + [k for k in t if k not in b and k not in o]
         merged = kept + added
+        try:
+            rows = [json.loads(k) for k in merged]
+        except ValueError:
+            return None
+        keys = [tuple(r.get(n) for n in BASELINE_KEY) if isinstance(r, dict) else None for r in rows]
+        named = [k for k in keys if k and None not in k]
+        if len(named) != len(set(named)):
+            return None  # both sides changed the same row: one would silently win, so it needs judgment
         if o == sorted(o) and t == sorted(t):
             merged = sorted(merged)
-        indent = re.match(r'\s*', (_lines(ours) or _lines(theirs))[0]).group(0)
-        trail = (_lines(ours) or [''])[-1].rstrip('\r\n').endswith(',')
+        side = next((x for x in (ours, theirs) if x.strip()), '')
+        if not side or not merged:
+            return None
+        indent = re.match(r'\s*', _lines(side)[0]).group(0)
+        # Whether the region's last line carries a comma: read from a side that has lines (main may have deleted its).
+        trail = _lines(side)[-1].rstrip('\r\n').endswith(',')
         out = [indent + k + (',' if (n < len(merged) - 1 or trail) else '') + '\n' for n, k in enumerate(merged)]
         return ''.join(out)
     return None
@@ -451,8 +465,12 @@ def merge_conflicts(tree, head):
     if merged.returncode == 0:
         return []
     status = git(tree, 'status', '--porcelain=v1', '-z').stdout.split('\0')
-    out = []
+    out, skip = [], False
     for entry in status:
+        if skip:  # the old path of a rename or copy, printed as an entry of its own
+            skip = False
+            continue
+        skip = len(entry) > 1 and entry[0] in 'RC'
         if len(entry) < 4 or entry[:2] not in ('UU', 'AA', 'DU', 'UD', 'AU', 'UA', 'DD'):
             continue
         code, path = entry[:2], entry[3:]
@@ -519,7 +537,7 @@ class Resolver:
     def resolve(self, pull):
         """Work one PR. Returns the record to post (the comment text is built from it)."""
         pr, head = pull['number'], pull['head']['sha']
-        record = {'kind': 'case', 'pr': pr, 'head': head[:7]}
+        record = {'kind': 'case', 'pr': pr, 'head': head[:7], 'head_sha': head}
         base_sha, fetched = prepare(self.workdir, self.remote, self.base, pr, self.read_token)
         record['base'] = base_sha[:7]
         if fetched != head:
@@ -545,6 +563,7 @@ class Resolver:
                             reason='touches a protected path: ' + ', '.join(blocked[:5]))
             if record['sort'] == 'hard':
                 return dict(record, outcome='handback', reason=self.hard_reason(conflicts))
+            record['web'] = any(WEB.match(p) for p in changed)
             return self.propose(record, pull, causes, tree, conflicts, base_sha, head)
         finally:
             git(tree, 'merge', '--abort', check=False)
@@ -602,6 +621,11 @@ class Resolver:
             pairs += [(seg['hunk'], seg['resolved']) for seg in segments if isinstance(seg, dict)]
             if any(isinstance(seg, dict) and has_markers(seg['resolved']) for seg in segments):
                 return dict(record, outcome='refused', reason=f'`{path}` still has conflict markers')
+            if GENERATED.search(path):
+                try:
+                    json.loads(out)
+                except ValueError:
+                    return dict(record, outcome='refused', reason=f'`{path}` would no longer parse as JSON')
             (tree / path).write_bytes(out.encode('utf-8'))
             git(tree, 'add', '--', path)
         record['kept'] = list(kept_case(pairs))
@@ -623,7 +647,8 @@ class Resolver:
             record['push_error'] = describe(error)[:200]
             return record
         dispatched = []
-        for workflow in CHECK_WORKFLOWS:
+        # hosted-web only when the PR reaches the web app: on a dispatch it runs Playwright on a Mac whatever changed.
+        for workflow in [w for w in CHECK_WORKFLOWS if w != 'hosted-web.yml' or record.pop('web', False)]:
             try:
                 self.api.post(f'actions/workflows/{workflow}/dispatches', {'ref': branch})
                 dispatched.append(workflow)
@@ -743,23 +768,14 @@ def report(api, recs, now=None, conflict_comments=None):
     combine = [r for r in cases if r.get('sort') in ('small', 'medium') and r.get('outcome') != 'failed']
     rows, passed, pending = [], 0, 0
     for r in combine:
-        checks = 'none'
-        if r.get('shadow'):
-            runs = api.get(f'actions/runs?head_sha={r["shadow"]}&per_page=50').get('workflow_runs', [])
-            mine = [x for x in runs if Path(x.get('path', '')).name in CHECK_WORKFLOWS]
-            if {Path(x.get('path', '')).name for x in mine} != set(CHECK_WORKFLOWS):
-                checks = 'missing'  # a check that never ran can't pass
-            elif any(x.get('status') != 'completed' for x in mine):
-                checks = 'pending'
-            else:
-                checks = 'pass' if all(x.get('conclusion') == 'success' for x in mine) else 'fail'
+        checks, failing = grade_checks(api, r) if r.get('shadow') else ('none', [])
         kept = r.get('kept') or [0, 0]
         both = min(kept) >= KEPT_ENOUGH
         ok = r.get('outcome') == 'proposed' and checks == 'pass' and both
         passed += ok
         pending += checks == 'pending'
         rows.append(f'| #{r["pr"]} | {r.get("sort")} | {r.get("outcome")} | {checks} | '
-                    f'{kept[0]:.0%} / {kept[1]:.0%} | {"PASS" if ok else "no"} |')
+                    f'{kept[0]:.0%} / {kept[1]:.0%} | {"PASS" if ok else "no"} | {", ".join(failing)[:200]} |')
     sorts = Counter(r.get('sort', '?') for r in cases)
     rate = '' if conflict_comments is None else (
         f'Conflict hand-offs posted by the hosted check during the window: {conflict_comments} '
@@ -773,8 +789,31 @@ def report(api, recs, now=None, conflict_comments=None):
             f'{rate}Cases: {len(cases)} ({", ".join(f"{k} {v}" for k, v in sorted(sorts.items()))}). '
             f'Can combine (small or medium): {len(combine)}; passed {passed} ({share:.0%}); checks still pending {pending}; '
             f'not graded because the job failed: {len(broken)}.\n\n'
-            f'{verdict}\n\n| PR | sort | outcome | checks on proposed merge | words kept main / PR | pass |\n'
-            f'|---|---|---|---|---|---|\n' + '\n'.join(rows))
+            f'{verdict}\n\n| PR | sort | outcome | checks on proposed merge | words kept main / PR | pass | failing jobs |\n'
+            f'|---|---|---|---|---|---|---|\n' + '\n'.join(rows))
+
+
+def grade_checks(api, record):
+    """('pass' | 'fail' | 'pending' | 'missing', failing job names) for a proposed merge.
+
+    Only the jobs the PR's own checks ran (not skipped) on its head are graded. A dispatch runs more than a PR does
+    (hosted-portable's app build and Mac jobs, which a PR skips), and those would grade main's health, not the merge.
+    """
+    scope = {c['name'] for c in api.get(f'commits/{record["head_sha"]}/check-runs?per_page=100').get('check_runs', [])
+             if c.get('conclusion') in ('success', 'failure')}
+    runs = api.get(f'actions/runs?head_sha={record["shadow"]}&per_page=50').get('workflow_runs', [])
+    graded = []
+    for run in runs:
+        if Path(run.get('path', '')).name not in CHECK_WORKFLOWS:
+            continue
+        graded += [j for j in api.get(f'actions/runs/{run["id"]}/jobs?per_page=100').get('jobs', [])
+                   if j.get('name') in scope]
+    if not graded:
+        return 'missing', []  # a check that never ran can't pass
+    if any(j.get('status') != 'completed' for j in graded):
+        return 'pending', []
+    failing = sorted({j['name'] for j in graded if j.get('conclusion') != 'success'})
+    return ('fail' if failing else 'pass'), failing
 
 
 def count_handoffs(api, start, end):

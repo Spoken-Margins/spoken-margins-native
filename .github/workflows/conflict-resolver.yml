@@ -22,8 +22,10 @@
 #
 # Cost and catch: a run with nothing eligible is under a minute of Linux and no tokens. An eligible small or medium
 # conflict is about 5 to 15 minutes of Linux and one Sonnet call (estimate 100k to 400k input tokens, mostly cached;
-# 5k to 20k output) plus one hosted-portable and one hosted-web run on the proposed merge, the same checks the PR
-# runs anyway. Capped at 3 PRs a run and 25 a day, one run at a time; the trial lasts 12 hours. It is meant to catch
+# 5k to 20k output) plus one hosted-portable run on the proposed merge, and a hosted-web run only when the PR touches
+# the web app. A dispatch runs more than a PR does: hosted-portable adds its Mac jobs and the app build (about 8
+# minutes of hosted Mac, competing with the merge queue), and hosted-web runs Playwright on a Mac. Only the jobs the
+# PR's own checks ran are graded. Capped at 3 PRs a run and 25 a day, one run at a time; the trial lasts 12 hours. It is meant to catch
 # the finisher's tail (17 hand-offs in three weeks, median 2.3 h, slowest tenth over 15 h). Waste signal: fewer than
 # half of the trial's can-combine cases pass on outcomes, which keeps it from going live.
 name: conflict-resolver

@@ -112,6 +112,18 @@ class Hunks(unittest.TestCase):
                 'theirs': '    {"b": 2},\n    {"d": 4},\n'}
         self.assertEqual(cr.mechanical('scripts/x_baseline.json', hunk), '    {"c": 3},\n    {"d": 4},\n')
 
+    def test_a_baseline_where_main_deleted_the_rows_keeps_its_commas(self):
+        hunk = {'base': '    {"x": 1},\n', 'ours': '', 'theirs': '    {"x": 1},\n    {"y": 2},\n'}
+        self.assertEqual(cr.mechanical('scripts/x_baseline.json', hunk), '    {"y": 2},\n')
+
+    def test_a_baseline_row_both_sides_changed_needs_judgment(self):
+        row = '    {{"api": "a", "class": "c", "count": {n}, "function": "f"}},\n'
+        hunk = {'base': row.format(n=2), 'ours': row.format(n=1), 'theirs': row.format(n=3)}
+        self.assertIsNone(cr.mechanical('scripts/x_baseline.json', hunk))
+
+    def test_both_appending_to_data_under_docs_needs_judgment(self):
+        self.assertIsNone(cr.mechanical('docs/task-cost-map.json', {'ours': '1,\n', 'base': '', 'theirs': '2,\n'}))
+
     def test_sort(self):
         h = {'ours': 'a\n', 'base': 'b\n', 'theirs': 'c\n'}
         big = {'ours': 'a\n' * 11, 'base': 'b\n', 'theirs': 'c\n'}
@@ -343,6 +355,21 @@ class EndToEnd(unittest.TestCase):
         posted = cr.run(api, REPO, 'main', self.workdir, now=NOW, claude=lambda *a: self.fail('called'), remote=str(self.bare))
         self.assertEqual(posted, [])
         self.assertIn('ended', api.posts[-1][1]['body'])
+
+
+class Grading(unittest.TestCase):
+    class Api:
+        def get(self, path):
+            if path.startswith('commits/'):
+                return {'check_runs': [{'name': 'hosted fast: portable', 'conclusion': 'success'},
+                                       {'name': 'hosted app: build (no tests)', 'conclusion': 'skipped'}]}
+            if path.startswith('actions/runs?'):
+                return {'workflow_runs': [{'id': 1, 'path': '.github/workflows/hosted-portable.yml'}]}
+            return {'jobs': [{'name': 'hosted fast: portable', 'status': 'completed', 'conclusion': 'success'},
+                             {'name': 'hosted app: build (no tests)', 'status': 'completed', 'conclusion': 'failure'}]}
+
+    def test_only_the_jobs_the_pr_itself_ran_are_graded(self):
+        self.assertEqual(cr.grade_checks(self.Api(), {'head_sha': HEAD, 'shadow': 'b' * 40}), ('pass', []))
 
 
 class Records(unittest.TestCase):
