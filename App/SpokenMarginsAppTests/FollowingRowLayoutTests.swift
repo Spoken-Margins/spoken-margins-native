@@ -66,6 +66,17 @@ final class FollowingRowLayoutTests: XCTestCase {
         XCTAssertEqual(showHeight(show(inLibrary: false), adding: true, starting: true), base, accuracy: 0.5, "Adding while starting")
     }
 
+    /// #5295: "Adding…" grew the row by about 11 pt at Large on a 343 pt row. The status view itself must be exactly one
+    /// caption line tall at every non-accessibility size, like In Library, so it can never grow the row's last line.
+    func testAddingStatusIsOneCaptionLineTall() {
+        let sizes: [DynamicTypeSize] = [.xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge]
+        for size in sizes {
+            let adding = height(of: FollowingShowStatusView(status: .adding, showID: "money"), size: size, width: 343)
+            let inLibrary = height(of: FollowingShowStatusView(status: .inLibrary, showID: "money"), size: size, width: 343)
+            XCTAssertEqual(adding, inLibrary, accuracy: 0.5, "\(size): Adding is \(adding - inLibrary) pt taller than In Library")
+        }
+    }
+
     func testNoSizeAddsMoreThanOneCaptionLineForInLibrary() {
         let sizes: [DynamicTypeSize] = [.xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge]
         for size in sizes {

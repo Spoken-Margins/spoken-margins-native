@@ -425,10 +425,11 @@ public enum ImportedItemResolver {
             // Feeds reuse short GUIDs (#177), so another show's title rules the pair out unless the packet is
             // linkless (a private feed, whose show each subscriber's feed can title for them) and the same title
             // and the same publish day, both present, back the GUID.
-            return packageGUID == localGUID
+            return (packageGUID == localGUID
                 && (guidShowsAreCompatible(packageItem.showTitle, localItem.showTitle)
                     || (privateFeedTitlesAgree(packageItem, localItem) && publishDaysMatch(packageItem, localItem)))
-                && guidDurationsAreCompatible(packageItem.durationMs, localItem.durationMs)
+                && guidDurationsAreCompatible(packageItem.durationMs, localItem.durationMs))
+                || sameEpisodeInAnotherEdition(packageItem, localItem)
         }
         // A page link names an episode's audio only for a podcast packet; an article, PDF or EPUB that shares
         // the page is another work, so it never lands on the listener's audio file (#755).
@@ -438,6 +439,26 @@ public enum ImportedItemResolver {
             return privateFeedEpisodesAgree(packageItem, localItem)
         }
         return normalizedURL(packageURL) == normalizedURL(localURL)
+    }
+
+    /// One episode published in several feed editions (MP3, Opus, Ogg), each with its own GUID: Hacker Public Radio
+    /// uses the enclosure address as the GUID, so the MP3 and Opus copies of HPR4777 never share one (#5286). The
+    /// episode's page names the episode for every edition, but a show may give every episode its homepage as the
+    /// page, so the page alone is not enough: the same page, the same non-blank title and the same publish day (both
+    /// present), with no show title or length that disagrees, are one episode. Any of them missing or different keeps
+    /// the editions apart, as before.
+    static func sameEpisodeInAnotherEdition(_ packageItem: SharedItemIdentity, _ localItem: SharedItemIdentity) -> Bool {
+        guard packageItem.itemType == .podcast, localItem.itemType == .podcast,
+              let packagePage = packageItem.canonicalURL, let localPage = localItem.canonicalURL,
+              !isBlank(packagePage), normalizedURL(packagePage) == normalizedURL(localPage),
+              // A page that is itself the audio file names one edition only.
+              !PodcastEnclosureIdentity.sameFile(packagePage, packageItem.enclosureURL),
+              !PodcastEnclosureIdentity.sameFile(localPage, localItem.enclosureURL) else { return false }
+        let title = comparableTitle(packageItem.title)
+        return !title.isEmpty && title == comparableTitle(localItem.title)
+            && publishDaysMatch(packageItem, localItem)
+            && guidShowsAreCompatible(packageItem.showTitle, localItem.showTitle)
+            && guidDurationsAreCompatible(packageItem.durationMs, localItem.durationMs)
     }
 
     /// A podcast packet from a private feed names its episode by nothing but words: #168 drops every

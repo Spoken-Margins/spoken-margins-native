@@ -250,6 +250,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /l/{id}/preview", s.linkCORS(s.getLinkPreview))
 	mux.HandleFunc("GET /l/share-link-open.mjs", s.getLinkScript)
 	mux.HandleFunc("GET /l/share-link-page.mjs", s.getLinkScript)
+	mux.HandleFunc("GET /l/card.png", s.getLinkCard)
 	mux.HandleFunc("POST "+PathLinks, s.uploadLink)
 	mux.HandleFunc("POST "+PathLinkSender, s.attested(s.linkSender))
 	mux.HandleFunc("GET /l/{id}", s.getLink)

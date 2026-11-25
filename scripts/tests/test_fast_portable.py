@@ -100,7 +100,7 @@ class PortableStepTable(unittest.TestCase):
     def test_the_portable_plan_runs_its_steps_and_names_each_one_it_leaves_out(self):
         calls, skipped, slots, printed = self.run_portable()
         names = [name for name, _ in calls]
-        self.assertEqual(names, ['runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'system-callback-isolation', 'listener-words', 'recorder-failed-start', 'browser',
+        self.assertEqual(names, ['runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'system-callback-isolation', 'listener-words', 'flow-map', 'recorder-failed-start', 'browser',
                                  'share-link', 'web', 'research'])
         self.assertEqual(skipped, verification.PORTABLE_LEFT_OUT)
         for name in verification.PORTABLE_LEFT_OUT:
@@ -163,6 +163,7 @@ class PortableStepTable(unittest.TestCase):
                              ('listener-words', 'listener_words.py'), ('recorder-failed-start', 'recorder_failed_start.py')):
             self.assertEqual(calls[name][0], [sys.executable, f'scripts/{script}'], name)
         self.assertEqual(calls['main-thread-reads'][1], {'timeout': 120})
+        self.assertEqual(calls['flow-map'][0], [sys.executable, 'scripts/flow-map-check.py', '--pr'])
 
     def test_the_portable_plan_drops_the_apple_tests_and_checks_lfs_pointers(self):
         calls = dict(self.run_portable()[0])

@@ -4331,12 +4331,78 @@ public final class SessionEngine {
     /// has (`readText(instead:)`). If starting the recording throws, the article goes on in on-device speech.
     @discardableResult
     public func adoptPublisherAudioIfReady() throws -> SessionSnapshot? {
-        guard snapshot.status.isPlaybackActive, let session = currentSession,
+        guard snapshot.status.isPlaybackActive else { return nil }
+        return try adoptPublisherAudio()
+    }
+
+    /// The listener's switch between the publisher's audio and the app's voice for the playing article (#4640),
+    /// after the app saved or removed their choice. It plays the article's ordinary plan with that choice from the
+    /// sentence reached, and starts playing even from a pause, because the tap asks to hear the other voice. Leaving
+    /// the recording is not a failure, so nothing holds the recording back afterwards. `retryNow` (Play Publisher's
+    /// Audio) first clears a recent failure, so an explicit request tries again at once. A plan that already matches
+    /// what plays changes nothing.
+    @discardableResult
+    public func replanVoice(itemId: String, retryNow: Bool) throws -> SessionSnapshot {
+        guard let session = currentSession, session.itemId == itemId, session.phase == .itemPlayback else { return snapshot }
+        if retryNow { publisherAudioUnavailable[itemId] = nil }
+        let playingRecording = isPlayingPublisherAudio(session)
+        // The article is already in memory while it plays; it is read from the store only if it isn't.
+        let loaded = currentItem?.id == itemId ? currentItem : try? repository.loadItem(id: itemId)
+        let stored = loaded.map { publisherPlayback[itemId]?.stored($0) ?? $0 }
+        let wantsRecording = stored.flatMap { publisherAudioPlan(for: $0) } != nil
+        switch (playingRecording, wantsRecording) {
+        case (true, false):
+            guard let item = item(for: session) else { return snapshot }
+            // The place is read from the player before it stops: a stopped player has no clock to read.
+            let synchronized = try syncCurrentPositionFromAudio(session)
+            try audio.stop()
+            let reading = try readText(instead: synchronized, item: item, recordFailure: false)
+            try playCurrentTarget(reading)
+            publishPlaybackStart(for: reading, phase: reading.phase)
+            return snapshot
+        case (false, true):
+            var known: Session?
+            if session.currentTargetType != .itemTextTTS {
+                // Rendered narration has a clock of its own: take its text place first, as live speech would read
+                // it, without detaching the render (that is only for a render that failed). If the map doesn't
+                // reach that place, nothing changes: the narration plays on.
+                guard let item = item(for: session), let stored, let plan = publisherAudioPlan(for: stored) else { return snapshot }
+                let synchronized = try syncCurrentPositionFromAudio(session)
+                var asText = PreparedNarrationFallback.liveSpeechSession(
+                    from: synchronized, item: item, timeline: sourceTranscriptTimeline(for: synchronized))
+                asText.position.chapterId = chapterId(for: asText.position.charOffset)
+                guard plan.playingSession(from: asText) != nil else { return snapshot }
+                try audio.stop()
+                currentSession = asText
+                known = asText
+            }
+            if try adoptPublisherAudio(from: known) != nil {
+                // From a pause the recording starts too: the tap asked to hear it.
+                if !snapshot.status.isPlaybackActive, let playing = currentSession { publishPlaybackStart(for: playing, phase: playing.phase) }
+                return snapshot
+            }
+            // Only reached if the plan changed between the check and the adoption: go on in the app's voice.
+            if let known {
+                try persistSession(known)
+                try playCurrentTarget(known)
+                publishPlaybackStart(for: known, phase: known.phase)
+            }
+            return snapshot
+        default:
+            return snapshot
+        }
+    }
+
+    /// Moves the current article, read aloud, onto its publisher recording from the place reached. Nil, changing
+    /// nothing, when it has no usable plan or the map doesn't reach the place. `known` is a place already read from
+    /// another player (rendered narration): the speech player's offset would be a leftover, so it is not read.
+    private func adoptPublisherAudio(from known: Session? = nil) throws -> SessionSnapshot? {
+        guard let session = currentSession,
               session.currentTargetType == .itemTextTTS, session.phase == .itemPlayback,
               let item = currentItem ?? (try? repository.loadItem(id: session.itemId)),
               item.id == session.itemId, publisherPlayback[item.id] == nil,
               let plan = publisherAudioPlan(for: item) else { return nil }
-        let synchronized = syncSessionPositionFromAudio(session, item: item)
+        let synchronized = known ?? syncSessionPositionFromAudio(session, item: item)
         guard let playing = plan.playingSession(from: synchronized) else { return nil }
         publisherPlayback[item.id] = plan
         currentItem = plan.playing(item)
@@ -4362,7 +4428,8 @@ public final class SessionEngine {
     private func publisherAudioPlan(for item: Item) -> PublisherAudioPlayback? {
         guard let store = repository as? any PublisherAudioRepository,
               let record = try? store.loadPublisherAudio(itemId: item.id),
-              let plan = PublisherAudioPlayback.plan(for: item, record: record) else { return nil }
+              let plan = PublisherAudioPlayback.plan(
+                for: item, record: record, choice: try? store.loadPublisherAudioChoice(itemId: item.id)) else { return nil }
         if let failure = publisherAudioUnavailable[item.id] {
             if failure.audioURL == record.audioURL, now().timeIntervalSince(failure.failedAt) < Self.publisherAudioRetryInterval {
                 return nil
@@ -4589,6 +4656,7 @@ public final class SessionEngine {
         snapshot.status = status
         snapshot.phase = phase
         snapshot.isRecording = status == .recording
+        snapshot.publisherAudioSource = currentPublisherAudioSource()
         guard let session = currentSession else { return }
         snapshot.sessionId = session.id
         snapshot.itemId = session.itemId
@@ -4739,6 +4807,14 @@ public final class SessionEngine {
         currentSession?.itemId == itemId && publisherPlayback[itemId] != nil
     }
 
+    /// The source of the publisher recording the current session plays, or nil while the app's voice reads (#4640).
+    /// The one place `SessionSnapshot.publisherAudioSource` is derived from.
+    private func currentPublisherAudioSource() -> String? {
+        guard let session = currentSession, let plan = publisherPlayback[session.itemId],
+              plan.plays(targetId: session.currentTargetId) else { return nil }
+        return plan.recording.detectedFrom
+    }
+
     /// True when `session` plays the publisher recording of its article (#547).
     private func isPlayingPublisherAudio(_ session: Session) -> Bool {
         publisherPlayback[session.itemId]?.plays(targetId: session.currentTargetId) ?? false
@@ -4747,11 +4823,12 @@ public final class SessionEngine {
     /// Detaches the unusable narration from the item (so it can be rendered again) and persists the
     /// session on live speech of the text at the matching position. A publisher recording that
     /// can't play isn't attached to the item: the article simply stops using it until the app opens again.
-    private func readText(instead session: Session, item: Item) throws -> Session {
+    /// `recordFailure: false` is a listener's own switch to the app's voice (#4640): not a failure, so no 10-minute hold.
+    private func readText(instead session: Session, item: Item, recordFailure: Bool = true) throws -> Session {
         // The cached item can be older than storage; don't write stale fields back.
         var detached = (try? repository.loadItem(id: item.id)) ?? item
         let publisher = publisherPlayback[item.id].flatMap { $0.plays(targetId: session.currentTargetId) ? $0 : nil }
-        if let publisher {
+        if let publisher, recordFailure {
             publisherAudioUnavailable[item.id] = (publisher.recording.audioURL, now())
         }
         let publisherTimeline = publisher?.timeline

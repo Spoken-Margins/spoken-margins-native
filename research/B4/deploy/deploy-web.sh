@@ -69,11 +69,19 @@ fi
 dist="${stage}/dist"
 # The page a share link opens (#2168): https://app.spokenmargins.com/l/<id>#<key> serves link.html, which is the app's
 # own page with a <base href="/">, because the build's URLs are relative and /l/<id> is one folder down.
+# link.html also carries the share link's preview card tags (#5271), the same block the link server's own pages carry,
+# because Apple's link preview may follow the hand-over to this page. index.html, the listener's home page, does not.
 if [[ -f "${dist}/index.html" ]]; then
   base_tag='<base href="/" />'
+  preview_tags="${stage}/research/B4/server/internal/links/card/preview-tags.html"
+  [[ -s "${preview_tags}" ]] || die "the preview card tags (${preview_tags#"${stage}/"}) are missing from the archive"
   grep -q '<head>' "${dist}/index.html" || die "index.html has no <head> to put the base tag in"
-  awk -v tag="${base_tag}" '{ print } /<head>/ && !done { print "    " tag; done = 1 }' "${dist}/index.html" >"${dist}/link.html"
+  grep -q '</head>' "${dist}/index.html" || die "index.html has no </head> to put the preview card tags before"
+  # The tags go last in the head, so <meta charset> stays within the first 1024 bytes.
+  awk -v tag="${base_tag}" -v tags="${preview_tags}" '/<\/head>/ && !tagged { while ((getline line < tags) > 0) print "    " line; tagged = 1 } { print } /<head>/ && !done { print "    " tag; done = 1 }' "${dist}/index.html" >"${dist}/link.html"
   grep -qF -- "${base_tag}" "${dist}/link.html" || die "link.html did not get its base tag"
+  grep -qF -- 'property="og:image"' "${dist}/link.html" || die "link.html did not get the preview card tags"
+  ! grep -qF -- 'property="og:image"' "${dist}/index.html" || die "index.html carries the share link's preview card tags"
 fi
 [[ -f "${dist}/index.html" && -f "${dist}/link.html" && -f "${dist}/sw.js" && -f "${dist}/manifest.webmanifest" ]] || die "build is missing index.html, link.html, sw.js or the manifest"
 grep -rqF -- "${relay_origin}" "${dist}/assets" || die "the relay origin is not in the build; VITE_RELAY_ORIGIN was not applied"

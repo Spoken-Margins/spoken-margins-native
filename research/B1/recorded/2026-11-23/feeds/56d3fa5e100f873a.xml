@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<?xml-stylesheet href="https://rss.buzzsprout.com/styles.xsl" type="text/xsl"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:podcast="https://podcastindex.org/namespace/1.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:psc="http://podlove.org/simple-chapters" xmlns:atom="http://www.w3.org/2005/Atom">
+<script xmlns="http://www.w3.org/1999/xhtml" src="https://www.buzzsprout.com/vendor/xslt-polyfill/xslt-polyfill-1.0.33.min.js" charset="utf-8"></script>
+<channel>
+  <atom:link href="https://rss.buzzsprout.com/1004689.rss" rel="self" type="application/rss+xml" />
+  <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" xmlns="http://www.w3.org/2005/Atom" />
+  <title>Tech Won&#39;t Save Us</title>
+
+  <lastBuildDate>Thu, 19 Nov 2026 03:00:01 -0500</lastBuildDate>
+  <link>https://techwontsave.us/</link>
+  <language>en-us</language>
+  <copyright>© 2026 Tech Won&#39;t Save Us</copyright>
+  <podcast:locked>yes</podcast:locked>
+  <podcast:funding url="https://patreon.com/techwontsaveus">Support this Podcast</podcast:funding>
+  <podcast:guid>978a8a9e-0d84-5102-a875-099ea8890207</podcast:guid>
+<podcast:podroll>
+    <podcast:remoteItem feedGuid="7dc59f40-bbbb-5354-81e0-cd0627b56b76" feedUrl="https://feeds.soundcloud.com/users/soundcloud:users:861066976/sounds.rss" />
+    <podcast:remoteItem feedGuid="c56a71a3-cf82-5db4-ab15-0aee6e098ad9" feedUrl="https://trashfuturepodcast.podbean.com/feed.xml" />
+    <podcast:remoteItem feedGuid="ff7d3ac4-dcd5-5079-b8bc-c1b8f0c85356" feedUrl="https://feeds.megaphone.fm/TBIEA2761282490" />
+    <podcast:remoteItem feedGuid="e7ad803f-ae92-500b-9227-b04150291ebb" feedUrl="https://feeds.libsyn.com/506498/rss" />
+  </podcast:podroll>
+  <itunes:author>Paris Marx</itunes:author>
+  <itunes:type>episodic</itunes:type>
+  <itunes:explicit>false</itunes:explicit>
+  <description><![CDATA[Silicon Valley wants to shape our future, but why should we let it? Every Thursday, Paris Marx is joined by a new guest to critically examine the tech industry, its big promises, and the people behind them. Tech Won’t Save Us challenges the notion that tech alone can drive our world forward by showing that separating tech from politics has consequences for us all, especially the most vulnerable. It’s not your usual tech podcast.]]></description>
+  <generator>Buzzsprout (https://www.buzzsprout.com)</generator>
+  <itunes:keywords>technology, silicon valley, politics, socialism, criticism, news, books, paris marx, tech criticism, future</itunes:keywords>
+  <itunes:owner>
+    <itunes:name>Paris Marx</itunes:name>
+  </itunes:owner>
+  <image>
+     <url>https://storage.buzzsprout.com/tutsi25s4vue63c1xwucuexriowa?.jpg</url>
+     <title>Tech Won&#39;t Save Us</title>
+     <link>https://techwontsave.us/</link>
+  </image>
+  <itunes:image href="https://storage.buzzsprout.com/tutsi25s4vue63c1xwucuexriowa?.jpg" />
+  <itunes:category text="Technology" />
+  <itunes:category text="News">
+    <itunes:category text="Tech News" />
+  </itunes:category>
+  <itunes:category text="Arts">
+    <itunes:category text="Books" />
+  </itunes:category>
+  <podcast:person role="host" href="https://parismarx.com" img="https://storage.buzzsprout.com/kylj0f4w6918cp8ot7mu0dsi55a4">Paris Marx</podcast:person>
+  

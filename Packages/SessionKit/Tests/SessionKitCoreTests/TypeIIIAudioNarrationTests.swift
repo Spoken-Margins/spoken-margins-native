@@ -259,8 +259,8 @@ final class TypeIIIAudioNarrationTests: XCTestCase {
         func decision(_ address: String?) -> VoiceoverLookupDecision {
             .decide(textCharacterCount: 5_000, externalReference: address, hasPublisherAudioRecord: false, alreadyLookedUp: false)
         }
-        XCTAssertEqual(decision(Self.lessWrong), .lookUp(address: Self.lessWrong))
-        XCTAssertEqual(decision("https://forum.effectivealtruism.org/posts/abc123XYZ789/x"), .lookUp(address: "https://forum.effectivealtruism.org/posts/abc123XYZ789/x"))
+        XCTAssertEqual(decision(Self.lessWrong), .lookUp(address: Self.lessWrong, route: .typeIII))
+        XCTAssertEqual(decision("https://forum.effectivealtruism.org/posts/abc123XYZ789/x"), .lookUp(address: "https://forum.effectivealtruism.org/posts/abc123XYZ789/x", route: .typeIII))
         XCTAssertEqual(decision("https://example.com/posts/WQFioaudEH8R7fyhm/x"), .skip(reason: "not_substack_address"))
         XCTAssertEqual(decision("http://www.lesswrong.com/posts/WQFioaudEH8R7fyhm/x"), .skip(reason: "not_substack_address"))
         XCTAssertEqual(VoiceoverLookupDecision.decide(textCharacterCount: 5_000, externalReference: Self.lessWrong, hasPublisherAudioRecord: true, alreadyLookedUp: false),

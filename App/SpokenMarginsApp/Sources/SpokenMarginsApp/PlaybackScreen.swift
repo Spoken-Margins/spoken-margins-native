@@ -65,7 +65,9 @@ struct PlaybackScreen: View {
 
     /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
     /// looks first. On Now it sits in line with the title, so the screen gets no taller (#2262).
-    private var libraryExitButton: some View {
+    private func libraryExitButton(
+        accessibilityIdentifier: String = PlaybackLeadingControl.Slot.libraryExitIdentifier
+    ) -> some View {
         Button(action: model.openLibrary) {
             Image(systemName: "chevron.left").font(.body.weight(.semibold)).minimumTapTarget()
         }
@@ -75,7 +77,7 @@ struct PlaybackScreen: View {
         // "Library" twice (#5036). The bottom button keeps its visible word as its name.
         .accessibilityLabel("Back to Library")
         .accessibilityHint("Leaves this screen. Playback keeps going.")
-        .accessibilityIdentifier("playback.exit.button")
+        .accessibilityIdentifier(accessibilityIdentifier)
     }
 
     /// The first-Margin prompt is on screen: it is due and the Now pane, the only one that draws it, is showing (#5036).
@@ -235,6 +237,13 @@ struct PlaybackScreen: View {
                 // "Go to this moment in the source" lands on Now for a written Margin too (#3961); a spoken one is also covered
                 // above, and both set the same pane. The first value is never acted on, so a later open never jumps panes.
                 .onChange(of: model.showNowRequests) { _, _ in selectedPane = .now }
+                .onChange(of: PublisherAudioAttribution.PlayingVoice(itemId: model.snapshot.itemId, source: model.snapshot.publisherAudioSource)) { old, new in
+                    // VoiceOver hears the automatic switches within one item; a tapped switch is announced by the row's
+                    // redraw, and a new item or the end of playback is no switch (#4640).
+                    guard !PublisherVoiceSwitchTap.consume(new.source), UIAccessibility.isVoiceOverRunning,
+                          let announcement = PublisherAudioAttribution.switchAnnouncement(from: old, to: new) else { return }
+                    UIAccessibility.post(notification: .announcement, argument: announcement)
+                }
                 // The dock returns only once the keyboard has left the Timeline editor (#4043); a missed hide can't
                 // strand it.
                 .tracksKeyboard(for: $timelineDock)
@@ -269,7 +278,7 @@ struct PlaybackScreen: View {
                     pane: leadingControlPane, timelineEditorHasFocus: timelineDock.hidesDock,
                     nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio,
                     returnToNow: { selectedPane = .now }
-                ) { libraryExitButton }
+                ) { libraryExitButton(accessibilityIdentifier: $0) }
                 if selectedPane == .timeline,
                    FindInTextPresentation.buttonState(isRecordedAudio: model.selectedItem.isNativeAudio, text: model.selectedItem.text) != .hidden {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -309,6 +318,7 @@ struct PlaybackScreen: View {
                                 fraction: model.renderedFractionForPlayback,
                                 isNativeAudio: model.selectedItem.isNativeAudio
                             )
+                            ListeningOptionsVoiceRow()
                             onDeviceSpeechGenerationControl
                             reflectionOptions
                             conversation
@@ -724,7 +734,7 @@ struct PlaybackScreen: View {
         let titleMode = PlaybackTitleMode.choose(cardSlotHeld: model.pinnedMarginCard != nil)
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 4) {
-                libraryExitButton
+                libraryExitButton()
                 PlaybackSourceTitleView(
                     title: model.playbackItemHeaderTitle,
                     mode: titleMode,
@@ -743,6 +753,17 @@ struct PlaybackScreen: View {
                     .font(.subheadline)
                     .foregroundStyle(AppColors.watchSecondary)
                     .accessibilityIdentifier("playback.showTitle")
+            }
+
+            // Whose audio reads the article (#4640): only while the publisher's recording plays it.
+            if titleMode.showsSeparateShowLine, !model.selectedItem.isNativeAudio, model.snapshot.itemId == model.selectedItem.id,
+               let line = PublisherAudioAttribution.headerLine(
+                   source: model.snapshot.publisherAudioSource,
+                   siteHost: PublisherAudioAttribution.siteName(fromOriginalLink: model.selectedItem.originalSourceURL?.absoluteString)) {
+                Text(line)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.watchSecondary)
+                    .accessibilityIdentifier("playback.publisherAudioLine")
             }
 
             // The line is about the listener's own Margins, so it waits while a friend's Margin has the screen (#3790).

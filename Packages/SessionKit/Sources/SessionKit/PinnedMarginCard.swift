@@ -94,6 +94,9 @@ public struct PinnedMarginCard: Equatable, Sendable {
         /// A friend just saved a Margin of their own: it can be sent with Share (`answerSaved`). `atMs` is its place in the
         /// source, nil on text; `sentTo` is who it would go to.
         case answerSaved(atMs: Int?, sentTo: String)
+        /// The listener's first written Margin was just saved (#4713, hear it land): nothing to play, so the card says it is
+        /// pinned. `atMs` is its place in the source, nil on text. No buttons.
+        case savedHere(atMs: Int?)
         /// The last of a friend's Margins has played and none is ahead (`friendsLast`). `senders` is how many people's
         /// Margins the item holds; the subject names the one when there is one.
         case lastMargin(senders: Int)
@@ -211,7 +214,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
         case .waitingForTap: return "\(title) is here"
         case .silentHere(_, let isApproximate): return "\(title) is \(isApproximate ? "about here" : "here")"
         case .upNext(let ms, let arrival): return upNextHeadline(msRemaining: ms, arrival: arrival)
-        case .answerSaved(let atMs, _):
+        case .answerSaved(let atMs, _), .savedHere(let atMs):
             return "Your Margin is saved" + (atMs.map { " at \(SharedMarginReview.ReplyContext.clock($0))" } ?? "")
         case .lastMargin(let senders):
             if senders > 1 { return "That was the last of your friends' Margins" }
@@ -261,6 +264,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
             // The words themselves, cut as a waiting card cuts them. Placeholder words ("Voice Margin at 12:34") say nothing.
             let shown = words.flatMap { SharedMarginPlaceholderWords.matches($0) ? nil : Self.waitingTranscript($0, playsByItself: false) }
             return shown ?? "Not read aloud. The \(noun.inSentence) plays on."
+        case .savedHere: return "That's yours now, pinned to this moment."
         case .answerSaved(_, let sentTo): return "To send it to \(sentTo), tap Share below. You pick which of your Margins go."
         case .lastMargin(let senders):
             return "To answer\(senders > 1 ? " your friends" : subject.name.map { " \($0)" } ?? ""), add a Margin of your own."
