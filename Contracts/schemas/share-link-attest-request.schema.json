@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "share-link-attest-request.schema.json",
+  "title": "Recorded attested request (#4134)",
+  "description": "What the app's AttestedServerClient sends, minus the assertion (a random signature). Written by ShareLinkAttestContractTests, read by research/B4/server/internal/api/attest_contract_test.go.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["method", "path", "time", "bodyBase64", "headers", "assertionHeader", "clientDataSHA256"],
+  "properties": {
+    "method": {"const": "POST"},
+    "path": {"type": "string", "pattern": "^/api/v1/"},
+    "time": {"type": "integer", "minimum": 0},
+    "bodyBase64": {"type": "string"},
+    "headers": {"type": "object", "additionalProperties": {"type": "string"}},
+    "assertionHeader": {"type": "string", "minLength": 1},
+    "clientDataSHA256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

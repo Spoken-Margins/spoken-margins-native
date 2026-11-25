@@ -659,6 +659,7 @@ class StepTableTests(unittest.TestCase):
         'Install BlackHole (virtual audio output)': SETUP, 'Changed files': TEST, 'Mac rest of the fast plan': PLAN,
         'Mac build (merge queue, no tests)': PLAN,
         'Cancel the Mac jobs of this run': TEST, 'Tally the Linux retry-passes on': TEST,
+        'Repository guard tests': TEST,
         'Alert the owner if this PR is ready for his merge tap': TEST,
         'Start the merge run of each armed PR on this head': TEST, 'Changed web paths': TEST,
         'Is there a web app to test yet?': TEST, 'Install packages': PLAN, 'Build': TEST,

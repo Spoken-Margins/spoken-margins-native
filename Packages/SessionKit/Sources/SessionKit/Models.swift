@@ -1640,6 +1640,9 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     /// When the listener's request behind the latest playback start reached the engine, before any audio work, so the
     /// time from tap to first audio can be measured (#357). Optional, so older decoders ignore it.
     public var playbackRequestedAt: Date?
+    /// Where the recording that is reading the current article came from (`PublisherAudio.detectedFrom`), while the
+    /// publisher's audio plays it; nil while the app's voice reads (#4640). Optional, so older decoders ignore it.
+    public var publisherAudioSource: String?
 
     public init() {
         sessionId = nil

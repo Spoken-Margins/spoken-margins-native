@@ -88,6 +88,12 @@ public actor FollowedSourceCoordinator {
     /// the episode's own keys (GUID, page address, audio address). A marked episode is saved as `.dismissed`, so
     /// unfollowing and following again, which deletes the stored entries, can't bring it back.
     private let suppressedEntry: (@Sendable (_ feedKey: String, _ entryKey: String) -> Bool)?
+    /// What each page's own feed said about it this launch, keyed by `ArticleFeedAudioRules.pageKey` (#4640).
+    private var articleFeedListings: [String: ArticleFeedListing] = [:]
+    /// One discovery per link and membership rule at a time, so the Follow check and the article feed route share
+    /// one set of fetches (#4640). Each entry keeps its page key, so the route can wait on a discovery started by the
+    /// Follow check with the other membership rule.
+    private var inFlightDiscoveries: [String: (pageKey: String?, task: Task<[SourceCandidateEvidence], Error>)] = [:]
 
     public init(repository: any SessionRepository, session: URLSession? = nil, artworkFile: URL? = nil,
                 itemArtworkFile: URL? = nil, setAside: SetAside? = nil, signals: ListeningSignalRecorder?,
@@ -136,6 +142,15 @@ public actor FollowedSourceCoordinator {
 
     public func discover(urlString: String, requiringItemMembership: Bool = false) async throws -> [SourceCandidateEvidence] {
         let link = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = link + (requiringItemMembership ? "\u{1f}member" : "\u{1f}any")
+        if let running = inFlightDiscoveries[key] { return try await running.task.value }
+        let task = Task { try await self.runDiscovery(link: link, requiringItemMembership: requiringItemMembership) }
+        inFlightDiscoveries[key] = (ArticleFeedAudioRules.pageKey(link), task)
+        defer { inFlightDiscoveries[key] = nil }
+        return try await task.value
+    }
+
+    private func runDiscovery(link: String, requiringItemMembership: Bool) async throws -> [SourceCandidateEvidence] {
         lastDiscoveryTrace = []
         guard let url = URL(string: link) else { throw FollowedSourceError.invalidURL }
         contactedHosts = []
@@ -143,6 +158,7 @@ public actor FollowedSourceCoordinator {
         if url.scheme?.lowercased() == "https" {
             do {
                 let parsed = try await fetch(url: url, subscription: nil)
+                noteListing(.notAnArticlePage, for: [link])
                 return [candidate(url: url, parsed: parsed, relation: "direct", confidence: 1)]
             } catch {
                 lastDiscoveryTrace.append("direct: not a feed (\(Self.diagnosticCode(for: error)))")
@@ -158,6 +174,7 @@ public actor FollowedSourceCoordinator {
         // B2: a Substack post, home page, share link or profile names its publication by origin,
         // so old and tracked links need no feed membership. Other sites return nil here.
         if let substack = await substackCandidate(for: link) {
+            noteListing(.notAnArticlePage, for: [link])
             return [substack]
         }
         // A refused link (#4176) may carry a listener's private token. HTML discovery would send the same address
@@ -189,7 +206,10 @@ public actor FollowedSourceCoordinator {
     private func genericDiscover(url: URL, requiringItemMembership: Bool) async throws -> [SourceCandidateEvidence] {
         guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased() else { throw FollowedSourceError.insecureURL }
         contactedHosts.insert(host)
-        let html = try await fetchHTML(url: url)
+        let (html, finalURL) = try await fetchHTML(url: url)
+        let pageKeys = Set([url.absoluteString, finalURL.absoluteString].compactMap(ArticleFeedAudioRules.pageKey))
+        var listed: ParsedFeedItem?
+        var everyAlternateParsed = true
         var evidence: [(URL, String, Double)] = Self.alternateFeedURLs(in: html, baseURL: url)
             .map { ($0, "html_alternate", 0.95) }
         for path in ["/feed", "/feed.xml", "/rss", "/atom.xml"] {
@@ -202,7 +222,15 @@ public actor FollowedSourceCoordinator {
         var candidates: [SourceCandidateEvidence] = []
         var seenFeedContents = Set<String>()
         for (candidateURL, relation, confidence) in evidence.prefix(8) {
-            guard let parsed = try? await fetch(url: candidateURL, subscription: nil) else { continue }
+            guard let parsed = try? await fetch(url: candidateURL, subscription: nil) else {
+                if relation == "html_alternate" { everyAlternateParsed = false }
+                continue
+            }
+            // The article feed route (#4640): the item that is this page, whatever the membership rule decides below.
+            if let match = ArticleFeedAudioRules.matchingItem(in: parsed.items, pageKeys: pageKeys),
+               listed?.enclosureURL == nil {
+                listed = match
+            }
             // Discovery is evidence of membership, not merely a feed on the
             // same host. Unmatched heuristics must never become follow consent.
             guard !requiringItemMembership || parsed.items.contains(where: {
@@ -221,8 +249,56 @@ public actor FollowedSourceCoordinator {
                 candidates.append(found)
             }
         }
+        if let listed {
+            noteListing(.listed(listed), for: [url.absoluteString, finalURL.absoluteString])
+        } else if everyAlternateParsed {
+            noteListing(.notListed, for: [url.absoluteString, finalURL.absoluteString])
+        }
         guard !candidates.isEmpty else { throw FollowedSourceError.noFeedCandidates }
         return candidates
+    }
+
+    private func noteListing(_ listing: ArticleFeedListing, for addresses: [String]) {
+        for key in addresses.compactMap(ArticleFeedAudioRules.pageKey) { articleFeedListings[key] = listing }
+    }
+
+    /// The article feed route (#4640): whether this article's own feed lists it with audio that may play beside it.
+    /// It reads what the Follow check's discovery saw for the page, and runs that discovery itself (the same requests,
+    /// shared when one is already running) only when nothing is known yet. The rules run on every call, because each
+    /// caller passes its own word count. `requiringItemMembership` should be the one the Follow check uses for the
+    /// same item, so a discovery already running for it is shared rather than repeated; the listing it records is the
+    /// same under either rule.
+    public func articleFeedAudio(pageURL: URL, bodyWordCount: Int?, requiringItemMembership: Bool = true) async -> ArticleFeedAudioOutcome {
+        guard let key = ArticleFeedAudioRules.pageKey(pageURL.absoluteString) else { return .none(reason: "invalid_url") }
+        func evaluated() -> ArticleFeedAudioOutcome? {
+            articleFeedListings[key].map {
+                ArticleFeedAudioRules.evaluate(listing: $0, pageURL: pageURL, bodyWordCount: bodyWordCount)
+            }
+        }
+        if let known = evaluated() { return known }
+        for running in inFlightDiscoveries.values where running.pageKey == key { _ = try? await running.task.value }
+        if let known = evaluated() { return known }
+        do {
+            _ = try await discover(urlString: pageURL.absoluteString, requiringItemMembership: requiringItemMembership)
+        } catch {
+            if let known = evaluated() { return known }
+            return Self.articleFeedOutcome(for: error)
+        }
+        // Discovery found feeds, but one the page links could not be read, so "not listed" is not settled.
+        return evaluated() ?? .none(reason: "feed_unreadable")
+    }
+
+    static func articleFeedOutcome(for error: Error) -> ArticleFeedAudioOutcome {
+        switch error {
+        case FollowedSourceError.noFeedCandidates: return .none(reason: "no_feed")
+        case FollowedSourceError.refused: return .none(reason: "refused")
+        case FollowedSourceError.insecureURL, FollowedSourceError.invalidURL: return .none(reason: "invalid_url")
+        case let urlError as URLError: return .failed("url_error_\(urlError.code.rawValue)")
+        default:
+            let nsError = error as NSError
+            if nsError.domain == NSURLErrorDomain { return .failed("url_error_\(nsError.code)") }
+            return .failed(diagnosticCode(for: error))
+        }
     }
 
     private static func itemURLKey(_ raw: String?) -> String? {
@@ -652,20 +728,21 @@ public actor FollowedSourceCoordinator {
         return SubstackFetchResponse(url: http.url ?? url, status: http.statusCode, headers: headers, body: data)
     }
 
-    private func fetchHTML(url: URL) async throws -> String {
+    /// The page's text and the address it ended at after redirects.
+    private func fetchHTML(url: URL) async throws -> (html: String, finalURL: URL) {
         let page = try await loadHTML(url: url)
         guard (200..<300).contains(page.status) else { throw Self.error(forStatus: page.status) }
         guard let html = page.html else { throw FollowedSourceError.htmlResponseTooLarge }
-        return html
+        return (html, page.finalURL)
     }
 
     /// The page's HTTP status and its text, or nil text past the 1 MB limit.
-    private func loadHTML(url: URL) async throws -> (status: Int, html: String?) {
+    private func loadHTML(url: URL) async throws -> (status: Int, html: String?, finalURL: URL) {
         var request = URLRequest(url: url)
         request.setValue("text/html, application/xhtml+xml", forHTTPHeaderField: "Accept")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw FollowedSourceError.invalidResponse }
-        return (http.statusCode, data.count <= 1 * 1_024 * 1_024 ? String(decoding: data, as: UTF8.self) : nil)
+        return (http.statusCode, data.count <= 1 * 1_024 * 1_024 ? String(decoding: data, as: UTF8.self) : nil, http.url ?? url)
     }
 
     private static func alternateFeedURLs(in html: String, baseURL: URL) -> [URL] {
@@ -673,7 +750,10 @@ public actor FollowedSourceCoordinator {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return [] }
         let range = NSRange(html.startIndex..<html.endIndex, in: html)
         var results: [URL] = []
-        for match in regex.matches(in: html, range: range).prefix(8) {
+        // The type is checked before the cap (#4640): a multilingual page lists dozens of `hreflang` page alternates,
+        // and taking the first 8 links before checking their type hid its feed link.
+        for match in regex.matches(in: html, range: range) {
+            if results.count >= 8 { break }
             guard let swiftRange = Range(match.range, in: html) else { continue }
             let tag = String(html[swiftRange])
             guard tag.range(of: #"type\s*=\s*['\"](?:application/(?:rss\+xml|atom\+xml|feed\+json|json)|text/xml)['\"]"#, options: [.regularExpression, .caseInsensitive]) != nil,

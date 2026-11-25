@@ -1,0 +1,9 @@
+{
+  "status": 200,
+  "body": {
+    "permit": "<permit>",
+    "permitExpiresAt": "<permitExpiresAt>",
+    "sharingAllowed": true,
+    "sharingEnded": false
+  }
+}

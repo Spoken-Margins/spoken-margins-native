@@ -290,11 +290,14 @@ class WorkflowScopeTests(unittest.TestCase):
         for name in ('sessionkit', 'mac-rest'):
             with self.subTest(job=name):
                 job = self.jobs[name]
-                self.assertEqual(job['needs'], 'scope')
+                # And on `guards` (merge groups only), whose red cancels the run (#5281); no guards result skips them.
+                self.assertEqual(job['needs'], ['scope', 'guards'])
                 self.assertIn("needs.scope.outputs.mac != 'false'", job['if'])
                 # Without a status function GitHub adds success(), so a failed scope job would skip the Mac jobs
                 # (audit on 07cedaa). They run unless the scope job was cancelled, skipped or said mac=false.
-                self.assertTrue(job['if'].startswith("!cancelled() && needs.scope.result != 'skipped' && "), job['if'])
+                condition = ' '.join(job['if'].split())
+                self.assertTrue(condition.startswith("!cancelled() && needs.scope.result != 'skipped' && "), job['if'])
+                self.assertNotIn('needs.guards', condition)
                 self.assertIn('xcode', ' '.join(job['runs-on']).lower() + str(job['runs-on']).lower())
 
     def test_the_portable_job_waits_only_for_the_scope_job_and_skips_docs_only_changes(self):

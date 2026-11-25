@@ -167,6 +167,9 @@ struct SpokenMarginsApp: App {
                 )
                 // A show followed from any list leaves the AI's suggestions (#4683).
                 importer.onFollowed = { model?.aiFollowSuggestionsModel.remove(urls: $0) }
+                // A file's lists, includes and rules (#4046 PR 5, 8, 13).
+                importer.existingLists = { FollowListsState.shared.lists }
+                importer.saveExtras = { extras in await model?.saveOPMLImportExtras(extras) }
                 return importer
             },
             searcher: CatalogDrawerModel.makeSearcher(),
@@ -209,6 +212,8 @@ struct SpokenMarginsApp: App {
             for: url, appScheme: Gate2CompactCommandURL.scheme, compactHost: Gate2CompactCommandURL.host))
         let url = UITestingHooks.handedOffShareLink(url) ?? url
         if LiveSessionLinkRouter.shared.handle(url) { return }
+        // A list of shows opened from Files or Mail (#4046 PR 5): its import preview, never the Library.
+        if OPMLOpenRouter.opens(url), catalogDrawer.openFileImport(url) { return }
         // A friend's file comes before the first-run drawer (#3291).
         if ShareLinkURL.isOnShareHost(url)
             || (url.isFileURL && url.pathExtension.lowercased() == SpokenMarginsPackageArchive.fileExtension) {
