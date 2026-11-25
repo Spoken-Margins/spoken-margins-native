@@ -766,9 +766,11 @@ def report(api, recs, now=None, conflict_comments=None):
     # A Claude or push outage is the job's fault, not the resolver's judgment: listed, not graded.
     broken = [r for r in cases if r.get('sort') in ('small', 'medium') and r.get('outcome') == 'failed']
     combine = [r for r in cases if r.get('sort') in ('small', 'medium') and r.get('outcome') != 'failed']
-    rows, passed, pending = [], 0, 0
+    rows, passed, pending, ungraded = [], 0, 0, 0
     for r in combine:
         checks, failing = grade_checks(api, r) if r.get('shadow') else ('none', [])
+        if checks == 'ungraded':
+            ungraded += 1
         kept = r.get('kept') or [0, 0]
         both = min(kept) >= KEPT_ENOUGH
         ok = r.get('outcome') == 'proposed' and checks == 'pass' and both
@@ -780,40 +782,52 @@ def report(api, recs, now=None, conflict_comments=None):
     rate = '' if conflict_comments is None else (
         f'Conflict hand-offs posted by the hosted check during the window: {conflict_comments} '
         f'({conflict_comments / TRIAL_HOURS * 24:.1f} a day).\n\n')
-    share = passed / len(combine) if combine else 0.0
-    verdict = ('Too few cases to grade.' if len(combine) < 4 else
+    graded_cases = len(combine) - ungraded  # an ungraded case is listed, not counted either way
+    share = passed / graded_cases if graded_cases else 0.0
+    verdict = ('Too few cases to grade.' if graded_cases < 4 else
                ('Passes: at least half of the can-combine cases passed.' if share >= 0.5
                 else 'Does not go live: fewer than half of the can-combine cases passed.'))
     return (f'**Conflict resolver shadow trial report** ({start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M} UTC'
             f'{"" if now >= end else ", still running"}).\n\n'
             f'{rate}Cases: {len(cases)} ({", ".join(f"{k} {v}" for k, v in sorted(sorts.items()))}). '
             f'Can combine (small or medium): {len(combine)}; passed {passed} ({share:.0%}); checks still pending {pending}; '
+            f'ungraded because the PR head ran none of the Linux checks itself: {ungraded}; '
             f'not graded because the job failed: {len(broken)}.\n\n'
             f'{verdict}\n\n| PR | sort | outcome | checks on proposed merge | words kept main / PR | pass | failing jobs |\n'
             f'|---|---|---|---|---|---|---|\n' + '\n'.join(rows))
 
 
 def grade_checks(api, record):
-    """('pass' | 'fail' | 'pending' | 'missing', failing job names) for a proposed merge.
+    """('pass' | 'fail' | 'pending' | 'missing' | 'ungraded', failing job names) for a proposed merge.
 
-    Only the jobs the PR's own checks ran (not skipped) on its head are graded. A dispatch runs more than a PR does
-    (hosted-portable's app build and Mac jobs, which a PR skips), and those would grade main's health, not the merge.
+    The grade must measure the merge and nothing else (two audits, #5323). So a job is graded only when (1) the PR's own
+    checks ran it (passed or failed, not skipped) on its head, and (2) it ran on hosted Linux. A dispatch with no base
+    runs more than a PR does: hosted-portable's app build and Mac jobs test all of main, not the PR's scope. A head
+    with no such job of its own (GitHub runs no pull_request checks while a PR conflicts) is 'ungraded', not failed.
     """
     scope = {c['name'] for c in api.get(f'commits/{record["head_sha"]}/check-runs?per_page=100').get('check_runs', [])
              if c.get('conclusion') in ('success', 'failure')}
-    runs = api.get(f'actions/runs?head_sha={record["shadow"]}&per_page=50').get('workflow_runs', [])
+    runs = [r for r in api.get(f'actions/runs?head_sha={record["shadow"]}&per_page=50').get('workflow_runs', [])
+            if Path(r.get('path', '')).name in CHECK_WORKFLOWS]
     graded = []
     for run in runs:
-        if Path(run.get('path', '')).name not in CHECK_WORKFLOWS:
-            continue
         graded += [j for j in api.get(f'actions/runs/{run["id"]}/jobs?per_page=100').get('jobs', [])
-                   if j.get('name') in scope]
+                   if j.get('name') in scope and on_linux(j)]
     if not graded:
-        return 'missing', []  # a check that never ran can't pass
+        if not runs:
+            return 'missing', []  # nothing ran on the proposed merge: it can't pass
+        if any(r.get('status') != 'completed' for r in runs):
+            return 'pending', []
+        return 'ungraded', []  # the PR's head ran none of these jobs on Linux itself: nothing to compare
     if any(j.get('status') != 'completed' for j in graded):
         return 'pending', []
     failing = sorted({j['name'] for j in graded if j.get('conclusion') != 'success'})
     return ('fail' if failing else 'pass'), failing
+
+
+def on_linux(job):
+    labels = job.get('labels') or []
+    return bool(labels) and all(str(label).startswith('ubuntu') for label in labels)
 
 
 def count_handoffs(api, start, end):

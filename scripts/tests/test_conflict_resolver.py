@@ -359,17 +359,41 @@ class EndToEnd(unittest.TestCase):
 
 class Grading(unittest.TestCase):
     class Api:
+        def __init__(self, head_checks=None):
+            self.head_checks = head_checks if head_checks is not None else [
+                {'name': 'hosted fast: portable', 'conclusion': 'success'},
+                {'name': 'hosted fast: Mac rest', 'conclusion': 'success'},
+                {'name': 'hosted app: build (no tests)', 'conclusion': 'skipped'}]
+
         def get(self, path):
             if path.startswith('commits/'):
-                return {'check_runs': [{'name': 'hosted fast: portable', 'conclusion': 'success'},
-                                       {'name': 'hosted app: build (no tests)', 'conclusion': 'skipped'}]}
+                return {'check_runs': self.head_checks}
             if path.startswith('actions/runs?'):
-                return {'workflow_runs': [{'id': 1, 'path': '.github/workflows/hosted-portable.yml'}]}
-            return {'jobs': [{'name': 'hosted fast: portable', 'status': 'completed', 'conclusion': 'success'},
-                             {'name': 'hosted app: build (no tests)', 'status': 'completed', 'conclusion': 'failure'}]}
+                return {'workflow_runs': [{'id': 1, 'status': 'completed',
+                                           'path': '.github/workflows/hosted-portable.yml'}]}
+            return {'jobs': [
+                {'name': 'hosted fast: portable', 'status': 'completed', 'conclusion': 'success',
+                 'labels': ['ubuntu-latest']},
+                {'name': 'hosted fast: Mac rest', 'status': 'completed', 'conclusion': 'failure', 'labels': ['xcode-27']},
+                {'name': 'hosted app: build (no tests)', 'status': 'completed', 'conclusion': 'failure',
+                 'labels': ['xcode-27']}]}
 
-    def test_only_the_jobs_the_pr_itself_ran_are_graded(self):
+    def test_only_linux_jobs_the_pr_itself_ran_are_graded(self):
         self.assertEqual(cr.grade_checks(self.Api(), {'head_sha': HEAD, 'shadow': 'b' * 40}), ('pass', []))
+
+    def test_a_head_with_no_checks_of_its_own_is_ungraded_not_failed(self):
+        api = self.Api(head_checks=[])
+        self.assertEqual(cr.grade_checks(api, {'head_sha': HEAD, 'shadow': 'b' * 40}), ('ungraded', []))
+        start = {'user': {'login': cr.BOT}, 'created_at': iso(NOW - timedelta(hours=13)),
+                 'body': cr.record_comment({'kind': 'trial-start'}, 's')}
+        case = {'user': {'login': cr.BOT}, 'created_at': iso(NOW - timedelta(hours=12)),
+                'body': cr.record_comment({'kind': 'case', 'pr': 9, 'head': 'aaaaaaa', 'head_sha': HEAD,
+                                           'sort': 'small', 'outcome': 'proposed', 'shadow': 'b' * 40,
+                                           'kept': [1.0, 1.0]}, 'c')}
+        text = cr.report(api, cr.records([start, case]), now=NOW)
+        self.assertIn('ungraded because the PR head ran none of the Linux checks itself: 1', text)
+        self.assertIn('Too few cases to grade', text)
+        self.assertIn('passed 0 (0%)', text)
 
 
 class Records(unittest.TestCase):
