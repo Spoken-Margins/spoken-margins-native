@@ -166,14 +166,20 @@ public struct WatchNowPlaying: Codable, Equatable, Sendable {
     public var positionAt: Date
     /// How fast the position moves while playing. 0 means it doesn't: text read aloud has no media time (#3494).
     public var rate: Double
+    /// The file the phone plays, whose clock `positionMs` is on: a spoken note's Shorter pauses version runs on its own
+    /// (#4779). Optional, so a board from the build before it still decodes. The Watch hands it back with a Margin.
+    public var mediaFile: String?
 
-    public init(itemId: String, title: String, isPlaying: Bool, positionMs: Int, positionAt: Date, rate: Double = 1) {
+    public init(
+        itemId: String, title: String, isPlaying: Bool, positionMs: Int, positionAt: Date, rate: Double = 1, mediaFile: String? = nil
+    ) {
         self.itemId = itemId
         self.title = title
         self.isPlaying = isPlaying
         self.positionMs = positionMs
         self.positionAt = positionAt
         self.rate = rate
+        self.mediaFile = mediaFile
     }
 
     /// Where the item is at `time` (phone clock): moving on at its rate while it plays, never before `positionAt`.
@@ -201,10 +207,13 @@ public struct WatchItemTarget: Codable, Equatable, Sendable {
     /// Where the item stood when the Watch started recording, as the Watch worked it out from the board (moving on at the
     /// item's rate while it played). The phone prefers its own record of playing and uses this when that is missing.
     public var positionMs: Int?
+    /// The file whose clock `positionMs` is on, as the board named it (#4779). Nil from a Watch build before it.
+    public var mediaFile: String?
 
-    public init(itemId: String, positionMs: Int? = nil) {
+    public init(itemId: String, positionMs: Int? = nil, mediaFile: String? = nil) {
         self.itemId = itemId
         self.positionMs = positionMs
+        self.mediaFile = mediaFile
     }
 }
 
@@ -287,6 +296,7 @@ public struct WatchMarginTransfer: Codable, Equatable, Sendable {
         // #3494. Absent from a Watch Margin aimed at the session, and from every build before it.
         public static let targetItemId = "targetItemId"
         public static let targetPositionMs = "targetPositionMs"
+        public static let targetMediaFile = "targetMediaFile"
     }
 
     public var id: String
@@ -352,7 +362,9 @@ public struct WatchMarginTransfer: Codable, Equatable, Sendable {
         }
         var itemTarget: WatchItemTarget?
         if let itemId = (metadata[Key.targetItemId] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !itemId.isEmpty {
-            itemTarget = WatchItemTarget(itemId: itemId, positionMs: (metadata[Key.targetPositionMs] as? NSNumber)?.intValue.nonNegative)
+            let file = (metadata[Key.targetMediaFile] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            itemTarget = WatchItemTarget(
+                itemId: itemId, positionMs: (metadata[Key.targetPositionMs] as? NSNumber)?.intValue.nonNegative, mediaFile: file)
         }
         self.init(
             id: id,
@@ -384,6 +396,7 @@ public struct WatchMarginTransfer: Codable, Equatable, Sendable {
         if let itemTarget {
             metadata[Key.targetItemId] = itemTarget.itemId
             if let position = itemTarget.positionMs { metadata[Key.targetPositionMs] = position }
+            if let file = itemTarget.mediaFile { metadata[Key.targetMediaFile] = file }
         }
         return metadata
     }

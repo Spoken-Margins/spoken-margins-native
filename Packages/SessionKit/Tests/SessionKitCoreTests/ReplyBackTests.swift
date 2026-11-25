@@ -100,6 +100,27 @@ final class ReplyBackTests: XCTestCase {
         }
     }
 
+    /// The line under "Share replies with" (#4785), with one, two and three friends and no name; none for a share that
+    /// holds no reply.
+    func testTheCaptionSaysTheFriendCanHearJustTheReplies() throws {
+        let reply = own("reply", madeAt: 200, replyingTo: "ana")
+        let extra = own("extra", madeAt: 210)
+        let two = [layer("ana", importedAt: 100), layer("ben", importedAt: 110)]
+        let rows: [(String, [Interjection], [ImportedCommentaryLayer], String?)] = [
+            ("one friend", [reply], [layer("ana")], "These arrive marked new, so Ana can hear just them."),
+            ("two friends", [own("r1", madeAt: 200, replyingTo: "ana"), own("r2", madeAt: 201, replyingTo: "ben")], two,
+             "These arrive marked new, so Ana and Ben can hear just them."),
+            ("three friends", [own("r1", madeAt: 200, replyingTo: "ana"), own("r2", madeAt: 201, replyingTo: "ben"),
+                               own("r3", madeAt: 202, replyingTo: "cleo")], two + [layer("cleo", importedAt: 120)],
+             "These arrive marked new, so Ana, Ben and 1 other can hear just them."),
+            ("no name", [reply], [layer("ana", label: " ")], "These arrive marked new, so your friend can hear just them."),
+            ("no reply", [extra], [layer("ana")], nil),
+        ]
+        for (label, margins, layers, expected) in rows {
+            XCTAssertEqual(try XCTUnwrap(ReplyBackOffer.make(localMargins: margins, layers: layers)).caption, expected, label)
+        }
+    }
+
     func testNoMarginSinceTheImportMeansNoOffer() {
         XCTAssertNil(ReplyBackOffer.make(localMargins: [own("old", madeAt: 10)], layers: [layer("ana")]))
         XCTAssertNil(ReplyBackOffer.make(localMargins: [own("new", madeAt: 200)], layers: []), "no friend's packet on the item")

@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spoken Margins flow map: the sharing loop</title>
+<style>
+/* Status never rests on colour alone: each badge has a shape and a word. Blue and orange are Okabe-Ito (#0072B2, #E69F00). */
+:root {
+  --bg: #F4F2EA; --fg: #1B2320; --muted: #5F6B65; --line: #D4D7CB; --card: #FFFFFF;
+  --pass: #0072B2; --broken: #B86E00; --pending: #6B6B6B; --focus: #0072B2;
+  --font: -apple-system, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #161A17; --fg: #E9EEE8; --muted: #A5AFA8; --line: #2F3732; --card: #212923;
+  --pass: #56B4E9; --broken: #E69F00; --pending: #A0A0A0; --focus: #56B4E9; color-scheme: dark } }
+* { box-sizing: border-box }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 var(--font); padding: 24px 16px 64px }
+.wrap { max-width: 1500px; margin: 0 auto }
+h1 { font-size: 30px; margin: 0 0 6px } h2 { font-size: 22px; margin: 32px 0 10px } h3 { font-size: 17px; margin: 0 }
+p { max-width: 70ch; margin: 0 0 10px } .muted { color: var(--muted) } code { font-size: 13px }
+nav { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 }
+nav button, select, input { font: inherit; padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--fg) }
+nav button[aria-pressed="true"] { border: 2px solid var(--fg); font-weight: 700 }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 14px; margin: 8px 0 16px }
+.badge { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 700; padding: 1px 8px; border-radius: 999px; border: 2px solid currentColor; white-space: nowrap }
+.badge.pass { color: var(--pass) } .badge.broken { color: var(--broken); border-style: dashed } .badge.pending { color: var(--pending); border-style: dotted }
+.surface { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700 }
+.legs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(280px, 1fr); gap: 16px; overflow-x: auto; padding-bottom: 8px }
+.leg { display: grid; gap: 10px; align-content: start }
+.leg > header { border-bottom: 2px solid var(--fg); padding-bottom: 6px }
+.person { font-size: 18px; font-weight: 700 }
+.handoff { border: 2px dashed var(--muted); border-radius: 10px; padding: 8px 10px; font-size: 14px }
+.handoff::before { content: "⇄ Hand-off: "; font-weight: 700 }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: grid; gap: 6px }
+.card img { width: 100%; max-height: 360px; object-fit: contain; object-position: top; border-radius: 8px; border: 1px solid var(--line); background: var(--bg) }
+.card .noimg { border: 1px dotted var(--line); border-radius: 8px; padding: 18px 8px; text-align: center; font-size: 13px; color: var(--muted) }
+.tap { font-size: 14px; padding-left: 16px; position: relative } .tap::before { content: "↓"; position: absolute; left: 0; font-weight: 700 }
+.tap b { font-variant-numeric: tabular-nums }
+.ruling { font-size: 13px; border-left: 3px solid var(--fg); padding-left: 8px }
+.ruling .protects { font-weight: 700 }
+details summary { cursor: pointer; font-size: 14px }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px }
+table { border-collapse: collapse; width: 100%; font-size: 14px } th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top }
+.arrows { font-size: 13px; margin: 0; padding-left: 18px }
+#error { color: var(--broken); font-weight: 700 }
+</style>
+<div class="wrap">
+<h1>The sharing loop, end to end</h1>
+<p class="muted">Read from <code>flow-map.json</code> beside this file. Each screen shows the capture of the real thing named on the map, the commit it was taken at, and whether that step worked in the run. Taps are counted per person with the map's rules (a tap is 1; a menu item, context menu, swipe or VoiceOver action is 2).</p>
+<p class="muted">Open it with <code>python3 -m http.server -d Design/flow-map 8765</code>, then <code>http://localhost:8765/viewer.html</code>; a browser won't read the map from a <code>file://</code> page, so it offers a file picker instead.</p>
+<p id="error" hidden></p>
+<input id="pick" type="file" accept=".json" hidden aria-label="Choose flow-map.json">
+<div class="legend" aria-label="Legend">
+  <span class="badge pass">✓ Worked in the run</span>
+  <span class="badge broken">✕ Broken in the run</span>
+  <span class="badge pending">◌ No capture yet</span>
+  <span>⇄ dashed box: one person hands over to the other</span>
+</div>
+<nav aria-label="Views">
+  <button data-view="loop" aria-pressed="true">Jobs, person by person</button>
+  <button data-view="screens" aria-pressed="false">Sharing screens</button>
+  <button data-view="rulings" aria-pressed="false">Owner's rulings</button>
+  <button data-view="jobs" aria-pressed="false">All jobs and taps</button>
+</nav>
+<main id="view"></main>
+</div>
+<script>
+const DOUBLE = new Set(["menu item", "context menu", "swipe action", "system"]);
+const STATUS = { pass: ["✓", "Worked in the run"], broken: ["✕", "Broken in the run"], pending: ["◌", "No capture yet"] };
+const SURFACE = { app: "In the app", system: "iOS", messages: "Messages", web: "Browser listener", site: "Website", testflight: "TestFlight" };
+let map, screens, rulings, view = "loop";
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const cost = e => e.control_kind === "auto" ? 0 : DOUBLE.has(e.control_kind) ? 2 : 1;
+
+function shortest(src, dst) {
+  if (src === dst) return [0, []];
+  const adj = {};
+  for (const e of map.edges) if (!/debug/i.test(e.condition || "")) (adj[e.from] ||= []).push(e);
+  const best = { [src]: 0 }, prev = {}, todo = [[0, src]];
+  while (todo.length) {
+    todo.sort((a, b) => a[0] - b[0]);
+    const [c, u] = todo.shift();
+    if (c > best[u]) continue;
+    if (u === dst) break;
+    for (const e of adj[u] || []) {
+      const n = c + cost(e);
+      if (n < (best[e.to] ?? Infinity)) { best[e.to] = n; prev[e.to] = e; todo.push([n, e.to]); }
+    }
+  }
+  if (!(dst in best)) return null;
+  const path = [];
+  for (let n = dst; n !== src; n = prev[n].from) path.unshift(prev[n]);
+  return [best[dst], path];
+}
+
+// One leg (or a one-person job): the screens visited and the arrows taken, as compute-taps.py counts them.
+function walk(leg) {
+  const byId = Object.fromEntries(map.edges.map(e => [e.id, e]));
+  let pos = leg.start || map.start, total = 0;
+  const steps = [{ screen: pos, edge: null }];
+  const take = path => { for (const e of path) steps.push({ screen: e.to, edge: e }); };
+  for (const id of leg.via_edges || []) {
+    const e = byId[id]; const r = e && shortest(pos, e.from);
+    if (!r) return null;
+    take(r[1]); steps.push({ screen: e.to, edge: e }); total += r[0] + cost(e); pos = e.to;
+  }
+  for (const b of [...(leg.via || []), leg.target]) {
+    const r = shortest(pos, b);
+    if (!r) return null;
+    take(r[1]); total += r[0]; pos = b;
+  }
+  return { steps, taps: total + (leg.final_cost || 0) };
+}
+
+function badge(screen) {
+  const c = screen.capture || { status: "pending" };
+  const [icon, word] = STATUS[c.status] || STATUS.pending;
+  return `<span class="badge ${esc(c.status)}">${icon} ${word}</span>`;
+}
+
+function rulingHTML(ids) {
+  return (ids || []).map(id => rulings[id]).filter(Boolean).map(r =>
+    `<div class="ruling"><span class="protects">${esc(r.date)}${r.protects && r.protects !== "none" ? ` · protects ${esc(r.protects)}` : ""}</span>: ${esc(r.summary)}
+     <span class="muted">(${esc(r.file)}:${esc(r.line)})</span></div>`).join("");
+}
+
+function screenCard(id, edge) {
+  const s = screens[id] || { id, title: id };
+  const c = s.capture || {};
+  const img = c.file ? `<img src="${esc(c.file)}" alt="Capture of ${esc(s.title)}" loading="lazy">`
+                     : `<div class="noimg">${c.why ? esc(c.why) : "No capture of this screen yet."}</div>`;
+  return `${edge ? `<div class="tap">${esc(edge.control)} <b>(${cost(edge)} tap${cost(edge) > 1 ? "s" : ""})</b>${edge.rulings ? rulingHTML(edge.rulings) : ""}</div>` : ""}
+  <article class="card">
+    <div class="surface">${esc(SURFACE[s.surface] || s.surface || s.group || "")}</div>
+    <h3>${esc(s.title)}</h3>
+    <div>${badge(s)} ${c.commit ? `<span class="muted">at ${esc(String(c.commit).slice(0, 9))}</span>` : ""}</div>
+    ${c.status === "broken" ? `<div><b>Seen:</b> ${esc(c.seen)}</div>` : ""}
+    ${img}
+    ${c.run ? `<div class="muted" style="font-size:13px">${esc(c.run)}</div>` : ""}
+    ${rulingHTML(s.rulings)}
+  </article>`;
+}
+
+function renderLoop() {
+  const jobs = map.jobs.filter(j => j.legs);
+  const pick = new URLSearchParams(location.hash.slice(1)).get("job") || (jobs[0] && jobs[0].id);
+  const job = jobs.find(j => j.id === pick) || jobs[0];
+  if (!job) return "<p>The map has no two-person jobs yet.</p>";
+  let html = `<label>Job <select id="job">${jobs.map(j => `<option value="${esc(j.id)}" ${j === job ? "selected" : ""}>${esc(j.name)}</option>`).join("")}</select></label>`;
+  const walks = job.legs.map(walk);
+  const totals = {};
+  job.legs.forEach((l, i) => { if (walks[i]) totals[l.person] = (totals[l.person] || 0) + walks[i].taps; });
+  html += `<p style="margin-top:12px"><b>Taps:</b> ${Object.entries(totals).map(([p, t]) => `${esc(p)} ${t}`).join(", ")}. ${esc(job.note || "")}</p><div class="legs">`;
+  job.legs.forEach((leg, i) => {
+    const w = walks[i];
+    html += `<section class="leg" aria-label="${esc(leg.person)}, step ${i + 1}"><header><div class="person">${esc(leg.person)}</div>
+      <div class="muted">${w ? `${w.taps} taps` : "UNREACHABLE on this map"}</div></header>
+      ${leg.handoff ? `<div class="handoff">${esc(leg.handoff)}</div>` : ""}
+      ${w ? w.steps.map(st => screenCard(st.screen, st.edge)).join("") : ""}
+      ${leg.final ? `<div class="tap">Then: ${esc(leg.final)} <b>(${leg.final_cost || 0})</b></div>` : ""}</section>`;
+  });
+  return html + "</div>";
+}
+
+function renderScreens() {
+  const order = ["app", "system", "messages", "web", "site", "testflight"];
+  const list = map.screens.filter(s => s.sharing).sort((a, b) => order.indexOf(a.surface) - order.indexOf(b.surface));
+  return `<div class="grid">${list.map(s => {
+    const into = map.edges.filter(e => e.to === s.id), out = map.edges.filter(e => e.from === s.id);
+    const li = (e, other) => `<li>${esc(e.control)} ${other}</li>`;
+    return `<div>${screenCard(s.id)}<details><summary>${into.length} ways in, ${out.length} ways out</summary>
+      <ul class="arrows">${into.map(e => li(e, `← from ${esc((screens[e.from] || {}).title || e.from)}`)).join("")}
+      ${out.map(e => li(e, `→ to ${esc((screens[e.to] || {}).title || e.to)}`)).join("")}</ul></details></div>`;
+  }).join("")}</div>`;
+}
+
+function renderRulings() {
+  const govern = id => [...map.screens.filter(s => (s.rulings || []).includes(id)).map(s => s.title),
+                        ...map.edges.filter(e => (e.rulings || []).includes(id)).map(e => `“${e.control}”`)];
+  return `<table><thead><tr><th>Date</th><th>Ruling</th><th>Governs</th><th>Protects</th></tr></thead><tbody>${
+    (map.rulings || []).map(r => `<tr><td>${esc(r.date)}</td><td>${esc(r.summary)}<br><span class="muted">“${esc(r.quote)}” ${esc(r.file)}:${esc(r.line)}</span></td>
+    <td>${govern(r.id).map(esc).join("<br>")}</td><td>${esc(r.protects)}</td></tr>`).join("")}</tbody></table>`;
+}
+
+function renderJobs() {
+  return `<table><thead><tr><th>Job</th><th>Taps</th><th>Route</th></tr></thead><tbody>${map.jobs.map(j => {
+    const legs = j.legs || [j];
+    const w = legs.map(walk);
+    if (w.some(x => !x)) return `<tr><td>${esc(j.name)}</td><td>UNREACHABLE</td><td></td></tr>`;
+    const taps = w.reduce((n, x) => n + x.taps, 0);
+    const per = j.legs ? ` (${legs.map((l, i) => `${esc(l.person)} ${w[i].taps}`).join(", ")})` : "";
+    const route = w.map((x, i) => (j.legs ? `<b>${esc(legs[i].person)}:</b> ` : "") + x.steps.filter(s => s.edge).map(s => esc(s.edge.control)).join(" › ")).join("<br>");
+    return `<tr><td>${esc(j.name)}</td><td>${taps}${per}</td><td>${route}</td></tr>`;
+  }).join("")}</tbody></table>`;
+}
+
+function render() {
+  document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
+  document.getElementById("view").innerHTML = { loop: renderLoop, screens: renderScreens, rulings: renderRulings, jobs: renderJobs }[view]();
+  const sel = document.getElementById("job");
+  if (sel) sel.onchange = () => { location.hash = "job=" + sel.value; render(); };
+}
+
+function load(data) {
+  map = data;
+  screens = Object.fromEntries(map.screens.map(s => [s.id, s]));
+  rulings = Object.fromEntries((map.rulings || []).map(r => [r.id, r]));
+  render();
+}
+
+window.addEventListener("hashchange", () => { if (map && view === "loop") render(); });
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => { view = b.dataset.view; if (map) render(); });
+fetch("flow-map.json").then(r => r.json()).then(load).catch(() => {
+  const err = document.getElementById("error"), pick = document.getElementById("pick");
+  err.hidden = false; err.textContent = "Couldn't read flow-map.json from here. Choose the file:";
+  pick.hidden = false;
+  pick.onchange = () => pick.files[0].text().then(t => { err.hidden = true; pick.hidden = true; load(JSON.parse(t)); });
+});
+</script>
+</html>

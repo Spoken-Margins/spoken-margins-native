@@ -20,6 +20,12 @@ public struct ReplyBackOffer: Equatable, Sendable {
     public var title: String {
         replies.isEmpty ? "Share your Margins with \(friendName)" : "Share replies with \(friendName)"
     }
+    /// The line under the sheet's heading when it shares replies (#4785): the sender's worry was that the friend would
+    /// have to hunt for a third reply among old Margins. Both receivers mark an imported Margin new and can play only
+    /// the new ones, so it says so. Nil for "Share your Margins with", which holds no reply.
+    public var caption: String? {
+        replies.isEmpty ? nil : "These arrive marked new, so \(friendName) can hear just them."
+    }
     /// Every Margin the share sheet lists, in the order they were made.
     public var candidates: [Interjection] { (replies + others).sorted(by: ReplyBackOffer.madeBefore) }
     /// Whether the sheet starts with this Margin included. With linked replies, those and only those (#3221). With none,

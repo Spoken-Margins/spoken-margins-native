@@ -7,6 +7,7 @@ extension Gate1AppModel {
     /// `SharedMarginRow.canPlayFromMarginsList`, which asks `SharedMarginListPlay` for the same two places.
     /// Either way the tap leaves one `margin.tap` line; `playSharedMarginMoment` writes its own.
     func playSharedMarginFromMarginsList(_ row: SharedMarginRow) {
+        noteCatchUp(.play) // playing a Margin puts the caught-up card away (#4785)
         guard SharedMarginListPlay(row.interjection) == .textPassage else { return playSharedMarginMoment(row) }
         recordMarginTap(.shared, startSharedMarginAtPassage(row))
     }

@@ -41,6 +41,7 @@ extension Gate1AppModel {
         if marginVoiceIsHeldForRecording {
             recordDeveloperDiagnostic("transport.refused", ["command": CompactControlCommand.togglePlayPause.rawValue, "reason": "margin_recording"])
         }
+        noteCatchUp(.play) // Play after a catch-up run puts the caught-up card away (#4785)
         hangTelemetry.labels.scoped("playPauseTapped") { playPause() }
     }
 

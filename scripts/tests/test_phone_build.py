@@ -578,9 +578,26 @@ with open(os.environ["FAKE_LOG"], "a") as log:
 tip = os.environ["FAKE_TIP"]
 if args[:1] == ["api"] and "/statuses" in args[1]:
     # #5145: the commit's main-slow status, from FAKE_SLOW_STATE: green unless a test says otherwise ("none": no status).
+    # #4575: its main-t3 status, from FAKE_T3_STATE the same way ("down": GitHub unreachable).
     state = os.environ.get("FAKE_SLOW_STATE", "success")
-    print(json.dumps([] if state == "none" else
-                     [{"context": "main-slow", "state": state, "created_at": "2026-11-23T08:00:00Z"}]))
+    t3 = os.environ.get("FAKE_T3_STATE", "success")
+    if t3 == "down":
+        sys.exit(1)
+    print(json.dumps(([] if state == "none" else
+                      [{"context": "main-slow", "state": state, "created_at": "2026-11-23T08:00:00Z"}])
+                     + ([] if t3 == "none" else
+                        [{"context": "main-t3", "state": t3, "created_at": "2026-11-23T09:00:00Z",
+                          "target_url": "https://example/run/1"}])))
+elif args[:2] == ["api", "graphql"] and any("main-t3" in a for a in args):
+    # #4575: the tip's history with each commit's main-t3 result; FAKE_T3_HISTORY replaces the default (the tip, green).
+    if os.environ.get("FAKE_T3_STATE") == "down":
+        sys.exit(1)
+    nodes = json.loads(os.environ["FAKE_T3_HISTORY"]) if os.environ.get("FAKE_T3_HISTORY") else [
+        {"oid": tip, "status": {"context": {"state": "SUCCESS"}}}]
+    print(json.dumps({"data": {"repository": {"object": {"history": {"nodes": nodes}}}}}))
+elif args[:2] == ["workflow", "run"]:
+    # #4575: starting a main-t3 run on a refused commit.
+    sys.exit(1 if os.environ.get("FAKE_DISPATCH_FAILS") else 0)
 elif args[:2] == ["api", "graphql"] and any("main-slow" in a for a in args):
     # #5145: main's history with each commit's main-slow result; FAKE_SLOW_HISTORY replaces the default, which is the
     # tip alone with FAKE_SLOW_STATE.
@@ -820,7 +837,7 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertIn('fast hot-file-ok=1 scripts/verify-tests.py --plan fast', self.log.read_text())
 
-    def commit_the_host_check_python(self, subject, slow_tier=False):
+    def commit_the_host_check_python(self, subject, slow_tier=False, main_mac=False):
         """Commit a fake `.venv/bin/python` (what the build runs verify-tests.py with) as the new tip.
 
         It logs its command line to FAKE_LOG and exits with FAKE_FAST_EXIT. `slow_tier`: the commit has
@@ -828,6 +845,9 @@ class PhoneBuildTests(unittest.TestCase):
         if slow_tier:
             (self.repo / 'scripts/slow_tier.py').write_text('SLOW_SWIFT_TESTS = {}\n')
             self.git('add', 'scripts/slow_tier.py')
+        if main_mac:  # the commit's verify-tests.py has --plan main-mac (#5281)
+            (self.repo / 'scripts/verify-tests.py').write_text("PLANS = ('slow', 'mac-build', 'main-mac')\n")
+            self.git('add', 'scripts/verify-tests.py')
         (self.repo / '.venv/bin').mkdir(parents=True)
         python = self.repo / '.venv/bin/python'
         python.write_text('#!/bin/sh\necho "fast $*" >> "$FAKE_LOG"\nexit ${FAKE_FAST_EXIT:-0}\n')
@@ -836,9 +856,10 @@ class PhoneBuildTests(unittest.TestCase):
         self.git('commit', '-q', '-m', subject)
         self.tip = self.git('rev-parse', 'HEAD')
 
-    def build_the_merge_commit(self, runs_checks, slow_tier=False, **extra):
+    def build_the_merge_commit(self, runs_checks, slow_tier=False, main_mac=False, **extra):
         """Build a tip that reads "Merge pull request #12: ..." (the fake gh serves PR 12's merge check)."""
-        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing', slow_tier=slow_tier)
+        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing', slow_tier=slow_tier,
+                                          main_mac=main_mac)
         done = self.run_build(**{'FAKE_TIP': self.tip, **extra})
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         calls = self.log.read_text()
@@ -857,7 +878,17 @@ class PhoneBuildTests(unittest.TestCase):
         calls = self.log.read_text()
         self.assertIn('fast scripts/verify-tests.py --plan slow', calls)
         checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
-        self.assertIn('slow tier (--plan slow) ran on this exact commit', checks)
+        self.assertIn("main-slow's tests (--plan slow) ran on this exact commit", checks)
+
+    def test_a_commit_with_main_mac_runs_every_test_main_slow_runs_first(self):
+        # #5281: the merge queue builds on the Mac and runs no Mac tests, so a commit main-slow hasn't passed gets
+        # main-slow's whole plan (the Mac tests and the slow tier), not the slow tier alone.
+        self.build_the_merge_commit(runs_checks=False, slow_tier=True, main_mac=True, FAKE_SLOW_STATE='none')
+        calls = self.log.read_text()
+        self.assertIn('fast scripts/verify-tests.py --plan main-mac', calls)
+        self.assertNotIn('--plan slow', calls)
+        checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
+        self.assertIn("main-slow's tests (--plan main-mac) ran on this exact commit", checks)
 
     def test_a_green_slow_tier_on_the_commit_is_not_run_again(self):
         self.build_the_merge_commit(runs_checks=False, slow_tier=True, FAKE_SLOW_STATE='success')
@@ -872,10 +903,19 @@ class PhoneBuildTests(unittest.TestCase):
         checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
         self.assertIn('from before the slow tier', checks)
 
-    def test_a_red_slow_tier_stops_the_build(self):
+    def test_a_red_main_slow_on_the_commit_stops_the_build_without_a_local_plan(self):
+        # #5281 audit: main-slow failed on this commit, so a test it runs is known red; --plan slow alone could pass.
+        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing', slow_tier=True, main_mac=True)
+        done = self.run_build(FAKE_TIP=self.tip, FAKE_SLOW_STATE='failure')
+        self.assert_build_stopped(done, 'main-slow failed on this exact commit (its Mac tests or the slow tier); '
+                                        'build a commit it passes', builds_after=False)
+        self.assertNotIn('--plan slow', self.log.read_text())
+        self.assertNotIn('--plan main-mac', self.log.read_text())
+
+    def test_a_failing_local_main_slow_plan_stops_the_build(self):
         self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing', slow_tier=True)
-        done = self.run_build(FAKE_TIP=self.tip, FAKE_SLOW_STATE='failure', FAKE_FAST_EXIT='1')
-        self.assert_build_stopped(done, 'the slow tier (--plan slow) failed', builds_after=False)
+        done = self.run_build(FAKE_TIP=self.tip, FAKE_SLOW_STATE='none', FAKE_FAST_EXIT='1')
+        self.assert_build_stopped(done, "main-slow's tests (--plan slow) failed", builds_after=False)
 
     def test_a_safe_remerge_builds_release_without_repeating_host_or_simulator_checks(self):
         self.build_the_merge_commit(runs_checks=False, FAKE_SAFE_REMERGE='1')
@@ -1074,6 +1114,146 @@ else:
 """
 
 
+class PhoneBuildT3GateTests(unittest.TestCase):
+    """#4575: no phone build of a commit without a green main-t3 (main's scheduled app tests) on that exact SHA."""
+
+    def setUp(self):
+        PhoneBuildTests.setUp(self)
+        # main-t3 tests only commits on the trunk, so a run is started only for a commit in origin/main's history.
+        self.git('update-ref', 'refs/remotes/origin/main', self.tip)
+
+    git = PhoneBuildTests.git
+    run_build = PhoneBuildTests.run_build
+
+    def test_a_named_commit_main_t3_passed_is_built_and_says_so(self):
+        done = self.run_build()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        checks = json.loads(((self.phone / 'latest').resolve() / 'build.json').read_text())['checks']
+        self.assertIn('main-t3 (every app test) passed on this exact commit', checks)
+        self.assertNotIn('gh workflow run', self.log.read_text(), 'a green commit starts no run')
+
+    def test_a_named_commit_without_a_green_main_t3_is_refused_and_a_run_is_started(self):
+        for state, words in (('none', 'no main-t3 run on it yet'), ('error', 'runner fault')):
+            with self.subTest(state=state):
+                if self.log.exists():
+                    self.log.unlink()
+                done = self.run_build(FAKE_T3_STATE=state)
+                self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+                self.assertIn(f'refused {self.tip}: ', done.stdout, 'the line names the SHA')
+                self.assertIn(words, done.stdout)
+                self.assertIn('started a main-t3 run on it', done.stdout)
+                calls = self.log.read_text()
+                self.assertIn(f'gh workflow run main-t3.yml --repo Spoken-Margins/spoken-margins-native -f sha={self.tip} '
+                              '-f force=true', calls)
+                self.assertNotIn('-configuration Release', calls, 'nothing was built')
+                self.assertFalse((self.phone / 'latest').exists())
+
+    def test_a_real_failure_is_refused_without_starting_a_run_that_would_fail_again(self):
+        done = self.run_build(FAKE_T3_STATE='failure')
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn(f'refused {self.tip}: main-t3 failed on it', done.stdout)
+        self.assertIn('started no new run', done.stdout)
+        self.assertNotIn('gh workflow run', self.log.read_text())
+
+    def test_a_commit_off_the_trunk_starts_no_run_main_t3_would_drop(self):
+        self.git('checkout', '-q', '-b', 'side')
+        self.git('commit', '-q', '--allow-empty', '-m', 'off the trunk')
+        side = self.git('rev-parse', 'HEAD').strip()
+        self.git('checkout', '-q', '-')
+        done = subprocess.run(['/usr/bin/python3', str(SCRIPTS / 'phone-build'), '--commit', side],
+                              env={**os.environ, **self.env, 'FAKE_T3_STATE': 'none'}, capture_output=True, text=True,
+                              timeout=120)
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn(f'refused {side}: ', done.stdout)
+        self.assertIn('main-t3 tests only commits on', done.stdout)
+        self.assertNotIn('gh workflow run', self.log.read_text())
+
+    def test_a_run_in_progress_is_waited_for_not_started_again(self):
+        done = self.run_build(FAKE_T3_STATE='pending')
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn('still going', done.stdout)
+        self.assertNotIn('gh workflow run', self.log.read_text())
+
+    def test_github_down_refuses_rather_than_guessing(self):
+        done = self.run_build(FAKE_T3_STATE='down')
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn('GitHub could not be read', done.stdout)
+        self.assertNotIn('-configuration Release', self.log.read_text())
+
+    def test_a_dispatch_that_fails_is_said(self):
+        done = self.run_build(FAKE_T3_STATE='none', FAKE_DISPATCH_FAILS='1')
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn('could not start a main-t3 run on it', done.stdout)
+
+
+class TrunkT3PickTests(unittest.TestCase):
+    """#4575: a trunk build takes the newest commit in the tip's history that main-t3 passed."""
+
+    def setUp(self):
+        self.module = load_phone_build()
+        self.tip, self.older = 'a' * 40, 'b' * 40
+
+    def pick(self, nodes=None, down=False):
+        def gh(*args):
+            if down:
+                return None
+            return json.dumps({'data': {'repository': {'object': {'history': {'nodes': nodes}}}}})
+        with unittest.mock.patch.object(self.module, 'gh', side_effect=gh):
+            return self.module.t3_pick(self.tip, explicit=False)
+
+    def test_a_green_tip_is_built(self):
+        self.assertEqual(self.pick([{'oid': self.tip, 'status': {'context': {'state': 'SUCCESS'}}}]), (self.tip, ''))
+
+    def test_an_untested_or_red_tip_falls_back_to_the_newest_green_commit_and_says_so(self):
+        nodes = [{'oid': self.tip, 'status': None}, {'oid': 'c' * 40, 'status': {'context': {'state': 'FAILURE'}}},
+                 {'oid': 'd' * 40, 'status': {'context': {'state': 'PENDING'}}},
+                 {'oid': self.older, 'status': {'context': {'state': 'SUCCESS'}}}]
+        sha, line = self.pick(nodes)
+        self.assertEqual(sha, self.older)
+        self.assertIn(f'building {self.older[:7]}, the newest commit main-t3 passed; the tip {self.tip[:7]}', line)
+
+    def test_no_green_commit_in_reach_builds_nothing(self):
+        sha, line = self.pick([{'oid': self.tip, 'status': {'context': {'state': 'FAILURE'}}}])
+        self.assertIsNone(sha)
+        self.assertIn('has a green main-t3', line)
+
+    def test_github_down_builds_nothing(self):
+        sha, line = self.pick(down=True)
+        self.assertIsNone(sha)
+        self.assertIn('GitHub could not be read', line)
+
+    def test_an_if_changed_run_does_not_rebuild_the_fallback_it_already_built(self):
+        phone = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, phone)
+        module = self.module
+        args = unittest.mock.Mock(source='mac', commit=None, if_changed=True)
+        with unittest.mock.patch.dict(os.environ, {'SM_PHONE_DIR': str(phone)}), \
+                unittest.mock.patch.object(module, 'latest_build', return_value={'sha': self.older}), \
+                unittest.mock.patch.object(module, 'coalesce_reason', return_value=None), \
+                unittest.mock.patch.object(module, 'guard_reason', return_value=None), \
+                unittest.mock.patch.object(module, 't3_pick', return_value=(self.older, 'building bbbbbbb')), \
+                unittest.mock.patch.object(module, 'build', return_value=0) as build:
+            self.assertEqual(module.take_or_build(args, self.tip, self.tip), 0)
+        build.assert_not_called()
+
+    def test_an_if_changed_run_never_steps_back_to_a_green_commit_older_than_latest(self):
+        # The first run after the gate lands: latest is an ungated commit newer than the newest green one.
+        phone = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, phone)
+        module = self.module
+        args = unittest.mock.Mock(source='mac', commit=None, if_changed=True)
+        with unittest.mock.patch.dict(os.environ, {'SM_PHONE_DIR': str(phone)}), \
+                unittest.mock.patch.object(module, 'latest_build', return_value={'sha': 'c' * 40}), \
+                unittest.mock.patch.object(module, 'coalesce_reason', return_value=None), \
+                unittest.mock.patch.object(module, 'guard_reason', return_value=None), \
+                unittest.mock.patch.object(module, 't3_pick', return_value=(self.older, 'building bbbbbbb')), \
+                unittest.mock.patch.object(module, 'is_ancestor', return_value=True) as ancestor, \
+                unittest.mock.patch.object(module, 'build', return_value=0) as build:
+            self.assertEqual(module.take_or_build(args, self.tip, self.tip), 0)
+        build.assert_not_called()
+        ancestor.assert_called_once_with(self.older, 'c' * 40)
+
+
 class NearestSlowResultTests(unittest.TestCase):
     """#5145: the newest main-slow pass or failure in a commit's history, the commit itself first."""
 
@@ -1121,6 +1301,13 @@ class HostedPhoneBuildTests(unittest.TestCase):
         archive = app.parent / 'SpokenMarginsApp.app.zip'
         subprocess.check_call(['ditto', '-c', '-k', '--keepParent', str(app), str(archive)])
         return archive
+
+    def test_refuses_a_hosted_build_without_a_green_main_t3(self):
+        # #4575: the hosted build's commit goes on the phone only when main-t3 passed on it.
+        done = self.run_build(FAKE_T3_STATE='failure')
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn(f'refused the hosted build: refused {self.tip}: main-t3 failed on it', done.stdout)
+        self.assertFalse((self.phone / 'latest').exists())
 
     def test_refuses_a_hosted_build_main_slow_found_red(self):
         # #5145 audit: nothing here can run the slow tier, so a commit it failed on never reaches the phone.
@@ -1423,6 +1610,8 @@ class PhoneBuildCoalescingTests(unittest.TestCase):
         self.module.guard_reason = unittest.mock.Mock(return_value=None)
         self.module.clear_work = unittest.mock.Mock()
         self.module.build = unittest.mock.Mock(return_value=0)
+        # #4575's gate is PhoneBuildT3GateTests'; these are about coalescing, so every commit passes it.
+        self.module.t3_pick = unittest.mock.Mock(side_effect=lambda sha, explicit, tip='': (sha, ''))
 
     def attempt(self, minutes, filename='last-attempt.json', result='built'):
         (self.phone / filename).write_text(json.dumps({

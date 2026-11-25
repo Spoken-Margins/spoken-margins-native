@@ -762,6 +762,16 @@ final class SpokenMarginsPackageImportCoordinator {
             let digestsById = Dictionary(rows.compactMap { row in row.textDigests.map { (row.item.id, $0) } },
                                          uniquingKeysWith: { first, _ in first })
             guard let proposal = ListeningMapPacket.proposal(in: contents) else {
+                // Replies go to the row holding the Margins they answer, whatever edition the friend heard (#5286).
+                let parents = ReplyParentItemMatch.parents(in: contents.conversations)
+                if !parents.isEmpty, let replied = ReplyParentItemMatch.itemId(
+                    for: contents.manifest.item,
+                    holdingParents: try store.itemIdsHoldingOwnMargins(sharedAs: parents),
+                    among: items,
+                    ownedAudiobookDigest: { Self.ownedAudiobookDigest(for: $0, store: store) },
+                    textDigests: { digestsById[$0.id] }) {
+                    return PackageSourceMatch(itemId: replied)
+                }
                 return PackageSourceMatch(itemId: SharedPacketItemMatcher.matchingItemId(
                     for: contents.manifest.item, among: items,
                     ownedAudiobookDigest: { Self.ownedAudiobookDigest(for: $0, store: store) },

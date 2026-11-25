@@ -28,6 +28,7 @@ extension Gate1AppModel {
         let reader = StoreReader(store)
         if let latest = try await reader.latestFeedSubscriptions() {
             feedSubscriptions = latest
+            await reconcileNotForMeHides(with: latest) // a followed source is never hidden (#4285)
             return latest
         }
         return try await reader.feedSubscriptions()
@@ -439,6 +440,8 @@ extension Gate1AppModel {
         // `trigger.checksListLinks` before it touches the store, so every other trigger costs nothing here. The check runs on
         // its own task: a slow or dead list host must not keep a pull's spinner turning. **Check now** awaits the runner itself.
         startListLinkCheck(trigger: trigger)
+        // The rule learner reads the new episodes, off the main thread (#4046 PR 12).
+        if covered != nil { Task { [weak self] in await self?.reloadRuleSuggestions() } }
         return covered
     }
 
@@ -538,7 +541,9 @@ extension Gate1AppModel {
                         // The earlier record's text map is kept and the save runs off the main actor (#2509), as for a shared link.
                         var audio: PublisherAudio?
                         if let found = try PublisherAudioDetector.publisherAudio(for: entry, itemId: itemId) {
-                            audio = try await StoreReader(store).read { try $0.savePublisherAudioIfItemExists(found) }
+                            let result = try await StoreReader(store).read { try $0.savePublisherAudioIfItemExists(found) }
+                            audio = result.saved
+                            if let refusal = result.refusalDiagnostic { self.diagnostics["followedPublisherAudio"] = "\(itemId): \(refusal)" } // #4640
                         }
                         if let audio { PublisherAudioTextMapper.start(audio, store: store, transcriber: self.sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)" } }
                         self.recordFollowedPublisherAudio(lookup?.outcome, itemId: audio?.itemId ?? itemId, saved: audio != nil)
@@ -558,7 +563,9 @@ extension Gate1AppModel {
         }
     }
 
-    func unfollowSource(id: String) {
+    /// `then` runs after the unfollow has landed and the list is published, and only when it landed (#4285: a hide is
+    /// written there, after the show has left the list the hide reconcile reads).
+    func unfollowSource(id: String, then: (@MainActor () async -> Void)? = nil) {
         guard let coordinator = followedSourceCoordinator else { return }
         // The show leaves its follow lists with it (#4046). The member is read before the subscription goes.
         let member = feedSubscriptions.first { $0.id == id }.map { FollowListEditing.member(for: $0) }
@@ -566,6 +573,7 @@ extension Gate1AppModel {
             let unfollowed: Void? = try? await coordinator.unfollow(subscriptionId: id)
             if unfollowed != nil, let member { await self?.removeFromFollowLists(member) }
             await self?.publishFeedSubscriptionsAfterChange()
+            if unfollowed != nil { await then?() }
             await self?.performFollowedSourceRefresh(force: false, trigger: .localChange)
         }
     }

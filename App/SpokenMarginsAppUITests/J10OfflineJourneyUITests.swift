@@ -88,7 +88,8 @@ final class J10OfflineJourneyUITests: XCTestCase {
             XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8), "The sender flow did not open")
             let cleanUpQuestion = app.alerts["Remove ums and long pauses?"]
             if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
-            XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5), "Share did not open on the review stage")
+            // The Share Margins list is the one stage of a share that isn't a reply (#4647).
+            XCTAssertTrue(element("build23.sender.stage.list").waitForExistence(timeout: 5), "Share did not open on the Share Margins list")
             senderElement("build23.sender.preview.build").tap()
             XCTAssertTrue(element("build23.sender.recipient.verified-preview").waitForExistence(timeout: 12),
                           "The packet was not written and verified with the server unreachable")
@@ -197,7 +198,8 @@ final class J10OfflineJourneyUITests: XCTestCase {
 
     /// Scrolls the sender flow until `identifier` sits clear of whatever is pinned at its bottom, as Gate1FlowUITests does.
     ///
-    /// What is pinned depends on the stage: Review on the select stage, Share on the review stage (#2920), and the
+    /// What is pinned depends on the stage: Review on a reply sheet's select stage, Share on the list and the review
+    /// stage (#2920, #4647), and the
     /// Debug "Create recipient test session" tool once a verified packet exists. The drag must start above all of
     /// them, or it lands on the pinned bar and the list never moves (the hosted run's video shows exactly that).
     private func senderElement(_ identifier: String) -> XCUIElement {

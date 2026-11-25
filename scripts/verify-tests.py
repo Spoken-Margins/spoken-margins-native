@@ -29,6 +29,7 @@ import lane_sim
 import sm_build_cache
 import sessionkit_pass
 import slow_tier
+import swift_scan_tests
 import lane_sim_pool
 import node_modules_drift
 import third_party_notices
@@ -818,8 +819,11 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_app_test_negative_sleeps',
                        # The tracked-presentation guard scans App/ Swift files for a raw sheet or cover (#4337).
                        'test_tracked_presentations')
+# Every test that reads App/ or Packages/ is in scripts/swift_scan_tests.py (#5220), which test_swift_scan_tests keeps
+# complete; the readers scope runs those too, so a new scan needs only that one line.
+RUNNER_TEST_READERS += tuple(module for module in swift_scan_tests.SCANS if module not in RUNNER_TEST_READERS)
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
-                      'docs/sharing-test-kit/', 'docs/task-cost-map.json', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
+                      'docs/sharing-test-kit/', 'docs/task-cost-map.json', 'docs/overview/', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).
                       'docs/legal/', 'THIRD_PARTY_NOTICES.md', 'requirements-dev.txt', 'Site/', 'Tools/',
                       'Config/', 'fixtures/', 'traces/', 'schemas/',
@@ -845,7 +849,7 @@ def on_hosted_runner(environ=None):
     return environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
 
 
-PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'system-callback-isolation', 'listener-words', 'recorder-failed-start', 'browser', 'share-link', 'web', 'research')
+PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'system-callback-isolation', 'listener-words', 'flow-map', 'recorder-failed-start', 'browser', 'share-link', 'web', 'research')
 PORTABLE_LEFT_OUT = {
     'package-build': 'needs the Swift toolchain on macOS; hosted-portable.yml builds the Foundation-only modules on Linux, outside this plan',
     'package-core': 'needs the Swift toolchain on macOS (hosted-portable.yml also runs SessionKitCoreTests on Linux, #3529, outside this plan)',
@@ -868,7 +872,9 @@ PORTABLE_RUNNER_TESTS_LEFT_OUT = {
     'test_phone_build.PhoneBuildTests.test_builds_writes_plan_and_points_latest': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_a_lane_tested_commit_without_a_green_slow_tier_runs_it_first': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_a_green_slow_tier_on_the_commit_is_not_run_again': PHONE_BUILD_NEEDS_MAC,
-    'test_phone_build.PhoneBuildTests.test_a_red_slow_tier_stops_the_build': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_red_main_slow_on_the_commit_stops_the_build_without_a_local_plan': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_failing_local_main_slow_plan_stops_the_build': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_commit_with_main_mac_runs_every_test_main_slow_runs_first': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_a_commit_from_before_the_slow_tier_is_built_without_it': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_if_changed_skips_when_latest_is_the_tip': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_plan_starts_at_the_installed_build': PHONE_BUILD_NEEDS_MAC,
@@ -896,6 +902,37 @@ PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snaps
 # SessionKitTraceTests targets, whose real-time AVFoundation tests need a sound output (PORTABLE_LEFT_OUT 'package').
 # Between them the three plans run every fast-plan step (test_fast_split.py checks it).
 FAST_SPLIT_PLANS = ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest')
+# Plans that run only host steps (no Xcode scheme).
+HOST_ONLY_PLANS = ('slow', 'mac-build', 'main-mac')
+# --plan mac-build's reason for every test step it leaves out (#5281).
+# The shipped-build guards (#5281 audit): SessionKitTests classes that decode this build's stored rows or packets with
+# the last shipped build's frozen model. They protect listener data and packet compatibility, so every merge group
+# runs them, even the build-only Mac job. A class is one when its file uses the frozen module (ShippedSessionKit) or is
+# named for a shipped build or reader; test_slow_tier keeps the rule honest against the files.
+SHIPPED_GUARD_DIR = 'Packages/SessionKit/Tests/SessionKitTests'
+SHIPPED_GUARD_FILE_NAME = re.compile(r'Build\d+|Shipped|PacketExpectations')
+SHIPPED_GUARD_CLASS = re.compile(r'^\s*(?:@\w+\s+)*(?:final\s+)?class\s+(\w+)\s*:[^{]*\bXCTestCase\b', re.M)
+
+
+def shipped_guard_classes(root=None):
+    """Sorted names of the SessionKitTests classes that guard the shipped build's packets and database."""
+    names = set()
+    for path in sorted((Path(root or ROOT) / SHIPPED_GUARD_DIR).glob('*.swift')):
+        text = path.read_text()
+        if SHIPPED_GUARD_FILE_NAME.search(path.stem) or 'ShippedSessionKit' in text:
+            names.update(SHIPPED_GUARD_CLASS.findall(text))
+    return sorted(names)
+
+
+def shipped_guard_regex(classes):
+    """A SwiftPM --filter regex (matched against "Module.Class/test") for exactly these SessionKitTests classes."""
+    if not classes:
+        raise RuntimeError(f'no shipped-build guard classes found in {SHIPPED_GUARD_DIR}')
+    return r'^SessionKitTests\.(?:' + '|'.join(re.escape(name) for name in classes) + ')/'
+
+
+MAC_BUILD_LEFT_OUT = ('the merge queue builds on the Mac and runs no Mac tests (#5281); --plan main-mac runs them on main '
+                      '(main-slow.yml), and the Linux job runs the core tests the two platforms share')
 HOSTED_SESSIONKIT_STEPS = ('package-build', 'package-core', 'package-core-serial')
 MAC_REST_STEPS = ('hot-file-ratchet', 'runner-tests', 'ops', 'package-build', 'package', 'tools', 'shipped-compat')
 # The whole runner-tests step, here and on the Mac, runs one test module per process, four at a time, slowest first
@@ -2112,6 +2149,9 @@ class Run:
         self.command('system-callback-isolation', [sys.executable, 'scripts/system_callback_isolation.py'])
         # A listener-facing string that says "item" fails here, in seconds, instead of on the phone (#3599).
         self.command('listener-words', [sys.executable, 'scripts/listener_words.py'])
+        # A sharing control removed, renamed or re-routed without the flow map changing fails here, and the run names
+        # the sharing screens the diff touches with their neighbours and the owner's rulings on them (#5280).
+        self.command('flow-map', [sys.executable, 'scripts/flow-map-check.py', '--pr'])
         # A recorder freed while its audio queue runs, after a failed start, crashes the app (#3633).
         self.command('recorder-failed-start', [sys.executable, 'scripts/recorder_failed_start.py'])
         if not node_modules_installed():
@@ -2264,6 +2304,40 @@ class Run:
               flush=True)
         # With the dot: parallel_unittest.py matches by prefix, and a future test_sm_status_x must not leave too.
         return [f'{module}.' for module in modules]
+
+    def mac_build(self):
+        """--plan mac-build (#5281): the merge queue's Mac job, build only. It compiles SessionKit and every one of
+        its test targets with the Mac's Swift (the Linux job builds with another Swift and cannot see Apple-only code),
+        then runs the shipped-build guard classes (shipped_guard_classes) on every merge, and the shipped build's
+        packet and database checks when the diff reaches them: those are guards, which stay on every merge. The Mac tests themselves (SessionKitCoreTests on the Mac, SessionKitTests, the runner
+        tests that drive Apple tools, ops) run on main instead, in --plan main-mac. Linux runs the 9,950 core tests the
+        two share on every merge group."""
+        self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
+        # The shipped-build guards run on every merge group whatever the diff (#5281 audit): shipped_compat below
+        # runs only for watched paths and only the classes that export packets.
+        self.command('shipped-guards', [*PACKAGE_RUNNER, '--only', shipped_guard_regex(shipped_guard_classes())],
+                     timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
+                     tests=True)
+        self.shipped_compat()
+        for name in ('package-core', 'package', 'runner-tests', 'ops', 'tools'):
+            self.skip(name, MAC_BUILD_LEFT_OUT)
+        if input_identity() != self.manifest['input_sha256']:
+            raise RuntimeError(inputs_changed_message('Inputs changed during the Mac build', self.input_files))
+
+    def main_mac(self):
+        """--plan main-mac (#5281): every Mac test the merge queue's build-only job leaves out, plus the slow tier,
+        on main for main-slow.yml: fast-hosted-sessionkit and fast-mac-rest in full (no diff, nothing left out),
+        then the slow tier's runner module."""
+        with host_test_slot(f'verify-tests main-mac in {ROOT}', out=sys.stdout,
+                            max_wait=BUILD_SLOT_WAIT_SECONDS) as held:
+            self.manifest['host_test_slot'] = held
+            self.save()
+            self.hosted_sessionkit()
+            self.mac_rest()
+            modules = sorted(slow_tier.SLOW_RUNNER_MODULES)
+            if modules:
+                self.command('slow-runner-tests', [sys.executable, '-c', MAC_REST_RUNNER_LOADER,
+                                                   *(f'{m}.' for m in modules)], **RUNNER_TESTS_LIMITS)
 
     def slow(self):
         """--plan slow (#5145): exactly the tests --leave-out-slow leaves out, for main-slow.yml and phone-build."""
@@ -2620,7 +2694,7 @@ def read_changed_files(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--plan', choices=['fast', 'fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest', 'slow', *PLANS],
+    parser.add_argument('--plan', choices=['fast', 'fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest', 'slow', 'mac-build', 'main-mac', *PLANS],
                         default='fast')
     parser.add_argument('--device', help='Supported simulator UDID (including iPad); overrides phone preference')
     parser.add_argument('--ios', type=int, help='Required iOS major version, e.g. 26 or 27; never falls back to another OS')
@@ -2679,7 +2753,7 @@ def main():
         output = args.output or ROOT / 'artifacts/test-runs' / (
             datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '-' + args.plan)
         run = Run(output.resolve(), args.plan,
-                  read_changed_files(args.changed_files) if args.plan in ('fast', 'fast-mac-rest') else None)
+                  read_changed_files(args.changed_files) if args.plan in ('fast', 'fast-mac-rest', 'mac-build') else None)
         if args.pr_quick:
             run.manifest['pr_quick'] = True
             run.save()  # in the evidence from the start, not only from the first step's save
@@ -2693,7 +2767,11 @@ def main():
                 run.fast()
             elif args.plan == 'slow':
                 run.slow()
-            if args.plan not in ('fast', *FAST_SPLIT_PLANS, 'slow') and not args.build_only:
+            elif args.plan == 'mac-build':
+                run.mac_build()
+            elif args.plan == 'main-mac':
+                run.main_mac()
+            if args.plan not in ('fast', *FAST_SPLIT_PLANS, *HOST_ONLY_PLANS) and not args.build_only:
                 if journeys:
                     run.manifest['scripted_journeys'] = journeys
                     run.xcode(args.plan, args.device, args.rebuild, args.ios,

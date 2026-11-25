@@ -29,6 +29,10 @@ extension PinnedMarginCard {
             /// "Start a minute earlier" (#4171): plays this Margin again after one more minute of the source
             /// (`StartEarlier`). Shown in a friend's run-up and while a friend's voice plays, never at AX3 and above.
             case startEarlier
+            /// "Let Cole know" on the caught-up card (#4785): opens the share sheet with `CatchUpRun.shareText`. The card stays.
+            case letFriendKnow
+            /// Puts the caught-up card away.
+            case dismissCaughtUp
 
             /// Held while a Margin is being recorded (`recordingNavigationIsLocked`): drawn dimmed, not hidden.
             public var followsNavigationLock: Bool { self == .goToNextMargin || self == .startEarlier }
@@ -98,8 +102,16 @@ extension PinnedMarginCard {
         case .silentHere:
             // No Next Margin: the Skim arrows sit right under the card.
             return [Action(job: .dismissSilentMargin, title: "Dismiss", hint: "Hides this card. The \(ahead) keeps playing.", prominence: .quiet)]
-        case .answerSaved, .lastMargin:
+        case .answerSaved, .savedHere, .lastMargin:
             return []
+        case .caughtUp(let stillNew, _, _):
+            let dismiss = Action(job: .dismissCaughtUp, title: "Dismiss", hint: "Hides this card.", prominence: .quiet)
+            // With something still new the card only says so: no thanks to send for what wasn't heard.
+            guard stillNew == 0 else { return [dismiss] }
+            let tell = Action(
+                job: .letFriendKnow, title: "Let \(subject.buttonName ?? "them") know",
+                hint: "Opens the share sheet with a short message.", prominence: .secondary)
+            return [tell, dismiss]
         }
     }
 

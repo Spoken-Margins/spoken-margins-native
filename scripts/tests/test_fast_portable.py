@@ -100,7 +100,7 @@ class PortableStepTable(unittest.TestCase):
     def test_the_portable_plan_runs_its_steps_and_names_each_one_it_leaves_out(self):
         calls, skipped, slots, printed = self.run_portable()
         names = [name for name, _ in calls]
-        self.assertEqual(names, ['runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'system-callback-isolation', 'listener-words', 'recorder-failed-start', 'browser',
+        self.assertEqual(names, ['runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'system-callback-isolation', 'listener-words', 'flow-map', 'recorder-failed-start', 'browser',
                                  'share-link', 'web', 'research'])
         self.assertEqual(skipped, verification.PORTABLE_LEFT_OUT)
         for name in verification.PORTABLE_LEFT_OUT:
@@ -163,6 +163,7 @@ class PortableStepTable(unittest.TestCase):
                              ('listener-words', 'listener_words.py'), ('recorder-failed-start', 'recorder_failed_start.py')):
             self.assertEqual(calls[name][0], [sys.executable, f'scripts/{script}'], name)
         self.assertEqual(calls['main-thread-reads'][1], {'timeout': 120})
+        self.assertEqual(calls['flow-map'][0], [sys.executable, 'scripts/flow-map-check.py', '--pr'])
 
     def test_the_portable_plan_drops_the_apple_tests_and_checks_lfs_pointers(self):
         calls = dict(self.run_portable()[0])
@@ -192,6 +193,22 @@ class PortableStepTable(unittest.TestCase):
         self.assertNotIn('--allow-lfs-pointers', by_name['contracts'])
         self.assertEqual(by_name['runner-tests'], verification.PARALLEL_RUNNER)  # every runner test, nothing left out
         self.assertIn('package-steps', by_name)
+
+
+class QueueGuardsRunInPortableToo(unittest.TestCase):
+    """hosted-portable.yml's `guards` job runs scripts/queue_guards.py first in a merge group, and a red there skips the
+    Mac jobs, which then report success. So `portable` must run every guard itself, or a guard could fail alone and
+    leave the group green."""
+
+    def test_portable_runs_every_guard_whole(self):
+        import queue_guards
+        import slow_tier
+        self.assertTrue(queue_guards.GUARDS)
+        for module in queue_guards.GUARDS:
+            with self.subTest(module=module):
+                self.assertFalse([prefix for prefix in verification.PORTABLE_RUNNER_TESTS_LEFT_OUT
+                                  if prefix.split('.')[0] == module], 'left out of portable, in whole or in part')
+                self.assertNotIn(module, slow_tier.SLOW_RUNNER_MODULES, 'moved to the nightly slow tier')
 
 
 class SupertonicModelSkips(unittest.TestCase):

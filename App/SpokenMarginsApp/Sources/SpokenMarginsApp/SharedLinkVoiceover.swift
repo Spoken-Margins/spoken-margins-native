@@ -55,12 +55,15 @@ final class SharedLinkVoiceover {
         fetched: FetchedPageMemo?,
         store: SQLiteSessionStore,
         transcriber: any SourceTranscriptionClient,
+        articleFeedAudio: SharedPostVoiceoverLookup.ArticleFeedAudio? = nil,
+        status: (@MainActor (String) -> Void)? = nil,
         report: @escaping @MainActor (String) -> Void
     ) async {
-        let note: @MainActor (String) -> Void = { [weak self] status in
+        let note: @MainActor (String) -> Void = { [weak self] value in
+            status?(value)
             guard let self else { return }
-            ledger.record(status: status, itemId: itemId, now: now())
-            log.record(status, for: itemId)
+            ledger.record(status: value, itemId: itemId, now: now())
+            log.record(value, for: itemId)
             report(log.summary)
         }
         let fetchPage = fetchPage
@@ -70,7 +73,7 @@ final class SharedLinkVoiceover {
         let outcome = await Task.detached(priority: .utility) {
             await SharedPostVoiceoverLookup.find(
                 sharedURL: sharedURL, articleURL: articleURL, itemId: itemId, fetched: fetched, fetchPage: fetchPage,
-                fetchNarration: fetchNarration
+                fetchNarration: fetchNarration, articleFeedAudio: articleFeedAudio
             )
         }.value
         let found: PublisherAudio
@@ -83,8 +86,9 @@ final class SharedLinkVoiceover {
         do {
             // The item check, the earlier text map and the save run in order on one background task, off the main
             // actor (#2507). The listener may have removed the article while the page loaded.
-            let saved = try await StoreReader(store).read { try $0.savePublisherAudioIfItemExists(found) }
-            guard let audio = saved else { return note("item removed") }
+            let result = try await StoreReader(store).read { try $0.savePublisherAudioIfItemExists(found) }
+            if let refusal = result.refusalDiagnostic { return note(refusal) } // #4640
+            guard let audio = result.saved else { return note("item removed") }
             note("saved")
             PublisherAudioTextMapper.start(audio, store: store, transcriber: transcriber) { note($0) }
         } catch {

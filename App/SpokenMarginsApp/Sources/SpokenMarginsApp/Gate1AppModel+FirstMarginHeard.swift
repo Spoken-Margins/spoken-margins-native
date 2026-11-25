@@ -60,13 +60,16 @@ extension Gate1AppModel {
         }
         conductor.onVoiceUnavailable = { [weak self] (marginId: String, reason: String) in
             self?.diagnostics["marginMoment.voiceUnavailable"] = "\(marginId):\(reason)"
-            self?.reportWarning("That Margin's recording couldn't play, so listening continues.")
+            // A catch-up run ends paused, so it never says listening continues (#4785).
+            self?.reportWarning(self?.catchUp?.run.isRunning == true
+                ? "That Margin's recording couldn't play." : "That Margin's recording couldn't play, so listening continues.")
         }
     }
 
     /// The Margin-moment player stopped a voice. Whose Margin it was comes from the store: an own spoken Margin of the
     /// item, never the card's label. Its one row is read off the main thread (#2256); only the hearing is noted here.
     func marginMomentVoiceEnded(_ margin: MarginMomentAnchor, itemId: String, reachedEnd: Bool) {
+        hearItLandVoiceEnded(margin.marginId)
         guard let store else { return }
         Task { [weak self] in
             let heard = try? await Self.offMain { MarginHearing.spokenVoiceEnded(marginIdentity: margin.marginId, itemId: itemId, reachedEnd: reachedEnd, repository: store) }

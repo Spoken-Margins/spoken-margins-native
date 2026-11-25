@@ -100,6 +100,7 @@ PLAN_STEP_PREFIXES = ('Run actions/setup-',)
 PLAN_STEPS = frozenset({
     'Portable fast plan', 'SessionKitCoreTests on Linux', 'SessionKit build and SessionKitCoreTests',
     'Build the app for the simulator (build-for-testing, no tests)', 'Mac rest of the fast plan',
+    'Mac build (merge queue, no tests)',
     'Caddy and smserver for the Caddyfile tests', 'Python tools and Node packages', 'Python tools',
     'List LFS objects', 'Fetch LFS files', 'Install packages', 'Install Playwright browsers',
 })

@@ -1,0 +1,15 @@
+<!doctype html>
+<!-- The source of card.png, the picture a messenger shows for every share link (#5271). Render it at 1200 x 630:
+     cd Web && npx playwright screenshot --viewport-size=1200,630 "file://$PWD/../research/B4/server/internal/links/card/card.html" ../research/B4/server/internal/links/card/card.png
+     Everything that carries meaning sits inside the centred 630 x 630 square, because some messengers crop to a square. -->
+<html lang="en"><head><meta charset="utf-8"><title>Share link card</title>
+<style>
+html,body{margin:0;width:1200px;height:630px;overflow:hidden}
+body{position:relative;background:#f5f0e6;font-family:-apple-system,"SF Pro Display","Helvetica Neue",Inter,Arial,sans-serif;text-align:center}
+.rule{position:absolute;left:96px;top:195px;width:6px;height:240px;background:#d9754b}
+img{position:absolute;left:510px;top:150px;width:180px;height:180px;border-radius:40px}
+h1{position:absolute;left:0;right:0;top:370px;margin:0;font-size:56px;line-height:64px;font-weight:700;color:#17372f}
+p{position:absolute;left:0;right:0;top:458px;margin:0;font-size:40px;line-height:48px;font-weight:400;color:#4f5f58}
+</style></head>
+<body><div class="rule"></div><img src="../../../../../../App/SpokenMarginsApp/Sources/SpokenMarginsApp/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png" alt="">
+<h1>Spoken Margins</h1><p>A friend left you Margins.</p></body></html>

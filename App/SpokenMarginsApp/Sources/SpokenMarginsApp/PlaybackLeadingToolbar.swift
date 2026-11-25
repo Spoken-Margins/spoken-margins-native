@@ -16,7 +16,9 @@ struct PlaybackLeadingToolbar<LibraryExit: View>: ToolbarContent {
     let timelineEditorHasFocus: Bool
     let nowHeaderIsVisible: Bool
     let returnToNow: () -> Void
-    @ViewBuilder let libraryExit: () -> LibraryExit
+    /// The Library arrow, given the accessibility identifier to carry: the bar's hidden copy must not share the shown
+    /// arrow's identifier, or a lookup finds the copy that can't be tapped (#5311).
+    @ViewBuilder let libraryExit: (_ accessibilityIdentifier: String) -> LibraryExit
 
     @ToolbarContentBuilder
     var body: some ToolbarContent {
@@ -25,7 +27,7 @@ struct PlaybackLeadingToolbar<LibraryExit: View>: ToolbarContent {
         switch slot.kind {
         case .libraryExit:
             ToolbarItem(placement: .topBarLeading) {
-                libraryExit()
+                libraryExit(slot.libraryExitIdentifier)
                     .opacity(slot.isShown ? 1 : 0)
                     .allowsHitTesting(slot.isShown)
                     .accessibilityHidden(!slot.isShown)

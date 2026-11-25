@@ -378,6 +378,13 @@ extension Gate1AppModel {
         if momentVoiceIsOpenInLog { recordMarginVoiceEvent("stop", player: "moment") }
     }
 
+    /// The Margin moment is being ended (`endMarginMoment`): its voice's stop is logged, and a hear-it-land playback that
+    /// never reported its end is forgotten, so it can't leave its card line behind (#4713).
+    func recordMarginMomentEnded() {
+        recordMarginMomentVoiceEnded()
+        hearItLandPlaybackCancelled()
+    }
+
     /// The log's last moment entry is a start with no stop after it.
     private var momentVoiceIsOpenInLog: Bool {
         let events = diagnostics["marginVoice.events"]?.components(separatedBy: " | ") ?? []
@@ -449,10 +456,12 @@ extension Gate1AppModel: MarginVoicePlayerHost {
     /// A podcast has no later Margins to wait for unless the listener recorded some. An article just resumes.
     private func continueWithLaterMargins(afterOwnMarginID id: String, sessionID: String, skipping recordedOver: Set<String>) {
         guard let store, let itemID = snapshot.itemId, let position = snapshot.currentMediaTimeMs,
-              let played = (try? store.loadInterjections(sessionId: sessionID))?.first(where: { $0.id == id }),
-              played.itemId == itemID,
-              played.isInlineSpokenMargin, played.hasPlace, let playedMs = played.anchor.mediaTimeMs else { return }
-        let spoken = inlineSpokenMargins(itemId: itemID, store: store)
+              let saved = (try? store.loadInterjections(sessionId: sessionID))?.first(where: { $0.id == id }),
+              saved.itemId == itemID else { return }
+        // Compared with `position`, so on the clock of the file playing: a note's Shorter pauses version runs on its own (#4779).
+        let onClock = SpokenNoteCleanClock.onPlayingClock([saved] + inlineSpokenMargins(itemId: itemID, store: store), mediaURL: openSessionMediaURL)
+        let played = onClock[0], spoken = Array(onClock.dropFirst())
+        guard played.isInlineSpokenMargin, played.hasPlace, let playedMs = played.anchor.mediaTimeMs else { return }
         let playedIdentity = Self.marginIdentity(played)
         // The Margin just recorded over this one (#1672) sits at its place; the listener just made it, so it doesn't play next.
         // Only Margins with a place and a time can follow (#4233): a missing time is never read as 0:00.
@@ -508,10 +517,14 @@ extension Gate1AppModel {
     func startMarginMomentIfSpoken(_ interjection: Interjection, store: SQLiteSessionStore) {
         guard interjection.isSpokenItemMargin else { return }
         let clock: MarginMomentClock = snapshot.targetType == TargetType.itemTextTTS.rawValue ? .liveNarration : .media
-        let spoken = spokenItemMargins(itemId: interjection.itemId, store: store)
+        // The moment seeks the source and waits for it on the clock of the file playing: a note's Shorter pauses version
+        // runs on its own, while Margins are saved on the recording's (#4779).
+        let onClock = SpokenNoteCleanClock.onPlayingClock(
+            [interjection] + spokenItemMargins(itemId: interjection.itemId, store: store), mediaURL: openSessionMediaURL)
+        let played = onClock[0], spoken = Array(onClock.dropFirst())
         let text = clock.isNarratedText ? narratedMomentText(itemId: interjection.itemId) : ""
         guard let anchors = MarginMomentPlanner.anchors(
-            played: interjection, among: spoken, clock: clock, targetMediaTimeMs: snapshot.currentMediaTimeMs, text: text
+            played: played, among: spoken, clock: clock, targetMediaTimeMs: snapshot.currentMediaTimeMs, text: text
         ) else { return }
         var voiceURLs: [String: URL] = [:]
         for margin in spoken + [interjection] {
@@ -600,6 +613,7 @@ extension Gate1AppModel {
     /// Tapping a shared Margin in the Timeline plays its moment (#158): a lead-in, their voice, then the item.
     /// Position is the best the app has: a verified or interpolated match, else the sender's own time.
     func playSharedMarginMoment(_ row: SharedMarginRow) {
+        noteCatchUp(.play) // playing a Margin puts the caught-up card away (#4785)
         recordMarginTap(.shared, startSharedMarginMoment(row))
     }
 

@@ -4,7 +4,7 @@ import SwiftUI
 /// The Rules screen (#4046 PR 10b), pushed from the Lists screen's Rules row, or from a list's Rules for this list (then it
 /// shows only that list's rules, and a new rule starts scoped to the list). Rules are in On and Off sections, each with its
 /// sentence, an origin line and a switch. Turning on a skip rule that would skip almost everything is refused with an alert,
-/// and the rule stays off. The Suggested section arrives with PR 12.
+/// and the rule stays off. The Suggested section (PR 12) lists every live suggestion as a card, on the full screen only.
 ///
 /// The model is passed in, not observed, so the screen redraws for the rules and lists it watches, not for every publish of
 /// `Gate1AppModel` (#4028).
@@ -16,7 +16,9 @@ struct RulesScreen: View {
 
     @ObservedObject private var rulesState = ListeningRulesState.shared
     @ObservedObject private var listsState = FollowListsState.shared
+    @ObservedObject private var suggestionsState = RuleSuggestionsState.shared
     @State private var isAdding = false
+    @State private var isTurningOn = false
     @State private var refusal: ListeningRuleScreens.Refusal?
     /// Per rule id, the shows a rule that is on is paused for. Worked out off the main thread from Following's entries.
     @State private var pausedShowTitles: [String: [String]] = [:]
@@ -27,6 +29,20 @@ struct RulesScreen: View {
             pausedShowTitles: pausedShowTitles, onlyList: onlyListID
         )
         return List {
+            if onlyListID == nil, !suggestionsState.suggestions.isEmpty {
+                Section(RuleSuggestionWords.suggestedHeader) {
+                    ForEach(suggestionsState.suggestions) { suggestion in
+                        RuleSuggestionCard(suggestion: suggestion, isBusy: isTurningOn) {
+                            turnOn(suggestion)
+                        } notNow: {
+                            Task { await model.putOffSuggestion(suggestion) }
+                        } never: {
+                            Task { await model.refuseSuggestion(suggestion) }
+                        }
+                        .listRowBackground(Color.clear)
+                    }
+                }
+            }
             if !rulesState.loaded {
                 EmptyView()
             } else if sections.isEmpty {
@@ -61,6 +77,7 @@ struct RulesScreen: View {
         .task {
             await model.reloadListeningRules()
             await model.reloadFollowLists()
+            if onlyListID == nil { await model.reloadRuleSuggestions() }
         }
         .task(id: PausedKey(rules: rulesState.rules, revision: rulesState.entriesRevision)) {
             pausedShowTitles = await pausedTitles()
@@ -101,6 +118,17 @@ struct RulesScreen: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("rules.row.\(row.id)")
+    }
+
+    private func turnOn(_ suggestion: RuleSuggestion) {
+        guard !isTurningOn else { return }
+        isTurningOn = true
+        Task {
+            let change = await model.turnOnSuggestion(suggestion)
+            if let refused = change?.refusal { refusal = refused }
+            if change?.isFull == true { refusal = ListeningRuleScreens.fullRefusal }
+            isTurningOn = false
+        }
     }
 
     private func setOn(_ id: String, _ isOn: Bool) {
