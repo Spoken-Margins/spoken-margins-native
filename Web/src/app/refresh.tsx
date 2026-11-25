@@ -4,6 +4,7 @@
 // logic/refresh.ts; this file only decides when to run and keeps what the Following tab shows.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useData } from './data.tsx';
+import { followedShows, refreshable } from './logic/follow-state.ts';
 import { dueShows, lastRefreshedAt, refreshResultLine, runRefresh, type RefreshOutcome } from './logic/refresh.ts';
 import { NeedsRelayConsent } from './ports.ts';
 import { RELAY_ORIGIN, services } from './services.ts';
@@ -49,7 +50,8 @@ export function FeedRefreshProvider({ children }: { children: ReactNode }) {
         return;
       }
       const now = Date.now();
-      const candidates = options.only ? current.shows.filter((s) => options.only?.has(s.id)) : current.shows;
+      // Unfollowed shows are never read (#4426).
+      const candidates = (options.only ? current.shows.filter((s) => options.only?.has(s.id)) : current.shows).filter(refreshable);
       const shows = dueShows(candidates, attempts.current, now, { force: trigger === 'listener' || options.force === true });
       if (shows.length === 0) return;
       running.current = true;
@@ -117,9 +119,10 @@ export function FeedRefreshProvider({ children }: { children: ReactNode }) {
     if (relayAllowed && skippedRef.current.size > 0) void run('auto', { only: skippedRef.current, relayAllowed: true, force: true });
   }, [relayAllowed, run]);
 
-  const followed = new Set(data.shows.map((s) => s.id));
+  const followedList = followedShows(data.shows);
+  const followed = new Set(followedList.map((s) => s.id));
   const needsRelay = relayAllowed ? 0 : [...skipped].filter((id) => followed.has(id)).length;
-  const lastCheckedAt = lastRefreshedAt(data.shows);
+  const lastCheckedAt = lastRefreshedAt(followedList);
   const api = useMemo<RefreshApi>(
     () => ({ checking, lastCheckedAt, needsRelay, relayAvailable: RELAY_ORIGIN !== '', refresh, allowRelay }),
     [checking, lastCheckedAt, needsRelay, refresh, allowRelay],

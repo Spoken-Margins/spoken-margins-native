@@ -56,14 +56,6 @@ export function mirrorPosition(storage: MirrorStorage | undefined, position: Pla
   writeMirror(storage, rows);
 }
 
-/** Unfollowing resets an episode's place, so its mirrored copy goes too, or a re-follow would bring it back. */
-export function forgetMirrored(storage: MirrorStorage | undefined, episodeIds: Iterable<string>): void {
-  const rows = readMirror(storage);
-  let changed = false;
-  for (const id of episodeIds) changed = rows.delete(id) || changed;
-  if (changed) writeMirror(storage, rows);
-}
-
 /**
  * The places to use at load: what IndexedDB holds, with any mirrored place that is newer, or for an episode IndexedDB
  * has no place for. `written` is what must go back into IndexedDB. A place for an episode that is no longer in the
