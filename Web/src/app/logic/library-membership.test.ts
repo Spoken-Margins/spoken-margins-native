@@ -280,3 +280,28 @@ test('prepareLibrary keep pass leaves an out row alone', () => {
   assert.deepEqual(prepared.rows, []);
   assert.equal(inLibrary('a', prepared.library), false);
 });
+
+test('#4426: the move leaves an unfollowed show’s episodes alone, except one with a Margin, which goes in', () => {
+  const unfollowed: Show = { id: FEED, kind: 'podcast', title: 'Gone', feedUrl: 'https://feeds.test/lemonade.rss', followedAt: NOW, unfollowedAt: LATER };
+  const episodes = [episode('untouched'), episode('placed'), episode('margined')];
+  for (const libraryModel of ['', 'added'] as const) {
+    const result = prepareLibrary(
+      { shows: [unfollowed], episodes, margins: [margin('margined')], positions: [place('placed', 40)], library: {}, settings: settings(libraryModel) },
+      NOW,
+    );
+    assert.deepEqual(Object.keys(result.library), ['margined'], libraryModel);
+    assert.deepEqual(libraryModel === '' ? result.movedOut : [], [], 'nothing of an unfollowed show is moved out');
+  }
+});
+
+test('#4426: followsAShow ignores an unfollowed show; libraryEpisodes and stillMovedOut drop its episodes before migration', () => {
+  const gone: Show = { id: FEED, kind: 'podcast', title: 'Gone', feedUrl: 'https://feeds.test/x.rss', followedAt: NOW, unfollowedAt: LATER };
+  const kept: Show = { id: 'feed:kept', kind: 'podcast', title: 'Kept', feedUrl: 'https://feeds.test/k.rss', followedAt: NOW };
+  assert.equal(followsAShow([gone]), false);
+  assert.equal(followsAShow([gone, kept]), true);
+  const episodes = [episode('a'), episode('k', 'feed:kept')];
+  assert.deepEqual(libraryEpisodes(episodes, {}, false, [gone, kept]).map((e) => e.id), ['k']);
+  // Once migrated, membership alone decides, whatever the show.
+  assert.deepEqual(libraryEpisodes(episodes, { a: { in: true, at: NOW } }, true, [gone, kept]).map((e) => e.id), ['a']);
+  assert.deepEqual(stillMovedOut(['a', 'k'], episodes, {}, [gone, kept]), ['k']);
+});

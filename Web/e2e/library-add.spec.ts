@@ -120,10 +120,12 @@ test('first run: Following adds nothing, Add and a play put episodes in the Libr
   await page.reload();
   await expect(libraryTitles(page)).toHaveText([EP3, EP2]);
 
-  // Unfollowing says how many episodes leave the Library.
+  // Unfollowing keeps what was added (#4426), and says so.
   await openShow(page);
   await page.getByRole('button', { name: 'Unfollow' }).click();
-  await expect(page.getByText(`Unfollowed ${SHOW}. 2 episodes leave your Library. Its Margins stay in the Margins tab.`)).toBeVisible();
+  await expect(page.getByText(`Unfollowed ${SHOW}. What you added to your Library stays there.`)).toBeVisible();
+  await tab(page, 'Library');
+  await expect(libraryTitles(page)).toHaveText([EP3, EP2]);
 });
 
 test('a store from before: A, B and D stay, C moves out, and the notice offers it back', async ({ page }, info) => {
