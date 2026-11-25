@@ -36,8 +36,6 @@ protocol EpisodeMapPreparerHost: AnyObject {
     func recordEpisodeMapDiagnostic(_ key: String, _ value: String)
     /// Heat and Low Power Mode, read before a run and every `heatCheckInterval` while it works (#2092).
     func episodeMapDeviceConditions() -> SpeechEngineConditions
-    /// The phone transcribed the episode for its map: the opt-in community upload hook sees the transcript here.
-    func episodeMapTranscribed(itemId: String, timeline: TranscriptTimeline, store: SQLiteSessionStore)
 
     func episodeMapWarn(_ message: String)
     func episodeMapSucceeded(_ message: String)
@@ -361,7 +359,6 @@ final class EpisodeMapPreparer {
                    !publisherChapters.isEmpty {
                     timeline.chapters = publisherChapters
                 }
-                host.episodeMapTranscribed(itemId: item.id, timeline: timeline, store: store)
 
                 job.stage = .generatePhraseSketch
                 try await self.saveJob(job, store: store)
