@@ -1254,6 +1254,43 @@ class TrunkT3PickTests(unittest.TestCase):
         ancestor.assert_called_once_with(self.older, 'c' * 40)
 
 
+class NoTestsBuildTests(unittest.TestCase):
+    """--no-tests (the owner's Desktop shortcut, 2026-11-25): builds the exact commit here, asks main-t3 nothing."""
+
+    def setUp(self):
+        self.module = load_phone_build()
+        self.phone = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.phone)
+
+    def run_take(self, guard=None):
+        module = self.module
+        args = unittest.mock.Mock(source='hosted', commit=None, if_changed=False, no_tests=True)
+        with unittest.mock.patch.dict(os.environ, {'SM_PHONE_DIR': str(self.phone)}), \
+                unittest.mock.patch.object(module, 'guard_reason', return_value=guard), \
+                unittest.mock.patch.object(module, 't3_pick') as pick, \
+                unittest.mock.patch.object(module, 'take_hosted') as hosted, \
+                unittest.mock.patch.object(module, 'build', return_value=0) as build:
+            code = module.take_or_build(args, 'a' * 40, 'a' * 40)
+        return code, pick, hosted, build
+
+    def test_builds_the_tip_here_with_no_main_t3_gate_even_when_the_source_is_hosted(self):
+        code, pick, hosted, build = self.run_take()
+        self.assertEqual(code, 0)
+        build.assert_called_once_with('a' * 40, no_tests=True)
+        pick.assert_not_called()
+        hosted.assert_not_called()
+
+    def test_the_disk_and_memory_guard_still_applies(self):
+        code, pick, hosted, build = self.run_take(guard='free disk is 3.0 GB')
+        self.assertEqual(code, self.module.EXIT_SKIPPED)
+        build.assert_not_called()
+
+    def test_the_build_record_says_no_tests_ran(self):
+        self.assertIn('NO TESTS RUN', self.module.NO_TESTS_CHECKS)
+        source = (SCRIPTS / 'phone-build').read_text()
+        self.assertIn('checks = NO_TESTS_CHECKS if no_tests else runner_tested(sha)', source)
+
+
 class NearestSlowResultTests(unittest.TestCase):
     """#5145: the newest main-slow pass or failure in a commit's history, the commit itself first."""
 
