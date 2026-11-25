@@ -138,7 +138,7 @@ extension Gate1AppModel {
         // by itself, so no new publisher page is read for it (#4640, the 2026-10-21 rule).
         Task { @MainActor [weak self] in
             guard let self else { return }
-            hangTelemetry.labels.scoped("playQueueAdvance") { startItem(id: next, trigger: .queueAdvance) }
+            hangTelemetry.labels.scoped("playQueueAdvance") { _ = startItem(id: next, trigger: .queueAdvance) }
         }
     }
 }

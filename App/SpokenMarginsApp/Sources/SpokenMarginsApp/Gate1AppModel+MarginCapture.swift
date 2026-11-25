@@ -222,6 +222,7 @@ extension Gate1AppModel {
             return
         }
         guard !recordingNavigationIsLocked, handOffPlayingMarginToRecording() else { return }
+        noteCatchUp(.recordingStarted) // "Your Margin is saved" takes the caught-up card's slot (#4785)
         suggestSharedMarginReply()
         let voiceCaptureRequestID = marginCapture.beginVoiceRequest()
         AppHaptics.play(.started)
@@ -499,6 +500,7 @@ extension Gate1AppModel {
             marginCapture.clearPermissionDenied()
             snapshot = engine.snapshot
             marginCapture.openDraft(makeWrittenMarginDraft(for: capture, store: store, replyChoice: MarginReplyChoice(suggested: reply)))
+            noteCatchUp(.recordingStarted) // a written Margin puts the caught-up card away, as a spoken one does (#4785)
             clearRecordingPresentation()
         } catch {
             streamingSpeechQueue.resumeAfterInterjection()

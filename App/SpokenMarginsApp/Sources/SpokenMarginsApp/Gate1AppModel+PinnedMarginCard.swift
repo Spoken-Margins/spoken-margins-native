@@ -77,6 +77,8 @@ extension Gate1AppModel {
         // A friend's Margin the listener went to that is never read aloud: its words, while the source is still near it (#4934).
         if let landing = shownSilentMarginLanding { return landing.card(noun: sourceNoun) }
         if let saved = friendAnswerSavedCard ?? hearItLandWrittenCard { return saved }
+        // After a catch-up run, the card that says no answer is owed, ahead of any heard Margin still ahead (#4785).
+        if let caughtUp = caughtUpCard { return caughtUp }
         // Auto-play off still holds the slot: Next Margin is reachable between Margins and the title never moves.
         guard let next = nextSharedMargin else { return friendLastMarginCard }
         let remaining = next.mediaTimeMs.flatMap { ms in snapshot.currentMediaTimeMs.map { max(0, ms - $0) } }
@@ -162,7 +164,7 @@ extension Gate1AppModel {
         case .seekToLeadIn(let ms) where marginMoment != nil:
             // A review's episode plays on between Margins and nothing hops ahead by itself: this tap is the hop. The
             // review's own Margin plays when the episode reaches it, so nothing is marked or dismissed here.
-            marginMomentConductor?.sourceMoved()
+            listenerMovedSource()
             seekMedia(toMediaTimeMs: ms)
         case .seekToLeadIn(let ms):
             // An announced Margin is not offered when the episode crosses it again, so give it back first: the lead-in

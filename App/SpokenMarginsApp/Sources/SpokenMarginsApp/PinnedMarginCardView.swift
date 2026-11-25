@@ -8,6 +8,7 @@ import SessionKit
 struct PinnedMarginCardView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @State private var playbackTick = 0 // bumped by each progress tick: the countdown follows the playhead (#2074)
+    @State private var caughtUpShare: PlainTextShare? // "Let Cole know" on the caught-up card (#4785)
 
     private var moment: MarginMomentSequence? { model.marginMoment }
     private var isReview: Bool { moment?.isReview == true }
@@ -24,6 +25,8 @@ struct PinnedMarginCardView: View {
             }
         }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
+        // Sending or cancelling leaves the caught-up card up; only Dismiss or moving on puts it away (#4785).
+        .trackedSheet(item: $caughtUpShare) { PlainTextShareSheet(text: $0.text) }
         // A Margin that waits for a tap, or could not play, appears at the top of Now while VoiceOver's focus is elsewhere:
         // say so once, when the card enters that stage or another Margin replaces it (#3728). `VoiceOverAnnouncements`
         // decides; the stages that play aloud, and a guided Margin's 420 ms beat, stay silent. The key carries the Margin's
@@ -96,6 +99,9 @@ struct PinnedMarginCardView: View {
         case .dismiss: model.skipPendingImportedCommentary()
         case .dismissSilentMargin: model.dismissSilentMarginLanding()
         case .startEarlier: model.startMarginEarlier()
+        case .letFriendKnow:
+            if case .caughtUp(_, _, let text) = model.pinnedMarginCard?.stage { caughtUpShare = PlainTextShare(text: text) }
+        case .dismissCaughtUp: model.noteCatchUp(.dismissed)
         }
     }
 
@@ -226,12 +232,13 @@ struct PinnedMarginCardBody: View {
         case .failed: "exclamationmark.triangle"
         case .comingUp, .waitingForTap, .silentHere, .upNext: "text.bubble"
         case .answerSaved, .savedHere: "checkmark.circle"
-        case .lastMargin: "text.bubble"
+        case .lastMargin, .caughtUp: "text.bubble"
         }
     }
 
     /// The identifiers a review's UI tests already look for, kept on the same words.
     private var headlineIdentifier: String {
+        if case .caughtUp = card.stage { return "pinnedCard.caughtUp" }
         guard isReview else { return "marginCard.headline" }
         if case .comingUp = card.stage { return "review.comingUp" }
         if card.stage == .speaking || card.stage == .reading || card.stage == .voicePaused { return "review.playing" }
@@ -298,6 +305,8 @@ struct PinnedMarginCardBody: View {
         case .dismiss: "importedCommentary.dismiss"
         case .dismissSilentMargin: "marginCard.silent.dismiss"
         case .startEarlier: "marginCard.startEarlier"
+        case .letFriendKnow: "pinnedCard.letFriendKnow"
+        case .dismissCaughtUp: "pinnedCard.dismissCaughtUp"
         }
     }
 
@@ -307,8 +316,9 @@ struct PinnedMarginCardBody: View {
         case .skipThisMargin: "forward.end.fill"
         case .retry: "arrow.clockwise"
         case .playMomentNow, .listen: "play.fill"
-        case .keepListening, .stopReview, .stopPlayingMine, .dismiss, .dismissSilentMargin: "xmark"
+        case .keepListening, .stopReview, .stopPlayingMine, .dismiss, .dismissSilentMargin, .dismissCaughtUp: "xmark"
         case .startEarlier: "gobackward.60"
+        case .letFriendKnow: "square.and.arrow.up"
         }
     }
 }

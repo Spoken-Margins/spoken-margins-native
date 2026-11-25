@@ -60,7 +60,9 @@ extension Gate1AppModel {
         }
         conductor.onVoiceUnavailable = { [weak self] (marginId: String, reason: String) in
             self?.diagnostics["marginMoment.voiceUnavailable"] = "\(marginId):\(reason)"
-            self?.reportWarning("That Margin's recording couldn't play, so listening continues.")
+            // A catch-up run ends paused, so it never says listening continues (#4785).
+            self?.reportWarning(self?.catchUp?.run.isRunning == true
+                ? "That Margin's recording couldn't play." : "That Margin's recording couldn't play, so listening continues.")
         }
     }
 

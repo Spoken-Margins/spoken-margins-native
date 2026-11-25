@@ -613,6 +613,7 @@ extension Gate1AppModel {
     /// Tapping a shared Margin in the Timeline plays its moment (#158): a lead-in, their voice, then the item.
     /// Position is the best the app has: a verified or interpolated match, else the sender's own time.
     func playSharedMarginMoment(_ row: SharedMarginRow) {
+        noteCatchUp(.play) // playing a Margin puts the caught-up card away (#4785)
         recordMarginTap(.shared, startSharedMarginMoment(row))
     }
 

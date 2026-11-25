@@ -624,7 +624,9 @@ struct ExperienceItemDetailScreen: View {
             // Friend Margins ahead of the place play in place as the episode reaches them (#3219).
             model.continueListening(itemId: itemId, surface: .itemScreen) { pendingNewMarginsOffer = $0 }
         case .reviewNewMargins(let thenContinue):
-            model.reviewNewMargins(itemId: itemId, thenContinue: thenContinue, entries: thenContinue ? behind : nil)
+            // In catch-up the big button plays only what is new and pauses after it (#4785).
+            model.reviewNewMargins(
+                itemId: itemId, thenContinue: thenContinue, entries: thenContinue ? behind : nil, catchUp: catchUp != nil)
         case .continueWithout:
             model.continueWithoutNewMargins(NewMarginsOfferRequest(itemId: itemId, entries: behind))
         case .startFromBeginning:
@@ -638,14 +640,26 @@ struct ExperienceItemDetailScreen: View {
 
     /// The start controls for this item: today's single button, or the two choices when a friend's Margins wait (#3219).
     private var listeningChoices: ItemListeningChoices {
-        ItemListeningChoices(
+        let catchUp = catchUp
+        return ItemListeningChoices(
             unheardFriendMargins: newSharedMargins.map(\.waitingMargin),
             marginsBehindPlace: marginsBehindPlace.map(\.waitingMargin),
             placeIsAtEnd: model.selectedItemSavedPlaceIsAtEnd(),
             hasFinishedSession: hasFinishedSession,
             hasContinuationSession: model.selectedItemPreferredContinuationSession != nil,
-            isPreparingAudio: [.waiting, .preparing].contains(model.selectedItemStartupAudioState)
+            isPreparingAudio: [.waiting, .preparing].contains(model.selectedItemStartupAudioState),
+            catchUp: catchUp,
+            resumesShortOfEnd: catchUp != nil && model.selectedItemCatchUpResumesARelisten(),
+            ownParentDurationsMs: catchUp.map { model.catchUpOwnParentLengthsMs($0) } ?? []
         )
+    }
+
+    /// Catch-up (#4785): the item is finished (the Library row's `isCompleted`, which is `ItemFinishedRule.isFinished`)
+    /// and a new Margin answers one of the listener's own. Built from the same list as the intro's "Replies from" line,
+    /// so the two can never disagree, with no read of its own.
+    private var catchUp: ConversationCatchUp? {
+        let finished = model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.isCompleted ?? false
+        return ConversationCatchUp.make(isFinished: finished, waiting: newSharedMargins.map(\.waitingMargin))
     }
 
     @ViewBuilder

@@ -51,6 +51,8 @@ struct InterjectionSharingState {
     var draftFilter: ShareMarginDraftFilter = .all
     /// "Share replies with Ana" when the sheet was opened to share replies back (#3221, #3906); nil for an ordinary share.
     var replyBackTitle: String?
+    /// "These arrive marked new, so Ana can hear just them." under the replies heading (#4785); nil otherwise.
+    var replyBackCaption: String?
     var autoCleanSelectedEnabled = ShareAutoCleanPreference.isEnabled
     var needsAutoCleanDecision = !ShareAutoCleanPreference.hasRecordedDecision
     var automaticallyCleanedDraftIDs: Set<String> = []

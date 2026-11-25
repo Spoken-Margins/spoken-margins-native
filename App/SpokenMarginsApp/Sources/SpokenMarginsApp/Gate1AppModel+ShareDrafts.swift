@@ -87,6 +87,7 @@ extension Gate1AppModel {
         let hasStarredCandidates = replyBack == nil && candidates.contains { $0.isStarredForSharing == true }
         sharingState = InterjectionSharingState(isPreparing: true)
         sharingState.replyBackTitle = replyBack?.title
+        sharingState.replyBackCaption = replyBack?.caption
         sharingState.openedFrom = ShareSelectionDiagnostics.opened(
             isReplyBack: replyBack != nil, isSingleMargin: isSingleMargin, hasStarredCandidates: hasStarredCandidates)
         sharingState.draftFilter = hasStarredCandidates ? .starred : .all
