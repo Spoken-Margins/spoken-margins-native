@@ -73,7 +73,7 @@ test('a share link for an Apple Podcasts episode with only its page plays that e
   const arrival = page.getByTestId('arrival');
   await expect(arrival.getByRole('heading', { name: TITLE })).toBeVisible();
   await expect(arrival.getByText('2 Margins', { exact: false })).toBeVisible();
-  await expect(arrival.getByText('no audio the browser can play')).toHaveCount(0);
+  await expect(page.getByTestId('arrival-listen')).toHaveCount(0);
   await expect(arrival.getByRole('button', START)).toBeEnabled();
   expect(asked).toEqual(['https://itunes.apple.com/lookup?id=1445582279&entity=podcastEpisode&limit=200']);
   for (const request of log.filter((r) => r.url().includes('apple.com'))) {
@@ -101,12 +101,12 @@ test('an Apple Podcasts episode that Apple does not list says it cannot play her
   // Another episode with the same title and a re-upload's id: never matched by title.
   await appleLookup(page, [episode({ trackId: 1000427709999 })]);
   await page.goto(LINK);
-  const arrival = page.getByTestId('arrival');
-  await expect(arrival.getByRole('heading', { name: TITLE })).toBeVisible();
-  await expect(arrival.getByText('no audio the browser can play', { exact: false })).toBeVisible();
-  await expect(arrival.getByText('Spoken Margins app on iPhone', { exact: false })).toBeVisible();
-  await expect(arrival.getByRole('button', { name: /^Keep .* Margins$/ })).toBeVisible();
-  await expect(arrival.getByRole('button', START)).toHaveCount(0);
+  // The listen-here card (#5265): the Margins play here, and the next step is the iPhone app.
+  const listen = page.getByTestId('arrival-listen');
+  await expect(listen.getByRole('heading', { name: TITLE })).toBeVisible();
+  await expect(listen.getByRole('link', { name: 'Get Spoken Margins for iPhone' })).toBeVisible();
+  await expect(listen.getByRole('button', { name: /^Hear .* Margins$/ })).toBeVisible();
+  await expect(listen.getByRole('button', START)).toHaveCount(0);
 });
 
 test('when Apple does not answer, Play asks again and says so plainly, never that the post has no voice', async ({ page }) => {
@@ -159,7 +159,7 @@ test('an Apple episode the lookup does not list plays from the show\'s feed, mat
   await page.goto(OUTSIDE_LINK);
   const arrival = page.getByTestId('arrival');
   await expect(arrival.getByRole('heading', { name: OUTSIDE_TITLE })).toBeVisible();
-  await expect(arrival.getByText('no audio the browser can play')).toHaveCount(0);
+  await expect(page.getByTestId('arrival-listen')).toHaveCount(0);
   await expect(arrival.getByRole('button', START)).toBeEnabled();
   await arrival.getByRole('button', START).click();
   await expect(page.getByRole('dialog', { name: OUTSIDE_TITLE })).toBeVisible();
@@ -177,7 +177,7 @@ test('when the feed refuses browsers, Play asks once to read it through the serv
   await page.goto(OUTSIDE_LINK);
   const arrival = page.getByTestId('arrival');
   await expect(arrival.getByRole('button', START)).toBeEnabled();
-  await expect(arrival.getByText('no audio the browser can play')).toHaveCount(0);
+  await expect(page.getByTestId('arrival-listen')).toHaveCount(0);
   await arrival.getByRole('button', START).click();
   const ask = page.getByRole('dialog', { name: 'Read this feed through our server?' });
   await expect(ask).toBeVisible();
@@ -194,8 +194,7 @@ test('two episodes in the feed with the packet\'s title are never guessed betwee
   const twin = REAL_FEED.replace('</channel>', `<item><title>People, Parks and Policy with RFF’s Margaret Walls</title><guid>twin</guid><enclosure type="audio/mpeg" url="https://feeds.soundcloud.com/stream/1-twin.mp3" length="1"/></item></channel>`);
   await outsideLookupPage(page, 'readable', twin);
   await page.goto(OUTSIDE_LINK);
-  const arrival = page.getByTestId('arrival');
-  await expect(arrival.getByRole('heading', { name: OUTSIDE_TITLE })).toBeVisible();
-  await expect(arrival.getByText('no audio the browser can play', { exact: false })).toBeVisible();
-  await expect(arrival.getByRole('button', START)).toHaveCount(0);
+  const listen = page.getByTestId('arrival-listen');
+  await expect(listen.getByRole('heading', { name: OUTSIDE_TITLE })).toBeVisible();
+  await expect(listen.getByRole('button', START)).toHaveCount(0);
 });

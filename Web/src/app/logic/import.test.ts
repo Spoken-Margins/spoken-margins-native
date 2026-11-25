@@ -22,7 +22,7 @@ function margin(id: string, at: number): Margin {
 }
 
 function read(episode: PacketRead['episode'], extra: Partial<PacketRead> = {}): PacketRead {
-  return { contentDigest: 'd'.repeat(64), episode, margins: [margin('b', 40), margin('a', 12.5)], textMarginCount: 0, percentMargins: [], ...extra };
+  return { contentDigest: 'd'.repeat(64), episode, margins: [margin('b', 40), margin('a', 12.5)], textMarginCount: 0, percentMargins: [], pageMargins: [], ...extra };
 }
 
 test('the listener’s own copy is found by guid, then audio address, then page', () => {
@@ -74,12 +74,12 @@ test('no sender, no identity: still one show, and an id from the file', () => {
 
 test('the summary counts what was placed and names what wasn’t', () => {
   const placed = placeImport(read({ title: 'Ep', guid: 'g-1' }, { textMarginCount: 1 }), [show], [mine]);
-  assert.equal(importSummary(placed, 'Ada'), 'Opened 2 Margins from Ada on “Episode 1”. 1 Margin is on an article’s text, which the web app can’t open yet.');
+  assert.equal(importSummary(placed, 'Ada'), 'Opened 2 Margins from Ada on “Episode 1”. 1 Margin is on the article’s words. Open the file in Spoken Margins on iPhone to hear them in place.');
   const one = placeImport(read({ title: 'Ep', guid: 'g-1' }, { margins: [margin('a', 1)] }), [show], [mine]);
   assert.equal(importSummary(one, undefined), 'Opened 1 Margin on “Episode 1”.');
   const none = placeImport(read({ title: 'Ep' }, { margins: [], textMarginCount: 3 }), [], []);
   assert.equal(none.landAt, undefined);
-  assert.equal(importSummary(none, undefined), 'This file has no Margins the web app can place. 3 Margins are on an article’s text, which the web app can’t open yet.');
+  assert.equal(importSummary(none, undefined), 'This file has no Margins the web app can place. 3 Margins are on the article’s words. Open the file in Spoken Margins on iPhone to hear them in place.');
 });
 
 test('opening a backup of Margins already here adds none of them again', () => {
@@ -261,7 +261,10 @@ test('an opened packet keeps its article Margins to place later, aimed at its ep
 test('a Margin file opens no voice, so its article Margins are still counted as unopened', () => {
   const packet = read({ title: 'A post', pageUrl: 'https://writer.substack.com/p/a-post' }, { margins: [], textMarginCount: 3, percentMargins: [pct('a', 10), pct('b', 20)] });
   const placed = placeImport(packet, [], []);
-  assert.match(importSummary(placed, 'Cole'), /3 Margins are on an article’s text, which the web app can’t open yet\./);
+  assert.match(importSummary(placed, 'Cole'), /3 Margins are on the article’s words\. Open the file in Spoken Margins on iPhone to hear them in place\./);
+  // The noun follows what the Margins sit on (#5265).
+  assert.match(importSummary(placed, 'Cole', 'PDF'), /3 Margins are on the PDF’s words\./);
+  assert.doesNotMatch(importSummary(placed, 'Cole', 'book'), /can’t/);
 });
 
 // #4783: a page-only Apple episode kept before its audio was known takes the audio the packet now carries.

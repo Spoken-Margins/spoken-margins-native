@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type { Margin, PercentMargin } from '../../shared/model.ts';
 import type { PacketRead } from '../ports.ts';
 import { messageForOpened } from '../play-check.ts';
-import { ARRIVAL_WORDS } from './arrival.ts';
+import { kindWords } from './arrival-card.ts';
 import { attemptToast, attemptWithoutAudio, libraryVoiceTag } from './episode-voice-words.ts';
 import { MESSAGES } from './messages.ts';
 import { episodeVoice, playability } from './playability.ts';
@@ -135,7 +135,8 @@ test('a page that is not a Substack post is never told "no voice" (the #4767 cla
 });
 
 test('the no-audio words point to the app, on the card and in the toast', () => {
-  assert.match(ARRIVAL_WORDS.noEpisodeAudio('Cole'), /Spoken Margins app on iPhone/);
+  // The card for an episode with no audio is the listen-here card now (#5265); its next step names the iPhone app.
+  assert.match(kindWords('episode', 'Cole', 'link', false).nextStep, /Spoken Margins on iPhone/);
   assert.match(MESSAGES.noWebAudio, /Spoken Margins app on iPhone/);
 });
 

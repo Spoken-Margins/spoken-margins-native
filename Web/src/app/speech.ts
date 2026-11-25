@@ -162,3 +162,85 @@ export function readWrittenMargin(intro: string, words: string, hooks: { onStart
     },
   };
 }
+
+/** How long a line the voice was asked to say may wait to begin before it is passed over (#5265). */
+export const LINE_START_MS = 2000;
+
+/**
+ * Says one line in this browser's voice with no tone: the words of the source before a friend's Margin (#5265). `onEnd`
+ * fires once, when the line finishes, fails, is cancelled, or hasn't begun within `LINE_START_MS` (its words are on screen
+ * already, so a voice that never starts only skips it). Returns undefined, and calls nothing, where there is no voice.
+ */
+export function speakLine(text: string, hooks: { onEnd(): void }): Reading | undefined {
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
+  if (!synth || typeof SpeechSynthesisUtterance === 'undefined' || !text.trim()) return undefined;
+  let live = true;
+  let started = false;
+  let paused = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const end = () => {
+    if (!live) return;
+    live = false;
+    clearTimeout(timer);
+    hooks.onEnd();
+  };
+  const stop = () => {
+    try {
+      if (started || synth.speaking || synth.pending) synth.cancel();
+    } catch {
+      // Nothing to stop.
+    }
+  };
+  const utterance = new SpeechSynthesisUtterance(text);
+  // Held here, so Chrome can't collect it before `onend` (as `readWrittenMargin` holds its own).
+  const giveUp = (ms: number) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      stop();
+      end();
+    }, ms);
+  };
+  utterance.onstart = () => {
+    started = true;
+    if (live && !paused) giveUp(8000 + text.length * 120);
+  };
+  utterance.onend = end;
+  utterance.onerror = end;
+  giveUp(LINE_START_MS);
+  try {
+    synth.speak(utterance);
+  } catch {
+    end();
+  }
+  return {
+    cancel() {
+      if (!live) return;
+      stop();
+      end();
+    },
+    pause() {
+      if (!live || paused) return;
+      paused = true;
+      clearTimeout(timer);
+      try {
+        synth.pause();
+      } catch {
+        // Handled below.
+      }
+      if (synth.paused) return;
+      stop();
+      end();
+    },
+    resume() {
+      if (!live || !paused) return;
+      paused = false;
+      giveUp(started ? 8000 + text.length * 120 : LINE_START_MS);
+      try {
+        synth.resume();
+      } catch {
+        stop();
+        end();
+      }
+    },
+  };
+}
