@@ -2158,9 +2158,8 @@ final class Gate1AppModel: ObservableObject {
             ? playbackRate.map { SpeechRateRule.quarterStepMultiplier($0) }
             : playbackRate
         synchronizeSpeechAnchorForCompactCommand(command, canonicalTransport: canonicalTransportCommands.contains(command))
-        if command == .beginInterjection {
-            streamingSpeechQueue.pauseForInterjection()
-        }
+        if command == .beginInterjection { streamingSpeechQueue.pauseForInterjection() }
+        settleCatchUpPlaceBeforeCompactDispatch(command) // a compact Play gives back a catch-up run's kept place (#5238)
         guard let captureVerdict = verdictForCompactCommand(command) else { return }
         do {
             let result = try gate2CompactControls.dispatch(
