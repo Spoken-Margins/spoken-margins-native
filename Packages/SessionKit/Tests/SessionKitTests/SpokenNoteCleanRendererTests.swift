@@ -114,5 +114,44 @@ final class SpokenNoteCleanRendererTests: XCTestCase {
         let second = try await again.run(requested: [a.0], noteFolder: folder)
         XCTAssertEqual(second, layout)
     }
+
+    // MARK: Without ums (#5342)
+
+    private struct FakeTranscriber: SpokenNoteTranscribing {
+        let segments: [AlignedTranscriptSegment]?
+        func transcribe(fileAt url: URL) async throws -> [AlignedTranscriptSegment] {
+            guard let segments else { throw SessionKitError.persistenceFailed("speech_recognizer_unavailable") }
+            return segments
+        }
+    }
+
+    func testWithoutUmsCutsTheFillerAndThePauseIntoItsOwnFolder() async throws {
+        let a = try take("a", seconds: 4, seed: 2)
+        let words = [
+            AlignedTranscriptSegment(id: "s1", text: "So", startMs: 0, endMs: 500),
+            AlignedTranscriptSegment(id: "s2", text: "um", startMs: 600, endMs: 900),
+            AlignedTranscriptSegment(id: "s3", text: "fine.", startMs: 3_000, endMs: 4_000),
+        ]
+        let pipeline = SpokenNoteCleanPipeline(silentFlags: flags, transcriber: FakeTranscriber(segments: words))
+        let layout = try await pipeline.run(requested: [a.0], noteFolder: folder, version: .withoutUms)
+        let saved = try XCTUnwrap(SpokenNoteCleanFiles.read(
+            SpokenNoteCutFile.self, from: SpokenNoteCleanFiles.cutURL(takeId: "a", inNoteFolder: folder, version: .withoutUms)))
+        XCTAssertEqual(saved.cut.fillersRemoved, 1)
+        XCTAssertEqual(saved.cut.pausesShortened, 1)
+        XCTAssertEqual(saved.cut.removedMs, 380 + 1_500, "the um with the Margins cleanup's padding, and the 2 s pause down to 500 ms")
+        XCTAssertTrue(layout.result.hasAudio)
+        XCTAssertEqual(SpokenNoteCleanFiles.readLayout(inNoteFolder: folder, version: .withoutUms), layout)
+        XCTAssertNil(SpokenNoteCleanFiles.readLayout(inNoteFolder: folder), "Shorter pauses is not made by it")
+    }
+
+    func testWithoutUmsFailsWhenNoTakeCanBeTranscribed() async throws {
+        let a = try take("a", seconds: 4, seed: 3)
+        let pipeline = SpokenNoteCleanPipeline(silentFlags: flags, transcriber: FakeTranscriber(segments: nil))
+        do {
+            _ = try await pipeline.run(requested: [a.0], noteFolder: folder, version: .withoutUms)
+            XCTFail("no take was transcribed, so there is no Without ums version")
+        } catch {}
+        XCTAssertNil(SpokenNoteCleanFiles.readLayout(inNoteFolder: folder, version: .withoutUms))
+    }
 }
 #endif

@@ -3,15 +3,16 @@ import SessionKit
 import SessionKitAudio
 import UIKit
 
-/// Shorter pauses for spoken notes (#4779): the listener's one choice for the app, and the job that makes a note's
-/// version. The job runs off the main actor (`SpokenNoteCleanPipeline`), one note at a time, newest first. When a
+/// Shorter pauses (#4779) and Without ums (#5342) for spoken notes: the listener's one choice for the app, and the job
+/// that makes a note's version. The job runs off the main actor (`SpokenNoteCleanPipeline`), one note at a time, newest first. When a
 /// version is ready and the note is the open session, it moves the note onto that file at the same moment
 /// (`Gate1AppModel.switchSpokenNoteVersion`); a move held by a recording, a skim or the app being in the background
 /// waits and is tried again when that clears. Nothing here plays audio or writes the takes.
 @MainActor
 final class SpokenNoteCleanCoordinator: ObservableObject {
     @Published private(set) var version: SpokenNoteAudioVersion
-    /// By note id, for a note whose version was asked for this launch.
+    /// By version and note id (`key`), for a note whose version was asked for this launch. Shorter pauses and Without
+    /// ums are separate files, so each keeps its own state.
     @Published private(set) var states: [String: SpokenNoteCleanState] = [:]
     /// The note screen records a take: set by that screen, read by the version-change block.
     @Published var takeIsRecording = false
@@ -19,7 +20,7 @@ final class SpokenNoteCleanCoordinator: ObservableObject {
     var routingItemId: String?
 
     private let defaults: UserDefaults
-    private var job: (id: UUID, noteId: String, work: Task<Result<(SpokenNoteCleanLayout, Int), Error>, Never>)?
+    private var job: (id: UUID, noteId: String, version: SpokenNoteAudioVersion, work: Task<Result<(SpokenNoteCleanLayout, Int), Error>, Never>)?
     private var pendingStart: (itemId: String, ms: Int)?
     /// A note waiting for the phone to cool, or for the app to come back after the system stopped its export.
     private var waitingNoteId: String?
@@ -58,8 +59,10 @@ final class SpokenNoteCleanCoordinator: ObservableObject {
 
     /// What the control and Now show for a note.
     func state(noteId: String) -> SpokenNoteCleanState {
-        version == .asRecorded ? .asRecorded : (states[noteId] ?? .untilPlayed)
+        version == .asRecorded ? .asRecorded : (states[Self.key(noteId, version)] ?? .untilPlayed)
     }
+
+    private static func key(_ noteId: String, _ version: SpokenNoteAudioVersion) -> String { "\(version.rawValue)|\(noteId)" }
 
     /// The listener chose a version. Choices made quickly one after another end on the last one: each move re-reads
     /// the choice before it restarts anything.
@@ -73,20 +76,26 @@ final class SpokenNoteCleanCoordinator: ObservableObject {
             cancelJob() // the job stops; what it made so far stays for next time
             waitingNoteId = nil
             if let playingNoteId { requestMove(noteId: playingNoteId) }
-        case .shorterPauses:
-            if let playingNoteId { makeVersion(noteId: playingNoteId) }
+        case .shorterPauses, .withoutUms:
+            if let job, job.version != chosen { cancelJob() } // the other made version's job; what it made stays
+            if let playingNoteId {
+                // Off the other made version at once: the note plays as recorded until this one is ready, as the
+                // caption says, and moves onto it when it is (`finished`). From the recording this changes nothing.
+                requestMove(noteId: playingNoteId)
+                makeVersion(noteId: playingNoteId)
+            }
         }
     }
 
-    /// A note started playing. With Shorter pauses chosen, its version is made (or found made) and moved to.
+    /// A note started playing. With a made version chosen, it is made (or found made) and moved to.
     func notePlaybackStarted(noteId: String) {
-        guard version == .shorterPauses else { return }
-        if case .ready = states[noteId] { return }
+        guard version.isMade else { return }
+        if case .ready = states[Self.key(noteId, version)] { return }
         makeVersion(noteId: noteId)
     }
 
     func tryAgain(noteId: String) {
-        states[noteId] = nil
+        states[Self.key(noteId, version)] = nil
         makeVersion(noteId: noteId)
     }
 
@@ -163,7 +172,7 @@ final class SpokenNoteCleanCoordinator: ObservableObject {
     }
 
     private func resumeWaiting() {
-        guard let noteId = waitingNoteId, version == .shorterPauses else { return }
+        guard let noteId = waitingNoteId, version.isMade else { return }
         if Self.isHot { return }
         if UIApplication.shared.applicationState != .active, app?.snapshot.status.isPlaybackActive != true { return }
         waitingNoteId = nil
@@ -176,22 +185,25 @@ final class SpokenNoteCleanCoordinator: ObservableObject {
     }
 
     private func makeVersion(noteId: String) {
+        let version = version
+        guard version.isMade else { return }
+        let key = Self.key(noteId, version)
         if let running = job {
-            if running.noteId == noteId { return }
+            if running.noteId == noteId, running.version == version { return }
             cancelJob() // newest first; the cancelled job stops at its next step and removes its half-made file
         }
         if Self.isHot {
-            states[noteId] = .hot
+            states[key] = .hot
             waitingNoteId = noteId
             return
         }
         guard let app, let support = try? app.applicationSupportDirectory(),
               let noteStore = SpokenNoteStarter.store(noteId: noteId, in: support) else {
-            states[noteId] = .failed(.other)
+            states[key] = .failed(.other)
             return
         }
         let folder = noteStore.folderURL
-        states[noteId] = .making(fraction: 0)
+        states[key] = .making(fraction: 0)
         let id = UUID()
         // Held here so a cancel reaches the pipeline itself, not a task that only waits on it.
         let work = Task.detached(priority: .utility) { () -> Result<(SpokenNoteCleanLayout, Int), Error> in
@@ -199,28 +211,35 @@ final class SpokenNoteCleanCoordinator: ObservableObject {
                 guard let recorded = SpokenNoteWholePlayback.recordedLayout(inFolder: folder) else {
                     throw SpokenNoteWholePlayback.PrepareError.noAudio
                 }
-                let layout = try await SpokenNoteCleanPipeline().run(requested: recorded.requested, noteFolder: folder) { fraction in
-                    Task { @MainActor in self.progress(jobId: id, noteId: noteId, fraction: fraction) }
+                let layout = try await SpokenNoteCleanPipeline().run(
+                    requested: recorded.requested, noteFolder: folder, version: version
+                ) { fraction in
+                    Task { @MainActor in self.progress(jobId: id, key: key, fraction: fraction) }
                 }
                 return .success((layout, recorded.durationMs))
             } catch {
                 return .failure(error)
             }
         }
-        job = (id, noteId, work)
+        job = (id, noteId, version, work)
         // The coordinator lives as long as the app model, and is main-actor isolated, so the wait holds it plainly.
         Task {
             let outcome = await work.value
-            Self.labels.scoped("spokenNoteClean.finished") { self.finished(jobId: id, noteId: noteId, outcome: outcome) }
+            Self.labels.scoped("spokenNoteClean.finished") {
+                self.finished(jobId: id, noteId: noteId, version: version, outcome: outcome)
+            }
         }
     }
 
-    private func progress(jobId: UUID, noteId: String, fraction: Double) {
-        guard job?.id == jobId, case .making(let shown) = states[noteId], fraction > shown else { return }
-        states[noteId] = .making(fraction: fraction)
+    private func progress(jobId: UUID, key: String, fraction: Double) {
+        guard job?.id == jobId, case .making(let shown) = states[key], fraction > shown else { return }
+        states[key] = .making(fraction: fraction)
     }
 
-    private func finished(jobId: UUID, noteId: String, outcome: Result<(SpokenNoteCleanLayout, Int), Error>) {
+    private func finished(
+        jobId: UUID, noteId: String, version: SpokenNoteAudioVersion, outcome: Result<(SpokenNoteCleanLayout, Int), Error>
+    ) {
+        let key = Self.key(noteId, version)
         guard job?.id == jobId else { return } // a cancelled job's late answer is not this note's state
         job = nil
         switch outcome {
@@ -230,11 +249,11 @@ final class SpokenNoteCleanCoordinator: ObservableObject {
                 waitingNoteId = noteId
                 return
             }
-            states[noteId] = SpokenNoteCleanState.from(result: layout.result, recordedMs: recordedMs, versionMs: layout.durationMs)
-            if layout.result.hasAudio, version == .shorterPauses { requestMove(noteId: noteId) }
+            states[key] = SpokenNoteCleanState.from(result: layout.result, recordedMs: recordedMs, versionMs: layout.durationMs)
+            if layout.result.hasAudio, self.version == version { requestMove(noteId: noteId) }
         case .failure(let error):
-            if error is CancellationError { states[noteId] = nil; return }
-            states[noteId] = .failed(.other)
+            if error is CancellationError { states[key] = nil; return }
+            states[key] = .failed(.other)
         }
     }
 }

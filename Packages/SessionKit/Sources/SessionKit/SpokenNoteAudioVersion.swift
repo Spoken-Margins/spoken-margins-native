@@ -1,10 +1,19 @@
 import Foundation
 
-/// Which recording of a spoken note plays (#4779): the takes as recorded, or the version with long pauses shortened.
-/// One choice for the whole app, kept in UserDefaults, As recorded unless the listener changes it.
+/// Which recording of a spoken note plays (#4779): the takes as recorded, the version with long pauses shortened, or
+/// the version Without ums (#5342), which takes the filler words out with the Margins cleanup and shortens long pauses
+/// too. One choice for the whole app, kept in UserDefaults, As recorded unless the listener changes it. A build before
+/// #5342 reads `without_ums` as nothing stored, so it plays As recorded.
 public enum SpokenNoteAudioVersion: String, CaseIterable, Codable, Equatable, Sendable {
     case asRecorded = "as_recorded"
     case shorterPauses = "shorter_pauses"
+    case withoutUms = "without_ums"
+
+    /// The versions made from the takes, each in its own folder (`SpokenNoteCleanFiles`).
+    public static let madeVersions: [SpokenNoteAudioVersion] = [.shorterPauses, .withoutUms]
+
+    /// Whether this version is made from the takes (anything but As recorded).
+    public var isMade: Bool { self != .asRecorded }
 
     public static let defaultsKey = "spokenNoteAudioVersion"
 
@@ -24,29 +33,36 @@ public enum SpokenNoteAudioVersion: String, CaseIterable, Codable, Equatable, Se
 public enum SpokenNoteCleanClock {
     /// The map between the recording and its version, when the version is made from exactly the recording's takes and
     /// has an audio file.
-    public static func map(inNoteFolder folder: URL, recorded: SpokenNoteWholeAudioLayout) -> SpokenNoteCleanMap? {
-        guard let clean = SpokenNoteCleanFiles.readLayout(inNoteFolder: folder), clean.isCurrent(for: recorded.requested),
-              clean.result.hasAudio, isRegularCleanFile(SpokenNoteCleanFiles.audioURL(inNoteFolder: folder)) else { return nil }
+    public static func map(
+        inNoteFolder folder: URL, recorded: SpokenNoteWholeAudioLayout, version: SpokenNoteAudioVersion = .shorterPauses
+    ) -> SpokenNoteCleanMap? {
+        guard version.isMade, let clean = SpokenNoteCleanFiles.readLayout(inNoteFolder: folder, version: version),
+              clean.isCurrent(for: recorded.requested), clean.result.hasAudio,
+              isRegularCleanFile(SpokenNoteCleanFiles.audioURL(inNoteFolder: folder, version: version)) else { return nil }
         return SpokenNoteCleanMap(placements: clean.placements, recorded: recorded, cleanDurationMs: clean.durationMs)
     }
 
-    /// The map for a media URL that names a note's version (`<note folder>/clean/whole-note.m4a`); nil otherwise.
+    /// The map for a media URL that names a note's version (`<note folder>/clean/whole-note.m4a`, or
+    /// `<note folder>/clean-without-ums/whole-note.m4a`); nil otherwise.
     public static func map(forMediaURL mediaURL: String?) -> SpokenNoteCleanMap? {
-        guard SpokenNoteCleanFiles.namesCleanAudio(mediaURL), let mediaURL else { return nil }
+        guard let version = SpokenNoteCleanFiles.madeVersion(namedBy: mediaURL), let mediaURL else { return nil }
         let url = mediaURL.hasPrefix("/") ? URL(fileURLWithPath: mediaURL) : (URL(string: mediaURL) ?? URL(fileURLWithPath: mediaURL))
         let folder = url.deletingLastPathComponent().deletingLastPathComponent()
-        return cache.map(for: folder)
+        return cache.map(for: folder, version: version)
     }
 
-    /// Whether the note playing `noteMediaURL` (its recording or its version) has a usable Shorter pauses version, so a
-    /// place on it could be on either clock. With none, the recording's is the only clock it has.
+    /// Whether the note playing `noteMediaURL` (its recording or one of its versions) has a usable made version
+    /// (Shorter pauses or Without ums), so a place on it could be on more than one clock. With none, the recording's is
+    /// the only clock it has.
     public static func hasVersion(noteMediaURL: String?) -> Bool {
         guard let noteMediaURL, !noteMediaURL.isEmpty else { return false }
         if SpokenNoteCleanFiles.namesCleanAudio(noteMediaURL) { return map(forMediaURL: noteMediaURL) != nil }
         let isPath = noteMediaURL.hasPrefix("/")
         guard let url = isPath ? URL(fileURLWithPath: noteMediaURL) : URL(string: noteMediaURL) else { return false }
-        let clean = SpokenNoteCleanFiles.audioURL(inNoteFolder: url.deletingLastPathComponent())
-        return map(forMediaURL: isPath ? clean.path : clean.absoluteString) != nil
+        return SpokenNoteAudioVersion.madeVersions.contains { version in
+            let clean = SpokenNoteCleanFiles.audioURL(inNoteFolder: url.deletingLastPathComponent(), version: version)
+            return map(forMediaURL: isPath ? clean.path : clean.absoluteString) != nil
+        }
     }
 
     /// Whether a note's place with no file kept still has a known clock, the recording's: when it came from a player run
@@ -69,7 +85,7 @@ public enum SpokenNoteCleanClock {
     /// Margins with their saved times moved onto the clock of the file at `mediaURL`, for code that compares them with
     /// the playing position or seeks to them (a Margin moment, the Margins that follow it). Saved times stay on the
     /// recording's clock (#4779); this is the one place a list of them is read on the playing clock. Nothing changes,
-    /// and no file is read, unless `mediaURL` names a note's Shorter pauses version.
+    /// and no file is read, unless `mediaURL` names one of a note's made versions.
     public static func onPlayingClock(_ margins: [Interjection], mediaURL: String?) -> [Interjection] {
         moved(margins, by: map(forMediaURL: mediaURL))
     }
@@ -85,31 +101,35 @@ public enum SpokenNoteCleanClock {
         }
     }
 
-    /// Maps by note folder, made again when either layout file changes. Small: one entry a note played this launch.
+    /// Maps by note folder and version, made again when either layout file changes. Small: one entry a note version
+    /// played this launch.
     private static let cache = MapCache()
 
     private final class MapCache: @unchecked Sendable {
         private let lock = NSLock()
         private var entries: [String: (stamp: String, map: SpokenNoteCleanMap?)] = [:]
 
-        func map(for folder: URL) -> SpokenNoteCleanMap? {
-            let stamp = Self.stamp(folder)
+        func map(for folder: URL, version: SpokenNoteAudioVersion) -> SpokenNoteCleanMap? {
+            let stamp = Self.stamp(folder, version: version)
+            let key = "\(version.rawValue)|\(folder.path)"
             lock.lock()
-            if let entry = entries[folder.path], entry.stamp == stamp { lock.unlock(); return entry.map }
+            if let entry = entries[key], entry.stamp == stamp { lock.unlock(); return entry.map }
             lock.unlock()
-            let made = SpokenNoteWholePlayback.recordedLayout(inFolder: folder).flatMap { SpokenNoteCleanClock.map(inNoteFolder: folder, recorded: $0) }
+            let made = SpokenNoteWholePlayback.recordedLayout(inFolder: folder)
+                .flatMap { SpokenNoteCleanClock.map(inNoteFolder: folder, recorded: $0, version: version) }
             lock.lock()
-            entries[folder.path] = (stamp, made)
+            entries[key] = (stamp, made)
             lock.unlock()
             return made
         }
 
-        private static func stamp(_ folder: URL) -> String {
+        private static func stamp(_ folder: URL, version: SpokenNoteAudioVersion) -> String {
             // The version's audio too: a map read between its layout and its audio being written would otherwise
             // stay "no version" until the layout changed.
             [
-                folder.appendingPathComponent(SpokenNoteWholePlayback.layoutFileName), SpokenNoteCleanFiles.layoutURL(inNoteFolder: folder),
-                SpokenNoteCleanFiles.audioURL(inNoteFolder: folder)
+                folder.appendingPathComponent(SpokenNoteWholePlayback.layoutFileName),
+                SpokenNoteCleanFiles.layoutURL(inNoteFolder: folder, version: version),
+                SpokenNoteCleanFiles.audioURL(inNoteFolder: folder, version: version)
             ]
                 .map { url in
                     let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
@@ -148,9 +168,12 @@ public struct SpokenNoteVersionSwitch: Equatable, Sendable {
     let toMap: SpokenNoteCleanMap?
 
     /// The move from `previousMediaURL` (the file attached before) to `newMediaURL` (the file Play just prepared), or nil
-    /// when both name the same version (the session simply carries on). Reads files: never call it on the main thread.
+    /// when both name the same version (the session simply carries on). Shorter pauses and Without ums are different
+    /// files on different clocks, so a move between them is planned like any other. Reads files: never call it on the
+    /// main thread.
     public static func plan(previousMediaURL: String?, newMediaURL: String?) -> SpokenNoteVersionSwitch? {
-        guard SpokenNoteCleanFiles.namesCleanAudio(previousMediaURL) != SpokenNoteCleanFiles.namesCleanAudio(newMediaURL) else { return nil }
+        guard SpokenNoteVersionPlan.attachedVersion(mediaURL: previousMediaURL)
+            != SpokenNoteVersionPlan.attachedVersion(mediaURL: newMediaURL) else { return nil }
         return SpokenNoteVersionSwitch(
             previousMediaURL: previousMediaURL,
             newMediaURL: newMediaURL,
@@ -198,6 +221,6 @@ extension SpokenNoteVersionPlan {
 
     /// The version an item's media URL plays.
     public static func attachedVersion(mediaURL: String?) -> SpokenNoteAudioVersion {
-        SpokenNoteCleanFiles.namesCleanAudio(mediaURL) ? .shorterPauses : .asRecorded
+        SpokenNoteCleanFiles.madeVersion(namedBy: mediaURL) ?? .asRecorded
     }
 }
