@@ -49,6 +49,11 @@ public struct SpokenNoteCleanPipeline: Sendable {
         let totalUnits = readUnits + renderUnits
         var doneUnits = 0.0
 
+        // A take the transcriber couldn't read keeps a pauses-only cut, saved as untranscribed. It is asked again only
+        // while no Without ums file is current for these takes: once one is, making it again would replace the file and
+        // its clock under a note that may be playing it (audit on #5349).
+        let retryUntranscribed = version == .withoutUms
+            && !Self.hasCurrentFile(requested: requested, noteFolder: noteFolder, version: version)
         var takes: [SpokenNoteRenderTake] = []
         var transcriptFailures = 0
         var lastTranscriptError: Error?
@@ -58,10 +63,13 @@ public struct SpokenNoteCleanPipeline: Sendable {
             // Without ums also names the Margins cleanup's policy, so a change there makes its cuts again.
             let takeFingerprint = "\(take.audioFileName)-\(take.durationMs)-rule\(SpokenNoteCleanPolicy.ruleVersion)"
                 + (version == .withoutUms ? "-\(DeterministicInterjectionCleanup.policyVersion)" : "")
+            let untranscribedFingerprint = "\(takeFingerprint)\(Self.untranscribedSuffix)"
             let cutURL = SpokenNoteCleanFiles.cutURL(takeId: take.id, inNoteFolder: noteFolder, version: version)
+            let saved = SpokenNoteCleanFiles.read(SpokenNoteCutFile.self, from: cutURL)
+                .flatMap { $0.cut.ruleVersion == SpokenNoteCleanPolicy.ruleVersion ? $0 : nil }
             let cut: SpokenNoteTakeCut
-            if let saved = SpokenNoteCleanFiles.read(SpokenNoteCutFile.self, from: cutURL), saved.takeFingerprint == takeFingerprint,
-               saved.cut.ruleVersion == SpokenNoteCleanPolicy.ruleVersion {
+            if let saved, saved.takeFingerprint == takeFingerprint
+                || (saved.takeFingerprint == untranscribedFingerprint && !retryUntranscribed) {
                 cut = saved.cut
             } else {
                 let flags = try silentFlags(url)
@@ -72,11 +80,12 @@ public struct SpokenNoteCleanPipeline: Sendable {
                         try SpokenNoteCleanFiles.write(SpokenNoteCutFile(takeFingerprint: takeFingerprint, cut: cut), to: cutURL)
                     } catch {
                         if error is CancellationError || Task.isCancelled { throw CancellationError() }
-                        // A take the transcriber can't read (often one with no speech) still has its pauses shortened.
-                        // Its cut isn't saved, so the next run asks the transcriber again.
+                        // A take the transcriber can't read (often one with no speech) still has its pauses shortened,
+                        // and that cut is saved, marked untranscribed, so a later run doesn't change it under the file.
                         transcriptFailures += 1
                         lastTranscriptError = error
                         cut = SpokenNoteTakeCut.make(words: [], silentFlags: flags.flags, durationMs: flags.durationMs)
+                        try SpokenNoteCleanFiles.write(SpokenNoteCutFile(takeFingerprint: untranscribedFingerprint, cut: cut), to: cutURL)
                     }
                 } else {
                     cut = SpokenNoteTakeCut.make(words: [], silentFlags: flags.flags, durationMs: flags.durationMs)
@@ -95,5 +104,17 @@ public struct SpokenNoteCleanPipeline: Sendable {
         return try await renderer.render(takes: takes, noteFolder: noteFolder, version: version) { fraction in
             report((renderBase + fraction * renderUnits) / totalUnits)
         }
+    }
+
+    static let untranscribedSuffix = "-untranscribed"
+
+    /// Whether the version has an audio file made from exactly these takes under today's rule.
+    static func hasCurrentFile(
+        requested: [SpokenNoteWholeAudioLayout.Requested], noteFolder: URL, version: SpokenNoteAudioVersion
+    ) -> Bool {
+        guard let layout = SpokenNoteCleanFiles.readLayout(inNoteFolder: noteFolder, version: version),
+              layout.isCurrent(for: requested), layout.result.hasAudio else { return false }
+        let audio = SpokenNoteCleanFiles.audioURL(inNoteFolder: noteFolder, version: version)
+        return (try? FileManager.default.attributesOfItem(atPath: audio.path))?[.type] as? FileAttributeType == .typeRegular
     }
 }
