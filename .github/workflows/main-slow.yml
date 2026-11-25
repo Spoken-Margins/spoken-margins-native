@@ -5,12 +5,17 @@
 # green one. A failure opens or updates one "Main slow tests failed on <sha7>" regression issue that names the failing
 # tests, the last green `main-slow` and every merge since it. scripts/main_slow.py has the rules.
 #
-# Cost and catch: one GitHub-hosted Mac run of about 10 minutes (setup, SessionKit build from the shared cache, then
-# about 5 minutes of tests), at most 3 a day and none on a day main does not move. It replaces about 5 minutes of
-# hosted-Mac test time in every Swift merge group and about 2 minutes of Linux time in every merge group. It catches a
-# break in a moved test within a day, with the merges to look at. Waste signal: a red `main-slow` means a moved test
-# still catches things, so it goes back to every PR (delete its line in scripts/slow_tier.py); a slow tier with no
-# test left in it means this workflow can go.
+# Since #5281 the merge queue's Mac job only builds, so this run also holds every Mac test: --plan main-mac runs
+# fast-hosted-sessionkit and fast-mac-rest in full, then the slow tier. A red names the merges since the last green.
+#
+# Cost and catch: one GitHub-hosted Mac run of about 35 minutes (setup, SessionKit build from the shared cache, about
+# 10 minutes of SessionKitCoreTests, 7 of SessionKitTests and the runner tests, 5 of the slow tier), at most 9 a day
+# and none on a tick where main has not moved: up to about 315 Mac-minutes a day. It replaces about 18 Mac-minutes of
+# tests in every Swift merge group (647 merge groups of all kinds in the 72 h to 2026-11-24), and about 5 minutes of hosted-Mac
+# slow-tier time and 2 of Linux time per group. It catches a Mac-only test break (21 SessionKitCoreTests failures on
+# the Mac and not on Linux in the 30 days to 2026-11-24, some of them flakes) within about 3 hours, with the merges
+# to look at. Waste signal: a month of green runs says the Mac tests could go weekly; repeated reds that a merge
+# group would have stopped say they go back to the queue (revert #5281's workflow lines).
 #
 # workflow_dispatch: `force` runs even when the SHA already has a status; `sha` tests an older commit on main.
 name: main-slow
@@ -19,10 +24,10 @@ on:
   schedule:
     # Nightly, at a jittered minute (GitHub delays runs scheduled at :00): 00:47 America/Phoenix.
     - cron: '47 7 * * *'
-    # Before the phone builds at 8:00 and 17:00 Phoenix (UTC-7), ten minutes after main-t3's ticks so the two Mac
-    # runs don't start together. They skip like the nightly when main's head already has a result.
-    - cron: '40 13 * * *'
-    - cron: '40 22 * * *'
+    # Every three hours (#5281: the merge queue runs no Mac tests, so this is where a Mac-only break shows), ten
+    # minutes after main-t3's ticks so the two Mac runs don't start together. 13:40 and 22:40 come before the phone
+    # builds at 8:00 and 17:00 Phoenix (UTC-7). Each skips like the nightly when main's head already has a result.
+    - cron: '40 1-22/3 * * *'
   workflow_dispatch:
     inputs:
       sha:
@@ -158,13 +163,15 @@ jobs:
           sudo killall coreaudiod || true
           sleep 5
           SwitchAudioSource -t output -s "BlackHole 2ch"
-      - name: Run the slow tier
+      # #5281: the merge queue's Mac job builds only, so every Mac test runs here: --plan main-mac is the slow tier
+      # plus fast-hosted-sessionkit and fast-mac-rest in full.
+      - name: Run the Mac tests and the slow tier
         id: run
         env:
           GH_TOKEN: ''
         run: |
           set +e
-          .venv/bin/python scripts/verify-tests.py --plan slow --output "$RUNNER_TEMP/slow-run"
+          .venv/bin/python scripts/verify-tests.py --plan main-mac --output "$RUNNER_TEMP/slow-run"
           echo "code=$?" >> "$GITHUB_OUTPUT"
       - name: Record the result
         id: report

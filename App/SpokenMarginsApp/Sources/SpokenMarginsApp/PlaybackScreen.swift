@@ -311,6 +311,9 @@ struct PlaybackScreen: View {
                 NavigationStack {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 18) {
+                            if let noteId = playingSpokenNoteId {
+                                SpokenNoteAudioVersionControl(clean: model.spokenNoteClean, noteId: noteId, placement: .listeningOptions)
+                            }
                             playbackRateControl
                             mixedAudioControl
                             PlaybackFollowOptionsView()
@@ -755,6 +758,10 @@ struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.showTitle")
             }
 
+            if let noteId = playingSpokenNoteId {
+                SpokenNoteAudioVersionLine(clean: model.spokenNoteClean, noteId: noteId)
+            }
+
             // Whose audio reads the article (#4640): only while the publisher's recording plays it.
             if titleMode.showsSeparateShowLine, !model.selectedItem.isNativeAudio, model.snapshot.itemId == model.selectedItem.id,
                let line = PublisherAudioAttribution.headerLine(
@@ -1174,6 +1181,12 @@ struct PlaybackScreen: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("playback.mixedAudio.control")
         }
+    }
+
+    /// The note behind the item playing on Now, when it is a spoken note (#4779).
+    private var playingSpokenNoteId: String? {
+        guard model.selectedItem.id == model.snapshot.itemId else { return nil }
+        return SpokenNoteItem.noteId(fromReference: model.selectedItem.externalReference)
     }
 
     @ViewBuilder

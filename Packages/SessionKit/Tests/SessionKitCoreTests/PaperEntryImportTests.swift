@@ -81,6 +81,19 @@ final class PaperEntryImportTests: XCTestCase {
         XCTAssertEqual(PaperEntryImportRoute.afterPDFFailed(for: without), .open(URL(string: "https://doi.org/10.1000/xyz123")))
     }
 
+    func testAFailedPDFLinkTriesTheStoredPDFBeforeTheAbstract() {
+        var both = paper(pdf: "https://example.org/paywalled.pdf")
+        both.storedPDFAttachmentKey = "ATTACH01"
+        both.storedPDFReachable = true
+        let first = PaperEntryImportRoute.route(for: both, existingItemId: nil)
+        XCTAssertEqual(first, .pdf(URL(string: "https://example.org/paywalled.pdf")!))
+        let second = PaperEntryImportRoute.afterPDFFailed(for: both, failed: first)
+        XCTAssertEqual(second, .storedPDF(attachmentKey: "ATTACH01"), "the file in the listener's library is there")
+        XCTAssertEqual(PaperEntryImportRoute.afterPDFFailed(for: both, failed: second), .abstract, "never the stored PDF twice")
+        both.storedPDFReachable = false
+        XCTAssertEqual(PaperEntryImportRoute.afterPDFFailed(for: both, failed: first), .abstract, "out of reach without the key")
+    }
+
     func testMessagesAreTheDesignsWords() {
         XCTAssertEqual(PaperAddMessage.added(title: "Sleep"), "Added “Sleep”.")
         XCTAssertEqual(PaperAddMessage.pdfNeedsLoginAbstractAdded, "The PDF needs a login, so the abstract was added.")

@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import SessionKit
 @testable import SessionKitFeeds
 import SessionKitTestInputs
 

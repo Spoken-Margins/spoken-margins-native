@@ -25,24 +25,31 @@ public struct PlayerRunRecorder: Equatable, Sendable {
         /// Where in the text the player is. For an article read aloud with the on-device voice this is the only place
         /// there is: it reports no media time (#4561).
         public var textOffset: Int?
+        /// The file playing, whose clock `mediaTimeMs` is on: a spoken note's Shorter pauses version runs on its own (#4779).
+        public var mediaURL: String?
 
-        public init(itemId: String?, mediaTimeMs: Int?, rate: Double, isPlaying: Bool, isPaused: Bool = false, textOffset: Int? = nil) {
+        public init(
+            itemId: String?, mediaTimeMs: Int?, rate: Double, isPlaying: Bool, isPaused: Bool = false, textOffset: Int? = nil,
+            mediaURL: String? = nil
+        ) {
             self.itemId = itemId
             self.mediaTimeMs = mediaTimeMs
             self.rate = rate
             self.isPlaying = isPlaying
             self.isPaused = isPaused
             self.textOffset = textOffset
+            self.mediaURL = mediaURL
         }
     }
 
     /// What the player's snapshot says. A finished item reads as paused in the snapshot (the engine stops at a natural
     /// end), but it is not one: nothing is waiting to be resumed there (#4079).
-    public static func observation(of snapshot: SessionSnapshot) -> Observation {
+    /// `mediaURL` is the file the engine plays, which the snapshot doesn't carry.
+    public static func observation(of snapshot: SessionSnapshot, mediaURL: String? = nil) -> Observation {
         Observation(
             itemId: snapshot.itemId, mediaTimeMs: snapshot.currentMediaTimeMs, rate: snapshot.playbackRate,
             isPlaying: snapshot.status == .playing, isPaused: snapshot.status == .paused && snapshot.phase != .finished,
-            textOffset: snapshot.currentTextStart
+            textOffset: snapshot.currentTextStart, mediaURL: mediaURL
         )
     }
 
@@ -62,12 +69,22 @@ public struct PlayerRunRecorder: Equatable, Sendable {
         var startPositionMs: Int
         var rate: Double
         var lastSeenAt: Date
+        var mediaURL: String?
+
+        func run(endingAt end: Date) -> LiveSessionFiling.PlayerRun {
+            LiveSessionFiling.PlayerRun(
+                itemId: itemId, startedAt: startedAt, endedAt: end, startPositionMs: startPositionMs, rate: rate, mediaURL: mediaURL)
+        }
     }
 
     private var finished: [LiveSessionFiling.PlayerRun] = []
     private var open: Open?
     /// An item loaded and paused: a stretch at rate 0, so a Margin taken while it waits files at its place (#4079).
     private var parked: Open?
+
+    /// Each change of the file an item has attached, playing or not, oldest first (#4779). A Watch position on a paused
+    /// note has no run to carry its file, so it is read by the file attached when the Margin was taken.
+    public private(set) var filesAttached: [LiveSessionFiling.FileAttachment] = []
 
     /// An article read aloud that was paused: where, and from when until reading resumed (#4561).
     private struct TextPause: Equatable, Sendable {
@@ -85,6 +102,7 @@ public struct PlayerRunRecorder: Equatable, Sendable {
 
     /// Notes what the player reports at `time`.
     public mutating func observe(_ observation: Observation, at time: Date) {
+        noteFile(observation, at: time)
         observeParked(observation, at: time)
         observeReadingAloud(observation, at: time)
         guard observation.isPlaying, let itemId = observation.itemId, let positionMs = observation.mediaTimeMs,
@@ -95,7 +113,8 @@ public struct PlayerRunRecorder: Equatable, Sendable {
         }
         if var current = open {
             let expectedMs = current.startPositionMs + Int((time.timeIntervalSince(current.startedAt) * 1_000 * current.rate).rounded())
-            let steady = current.itemId == itemId
+            // Another file of the same item (a note moved to its other version) is a new run on another clock.
+            let steady = current.itemId == itemId && current.mediaURL == observation.mediaURL
                 && current.rate == observation.rate
                 && abs(Double(positionMs - expectedMs)) <= Self.jumpTolerance * 1_000
             if steady {
@@ -106,11 +125,13 @@ public struct PlayerRunRecorder: Equatable, Sendable {
             }
             // A change of item, rate or place. A rate change is continuous, so its run runs up to now; anything else
             // is vouched for only up to the last time we saw it steady.
-            let continuous = current.itemId == itemId && current.rate != observation.rate
+            let continuous = current.itemId == itemId && current.mediaURL == observation.mediaURL && current.rate != observation.rate
                 && abs(Double(positionMs - expectedMs)) <= Self.jumpTolerance * 1_000
             closeOpen(at: continuous ? time : current.lastSeenAt)
         }
-        open = Open(itemId: itemId, startedAt: time, startPositionMs: positionMs, rate: observation.rate, lastSeenAt: time)
+        open = Open(
+            itemId: itemId, startedAt: time, startPositionMs: positionMs, rate: observation.rate, lastSeenAt: time,
+            mediaURL: observation.mediaURL)
         drop(before: time)
     }
 
@@ -118,17 +139,10 @@ public struct PlayerRunRecorder: Equatable, Sendable {
     public func runs(at now: Date) -> [LiveSessionFiling.PlayerRun] {
         var all = finished
         if let current = open, now >= current.startedAt {
-            all.append(LiveSessionFiling.PlayerRun(
-                itemId: current.itemId, startedAt: current.startedAt, endedAt: now,
-                startPositionMs: current.startPositionMs, rate: current.rate
-            ))
+            all.append(current.run(endingAt: now))
         }
         if let current = parked, now >= current.startedAt {
-            all.append(LiveSessionFiling.PlayerRun(
-                itemId: current.itemId, startedAt: current.startedAt,
-                endedAt: min(now, current.startedAt.addingTimeInterval(Self.parkedHold)),
-                startPositionMs: current.startPositionMs, rate: 0
-            ))
+            all.append(current.run(endingAt: min(now, current.startedAt.addingTimeInterval(Self.parkedHold))))
         }
         return all
     }
@@ -141,7 +155,7 @@ public struct PlayerRunRecorder: Equatable, Sendable {
     private mutating func observeParked(_ observation: Observation, at time: Date) {
         if let current = parked {
             let near = observation.mediaTimeMs.map { abs(Double($0 - current.startPositionMs)) <= Self.jumpTolerance * 1_000 } == true
-            if observation.isPaused, observation.itemId == current.itemId, near {
+            if observation.isPaused, observation.itemId == current.itemId, observation.mediaURL == current.mediaURL, near {
                 parked?.lastSeenAt = time
                 return
             }
@@ -150,7 +164,8 @@ public struct PlayerRunRecorder: Equatable, Sendable {
         }
         guard observation.isPaused, let itemId = observation.itemId, let positionMs = observation.mediaTimeMs, positionMs >= 0,
               let last = open, last.itemId == itemId else { return }
-        parked = Open(itemId: itemId, startedAt: last.lastSeenAt, startPositionMs: positionMs, rate: 0, lastSeenAt: time)
+        parked = Open(
+            itemId: itemId, startedAt: last.lastSeenAt, startPositionMs: positionMs, rate: 0, lastSeenAt: time, mediaURL: observation.mediaURL)
     }
 
     private mutating func closeParked(at end: Date) {
@@ -158,10 +173,7 @@ public struct PlayerRunRecorder: Equatable, Sendable {
         parked = nil
         let end = min(end, current.startedAt.addingTimeInterval(Self.parkedHold))
         guard end > current.startedAt else { return }
-        finished.append(LiveSessionFiling.PlayerRun(
-            itemId: current.itemId, startedAt: current.startedAt, endedAt: end,
-            startPositionMs: current.startPositionMs, rate: 0
-        ))
+        finished.append(current.run(endingAt: end))
     }
 
     /// The text place a Margin taken at `time` on an article read aloud belongs at: where it was paused, when the Margin
@@ -197,20 +209,32 @@ public struct PlayerRunRecorder: Equatable, Sendable {
         }
     }
 
+
+    private mutating func noteFile(_ observation: Observation, at time: Date) {
+        guard let itemId = observation.itemId else { return }
+        if let last = filesAttached.last(where: { $0.itemId == itemId }), last.mediaURL == observation.mediaURL { return }
+        filesAttached.append(.init(itemId: itemId, mediaURL: observation.mediaURL, since: time))
+    }
+
     private mutating func closeOpen(at end: Date) {
         guard let current = open else { return }
         open = nil
         guard end > current.startedAt else { return }
-        finished.append(LiveSessionFiling.PlayerRun(
-            itemId: current.itemId, startedAt: current.startedAt, endedAt: end,
-            startPositionMs: current.startPositionMs, rate: current.rate
-        ))
+        finished.append(current.run(endingAt: end))
     }
+
 
     private mutating func drop(before now: Date) {
         let oldest = now.addingTimeInterval(-Self.keepFor)
         finished.removeAll { $0.endedAt < oldest }
         if finished.count > Self.capacity { finished.removeFirst(finished.count - Self.capacity) }
+        // An old change of file goes once a newer one of the same item has also aged out; each item keeps its latest.
+        if let first = filesAttached.first, first.since < oldest {
+            filesAttached = filesAttached.enumerated().filter { index, file in
+                file.since >= oldest || !filesAttached[(index + 1)...].contains { $0.itemId == file.itemId && $0.since < oldest }
+            }.map(\.element)
+        }
+        if filesAttached.count > Self.capacity { filesAttached.removeFirst(filesAttached.count - Self.capacity) }
         textPauses.removeAll { ($0.resumedAt ?? $0.at.addingTimeInterval(Self.parkedHold)) < oldest }
         if textPauses.count > Self.capacity { textPauses.removeFirst(textPauses.count - Self.capacity) }
     }

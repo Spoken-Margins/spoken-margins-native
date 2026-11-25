@@ -6,11 +6,14 @@ public enum FollowingFeed {
     public enum Row: Identifiable, Equatable, Sendable {
         case friend(FollowingFriends.Friend)
         case show(FollowingShowRow)
+        /// A followed reading list (#4341). It sorts by the newest date a paper joined it.
+        case papers(PaperSourceRow)
 
         public var id: String {
             switch self {
             case .friend(let friend): "friend::\(friend.id)"
             case .show(let row): "show::\(row.id)"
+            case .papers(let row): "papers::\(row.id)"
             }
         }
 
@@ -20,6 +23,7 @@ public enum FollowingFeed {
             switch self {
             case .friend(let friend): friend.newestAt
             case .show(let row): row.newestEpisodeDate
+            case .papers(let row): row.newestJoinedAt
             }
         }
     }
@@ -46,6 +50,31 @@ public enum FollowingFeed {
         return merged
     }
 
+    /// Splices the followed reading lists (#4341), already newest first (`PaperSourceRow.visible`), into Following's
+    /// rows. Every row keeps its order; between the two, the newer date wins and a tie keeps the friend or show first.
+    /// Rows with no date stay last. Until the show list has loaded once nothing is drawn, lists included, so the first
+    /// frame is already in its final order (#3753).
+    public static func rows(_ rows: [Row], splicingPapers papers: [PaperSourceRow], showsLoaded: Bool) -> [Row] {
+        guard showsLoaded else { return [] }
+        guard !papers.isEmpty else { return rows }
+        var merged: [Row] = []
+        merged.reserveCapacity(rows.count + papers.count)
+        var r = rows[...]
+        var p = papers[...]
+        while let row = r.first, let paper = p.first {
+            if (row.sortDate ?? .distantPast) >= paper.newestJoinedAt {
+                merged.append(row)
+                r = r.dropFirst()
+            } else {
+                merged.append(.papers(paper))
+                p = p.dropFirst()
+            }
+        }
+        merged += r
+        merged += p.map(Row.papers)
+        return merged
+    }
+
     /// What the screen draws (#3753). Until the show list has loaded once, friends alone would be drawn, and the
     /// shows' newer episodes would then sort above them and push them down: the "snap". So nothing is drawn until
     /// the shows are in, and the first frame is already in its final order.
@@ -57,5 +86,11 @@ public enum FollowingFeed {
     /// really no shows (Quiet ones count) and no friends. Before the load, an empty list means "not read yet".
     public static func showsEmptyState(friends: [FollowingFriends.Friend], shows: FollowingShowList, showsLoaded: Bool) -> Bool {
         showsLoaded && shows.rows.isEmpty && shows.quiet.isEmpty && friends.isEmpty
+    }
+
+    /// Following with a followed reading list (#4341), Quiet or not, is following something. Until the lists have been
+    /// read, an empty list means "not read yet", as for shows.
+    public static func showsEmptyState(showsEmpty: Bool, papersLoaded: Bool, followsPapers: Bool) -> Bool {
+        showsEmpty && papersLoaded && !followsPapers
     }
 }
