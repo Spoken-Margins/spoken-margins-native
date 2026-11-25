@@ -61,7 +61,7 @@ export interface ArrivalListenProps {
 type Run =
   | { state: 'ready' }
   | { state: 'playing'; index: number; phase: CardPhase; only: boolean }
-  | { state: 'waiting'; index: number }
+  | { state: 'waiting'; index: number; only: boolean }
   /** `again`: the whole run ended, so the button reads "Hear them again"; a row's own Hear leaves it as it was. */
   | { state: 'finished'; line: string; again: boolean };
 
@@ -108,7 +108,11 @@ export function ArrivalListen(props: ArrivalListenProps) {
   /** Episode kinds keep their Margins in the web Library, as Keep did: stored once, on the first Hear or the Library. */
   const storeOnce = useCallback(() => {
     if (!props.store) return undefined;
-    storing.current ??= props.store();
+    if (!storing.current) {
+      storing.current = props.store();
+      // Handled here so a failed write is never an unhandled rejection; the way to the Library still reports it.
+      storing.current.saved.catch(() => undefined);
+    }
     setStored(true);
     return storing.current;
   }, [props.store]);
@@ -147,7 +151,12 @@ export function ArrivalListen(props: ArrivalListenProps) {
       // Inside the tap: the clip element and the voice are readied before anything is awaited.
       fx.prime();
       if (player.playing) player.pause();
-      storeOnce();
+      // Storing an episode's Margins never stops them playing here; a write that fails says so when the card closes.
+      try {
+        storeOnce();
+      } catch {
+        storing.current = undefined;
+      }
       const onProgress = (p: MarginRunProgress) => {
         if (mine !== runId.current) return;
         const card = cards[p.index];
@@ -158,7 +167,7 @@ export function ArrivalListen(props: ArrivalListenProps) {
         } else if (p.phase === 'failed') setFailed((f) => new Set([...f, card.margin.id]));
         else if (p.phase === 'blocked') {
           handle.current = undefined;
-          setRun({ state: 'waiting', index: p.index });
+          setRun({ state: 'waiting', index: p.index, only });
         } else if (p.phase === 'done') {
           handle.current = undefined;
           const last = cards[p.index] ?? cards[cards.length - 1];
@@ -188,7 +197,7 @@ export function ArrivalListen(props: ArrivalListenProps) {
 
   const onPrimary = () => {
     if (run.state === 'playing') stop();
-    else if (run.state === 'waiting') start(run.index, false);
+    else if (run.state === 'waiting') start(run.index, run.only);
     else start(0, false);
   };
 

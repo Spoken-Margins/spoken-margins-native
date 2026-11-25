@@ -116,7 +116,7 @@ export function useOpenShareLink(onLanded: (landing: Landing) => void): OpenShar
  * Opens one file's bytes, from any way in. A backup `.zip` from Settings opens each packet in it (#3012); anything
  * else goes to the packet reader as it is, which says plainly when it isn't a Margin file.
  */
-export async function openFileBytes(bytes: Uint8Array, fileName: string | undefined, open: OpenMarginFile, onlyFile = true): Promise<void> {
+export async function openFileBytes(bytes: Uint8Array, fileName: string | undefined, open: OpenMarginFile, onlyFile = false): Promise<void> {
   const packets = await packetsToOpen(bytes, fileName);
   for (const packet of packets) await open(packet.bytes, packet.name, packet.fromBackup, onlyFile && packets.length === 1);
 }

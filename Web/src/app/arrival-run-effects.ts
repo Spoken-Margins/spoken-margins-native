@@ -84,7 +84,9 @@ export function cardSounds(element: HTMLAudioElement): CardSounds {
           },
         };
       }
+      // Shown with nothing reading it: its words are up for the usual time, which counts as heard on the card.
       const shownThenOn = () => {
+        hooks.started();
         timer = setTimeout(() => finish(hooks.ended), WRITTEN_SHOWN_MS);
       };
       if (!readsAloud(margin)) {

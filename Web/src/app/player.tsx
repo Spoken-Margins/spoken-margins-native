@@ -541,9 +541,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         const line = speakLine(context, {
           onEnd: () => {
             if (run !== runId.current) return;
-            if (reading.current === line) reading.current = undefined;
+            // Skip this Margin while its context is read clears the reading first: then the run moves past the Margin.
+            const skipped = reading.current !== line;
+            if (!skipped) reading.current = undefined;
             setMarginPlaying(false);
-            step(index);
+            step(skipped ? index + 1 : index);
           },
         });
         if (line) {

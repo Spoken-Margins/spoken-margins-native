@@ -174,6 +174,7 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
       {arriving && <Arrival link={launchLink} onDone={arrived} />}
       {listening && !arriving && (
         <ArrivalListen
+          key={listening.contentDigest}
           read={listening}
           origin="file"
           iphoneStep={showIphoneStep(capacitorBridge() !== undefined, navigator.userAgent)}
