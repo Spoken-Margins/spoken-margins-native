@@ -29,6 +29,7 @@ import lane_sim
 import sm_build_cache
 import sessionkit_pass
 import slow_tier
+import swift_scan_tests
 import lane_sim_pool
 import node_modules_drift
 import third_party_notices
@@ -818,8 +819,11 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_app_test_negative_sleeps',
                        # The tracked-presentation guard scans App/ Swift files for a raw sheet or cover (#4337).
                        'test_tracked_presentations')
+# Every test that reads App/ or Packages/ is in scripts/swift_scan_tests.py (#5220), which test_swift_scan_tests keeps
+# complete; the readers scope runs those too, so a new scan needs only that one line.
+RUNNER_TEST_READERS += tuple(module for module in swift_scan_tests.SCANS if module not in RUNNER_TEST_READERS)
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
-                      'docs/sharing-test-kit/', 'docs/task-cost-map.json', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
+                      'docs/sharing-test-kit/', 'docs/task-cost-map.json', 'docs/overview/', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).
                       'docs/legal/', 'THIRD_PARTY_NOTICES.md', 'requirements-dev.txt', 'Site/', 'Tools/',
                       'Config/', 'fixtures/', 'traces/', 'schemas/',
