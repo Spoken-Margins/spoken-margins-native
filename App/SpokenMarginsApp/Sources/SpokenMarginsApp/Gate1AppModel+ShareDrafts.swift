@@ -175,23 +175,44 @@ extension Gate1AppModel {
         shareStarTally.reset()
     }
 
+    /// A Margin switched in or out (#4647). In, with the switch on, only its words are cleaned and only it joins the run;
+    /// out, it leaves the run at once if it is still queued. Only a real change does either: a Margin already in (as
+    /// "Select all shown" passes it again) is not cleaned again, so a sender's "Undo all edits" holds.
     func setShareDraftIncluded(_ id: String, included: Bool) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        let wasIncluded = sharingState.drafts[index].isIncluded
         sharingState.drafts[index].setIncluded(included)
+        guard sharingState.drafts[index].isIncluded != wasIncluded else { return }
+        if sharingState.drafts[index].isIncluded {
+            prepareIncludedShareDraftIfEnabled(id)
+        } else {
+            dropShareVoice(id: id)
+        }
     }
 
     func setShareDraftsIncluded(_ ids: [String], included: Bool) {
         let targetIDs = Set(ids)
         guard !targetIDs.isEmpty else { return }
-        for index in sharingState.drafts.indices where targetIDs.contains(sharingState.drafts[index].id) {
-            sharingState.drafts[index].setIncluded(included)
+        // In list order, so the run takes them as the sender sees them.
+        for id in sharingState.drafts.map(\.id) where targetIDs.contains(id) {
+            setShareDraftIncluded(id, included: included)
         }
     }
 
+    /// A version pick holds (#4647). "Without ums" picked before its voice exists is kept, and the voice is made through
+    /// the run (after a failure this is the retry); As recorded and Words only take the Margin out of the run.
     func setShareDraftRepresentation(_ id: String, choice: ShareMarginRepresentationChoice) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
         sharingState.drafts[index].setRepresentation(choice, hasOriginalAudio: hasOriginalAudio)
+        if choice == .cleaned {
+            sharingState.drafts[index].recordPick(.cleaned)
+            if sharingState.drafts[index].cleanedAudioURL == nil {
+                queueShareVoice(id: id)
+            }
+        } else {
+            dropShareVoice(id: id)
+        }
     }
 
     /// The sender asks the friend's phone to read a text Margin aloud, or not to (#3427). It means nothing for a
@@ -222,20 +243,28 @@ extension Gate1AppModel {
             .interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:))
     }
 
+    /// A card's "Remove ums and pauses" (#4647): the words are cleaned at once and the voice is made through the run, so
+    /// it gets its pause analysis and works during a run too. The switch didn't do it, so turning the switch off leaves it.
     func prepareCleanup(forShareDraft id: String) {
-        guard !sharingState.isBulkPreparing else { return }
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         sharingState.automaticallyCleanedDraftIDs.remove(id)
-        if let index = sharingState.drafts.firstIndex(where: { $0.id == id }) {
-            sharingState.drafts[index].preparationMessage = nil
-        }
-        recordShareEdit(for: id) { $0.automaticCleanupEnabled = true }
-        analyzeAcousticPauses(forShareDraft: id)
+        sharingState.drafts[index].recordPick(.cleaned)
+        BulkShareDraftPreparation.applyTextStep(for: id, host: self)
+        queueShareVoice(id: id)
+    }
+
+    /// A Margin whose voice is queued or being made in the run: a hand edit changes its words and starts no render of its
+    /// own; the run renders the words as they are when its turn comes (#4647).
+    private func voiceIsInRun(_ id: String) -> Bool {
+        sharingState.queuedVoiceIDs.contains(id)
     }
 
     func setCleanupDecision(draftID: String, decisionID: String, accepted: Bool) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == draftID }) else { return }
         let hasOriginalAudio = originalAudioURL(forShareDraft: draftID) != nil
-        if sharingState.drafts[index].setCleanupDecision(decisionID: decisionID, accepted: accepted, hasOriginalAudio: hasOriginalAudio) {
+        if sharingState.drafts[index].setCleanupDecision(
+            decisionID: decisionID, accepted: accepted, hasOriginalAudio: hasOriginalAudio,
+            renderCleanedAudio: !voiceIsInRun(draftID)) {
             renderCleanup(forShareDraft: draftID)
         }
     }
@@ -243,7 +272,8 @@ extension Gate1AppModel {
     func toggleShareDraftWord(draftID: String, segmentID: String) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == draftID }) else { return }
         let hasOriginalAudio = originalAudioURL(forShareDraft: draftID) != nil
-        if sharingState.drafts[index].toggleWord(segmentID: segmentID, hasOriginalAudio: hasOriginalAudio) {
+        if sharingState.drafts[index].toggleWord(
+            segmentID: segmentID, hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: !voiceIsInRun(draftID)) {
             renderCleanup(forShareDraft: draftID)
         }
     }
@@ -255,7 +285,7 @@ extension Gate1AppModel {
     func undoShareDraftEdit(_ id: String) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        if sharingState.drafts[index].undoEdit(hasOriginalAudio: hasOriginalAudio) {
+        if sharingState.drafts[index].undoEdit(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: !voiceIsInRun(id)) {
             renderCleanup(forShareDraft: id)
         }
     }
@@ -263,7 +293,7 @@ extension Gate1AppModel {
     func redoShareDraftEdit(_ id: String) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        if sharingState.drafts[index].redoEdit(hasOriginalAudio: hasOriginalAudio) {
+        if sharingState.drafts[index].redoEdit(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: !voiceIsInRun(id)) {
             renderCleanup(forShareDraft: id)
         }
     }
@@ -273,57 +303,6 @@ extension Gate1AppModel {
         sharingState.automaticallyCleanedDraftIDs.remove(id)
         let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
         sharingState.drafts[index].restoreOriginal(hasOriginalAudio: hasOriginalAudio)
-    }
-
-    func recordShareEdit(
-        for id: String,
-        renderCleanedAudio: Bool = true,
-        mutate: (inout ShareMarginEditState) -> Void
-    ) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        if sharingState.drafts[index].recordEdit(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: renderCleanedAudio, mutate: mutate) {
-            renderCleanup(forShareDraft: id)
-        }
-    }
-
-    func applyShareEditState(at index: Int, renderCleanedAudio: Bool = true) {
-        guard sharingState.drafts.indices.contains(index) else { return }
-        let id = sharingState.drafts[index].id
-        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        if sharingState.drafts[index].applyEditState(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: renderCleanedAudio) {
-            renderCleanup(forShareDraft: id)
-        }
-    }
-
-    private func analyzeAcousticPauses(forShareDraft id: String) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
-              sharingState.drafts[index].acousticPauseDecisions.isEmpty,
-              !sharingState.drafts[index].isAnalyzingPauses,
-              let aligned = sharingState.drafts[index].interjection.alignedTranscript,
-              let sourcePath = sharingState.drafts[index].interjection.audioPath,
-              let sourceURL = resolvedInterjectionAudioURL(for: sourcePath) else { return }
-        sharingState.drafts[index].isAnalyzingPauses = true
-        let analyzer = shareMarginSilenceAnalysisHandler
-        Task.detached { [weak self] in
-            let result: ([InterjectionCleanupDecision], String?)
-            do {
-                result = (try analyzer(sourceURL, aligned), nil)
-            } catch {
-                result = ([], SafeErrorText.describe(error))
-            }
-            await MainActor.run {
-                guard let self,
-                      let current = self.sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-                self.sharingState.drafts[current].isAnalyzingPauses = false
-                self.sharingState.drafts[current].acousticPauseDecisions = result.0
-                if let reason = result.1 {
-                    self.sharingState.drafts[current].preparationMessage = ShareCleanupWords.Failure.pauseAnalysisUnavailable.message
-                    self.diagnostics[Self.marginDiagnosticKey("shareCleanupFailure", self.sharingState.drafts[current].interjection)] = "pause_analysis:\(reason)"
-                }
-                self.applyShareEditState(at: current)
-            }
-        }
     }
 
     private func renderCleanup(forShareDraft id: String) {
@@ -352,7 +331,10 @@ extension Gate1AppModel {
                     self?.sharingState.drafts[current].isPreparingCleanup = false
                     self?.sharingState.drafts[current].cleanedAudioURL = destination
                     self?.sharingState.drafts[current].cleanedAudioDurationMs = duration
-                    self?.sharingState.drafts[current].representationChoice = .cleaned
+                    // A sender's pick holds (#4647): the new copy goes only when they picked nothing or Without ums.
+                    if self?.sharingState.drafts[current].optedOutOfCleanedVoice == false {
+                        self?.sharingState.drafts[current].representationChoice = .cleaned
+                    }
                     self?.sharingState.drafts[current].warning = nil
                 }
             } catch {
@@ -362,8 +344,13 @@ extension Gate1AppModel {
                     self?.sharingState.drafts[current].isPreparingCleanup = false
                     self?.sharingState.drafts[current].cleanedAudioURL = nil
                     self?.sharingState.drafts[current].cleanedAudioDurationMs = nil
+                    let keepsWordsOnly = self?.sharingState.drafts[current].representationChoice == .textOnly
+                        || self?.sharingState.drafts[current].senderPickedVersion == .textOnly
                     self?.sharingState.drafts[current].representationChoice =
-                        self?.originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
+                        keepsWordsOnly || self?.originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
+                    if self?.sharingState.drafts[current].senderPickedVersion == .cleaned {
+                        self?.sharingState.drafts[current].senderPickedVersion = nil
+                    }
                     self?.sharingState.drafts[current].preparationMessage = ShareCleanupWords.Failure.voiceNotPrepared.message
                     if let interjection = self?.sharingState.drafts[current].interjection {
                         self?.diagnostics[Self.marginDiagnosticKey("shareCleanupFailure", interjection)] = "render:\(SafeErrorText.describe(error))"

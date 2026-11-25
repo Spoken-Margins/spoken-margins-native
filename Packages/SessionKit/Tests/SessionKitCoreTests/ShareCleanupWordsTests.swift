@@ -6,7 +6,7 @@ final class ShareCleanupWordsTests: XCTestCase {
     func testTheSwitchNamesWhatItRemovesAndItsCaptionsSayWhatHappens() {
         XCTAssertEqual(ShareCleanupWords.switchLabel, "Remove ums and long pauses")
         XCTAssertEqual(ShareCleanupWords.switchCaption(isOn: false),
-            "Off. Your Margins go as you recorded them. You can still do this for one Margin in the next step.")
+            "Off. Your Margins go as you recorded them. You can still do this for one Margin below.")
         let on = ShareCleanupWords.switchCaption(isOn: true)
         XCTAssertTrue(on.hasPrefix("On for this share and later ones."))
         XCTAssertTrue(on.contains("Turn it off to put them all back."))
@@ -64,6 +64,6 @@ final class ShareCleanupWordsTests: XCTestCase {
         XCTAssertEqual(ShareCleanupWords.alertAccept, "Remove them")
         XCTAssertEqual(ShareCleanupWords.alertDecline, "Not now")
         XCTAssertTrue(ShareCleanupWords.alertMessage.contains("Your recording on this iPhone stays as it is."))
-        XCTAssertTrue(ShareCleanupWords.alertMessage.contains("Back to selection"))
+        XCTAssertTrue(ShareCleanupWords.alertMessage.contains("turn off Remove ums and long pauses at the top of this screen"))
     }
 }
