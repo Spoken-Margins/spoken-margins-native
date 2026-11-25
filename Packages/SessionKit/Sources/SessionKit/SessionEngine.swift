@@ -1513,6 +1513,18 @@ public final class SessionEngine {
                 session.position.charOffset = firstBoundary
             }
         }
+        if session.position.charOffset >= text.count {
+            // A skip past the last sentence finishes the item, as playing to the end does and as a media skip to the
+            // end already did. It used to stop at the end still in `.itemPlayback`, so nothing saw a finish: the
+            // play queue never started the next item (#5358) and the session never counted as finished.
+            let finished = markPlaybackComplete(session, item: item)
+            currentSession = finished
+            try persistSession(finished)
+            protectPlaybackPosition(for: finished)
+            try audio.stop()
+            publish(status: .paused, phase: .finished)
+            return snapshot
+        }
         session.completionPercent = percent(for: session.position.charOffset, text: text)
         session.position.chapterId = chapterId(for: session.position.charOffset)
         session.phase = .itemPlayback
@@ -1520,14 +1532,12 @@ public final class SessionEngine {
         currentSession = session
         try persistSession(session)
         protectPlaybackPosition(for: session)
-        if snapshot.status.isPlaybackActive, session.position.charOffset < text.count {
+        if snapshot.status.isPlaybackActive {
             try playCurrentTarget(session, seeking: true)
             publishPlaybackContinuation(for: session)
             return snapshot
-        } else if session.position.charOffset >= text.count {
-            try audio.stop()
         }
-        publish(status: session.position.charOffset >= text.count ? .paused : snapshot.status, phase: session.phase)
+        publish(status: snapshot.status, phase: session.phase)
         return snapshot
     }
 
