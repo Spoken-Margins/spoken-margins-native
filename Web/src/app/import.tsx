@@ -94,7 +94,7 @@ export function useOpenShareLink(onLanded: (landing: Landing) => void): OpenShar
         return;
       }
       try {
-        await land(bytes, 'shared.spokenmargins', 'link', (episodeId, read) => trackReplyBox(episodeId, replyFetch, senderNameOrNone(read.sender)));
+        await land(bytes, 'shared.spokenmargins', 'link', (episodeId, read) => trackReplyBox(episodeId, replyFetch, senderNameOrNone(read.sender), read.contentDigest));
       } catch (error) {
         // A write that failed has already said what wasn't saved. Otherwise it opened under the key but isn't a
         // packet this app can read.

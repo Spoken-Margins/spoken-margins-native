@@ -30,12 +30,7 @@ public enum BridgePublicTransport {
         defer { session.invalidateAndCancel() }
         let (bytes, response) = try await session.bytes(from: url)
         guard response.expectedContentLength <= maximumBytes else { throw URLError(.dataLengthExceedsMaximum) }
-        var data = Data()
-        for try await byte in bytes {
-            try Task.checkCancellation()
-            guard data.count < maximumBytes else { throw URLError(.dataLengthExceedsMaximum) }
-            data.append(byte)
-        }
+        let data = try await BoundedBytes.collect(bytes, maximumBytes: maximumBytes, expectedLength: response.expectedContentLength)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
     }
 }
@@ -160,13 +155,40 @@ public enum ClubTransport {
         defer { session.invalidateAndCancel() }
         let (bytes, response) = try await session.bytes(for: urlRequest)
         guard response.expectedContentLength <= maximumBytes else { throw URLError(.dataLengthExceedsMaximum) }
-        var data = Data()
-        for try await byte in bytes {
-            try Task.checkCancellation()
-            guard data.count < maximumBytes else { throw URLError(.dataLengthExceedsMaximum) }
-            data.append(byte)
-        }
+        // A reply box's answer can be 10 MB: read in chunks, not a byte (and a cancellation check) at a time.
+        let data = try await BoundedBytes.collect(bytes, maximumBytes: maximumBytes, expectedLength: response.expectedContentLength)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
     }
 }
 #endif
+
+/// Collects a byte stream into memory up to a cap, a chunk at a time (#4675). The cap and cancellation are checked once
+/// per chunk, not once per byte, and the bytes are appended a chunk at a time, so a 10 MB answer costs a few hundred
+/// checks rather than ten million. A stream longer than `maximumBytes` throws `URLError(.dataLengthExceedsMaximum)`
+/// as soon as it passes the cap, never after reading on; exactly `maximumBytes` is accepted.
+enum BoundedBytes {
+    static let defaultChunkBytes = 64 * 1024
+
+    static func collect<Bytes: AsyncSequence>(
+        _ bytes: Bytes, maximumBytes: Int, expectedLength: Int64 = -1, chunkBytes: Int = defaultChunkBytes
+    ) async throws -> Data where Bytes.Element == UInt8 {
+        precondition(chunkBytes > 0, "a chunk holds at least one byte")
+        var data = Data()
+        if expectedLength > 0 { data.reserveCapacity(Int(min(expectedLength, Int64(maximumBytes)))) }
+        var chunk: [UInt8] = []
+        chunk.reserveCapacity(chunkBytes > maximumBytes ? maximumBytes + 1 : chunkBytes)
+        func flush() throws {
+            try Task.checkCancellation()
+            guard data.count + chunk.count <= maximumBytes else { throw URLError(.dataLengthExceedsMaximum) }
+            data.append(contentsOf: chunk)
+            chunk.removeAll(keepingCapacity: true)
+        }
+        for try await byte in bytes {
+            chunk.append(byte)
+            // A full chunk, or one byte past the cap (which the flush refuses at once).
+            if chunk.count >= chunkBytes || data.count + chunk.count > maximumBytes { try flush() }
+        }
+        try flush()
+        return data
+    }
+}

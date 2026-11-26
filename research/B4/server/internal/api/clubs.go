@@ -231,8 +231,9 @@ func (s *Server) createClub(w http.ResponseWriter, r *http.Request) {
 func (s *Server) postClub(w http.ResponseWriter, r *http.Request) {
 	id, proof := r.PathValue("id"), clubProof(r)
 	box := s.box(id)
-	if box.Reply {
-		// Before every check, so a browser can read each error (reply_box.go).
+	if answerable(box) {
+		// Before every check, so a browser can read each error (reply_box.go), including the 404 of a box that
+		// has ended and gone, which the page must show as "can't take answers" rather than a network failure.
 		s.replyCORS(w, r)
 	}
 	clubHeaders(w)

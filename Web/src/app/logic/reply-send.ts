@@ -17,7 +17,30 @@ export const REPLY_SEND_WORDS = Object.freeze({
   tooBig: 'These are too big to send through the link. Untick a long recording, or send them as a file.',
   retry: 'Couldn’t send. Check your connection, then try again.',
   tryAgain: 'Try again',
+  fileOnlyTag: 'File only',
+  otherPacket: 'Replies to Margins from another link or file can’t go through this link. Send those as a file.',
 });
+
+const PACKET_PARENT = /^packet:([0-9a-f]{64}):/;
+
+/**
+ * Whether a Margin can go back through the reply box of the link whose packet had `linkDigest` (#4675). The sender's
+ * phone keeps an answer only when every reply in it answers a Margin from that packet (SessionKit `ReplyBoxRecord.check`,
+ * `other_parent`), so a reply to a Margin from another link or file would drop the whole answer while this page said
+ * Sent. A Margin that answers nothing travels; a reply travels only when its parent came in through this link's packet.
+ */
+export function sendsThroughLink(margin: Margin, linkDigest: string): boolean {
+  const parent = margin.replyToId ? PACKET_PARENT.exec(margin.replyToId)?.[1] : undefined;
+  return parent === undefined || parent === linkDigest;
+}
+
+/** The picked Margins split into those the link's box takes and those that can only go as a file. */
+export function splitForLink(margins: readonly Margin[], linkDigest: string): { through: Margin[]; fileOnly: Margin[] } {
+  const through: Margin[] = [];
+  const fileOnly: Margin[] = [];
+  for (const margin of margins) (sendsThroughLink(margin, linkDigest) ? through : fileOnly).push(margin);
+  return { through, fileOnly };
+}
 
 /** The caption that replaces "Share them as a file. …". */
 export function replyCaption(sender: string | undefined): string {

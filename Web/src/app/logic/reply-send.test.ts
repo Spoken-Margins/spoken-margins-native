@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import type { Margin } from '../../shared/model.ts';
 import {
   REPLY_SEND_WORDS, everythingSent, failureLine, fileInsteadLabel, forgetTicks, isSent, keepingSentThrough, replyCaption, savedCardWithBox,
-  sendToLabel, sentLine, withSentThrough, withoutSent,
+  sendToLabel, sendsThroughLink, sentLine, splitForLink, withSentThrough, withoutSent,
 } from './reply-send.ts';
 
 const margin = (id: string, extra: Partial<Margin> = {}): Margin =>
@@ -67,4 +67,21 @@ test('sent rows start unticked; a later Margin starts ticked; everything sent sa
   assert.equal(everythingSent([sent]), true);
   assert.equal(everythingSent([]), false);
   assert.deepEqual(forgetTicks({ s: true, f: false, x: true }, ['s', 'x']), { f: false });
+});
+
+test('through a link go only Margins that answer nothing or answer a Margin from that link’s packet (#4675)', () => {
+  const here = 'a'.repeat(64);
+  const there = 'b'.repeat(64);
+  const own = margin('own');
+  const toHere = margin('r1', { replyToId: `packet:${here}:interjection-1` });
+  const toThere = margin('r2', { replyToId: `packet:${there}:interjection-1` });
+  const toLocal = margin('r3', { replyToId: 'local-margin-id' });
+  assert.equal(sendsThroughLink(own, here), true);
+  assert.equal(sendsThroughLink(toHere, here), true);
+  assert.equal(sendsThroughLink(toThere, here), false, 'the phone drops the whole answer for a parent in another package');
+  assert.equal(sendsThroughLink(toLocal, here), true, 'a parent no packet names writes no conversation part');
+  assert.equal(sendsThroughLink(margin('r4', { replyToId: `packet:${here.toUpperCase()}:x` }), here), true, 'not a packet id, so no conversation part');
+  const split = splitForLink([own, toThere, toHere, toLocal], here);
+  assert.deepEqual(split.through.map((m) => m.id), ['own', 'r1', 'r3']);
+  assert.deepEqual(split.fileOnly.map((m) => m.id), ['r2']);
 });

@@ -118,6 +118,61 @@ test('Send to the sender posts one sealed answer, says Sent, marks the row, and 
   await context.close();
 });
 
+/** Makes the stored Margin with these words a reply to a Margin from another packet (another link or file). */
+async function replyToAnotherPacket(page: Page, words: string, digest: string): Promise<void> {
+  await page.evaluate(
+    ({ words, digest }) =>
+      new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open('spoken-margins');
+        open.onsuccess = () => {
+          const tx = open.result.transaction('margins', 'readwrite');
+          const all = tx.objectStore('margins').getAll() as IDBRequest<Array<{ text?: string }>>;
+          all.onsuccess = () => {
+            const row = all.result.find((m) => m.text === words);
+            if (!row) return reject(new Error(`no Margin "${words}"`));
+            tx.objectStore('margins').put({ ...row, replyToId: `packet:${digest}:interjection-1` });
+          };
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        };
+        open.onerror = () => reject(open.error);
+      }),
+    { words, digest },
+  );
+}
+
+test('a reply to another packet’s Margin never goes through the box, so the phone never drops the whole answer (#4675)', async ({ browser }) => {
+  const context = await newContext(browser);
+  const page = await friendPage(context);
+  const before = (await postsIn(page, 'replyvoice01')).length;
+  await openAndAnswer(page, 'replyvoice01', 'A reply elsewhere.');
+  await replyToAnotherPacket(page, 'A reply elsewhere.', 'b'.repeat(64));
+
+  await page.goto(linkTo('replyvoice01'));
+  await startFromBeginning(page);
+  const playing = page.getByRole('dialog', { name: EPISODE });
+  await write(playing, 'My answer.');
+  const elsewhere = playing.locator('.reply-back li').filter({ hasText: 'A reply elsewhere.' });
+  await expect(elsewhere.locator('.tag', { hasText: 'File only' })).toBeVisible();
+  await elsewhere.getByRole('checkbox').check();
+  const status = playing.locator('#share-why-not');
+  await expect(status).toContainText('Replies to Margins from another link or file can’t go through this link. Send those as a file.');
+
+  const send = playing.getByRole('button', { name: `Send to ${SENDER}` });
+  await send.click();
+  await expect(status).toContainText(SENT);
+  const posts = await postsIn(page, 'replyvoice01');
+  expect(posts.length).toBe(before + 1);
+  const answer = await readPacket(posts[posts.length - 1]);
+  expect(answer.margins.map((m) => m.text)).toEqual(['My answer.']);
+  // Only what went is marked Sent; the reply elsewhere stays ticked for the file, and Send has nothing left to take.
+  await expect(elsewhere.locator('.tag', { hasText: 'Sent' })).toHaveCount(0);
+  await expect(elsewhere.getByRole('checkbox')).toBeChecked();
+  await expect(send).toBeDisabled();
+  await expect(playing.getByRole('button', { name: FILE_BUTTON })).toBeEnabled();
+  await context.close();
+});
+
 const ERROR_ROWS: Array<[string, string, 'ended' | 'too-big' | 'retry']> = [
   ['replyclosed1', '410 expired_or_removed', 'ended'],
   ['replyfull409', '409 club_full', 'ended'],

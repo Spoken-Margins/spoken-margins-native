@@ -159,7 +159,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
   const store = useCallback((read: PacketRead) => {
     const current = dataRef.current;
     const placed = placeImport(read, current.shows, current.episodes, undefined, current.margins, { unnamedAuthor: unnamedAuthorFor('link') });
-    if (replyFetch.current) trackReplyBox(placed.episode.id, replyFetch.current, senderNameOrNone(read.sender));
+    if (replyFetch.current) trackReplyBox(placed.episode.id, replyFetch.current, senderNameOrNone(read.sender), read.contentDigest);
     const saved = (async () => {
       if (placed.show) await current.follow(placed.show, [placed.episode]);
       else if (placed.newEpisode) await current.updateEpisode(placed.episode);

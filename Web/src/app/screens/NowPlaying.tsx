@@ -25,7 +25,8 @@ import { NotSavedError } from '../logic/storage.ts';
 import { shareNativePacket } from '../logic/native-packets.ts';
 import { postAnswer, type ReplyFailure } from '../logic/reply-box.ts';
 import {
-  REPLY_SEND_WORDS, everythingSent, failureLine, fileInsteadLabel, forgetTicks, isSent, replyCaption, sendToLabel, sentLine, withoutSent,
+  REPLY_SEND_WORDS, everythingSent, failureLine, fileInsteadLabel, forgetTicks, isSent, replyCaption, sendToLabel, sendsThroughLink, sentLine,
+  splitForLink, withoutSent,
   type FileFallback,
 } from '../logic/reply-send.ts';
 import { useReplyBox } from '../reply-boxes.ts';
@@ -599,6 +600,9 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   const picked = currentPicks(listed ?? [], changed, starting);
   const toWrite = offer ? pickedMargins(offer, picked) : starredList ? pickedFromList(starredList, picked) : margins;
   const replyIds = new Set((offer?.replies ?? []).map((m) => m.id));
+  // The sender's phone keeps an answer only when each reply in it answers a Margin from this link's packet (#4675,
+  // ReplyBoxRecord.check): a reply to another link's or file's Margins goes only as a file, never through the box.
+  const forBox = box ? splitForLink(toWrite, box.packetDigest) : undefined;
   // Greyed buttons say why (#3784), and point at the sentence so a screen reader reads it too.
   const whyNot = box && toWrite.length === 0 && listed && everythingSent(listed) ? REPLY_SEND_WORDS.allSent : whyNotShared(listed, toWrite.length);
   // Nothing ticked, or more ticked than the writer takes (#4093): the buttons are greyed, and the sentence says why.
@@ -634,7 +638,9 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
     try {
       await keepName();
       // The same packet "Send as a file" writes, so the sender's phone opens it with the importer it already has.
-      const written = await services.packets.writePacket(episode, toWrite, show, senderForPacket(name));
+      const through = forBox?.through ?? [];
+      if (through.length === 0) return;
+      const written = await services.packets.writePacket(episode, through, show, senderForPacket(name));
       const result = await postAnswer(box.box, written.bytes);
       if (result.kind === 'failed') {
         setBoxFailure(result.failure);
@@ -736,6 +742,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
                   {replyIds.has(margin.id) && <span className="tag tag-quiet">Reply</span>}
                   {isStarred(margin) && <span className="tag tag-quiet">Starred</span>}
                   {box && isSent(margin) && <span className="tag tag-quiet">{REPLY_SEND_WORDS.sentTag}</span>}
+                  {box && !sendsThroughLink(margin, box.packetDigest) && <span className="tag tag-quiet">{REPLY_SEND_WORDS.fileOnlyTag}</span>}
                   <span className="margin-text">{candidateLabel(margin, formatClock)}</span>
                 </label>
               </li>
@@ -763,6 +770,8 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
           busy={busy}
           sending={sendingToBox}
           blocked={blocked}
+          sendBlocked={(forBox?.through.length ?? 0) === 0}
+          fileOnlyLine={forBox && forBox.fileOnly.length > 0 ? REPLY_SEND_WORDS.otherPacket : undefined}
           whyNot={whyNot}
           nextStep={nextStep}
           failure={boxFailure}
@@ -809,12 +818,16 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
  * text button under its "instead" name. A box that can't take answers hides Send and puts the file button first.
  */
 function ReplyBoxActions({
-  sender, busy, sending, blocked, whyNot, nextStep, failure, sent, fallback, onSend, onFile,
+  sender, busy, sending, blocked, sendBlocked, fileOnlyLine, whyNot, nextStep, failure, sent, fallback, onSend, onFile,
 }: {
   sender: string | undefined;
   busy: boolean;
   sending: boolean;
   blocked: boolean;
+  /** Nothing ticked can go through the link (every ticked row is a reply to another packet's Margin): Send is greyed. */
+  sendBlocked: boolean;
+  /** Some ticked rows can go only as a file: the line that says so, beside whatever else the status says. */
+  fileOnlyLine: string | undefined;
   whyNot: string | undefined;
   nextStep: string | undefined;
   failure: ReplyFailure | undefined;
@@ -826,7 +839,8 @@ function ReplyBoxActions({
   const ended = failure === 'ended';
   const lead = failure ? failureLine(failure, sender) : sent ? sentLine(sender) : undefined;
   const tail = whyNot ?? nextStep;
-  const described = lead || tail ? 'share-why-not' : undefined;
+  const fileOnly = whyNot ? undefined : fileOnlyLine;
+  const described = lead || tail || fileOnly ? 'share-why-not' : undefined;
   return (
     <>
       <p className="muted">{replyCaption(sender)}</p>
@@ -834,10 +848,11 @@ function ReplyBoxActions({
       <div role="status" id="share-why-not">
         {lead && <p className="muted">{lead}</p>}
         {tail && <p className="muted">{tail}</p>}
+        {fileOnly && <p className="muted" id="share-file-only">{fileOnly}</p>}
       </div>
       <div className="share-actions">
         {!ended && (
-          <button type="button" id="share-send-box" className="button button-primary" disabled={busy || blocked} aria-describedby={described} onClick={onSend}>
+          <button type="button" id="share-send-box" className="button button-primary" disabled={busy || blocked || sendBlocked} aria-describedby={described} onClick={onSend}>
             {sending ? REPLY_SEND_WORDS.sending : failure === 'retry' ? REPLY_SEND_WORDS.tryAgain : sendToLabel(sender)}
           </button>
         )}

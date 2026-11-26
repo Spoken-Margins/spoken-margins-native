@@ -486,12 +486,14 @@ func TestReplyPostCORSIsForListedOriginsAndReplyBoxesOnly(t *testing.T) {
 		t.Fatalf("create club: %d", r.code)
 	}
 	for name, r := range map[string]reply{
-		"other origin":       pre(v.ID, "https://evil.example", "POST", "authorization"),
-		"lookalike origin":   pre(v.ID, webApp+".evil.example", "POST", ""),
-		"GET":                pre(v.ID, webApp, "GET", ""),
-		"extra header":       pre(v.ID, webApp, "POST", "authorization, x-sm-key-id"),
-		"ordinary club":      pre(k.id, webApp, "POST", "authorization"),
-		"unknown id":         pre(deriveClub(t, secretK(64)).id, webApp, "POST", "authorization"),
+		"other origin":             pre(v.ID, "https://evil.example", "POST", "authorization"),
+		"lookalike origin":         pre(v.ID, webApp+".evil.example", "POST", ""),
+		"GET":                      pre(v.ID, webApp, "GET", ""),
+		"extra header":             pre(v.ID, webApp, "POST", "authorization, x-sm-key-id"),
+		"ordinary club":            pre(k.id, webApp, "POST", "authorization"),
+		"unknown id, other origin": pre(deriveClub(t, secretK(64)).id, "https://evil.example", "POST", "authorization"),
+		"unknown id post, other origin": c.req("POST", postsPath(deriveClub(t, secretK(64)).id), ans, v.PostProof,
+			"https://evil.example", nil),
 		"ordinary club post": c.req("POST", postsPath(k.id), sealedPart(links.PartPacket, 100, "p"), k.post, webApp, nil),
 		"ordinary club list": c.req("GET", postsPath(k.id), nil, k.read, webApp, nil),
 		"reply list":         c.req("GET", postsPath(v.ID), nil, v.ReadProof, webApp, nil),
@@ -521,6 +523,13 @@ func TestReplyPostCORSIsForListedOriginsAndReplyBoxesOnly(t *testing.T) {
 		}
 	}
 	readable("201", c.req("POST", postsPath(v.ID), ans, v.PostProof, webApp, nil), 201, "")
+	// An id that is no box (unknown, or a reply box that ended and was removed) answers 404 the page can read, so it
+	// shows "can't take answers any more" rather than "check your connection"; its preflight lets the post through.
+	gone := deriveClub(t, secretK(66))
+	if r := pre(gone.id, webApp, "POST", "authorization, content-type"); r.code != 204 || r.hdr.Get("Access-Control-Allow-Origin") != webApp {
+		t.Errorf("preflight to an unknown id from the web app: %d %v", r.code, r.hdr)
+	}
+	readable("404 unknown id", c.req("POST", postsPath(gone.id), ans, gone.post, webApp, nil), 404, "not_found")
 	readable("404 wrong proof", c.req("POST", postsPath(v.ID), ans, deriveClub(t, secretK(65)).post, webApp, nil), 404, "not_found")
 	readable("413", c.req("POST", postsPath(v.ID), sealedPart(links.PartPacket, clubs.ReplyMaxPostBytes+1, "big"), v.PostProof, webApp, nil), 413, "too_large")
 	c.setSwitch(config.ServiceReplies, false)

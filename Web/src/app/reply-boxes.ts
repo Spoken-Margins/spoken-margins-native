@@ -10,7 +10,14 @@ export type ReplyBoxState =
   | { kind: 'none' }
   /** The fetch hasn't settled yet (at most 5 seconds): the Share section waits. */
   | { kind: 'waiting' }
-  | { kind: 'ready'; box: ReplyBox; /** The link's sender's name, if the packet has one. */ sender: string | undefined };
+  | {
+    kind: 'ready';
+    box: ReplyBox;
+    /** The link's sender's name, if the packet has one. */
+    sender: string | undefined;
+    /** The content digest of the packet the link carried: a reply goes through the box only when it answers a Margin from it. */
+    packetDigest: string;
+  };
 
 const NONE: ReplyBoxState = Object.freeze({ kind: 'none' });
 const WAITING: ReplyBoxState = Object.freeze({ kind: 'waiting' });
@@ -28,13 +35,15 @@ function set(episodeId: string, state: ReplyBoxState): void {
  * Registers a link's reply fetch for the episode its packet landed on. The latest link opened for an episode wins; an
  * earlier fetch that settles afterwards changes nothing.
  */
-export function trackReplyBox(episodeId: string, fetching: Promise<ReplyBox | undefined>, sender: string | undefined): void {
+export function trackReplyBox(
+  episodeId: string, fetching: Promise<ReplyBox | undefined>, sender: string | undefined, packetDigest: string,
+): void {
   const token = {};
   tokens.set(episodeId, token);
   set(episodeId, WAITING);
   void fetching.then(
     (box) => {
-      if (tokens.get(episodeId) === token) set(episodeId, box ? { kind: 'ready', box, sender } : NONE);
+      if (tokens.get(episodeId) === token) set(episodeId, box ? { kind: 'ready', box, sender, packetDigest } : NONE);
     },
     () => {
       if (tokens.get(episodeId) === token) set(episodeId, NONE);

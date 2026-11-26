@@ -338,13 +338,22 @@ final class SpokenMarginsPackageImportCoordinator {
             }
             guard !Task.isCancelled else { await removeFolderIfNothingNamesIt(root); return .notNow }
             let committed = try await commit(contents, itemId: itemId, shareLinkId: nil, store: store)
+            // From here the answer is in the Library: whatever happens next, a cancellation included, the outcome is
+            // `.imported`. Returning `.notNow` would leave the post for the next check, which finds it already in
+            // (`newMarginCount` 0), and banner C would never say it arrived.
             // The Library row's new-Margins dot and the open item's cards; nothing opens and nothing plays.
             try? await environment.refreshImportedLibrary(store)
             if environment.selectedItemID() == itemId { environment.refreshSelectedItemQuietly() }
-            if let item = committed.item, let admission = committed.localAudioAdmission {
-                try await placeOnOwnedAudio(item, contents: contents, admission: admission)
-            } else if let localURL = environment.validatedLocalURL(itemId) {
-                environment.resolvePodcastCommentary(itemId, localURL)
+            do {
+                if let item = committed.item, let admission = committed.localAudioAdmission {
+                    try await placeOnOwnedAudio(item, contents: contents, admission: admission)
+                } else if let localURL = environment.validatedLocalURL(itemId) {
+                    environment.resolvePodcastCommentary(itemId, localURL)
+                }
+            } catch {
+                // The Margins are saved; placing them on the listener's own audio can be done again by a restore.
+                let detail = error is CancellationError ? "cancelled" : SafeErrorText.describe(error)
+                environment.recordDiagnostic("lastReplyBoxImportPlacement", "not_placed:\(committed.layerId):\(detail)")
             }
             environment.recordDiagnostic("lastReplyBoxImport", "imported:\(committed.layerId):\(committed.newMarginCount)")
             await removeFolderIfNothingNamesIt(root)

@@ -427,8 +427,12 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     @Published private(set) var reportEntries: [ShareLinkReport.Entry] = []
     /// The reply boxes behind card D on a friend's card (#4675).
     var replyBoxes: ReplyBoxCoordinator { model.replyBoxes }
-    /// The item the sender sheet shares (the packet is made from the open item), named in a reply box's record (#4675).
-    var sharedItemID: String { model.selectedItem.id }
+    /// The item the verified packet was built from, named in a reply box's record (#4675). Taken when the build started
+    /// (the export reads the open item then), never at link time: the open item can change while the sheet is up. Nil
+    /// with no verified packet, and then a link carries no box.
+    var sharedItemID: String? { verifiedPreview == nil ? nil : verifiedPreviewItemID }
+    /// The open item when the build behind `verifiedPreview` started; set and cleared with it.
+    private var verifiedPreviewItemID: String?
 
     init(model: Gate1AppModel) {
         self.model = model
@@ -1011,6 +1015,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         previewTask = nil
         previewFingerprint = nil
         verifiedPreview = nil
+        verifiedPreviewItemID = nil
         previewState = .notBuilt
         stage = newStage
     }
@@ -1054,6 +1059,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         }
         previewTask?.cancel()
         verifiedPreview = nil
+        verifiedPreviewItemID = nil
         previewFingerprint = nil
         previewState = .building
         stage = .recipientPreview
@@ -1061,6 +1067,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         previewTask = Task { [weak self] in
             // The archive is written off the main thread (#2510), so the build is awaited here, not in the tap.
             guard let model = self?.model else { return }
+            // The export builds the packet from the item open as it starts (it reads it before its first suspension, and
+            // gives up if the open item changes while it builds), so this is the item the packet is for (#4675).
+            let builtItemID = model.selectedItem.id
             // The file this build wrote, never the model's last one: a build that stopped early wrote none.
             let builtURL = await model.exportSharedInterjections(presentsReadySheet: false)
             guard let self,
@@ -1086,6 +1095,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                     return
                 }
                 self.previewFingerprint = fingerprint
+                self.verifiedPreviewItemID = builtItemID
                 self.verifiedPreview = preview
                 self.previewState = .ready
                 self.model.isSharedSpokenMarginsPackagePresented = false

@@ -147,6 +147,13 @@ func (s *Server) closeReplyBox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"closed": true})
 }
 
+// answerable is true for an id a browser may post an answer to: a reply box, or an id that is no box at all
+// (unknown, or a reply box that has ended and been removed), whose 404 the page must be able to read. An
+// ordinary club never is, so its routes stay closed to browsers.
+func answerable(box clubs.BoxInfo) bool {
+	return box.Reply || !box.Exists
+}
+
 // replyCORS sets the CORS headers on a reply box's post answer, for an exact -link-origins origin. Never
 // credentials. With no origins listed it changes nothing.
 func (s *Server) replyCORS(w http.ResponseWriter, r *http.Request) {
@@ -164,8 +171,9 @@ func (s *Server) replyCORS(w http.ResponseWriter, r *http.Request) {
 var replyAllowedHeaders = map[string]bool{"authorization": true, "content-type": true}
 
 // replyPreflight answers OPTIONS on a box's post route. It allows POST with Authorization and Content-Type,
-// for a listed origin and a reply box only; an ordinary club, an unknown id, another origin, another
-// method or another header is refused with no CORS headers, so the browser blocks the post.
+// for a listed origin and a reply box or an id that is no box (so the post's 404 is readable); an ordinary
+// club, another origin, another method or another header is refused with no CORS headers, so the browser
+// blocks the post.
 func (s *Server) replyPreflight(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Add("Vary", "Origin")
@@ -179,7 +187,7 @@ func (s *Server) replyPreflight(w http.ResponseWriter, r *http.Request) {
 			ok = false
 		}
 	}
-	if !ok || !s.box(r.PathValue("id")).Reply {
+	if !ok || !answerable(s.box(r.PathValue("id"))) {
 		fail(w, http.StatusForbidden, "origin_refused")
 		return
 	}
