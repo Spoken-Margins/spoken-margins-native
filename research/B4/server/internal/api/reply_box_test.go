@@ -433,18 +433,23 @@ func TestATakedownOrTheLinksEndStopsPosts(t *testing.T) {
 		t.Fatal("the takedown left the reply part on disk")
 	}
 
-	// The owner's takedown, and the link running out, do the same.
-	for name, end := range map[string]func(id string){
-		"owner takedown": func(id string) { c.srv.Links.Takedown(id) },
-		"link expiry":    func(string) { c.clock.Advance(links.Lifetime) },
-	} {
-		c2 := newReplyHarness(t)
-		c = c2
+	// The owner's takedown, and the link running out, do the same. A slice, not a map: the check after the loop needs
+	// the link-expiry harness, and a map's order is random (the test failed about a third of the time).
+	ends := []struct {
+		name string
+		end  func(c *clubHarness, id string)
+	}{
+		{"owner takedown", func(c *clubHarness, id string) { c.srv.Links.Takedown(id) }},
+		{"link expiry", func(c *clubHarness, _ string) { c.clock.Advance(links.Lifetime) }},
+	}
+	for _, e := range ends {
+		name := e.name
+		c = newReplyHarness(t)
 		linkID, out := c.uploaded(vectorHeaders(v))
 		if out["replyBox"] != true {
 			t.Fatalf("%s: no box", name)
 		}
-		end(linkID)
+		e.end(c, linkID)
 		if r := c.req("POST", postsPath(v.ID), ans, v.PostProof, "", nil); r.code != 410 {
 			t.Errorf("%s: post %d %s", name, r.code, r.body)
 		}
@@ -455,7 +460,7 @@ func TestATakedownOrTheLinksEndStopsPosts(t *testing.T) {
 			t.Errorf("%s: list %d", name, r.code)
 		}
 	}
-	// Seven days after the link's end the box is gone for its sender too.
+	// Seven days after the link's end (c is the link-expiry harness) the box is gone for its sender too.
 	c.clock.Advance(7 * 24 * time.Hour)
 	if r := c.req("GET", postsPath(v.ID)+"?after=0", nil, v.ReadProof, "", nil); r.code != 410 {
 		t.Errorf("list seven days after the link: %d", r.code)
