@@ -199,9 +199,8 @@ extension Gate1AppModel {
             // the handoff id, which matches the `pending…Payload:<id>` result below. Read on every drain, so it is in an
             // export made after a relaunch too.
             let root = handoffStore.rootDirectory
-            if let lastShare = try await Self.offMain({ ShareExtensionShareRecord.load(fromAppGroupRoot: root) }) {
-                diagnostics["lastShareExtension"] = lastShare.diagnosticValue
-            }
+            let lastShare = try await Self.offMain { ShareExtensionShareRecord.load(fromAppGroupRoot: root) }
+            if let lastShare { diagnostics["lastShareExtension"] = lastShare.diagnosticValue }
             let payloadIDs = try await Self.offMain { try handoffStore.pendingPayloadIDs() }
             diagnostics["pendingSourceLinkPayloads"] = "\(payloadIDs.count)"
             // A connection failure leaves the link pending for the next activation or the network's
