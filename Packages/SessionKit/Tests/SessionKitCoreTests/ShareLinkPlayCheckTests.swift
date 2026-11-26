@@ -51,13 +51,10 @@ final class ShareLinkPlayCheckTests: XCTestCase {
         }
         XCTAssertEqual(Check.words(for: .article).heading, "Your friend's browser can't play this article yet.")
         XCTAssertEqual(Check.words(for: .linkBroken).remedy, "Make a new link, or tap Send as a file.")
-        // #5264: the browser shows no Margin words on an article card, and only timed ones for a post with no voice.
-        XCTAssertEqual(
-            Check.words(for: .article).remedy,
-            "Their browser shows what your Margins are on, not the Margins. To read or hear them, they need Spoken Margins on iPhone."
-        )
+        // #5264: the browser shows only timed Margin words for a post with no voice.
+        // The article line is #5265's (#5355): its listen-here card shows every Margin.
         XCTAssertEqual(Check.words(for: .noPostVoice).remedy, "To hear it read aloud with your Margins, they need Spoken Margins on iPhone.")
-        for reason in Check.Reason.allCases {
+        for reason in Check.Reason.allCases where reason != .article {
             XCTAssertFalse(Check.words(for: reason).remedy.contains("They'll see your Margins' words"), "\(reason)")
         }
     }

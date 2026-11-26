@@ -136,7 +136,7 @@ public enum ShareLinkPlayCheck {
         switch reason {
         case .article:
             ("Your friend's browser can't play this article yet.",
-             "Their browser shows what your Margins are on, not the Margins. To read or hear them, they need Spoken Margins on iPhone.")
+             "They'll see your Margins' words. To hear them in place, they need Spoken Margins on iPhone.")
         case .noEpisodeAudio:
             ("Your friend's browser can't play this episode.",
              "It has no public audio link. If the show has a public feed, add the episode from there and share again.")
