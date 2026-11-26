@@ -676,6 +676,10 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         snapshot.canShareVerifiedFile ? verifiedPreview?.fileURL : nil
     }
 
+    /// Whether the shared item is a Spoken Note: the packet says only `text`, and the sentence beside a share link
+    /// names a Spoken Note as "something I wrote" (#5264). Read from the item this sheet shares, never the playing one.
+    var sharedItemIsSpokenNote: Bool { model.selectedItem.isSpokenNote }
+
     /// One friend's Margin as the item screen shows it. Whether it can be listened to is `SharedMarginAudio`'s answer (a
     /// recording, or a note the phone's voice reads), never the recording's path alone (#3412).
     static func importedMarginSnapshot(

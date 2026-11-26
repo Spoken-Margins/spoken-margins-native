@@ -1,5 +1,6 @@
 import SwiftUI
 import SessionKit
+import SessionKitSharing
 
 enum Build23RecipientPrimaryAction: Equatable {
     case addSource

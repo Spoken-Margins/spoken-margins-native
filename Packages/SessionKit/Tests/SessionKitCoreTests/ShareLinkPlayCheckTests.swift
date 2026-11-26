@@ -59,6 +59,12 @@ final class ShareLinkPlayCheckTests: XCTestCase {
             Check.words(for: .noEpisodeAudio).remedy,
             "It has no public audio link. If the show has a public feed, add the episode from there and share again.")
         XCTAssertEqual(Check.words(for: .linkBroken).remedy, "Make a new link, or tap Send as a file.")
+        // #5264: the browser shows only timed Margin words for a post with no voice.
+        // The article line is #5265's (#5355): its listen-here card shows every Margin.
+        XCTAssertEqual(Check.words(for: .noPostVoice).remedy, "To hear it read aloud with your Margins, they need Spoken Margins on iPhone.")
+        for reason in Check.Reason.allCases where reason != .article {
+            XCTAssertFalse(Check.words(for: reason).remedy.contains("They'll see your Margins' words"), "\(reason)")
+        }
     }
 
     func testOnlyAProblemIsAWarningOrAnnouncedOrReachesTheBanner() {
