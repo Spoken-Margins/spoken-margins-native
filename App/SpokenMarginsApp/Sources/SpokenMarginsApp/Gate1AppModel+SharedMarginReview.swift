@@ -47,7 +47,22 @@ extension Gate1AppModel {
         } else {
             entries = []
         }
-        return entries.filter { WrittenMarginReadings.audio(for: $0.interjection, in: $0.layer, voiceFile: resolvedApplicationSupportAssetURL(for:)).file != nil }
+        // Only the Margins the item's review can place on its clock (#5409), so the intro, "Hear the replies" and catch-up
+        // never offer what the review would then refuse: an article playing a recording has no time for a text place.
+        let placeable = expectedReviewClock(itemId: itemId).map { SharedMarginReview.entries(entries, playableOn: $0) } ?? entries
+        return placeable.filter { WrittenMarginReadings.audio(for: $0.interjection, in: $0.layer, voiceFile: resolvedApplicationSupportAssetURL(for:)).file != nil }
+    }
+
+    /// The clock a review of `itemId` will count on, when it is known before it starts (#5409): the loaded session's when it
+    /// is that item, else media for an item known to play audio. Nil when unknown, and then nothing is left out: a podcast
+    /// has no text-placed Margins, and a text item whose narration is prepared only when it starts is caught by the
+    /// review's own check once the session has begun.
+    func expectedReviewClock(itemId: String) -> MarginMomentClock? {
+        if snapshot.itemId == itemId, snapshot.targetType != nil { return reviewSourceClock }
+        if selectedItem.id == itemId, selectedItem.isNativeAudio || selectedItem.mediaDurationMs != nil { return .media }
+        let mediaTypes: Set<String> = [TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue]
+        if let row = libraryItems.first(where: { $0.id == itemId }), mediaTypes.contains(row.mediaType) { return .media }
+        return nil
     }
 
     /// The listener's own Margins on `itemId`, read from what the app already holds: the open item's and the rows the
