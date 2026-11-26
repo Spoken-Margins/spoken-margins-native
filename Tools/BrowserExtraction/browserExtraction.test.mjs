@@ -1234,13 +1234,14 @@ test("#5365: an interactive chart with a hidden static picture is captured as th
 });
 
 test("#5365: neighbours of the interactive figure: chart only, canvas, an icon in the caption, two pictures", () => {
-  // A chart with no picture beside it keeps its caption and loses its legend.
+  // A chart with no hidden picture beside it is left alone: its caption stays,
+  // and its legend is read as before, because nothing tells a legend apart
+  // from a figure's own words (#5384 audit).
   let text = captureFigures([interactiveFigure({
     id: "figure-x", legend: ["series one", "series two"], caption: "Figure X. Chart with no picture."
   })]);
   assert.equal(pictureCount(text), 0);
   assert.ok(text.includes("Figure X. Chart with no picture."));
-  assert.ok(!text.includes("series one") && !text.includes("series two"));
 
   // A <canvas> chart is the same case as an <svg> one.
   text = captureFigures([interactiveFigure({
@@ -1306,6 +1307,33 @@ test("#5365 audit: content that shares a figure with an icon or a chart is never
   text = captureFigures([`<figure><blockquote><p>Quoted words stay in the capture.</p><svg class="quote-mark"><path d="M0 0"/></svg></blockquote>`
     + `<figcaption>Quote author</figcaption></figure>`]);
   assert.ok(text.includes("Quoted words stay in the capture."), text);
+
+  // A quote whose words sit in a plain <div>/<span> beside a quote-mark <svg>:
+  // no hidden picture, so the figure is not touched (#5384 audit).
+  text = captureFigures([`<figure class="quote"><div class="quote-body"><svg class="quote-mark"><path d="M0 0"/></svg>`
+    + `<span>Quoted words in a span.</span></div><figcaption>Quote author</figcaption></figure>`]);
+  assert.ok(text.includes("Quoted words in a span."), text);
+
+  // In a real chart figure, a table with icon cells is not part of the chart's
+  // block: only the icon is hidden while Defuddle reads the page. (Defuddle
+  // itself keeps only a figure's picture and caption, on main too, so this is
+  // checked on the page rather than in the text.)
+  const chartAndTable = browserLikePage({
+    url: "https://example.com/chart-table",
+    head: "<title>Chart and table</title>",
+    body: `<article><h1>Title</h1>${articleProse}<figure><div class="ix"><div class="ix-legend"><span>table legend</span></div><svg id="chart"></svg></div>`
+      + `<img alt="Chart static." src="cs.png" style="display: none">`
+      + `<table><tr><th>Plan</th><th>Offline</th></tr><tr><td>Charted plan row</td><td><svg id="tick"><path d="M0 0"/></svg></td></tr></table>`
+      + `<figcaption>Figure CT. Chart and table.</figcaption></figure>${articleProse}</article>`
+  });
+  const hiddenDuringParse = [];
+  whileDefuddleParses(
+    () => chartAndTable.querySelectorAll("[style]").forEach(element =>
+      /display: none/.test(element.getAttribute("style")) && hiddenDuringParse.push(element.id || element.className || element.tagName)),
+    () => withGlobalDocument(chartAndTable, () =>
+      captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, chartAndTable))
+  );
+  assert.deepEqual(hiddenDuringParse, ["ix", "tick"]);
 
   // A video in a wrapper with an <svg> play button: the wrapper is not the chart's block.
   const document = browserLikePage({

@@ -281,6 +281,31 @@ function unhideWhileCapturing(element, restores) {
   }
 }
 
+function hiddenByAttributes(element) {
+  return element.hasAttribute("hidden")
+    || element.getAttribute("aria-hidden") === "true"
+    || (element.getAttribute("style") || "").split(";").some(part => HIDDEN_STYLE_DECLARATION.test(part))
+    || (element.getAttribute("class") || "").split(/\s+/).some(token => token && HIDDEN_CLASS_TOKEN.test(token));
+}
+
+// Only the #5365 shape is touched: a chart beside a picture the page hides
+// (by itself or by a wrapper inside the figure). Any other figure holding an
+// <svg> is left alone, because its words (a quote, a card, code drawn as rows)
+// can't be told apart from a legend.
+function holdsHiddenPicture(figure) {
+  return Array.from(figure.querySelectorAll("img")).some(image => {
+    if (image.closest("figcaption")) {
+      return false;
+    }
+    for (let element = image; element && element !== figure; element = element.parentElement) {
+      if (hiddenByAttributes(element)) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
 function pictureInteractiveFigures(documentRef) {
   const restores = [];
   const restore = () => restores.reverse().forEach(undo => undo());
@@ -290,7 +315,7 @@ function pictureInteractiveFigures(documentRef) {
         continue;
       }
       const charts = chartsOutsideCaption(figure);
-      if (!charts.length) {
+      if (!charts.length || !holdsHiddenPicture(figure)) {
         continue;
       }
       const blocks = new Set(charts.map(chart => chartBlock(chart, figure)));
