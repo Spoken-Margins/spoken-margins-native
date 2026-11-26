@@ -152,7 +152,7 @@ export function captureSelectedText(globalRef, documentRef) {
 // read.") and Timeline draws it, instead of reading every cell as a sentence
 // (#5364). Spans are laid out on a grid: a cell's text fills every column and
 // row it covers. The first row is the header, whatever its cells are tagged.
-const TABLE_CELL_BREAKS = new Set(["p", "div", "br", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre"]);
+const TABLE_CELL_BREAKS = new Set(["td", "th", "tr", "p", "div", "br", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre"]);
 const MAX_TABLE_SPAN = 1000;
 
 function tableSpan(cell, attribute) {
@@ -227,31 +227,60 @@ export function tableToMarkdown(table) {
   if (!rows.length || width === 0) {
     return "";
   }
+  // A <caption> names the table; keep it as a line above the rows.
+  const caption = Array.from(table.children).find(child => String(child.tagName || "").toLowerCase() === "caption");
+  const captionText = caption ? tableCellText(caption).replace(/\\\|/g, "|") : "";
   const line = row => `| ${Array.from({ length: width }, (_, index) => row[index] ?? "").join(" | ")} |`;
-  return [line(rows[0]), `| ${Array(width).fill("---").join(" | ")} |`, ...rows.slice(1).map(line)].join("\n");
+  const markdown = [line(rows[0]), `| ${Array(width).fill("---").join(" | ")} |`, ...rows.slice(1).map(line)].join("\n");
+  return captionText ? `${captionText}\n\n${markdown}` : markdown;
 }
 
 // Defuddle keeps a table as HTML when any cell has a colspan or rowspan
 // attribute, even colspan="1" (alignment.anthropic.com marks every cell so),
 // and the app turns each cell's paragraph into a line of its own. Give every
 // such table back as Markdown. A table that won't parse is left as it was.
+// Defuddle writes a table it keeps as HTML on lines of its own, so only a
+// "<table" that opens a line, outside a code fence, starts one: a code sample
+// or a mention of <table> in prose is left as written. A table with no
+// closing tag is left too, and the scan goes on after it.
+const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/;
+const TABLE_LINE = /^ {0,3}<table\b/i;
+
 function htmlTableBlocks(markdown) {
   const blocks = [];
   const tokens = /<table\b[^>]*>|<\/table\s*>/gi;
-  let depth = 0;
-  let start = -1;
-  for (const match of markdown.matchAll(tokens)) {
-    if (match[0][1] !== "/") {
-      if (depth === 0) {
-        start = match.index;
+  let fence = null;
+  let offset = 0;
+  while (offset < markdown.length) {
+    const lineEnd = markdown.indexOf("\n", offset);
+    const next = lineEnd === -1 ? markdown.length : lineEnd + 1;
+    const line = markdown.slice(offset, lineEnd === -1 ? markdown.length : lineEnd);
+    const fenceMark = line.match(FENCE_LINE);
+    if (fence) {
+      if (fenceMark && fenceMark[1][0] === fence[0] && fenceMark[1].length >= fence.length) {
+        fence = null;
       }
-      depth += 1;
-    } else if (depth > 0) {
-      depth -= 1;
-      if (depth === 0) {
-        blocks.push([start, match.index + match[0].length]);
+    } else if (fenceMark) {
+      fence = fenceMark[1];
+    } else if (TABLE_LINE.test(line)) {
+      tokens.lastIndex = offset;
+      let depth = 0;
+      let end = -1;
+      for (let match = tokens.exec(markdown); match; match = tokens.exec(markdown)) {
+        depth += match[0][1] === "/" ? -1 : 1;
+        if (depth === 0) {
+          end = match.index + match[0].length;
+          break;
+        }
+      }
+      if (end !== -1) {
+        blocks.push([offset + line.length - line.trimStart().length, end]);
+        const after = markdown.indexOf("\n", end);
+        offset = after === -1 ? markdown.length : after + 1;
+        continue;
       }
     }
+    offset = next;
   }
   return blocks;
 }
@@ -269,10 +298,20 @@ export function htmlTablesAsMarkdown(markdown, documentRef) {
     holder.innerHTML = markdown.slice(start, end);
     const table = (holder.content || holder).querySelector("table");
     const converted = table ? tableToMarkdown(table) : "";
-    result += markdown.slice(previous, start) + (converted ? `\n\n${converted}\n\n` : markdown.slice(start, end));
+    if (!converted) {
+      result += markdown.slice(previous, end);
+    } else {
+      // Only the blank lines around the table are tidied, never the rest.
+      const before = markdown.slice(previous, start).replace(/\s*$/, "");
+      result += `${before}${before ? "\n\n" : ""}${converted}\n\n`;
+      // Skip the blank lines that followed the HTML table.
+      const rest = markdown.slice(end).match(/^\s*/)[0].length;
+      previous = end + rest;
+      continue;
+    }
     previous = end;
   }
-  return (result + markdown.slice(previous)).replace(/\n{3,}/g, "\n\n");
+  return (result + markdown.slice(previous)).replace(/\n\n$/, previous >= markdown.length ? "" : "\n\n");
 }
 
 // Defuddle strips every element whose class or id starts with "ad-" or ends

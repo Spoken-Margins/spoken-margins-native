@@ -329,7 +329,7 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
     // reads a cell's paragraph as a sentence (#5364). Spans fill a grid; the
     // first row is the header. Same rules as tableToMarkdown in
     // Tools/BrowserExtraction/browserExtractionCore.mjs.
-    const breaks = new Set(["p", "div", "br", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre"]);
+    const breaks = new Set(["td", "th", "tr", "p", "div", "br", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre"]);
     const words = (node, parts) => {
         if (node.nodeType === 3) { parts.push(node.nodeValue); return; }
         const tag = String(node.tagName || "").toLowerCase();
@@ -367,8 +367,13 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
         const rows = grid.filter(row => row && row.some(cell => cell));
         const width = Math.max(0, ...rows.map(row => row.length));
         if (!rows.length || width === 0) { return ""; }
+        const caption = Array.from(table.children).find(child => String(child.tagName || "").toLowerCase() === "caption");
+        const captionParts = [];
+        if (caption) { Array.from(caption.childNodes || []).forEach(child => words(child, captionParts)); }
+        const captionText = normalize(captionParts.join(""));
         const line = row => `| ${Array.from({ length: width }, (_, index) => row[index] ?? "").join(" | ")} |`;
-        return [line(rows[0]), `| ${Array(width).fill("---").join(" | ")} |`, ...rows.slice(1).map(line)].join("\n");
+        const markdown = [line(rows[0]), `| ${Array(width).fill("---").join(" | ")} |`, ...rows.slice(1).map(line)].join("\n");
+        return captionText ? `${captionText}\n\n${markdown}` : markdown;
     };
     // A container's text already includes its descendants. Consume each DOM
     // passage once, without deleting intentional repetitions in sibling blocks.

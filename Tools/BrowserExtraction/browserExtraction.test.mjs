@@ -260,6 +260,21 @@ test("#5364: HTML tables left in Markdown become Markdown tables, spans laid out
     assert.equal(result, `Before.\n\n${expected}\n\nAfter.`, name);
   }
   assert.equal(htmlTablesAsMarkdown("No table here.", document), "No table here.");
+  const simple = "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>";
+  const asMarkdown = "| A | B |\n| --- | --- |\n| 1 | 2 |";
+  assert.equal(htmlTablesAsMarkdown(`<table><caption>Table 2. Scores.</caption><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>`, document),
+    `Table 2. Scores.\n\n${asMarkdown}`, "a caption stays, as a line above the rows");
+  const fenced = "```html\n" + simple + "\n```";
+  assert.equal(htmlTablesAsMarkdown(fenced, document), fenced, "a code sample in a fence is left as written");
+  assert.equal(htmlTablesAsMarkdown(`Use \`<table>\` for data.\n\n${simple}`, document),
+    `Use \`<table>\` for data.\n\n${asMarkdown}`, "a mention of <table> in prose doesn't hide the real table");
+  assert.equal(htmlTablesAsMarkdown(`<table><tr><td>never closed\n\n${simple}`, document),
+    `<table><tr><td>never closed\n\n${asMarkdown}`, "an unclosed table doesn't hide the next one");
+  const code = "```\na\n\n\n\nb\n```";
+  assert.equal(htmlTablesAsMarkdown(`${code}\n\n${simple}\n\nAfter.`, document), `${code}\n\n${asMarkdown}\n\nAfter.`,
+    "blank lines elsewhere are left alone");
+  assert.equal(htmlTablesAsMarkdown("<table><tr><td>x<table><tr><td>y</td></tr></table></td><td>z</td></tr></table>", document),
+    "| x y | z |\n| --- | --- |", "a nested table's words stay apart");
   assert.equal(htmlTablesAsMarkdown("<table></table>", document), "<table></table>", "an empty table is left as it was");
 });
 
