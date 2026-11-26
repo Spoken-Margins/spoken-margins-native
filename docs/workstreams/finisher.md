@@ -30,7 +30,7 @@ With no other instructions, a finisher:
    - The Dial (#589) is Off (checked: the worker reads it with `dial_gate.py`).
    - Memory pressure not normal, or under 10 GB free plus 4 GB for each running build (the floor is in the project instructions and the #337 header; [test-lane.md](test-lane.md) has the lane's own 10 GB line).
 2. **Takes the queue in this order** (owner's note, #2593):
-   1. `needs-mac` PRs: open, into `main`, with a `Handing to the Mac finisher:` comment saying what fails and where the report is.
+   1. `needs-mac` PRs: open, into `main`, with a `Handing to the Mac finisher:` comment saying what fails and where the report is. A merge conflict comes here only after the conflict resolver (`scripts/conflict_resolver.py`, #5320) declined it or left it 2 hours; until then the PR carries `conflict-resolver`, not `needs-mac`, and is not the finisher's.
    2. Then `priority` issues labelled `where:mac`.
 3. **Claims before it works.** The first line of a comment on the PR is exactly `Finisher <name> taking this.` (checked: both finishers and the worker match on it). On an issue it follows the normal claim: `in-progress` on, `ready` off, `Claimed by project thread "<title>"` (the project instructions' claim; the worker uses the same note for its issues).
 4. **Builds only through `scripts/xcodebuild-lane`**, never boots a simulator itself (simulator tests go to the lane as an optional `/lane T3` request with `lane:queued`; it holds no merge), and never pushes to `main` or to a PR that is armed (checked: the worker's run rules, `common_rules` in `sm_claude_worker.py`; a hook blocks raw `xcodebuild`, AGENTS.md "Verification"). Never reset or delete the owner's Library and recordings (owner overlay "Protect owner data").

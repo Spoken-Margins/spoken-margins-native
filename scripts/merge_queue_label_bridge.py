@@ -29,8 +29,8 @@ label into the queue's own commands. merge-queue-label-bridge.yml runs it from m
   the `unlabeled` event, a hold `edited`/`converted_to_draft` event, merge_queue_dequeued.py's label removal, or a
   hand-off (next point).
 - Handed off (#5302): a one-PR run (a dispatch or a PR event) on a PR with no arming label that carries `needs-mac`
-  takes it out of the queue and turns auto-merge off. The hosted conflict check (lane_conflicts.py) hands a
-  conflicting PR to the Mac finisher by swapping `automerge` for `needs-mac` with GITHUB_TOKEN, which wakes no
+  or `conflict-resolver` takes it out of the queue and turns auto-merge off. The hosted conflict check (lane_conflicts.py) hands a
+  conflicting PR to the conflict resolver by swapping `automerge` for `conflict-resolver` with GITHUB_TOKEN, which wakes no
   `unlabeled` run, so it dispatches one of these. A queued PR that conflicts can't merge, and while queued nobody
   can push the fix (#5276 sat 5 hours that way). The sweep never does this: it only reads armed PRs.
 
@@ -66,7 +66,8 @@ import unicodedata
 LABEL = 'automerge'
 OWNER_TAP = 'owner-tap'  # the owner's tap on a PR only he merges; it arms like `automerge` (#4939)
 FIX_LABEL = 'needs-fix'
-HANDOFF_LABEL = 'needs-mac'  # lane_conflicts.py's hand-off to the Mac finisher; such a PR must not sit queued (#5302)
+# lane_conflicts.py's hand-offs, to the Mac finisher or the conflict resolver (#5320); such a PR must not sit queued
+HANDOFF_LABELS = ('needs-mac', 'conflict-resolver')  # (#5302)
 TRIES = 3
 MARKER = '<!-- merge-queue-label-bridge not-queued -->'
 QUEUE_FAILED_MARKER = '<!-- merge-queue-label-bridge could-not-queue -->'
@@ -320,8 +321,9 @@ def queue(github, pr, out=sys.stdout, rearmed=False):
         print(f'#{number}: not open, nothing to do', file=out)
         return True
     if not armed(pr):
-        if HANDOFF_LABEL in labels(pr) and (pr.get('autoMergeRequest') or pr.get('mergeQueueEntry')):
-            print(f'#{number}: handed off (`{HANDOFF_LABEL}`) with no `{LABEL}` or `{OWNER_TAP}`, taking it out', file=out)
+        handed = [name for name in HANDOFF_LABELS if name in labels(pr)]
+        if handed and (pr.get('autoMergeRequest') or pr.get('mergeQueueEntry')):
+            print(f'#{number}: handed off (`{handed[0]}`) with no `{LABEL}` or `{OWNER_TAP}`, taking it out', file=out)
             return take_out(github, pr, out)
         print(f'#{number}: no `{LABEL}` or `{OWNER_TAP}` label, nothing to queue', file=out)
         return True
