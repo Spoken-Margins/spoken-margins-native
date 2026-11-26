@@ -23,7 +23,8 @@ final class PubMedPaperReaderTests: XCTestCase {
     private func page() throws -> PubMedPaperPage { try PubMedPaperReader.read(fixture()) }
 
     private func entry(_ pmid: String) throws -> PaperEntry {
-        try XCTUnwrap(page().entries.first { $0.pmid == pmid }, pmid)
+        let page = try page()
+        return try XCTUnwrap(page.entries.first { $0.pmid == pmid }, pmid)
     }
 
     // MARK: The real reply
@@ -59,7 +60,8 @@ final class PubMedPaperReaderTests: XCTestCase {
     }
 
     func testAStructuredAbstractKeepsItsSections() throws {
-        let abstract = try XCTUnwrap(entry("43065054").abstract)
+        let paper = try entry("43065054")
+        let abstract = try XCTUnwrap(paper.abstract)
         XCTAssertTrue(abstract.hasPrefix("BACKGROUND: "), abstract)
         XCTAssertTrue(abstract.contains("\n\nCONCLUSIONS: flexiAsCas12a joins"), abstract)
     }
