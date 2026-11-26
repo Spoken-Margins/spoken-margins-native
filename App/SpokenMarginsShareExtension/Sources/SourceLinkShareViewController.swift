@@ -383,7 +383,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             route: route,
             candidates: candidateTrace.candidates,
             handoffId: handoffId,
-            failure: failureError.map(ShareExtensionShareRecord.failureCode)
+            errorCode: failureError.map(ShareExtensionShareRecord.failureCode)
         )
         guard let containerURL = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: SourceLinkHandoffStore.appGroupIdentifier

@@ -447,7 +447,8 @@ public struct ShareExtensionShareRecord: Codable, Equatable, Sendable {
     /// The representations tried, in order. Nil in a record from a build before #5338.
     public var candidates: [Candidate]?
     public var handoffId: String?
-    public var failure: String?
+    /// An error's `domain:code` (`failureCode`), never its message.
+    public var errorCode: String?
 
     public init(
         recordedAt: Date = Date(),
@@ -455,14 +456,14 @@ public struct ShareExtensionShareRecord: Codable, Equatable, Sendable {
         route: String,
         candidates: [Candidate]? = nil,
         handoffId: String? = nil,
-        failure: String? = nil
+        errorCode: String? = nil
     ) {
         self.recordedAt = ISO8601DateFormatter().string(from: recordedAt)
         self.attachmentTypes = attachmentTypes
         self.route = route
         self.candidates = candidates
         self.handoffId = handoffId
-        self.failure = failure
+        self.errorCode = errorCode
     }
 
     /// An error as its domain and code only, so no message text (which can name a page or file) is kept.
@@ -491,7 +492,7 @@ public struct ShareExtensionShareRecord: Codable, Equatable, Sendable {
     public var diagnosticValue: String {
         var parts = ["at=\(recordedAt)", "route=\(route)"]
         if let handoffId { parts.append("handoff=\(handoffId)") }
-        if let failure { parts.append("failure=\(failure)") }
+        if let errorCode { parts.append("error=\(errorCode)") }
         if let candidates {
             let tried = candidates.map { candidate in
                 "\(candidate.type):\(candidate.outcome)" + (candidate.detail.map { "(\($0))" } ?? "")
