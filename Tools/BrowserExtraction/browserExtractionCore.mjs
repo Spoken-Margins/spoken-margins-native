@@ -535,6 +535,21 @@ function holdsHiddenPicture(figure) {
   });
 }
 
+// Once a figure has a visible picture, Defuddle writes it as just the picture
+// and its caption and drops every other child, a paragraph included (checked
+// against defuddle 0.19.5). So a chart figure that also holds a paragraph,
+// table, list, code, quote or other content beside the chart is left exactly
+// as main reads it: its picture stays hidden and its words are written out
+// (#5384 audit of 584f63d). Words are never traded for a picture.
+const CONTENT_SELECTOR = `${READABLE_SELECTOR}, details, summary`;
+
+function holdsContentBesideChart(figure, blocks) {
+  return Array.from(figure.querySelectorAll(CONTENT_SELECTOR)).some(element =>
+    !element.matches("figcaption, img, picture")
+      && !element.closest("figcaption")
+      && ![...blocks].some(block => block.contains(element)));
+}
+
 function pictureInteractiveFigures(documentRef) {
   const restores = [];
   const restore = () => restores.reverse().forEach(undo => undo());
@@ -548,6 +563,9 @@ function pictureInteractiveFigures(documentRef) {
         continue;
       }
       const blocks = new Set(charts.map(chart => chartBlock(chart, figure)));
+      if (holdsContentBesideChart(figure, blocks)) {
+        continue;
+      }
       for (const block of blocks) {
         if (![...blocks].some(other => other !== block && other.contains(block))) {
           hideWhileCapturing(block, restores);

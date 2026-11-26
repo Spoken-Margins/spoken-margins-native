@@ -1485,26 +1485,34 @@ test("#5365 audit: content that shares a figure with an icon or a chart is never
     + `<span>Quoted words in a span.</span></div><figcaption>Quote author</figcaption></figure>`]);
   assert.ok(text.includes("Quoted words in a span."), text);
 
-  // In a real chart figure, a table with icon cells is not part of the chart's
-  // block: only the icon is hidden while Defuddle reads the page. (Defuddle
-  // itself keeps only a figure's picture and caption, on main too, so this is
-  // checked on the page rather than in the text.)
-  const chartAndTable = browserLikePage({
-    url: "https://example.com/chart-table",
-    head: "<title>Chart and table</title>",
-    body: `<article><h1>Title</h1>${articleProse}<figure><div class="ix"><div class="ix-legend"><span>table legend</span></div><svg id="chart"></svg></div>`
-      + `<img alt="Chart static." src="cs.png" style="display: none">`
-      + `<table><tr><th>Plan</th><th>Offline</th></tr><tr><td>Charted plan row</td><td><svg id="tick"><path d="M0 0"/></svg></td></tr></table>`
-      + `<figcaption>Figure CT. Chart and table.</figcaption></figure>${articleProse}</article>`
-  });
-  const hiddenDuringParse = [];
-  whileDefuddleParses(
-    () => chartAndTable.querySelectorAll("[style]").forEach(element =>
-      /display: none/.test(element.getAttribute("style")) && hiddenDuringParse.push(element.id || element.className || element.tagName)),
-    () => withGlobalDocument(chartAndTable, () =>
-      captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, chartAndTable))
-  );
-  assert.deepEqual(hiddenDuringParse, ["ix", "tick"]);
+  // A chart figure that hides a picture but also holds a table, list, code or
+  // "show data" block is left as main reads it, so that content is written out
+  // (Defuddle writes a figure with a visible picture as picture and caption only).
+  const chartWith = (content) => `<figure><div class="ix"><div class="ix-legend"><span>side legend</span></div><svg></svg></div>`
+    + `<img alt="Chart static." src="cs.png" style="display: none">${content}`
+    + `<figcaption>Figure CT. Chart and content.</figcaption></figure>`;
+  for (const [content, words] of [
+    [`<table><tr><th>Plan</th><th>Offline</th></tr><tr><td>Charted plan row</td><td><svg><path d="M0 0"/></svg></td></tr></table>`, "Charted plan row"],
+    [`<ul><li>Source list item</li></ul>`, "Source list item"],
+    [`<pre><code>plotted values 1 2 3</code></pre>`, "plotted values 1 2 3"],
+    [`<details><summary>Show data</summary><table><tr><td>Hidden data cell</td></tr></table></details>`, "Hidden data cell"]
+  ]) {
+    text = captureFigures([chartWith(content)]);
+    assert.ok(text.includes(words), `${words}: ${text}`);
+    assert.ok(text.includes("Figure CT. Chart and content."), text);
+  }
+
+  // Figure 6 of the #5365 page: a note paragraph sits beside the chart inside
+  // the widget. Defuddle drops a paragraph beside a visible picture, so the
+  // figure is left as main reads it: the note and caption are read, and the
+  // picture stays out.
+  text = captureFigures([`<figure id="figure-6"><div class="ix"><div class="ix-chart"><svg><path d="M0 0"/></svg>`
+    + `<div class="ix-tip" role="status" hidden=""></div></div><p class="ix-note">Colored: cyber text. Gray: retain text.</p></div>`
+    + `<img alt="Log-scale bar chart." src="fig6.png" class="ix-static" style="display: none;">`
+    + `<figcaption>Figure 6. Note beside the chart.</figcaption></figure>`]);
+  for (const words of ["Colored: cyber text. Gray: retain text.", "Figure 6. Note beside the chart."]) {
+    assert.ok(text.includes(words), `${words}: ${text}`);
+  }
 
   // A video in a wrapper with an <svg> play button: the wrapper is not the chart's block.
   const document = browserLikePage({
