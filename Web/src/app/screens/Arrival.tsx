@@ -14,7 +14,9 @@ import { playability, type VoiceLookup } from '../logic/playability.ts';
 import { messageForFailure, messageForOpenedSettled, playCheckHandler, reportPlayCheck, type PlayCheckMessage } from '../play-check.ts';
 import { placeMarginsOnAudio } from '../place-margins.ts';
 import { plainError } from '../logic/messages.ts';
-import { ShareLinkError, linkFooterText, openSharedPacketWithExpiry, type ParsedLink, type ShareLinkRef } from '../logic/share-link.ts';
+import { ShareLinkError, linkFooterText, openSharedPacketWithExpiry, type ParsedLink, type ShareLinkFailure, type ShareLinkRef } from '../logic/share-link.ts';
+import { FRIEND_HELP_WORDS, friendHelpForFailure } from '../logic/friend-help.ts';
+import { FriendHelpLink } from './FriendHelpLink.tsx';
 import { NotSavedError } from '../logic/storage.ts';
 import { dontTellLabel, inSenderCheck, mayOffer, openedNotice, openedSignaller, openedToken, postOpened, toldNotNotice, withSignalled } from '../logic/opened-signal.ts';
 import { useData } from '../data.tsx';
@@ -27,7 +29,7 @@ import { useUi } from '../ui.tsx';
 
 type State =
   | { status: 'opening' }
-  | { status: 'failed'; message: string }
+  | { status: 'failed'; message: string; reason: ShareLinkFailure }
   | { status: 'ready'; read: PacketRead; facts: ArrivalFacts; expires?: string; lookup?: VoiceLookup; offersOpened: boolean };
 
 /** Words for a link that wouldn't open. A cut-off link and an unopenable key read the same: the friend re-copies it. */
@@ -99,7 +101,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
     if (started.current || !data.ready) return;
     started.current = true;
     if (link.kind !== 'link') {
-      setState({ status: 'failed', message: ARRIVAL_WORDS.cutOff });
+      setState({ status: 'failed', message: ARRIVAL_WORDS.cutOff, reason: 'damaged' });
       reportPlayCheck({ type: 'failed', reason: 'link-broken' });
       return;
     }
@@ -127,7 +129,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
         opened = packet;
         message = undefined;
       } catch (error) {
-        setState({ status: 'failed', message: failureWords(error) });
+        setState({ status: 'failed', message: failureWords(error), reason: error instanceof ShareLinkError ? error.reason : 'other' });
         message = messageForFailure(error);
       }
       // After the try, so nothing about the sender's check can turn a link that opened into the failed card. Inside the
@@ -263,6 +265,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
 
   if (state.status === 'failed') {
     const { head, rest } = splitSentence(state.message);
+    const helpTopic = friendHelpForFailure(state.reason);
     return (
       <div className="arrival" role="dialog" aria-modal="true" aria-labelledby="arrival-title" data-testid="arrival-failed">
         <div className="arrival-body arrival-centered">
@@ -271,6 +274,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
             {head}
           </h1>
           {rest && <p className="arrival-text">{rest}</p>}
+          {helpTopic && <FriendHelpLink topic={helpTopic} />}
           {state.message === ARRIVAL_WORDS.cutOff && reportHref && (
             <p className="arrival-foot">
               <a href={reportHref} target="_blank" rel="noopener noreferrer">
@@ -373,6 +377,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
                 {GET_APP_LINK.text}
               </a>
             </p>
+            <FriendHelpLink text={FRIEND_HELP_WORDS.footer} />
           </footer>
         </div>
         <div className="arrival-starts">
@@ -423,6 +428,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
             <button type="button" className="button arrival-play" onClick={() => onDone(false)}>
               Open Spoken Margins
             </button>
+            <FriendHelpLink topic="cant-hear" />
           </>
         ) : (
           <>
@@ -439,6 +445,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
               <PlayIcon size={22} />
               {unplayable ? `Keep ${possessive(who)} Margins` : 'Play'}
             </button>
+            {unplayable && <FriendHelpLink topic="cant-hear" />}
             {!unplayable && <p className="arrival-hint">{playHint(who, arrivalResumeAt(read, data.episodes, data.positions))}</p>}
             {/* A post whose voice can't be found (a paid post, none offered) leaves the friend the article itself (#4421). */}
             {read.margins.length === 0 && articleAddress && (
@@ -464,6 +471,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
               {GET_APP_LINK.text}
             </a>
           </p>
+          <FriendHelpLink text={FRIEND_HELP_WORDS.footer} />
         </footer>
       </div>
     </div>
