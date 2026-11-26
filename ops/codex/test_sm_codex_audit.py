@@ -807,6 +807,61 @@ class FailureMemory(unittest.TestCase):
         self.assertFalse(A.asks_for_audit("This doesn't need a Claude audit."))
 
 
+class RepeatedHeading(unittest.TestCase):
+    """#5332: a model answer that repeats the audit heading must still post its verdict as the first line after it.
+
+    Read back with the merge policy's own parser (`scripts/lane_merge_rules.audit_blocker`), which is what held #5180.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "lane_merge_rules_for_5332", Path(__file__).resolve().parents[2] / "scripts" / "lane_merge_rules.py")
+        cls.lane = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.lane)
+
+    def blocker(self, body):
+        return self.lane.audit_blocker([{"body": body}], HEAD)
+
+    CLEAN_SECTIONS = (
+        "**Claude audit on `e5f6547`**\n\nNo blocking findings.",  # #5180's comment 7150447827, another sha
+        "**Claude audit on `68fc333`**\n\n**Claude audit on `68fc333`**\n\nNo blocking findings.",
+        "Claude audit on `68fc333`\nNo blocking findings.",
+        "## Claude audit\n\nNo blocking findings.",
+        "**Claude audit:**\n\n**No blocking findings.**",
+        "**Codex audit (Astra) on `68fc333`**\n\nNo blocking findings.",
+        "### Codex audit\nNo findings.",
+        "**No blocking findings.**",
+        "No blocking findings.**",  # #5180's `c061f77` audit: a stray closing mark
+        "**Claude audit on `68fc333`**\n\nNo blocking findings.**",
+    )
+
+    def test_a_clean_answer_that_repeats_the_heading_clears_merge_policy(self):
+        for reviewer in ("Claude", "Codex"):
+            for section in self.CLEAN_SECTIONS:
+                with self.subTest(reviewer=reviewer, section=section):
+                    body = A.build_comment(366, HEAD, section, [366], reviewer=reviewer)
+                    self.assertEqual(sum("audit" in line and "`68fc333`" in line for line in body.splitlines()), 1, body)
+                    self.assertTrue(body.splitlines()[2].startswith("No blocking findings") or
+                                    body.splitlines()[2].startswith("No findings"), body)
+                    self.assertIsNone(self.blocker(body))
+
+    def test_findings_stay_blocking_with_or_without_a_repeated_heading(self):
+        for section in ("**Claude audit on `68fc333`**\n\n1. **High:** it loses data",
+                        "## Claude audit\n**Blocking:** packet won't import",
+                        "1. **Plausible:** No blocking findings in the parser, but the store drops a row",
+                        "**Claude audit on `68fc333`**",  # only the heading: nothing reads as clean
+                        "Claude audit on the head: one blocking finding\n1. it loses data"):
+            with self.subTest(section=section):
+                body = A.build_comment(366, HEAD, section, [366])
+                self.assertIsNotNone(self.blocker(body))
+                self.assertIn("blocking findings", self.blocker(body))
+
+    def test_split_sections_uses_the_same_rule(self):
+        out = "### PR #366\n**Claude audit on `68fc333`**\n\n**No blocking findings.**\n\nNotes."
+        self.assertEqual(A.split_sections(out, [366])[366], "No blocking findings.**\n\nNotes.")
+
+
 class HeadFiles(unittest.TestCase):
     def export(self, files, blobs):
         """blobs: path -> (mode, size, text or an Exception for show)."""
@@ -862,6 +917,28 @@ class HeadFiles(unittest.TestCase):
         self.assertNotIn("git show", block)
         self.assertIn("cannot run commands", A.build_prompt([dict(pr(number=7), lines=3)], [block], OLD))
 
+    def test_a_long_description_reaches_the_model_whole(self):
+        # #5274: a 9,324-character description lost its closing "Cost and catch" section at the old 6,000 cap.
+        body = "Closes #705.\n\n" + "Detail line.\n" * 700 + "## Cost and catch\n\n1. Cost per run: nothing."
+        self.assertGreater(len(body), 9000)
+        block = A.pr_context_block(dict(pr(number=7, body=body), lines=3, issues=[]), {}, ".sm-audit/pr-7.diff", OLD, OLD)
+        self.assertIn("## Cost and catch\n\n1. Cost per run: nothing.", block)
+        self.assertNotIn("Description truncated", block)
+
+    def test_a_description_past_the_cap_says_it_was_cut(self):
+        body = "Closes #705. " + "x" * A.PR_BODY_CHARS + " TAIL"
+        text = A.pr_description_text(body)
+        self.assertNotIn("TAIL", text)
+        self.assertIn(f"Description truncated at {A.PR_BODY_CHARS} of {len(body)} characters", text)
+        self.assertEqual(A.pr_description_text("  "), "(none)")
+        self.assertEqual(A.pr_description_text(None), "(none)")
+        exact = "y" * A.PR_BODY_CHARS
+        self.assertEqual(A.pr_description_text(exact), exact)
+
+    def test_an_edit_between_the_old_and_new_caps_is_a_description_change(self):
+        base = "Closes #705. " + "x" * 7000
+        self.assertNotEqual(A.audit_input_hash("t", base), A.audit_input_hash("t", base + " Cost and catch added"))
+
     def test_prompt_says_pr_and_issue_text_is_data(self):
         block = A.pr_context_block(dict(pr(number=7), lines=3, issues=[]), {}, ".sm-audit/pr-7.diff", OLD, OLD)
         prompt = A.build_prompt([dict(pr(number=7), lines=3)], [block], OLD)
@@ -872,6 +949,37 @@ class HostedAudit(unittest.TestCase):
     """The audit on hosted Linux (#2170): the token, forks, and starting runs with a workflow's own token."""
 
     WORKFLOW = {"GITHUB_ACTIONS": "true"}
+
+    def test_reads_keep_gh_token_and_writes_use_the_write_token(self):
+        """#5217: reads run on the App's token; writes on GITHUB_TOKEN so a label change starts no run."""
+        reads = [["gh", "api", "--paginate", "repos/o/r/issues/1/comments"], ["gh", "pr", "view", "1"],
+                 ["gh", "pr", "list", "--repo", "o/r"], ["gh", "api", "repos/o/r/issues/1"]]
+        writes = [["gh", "pr", "comment", "1", "--body", "x"], ["gh", "pr", "edit", "1", "--add-label", "automerge"],
+                  ["gh", "workflow", "run", "lane.yml"], ["gh", "run", "rerun", "9"],
+                  ["gh", "api", "-X", "POST", "repos/o/r/issues/1/labels", "-f", "labels[]=x"],
+                  ["gh", "api", "-X", "DELETE", "repos/o/r/issues/1/labels/x"]]
+        for cmd in reads:
+            self.assertFalse(A.is_gh_write(cmd), cmd)
+        for cmd in writes:
+            self.assertTrue(A.is_gh_write(cmd), cmd)
+        seen = []
+
+        def fake(cmd, **kwargs):
+            seen.append(kwargs.get("env"))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        with patch.dict(os.environ, {"GH_TOKEN": "app", "SM_WRITE_TOKEN": "wf"}), \
+                patch.object(A.subprocess, "run", fake):
+            A.run(reads[0])
+            A.run(writes[0])
+        self.assertIsNone(seen[0])
+        self.assertEqual(seen[1]["GH_TOKEN"], "wf")
+        with patch.dict(os.environ, {"GH_TOKEN": "app"}), patch.object(A.subprocess, "run", fake):
+            os.environ.pop("SM_WRITE_TOKEN", None)
+            A.run(writes[0])
+        self.assertIsNone(seen[2])
+
+    def test_the_write_token_never_reaches_claude(self):
+        self.assertIn('"GITHUB_TOKEN", "SM_WRITE_TOKEN")', Path(A.__file__).read_text())
 
     def test_the_workflow_s_secret_is_used_and_the_keychain_never_asked(self):
         with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": " tok\n"}), patch.object(A, "run") as run:
@@ -1136,13 +1244,18 @@ class HostedAudit(unittest.TestCase):
             self.assertIs(options.get("persist-credentials"), False, job)
         # The parsed file, not its text: `secrets[...]` and `toJSON(secrets)` count, and a comment does not (#3704).
         named = W.mentions_of(workflow, "secrets")
-        self.assertEqual(len(named), 1, named)
+        # Two: the Claude token, and (#5217) the App's private key, which only the mint step reads (the App token it
+        # makes reaches the Audit step as GH_TOKEN; the script strips it from Claude's environment).
+        self.assertEqual(len(named), 2, named)
+        mint = [m for m in named if m.endswith("/app-token.with/private-key")]
+        self.assertEqual(len(mint), 1, named)
+        self.assertEqual(len([m for m in named if "/Audit.env/" in m]), 1, named)
         # Its token is an environment secret only main may use: a repository secret reaches any branch's workflow.
         self.assertEqual(workflow["jobs"]["audit"]["environment"], "claude-audit")
         audit = next(step for step in workflow["jobs"]["audit"]["steps"] if step.get("name") == "Audit")
         self.assertEqual(audit["env"]["CLAUDE_CODE_OAUTH_TOKEN"], "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}")
         self.assertNotIn("uses", audit)  # the repository's own script, never a third party's action
-        self.assertTrue(named[0].endswith("/Audit.env/CLAUDE_CODE_OAUTH_TOKEN"), named)
+        self.assertTrue(any(m.endswith("/Audit.env/CLAUDE_CODE_OAUTH_TOKEN") for m in named), named)
         # One exact version, so a new release can't change the merge gate unannounced.
         self.assertRegex(text, r"@anthropic-ai/claude-code@\d+\.\d+\.\d+")
 
@@ -1355,6 +1468,19 @@ class OwnerTapPrAudit(unittest.TestCase):
         with patch.object(A, "run", return_value=SimpleNamespace(stdout=failed)), patch.object(A, "gh_json_lines", return_value=[]):
             self.assertEqual(A.head_checks_state(HEAD), ("failed", ["t1"]))
 
+    def test_a_cancelled_lane_conflicts_check_does_not_keep_a_risky_pr_from_its_audit(self):
+        # #5249: required checks green, lane-conflicts' `check` cancelled by its own concurrency group. The audit skipped
+        # #5161 as "checks failed: 1" (run 45319588167); it must read the head as ok and audit it.
+        runs = "\n".join(json.dumps(r) for r in (
+            {"name": "hosted fast: portable", "status": "completed", "conclusion": "success"},
+            {"name": "hosted fast: scope", "status": "completed", "conclusion": "success"},
+            {"name": "check", "status": "completed", "conclusion": "cancelled"}))
+        with patch.object(A, "run", return_value=SimpleNamespace(stdout=runs)), patch.object(A, "gh_json_lines", return_value=[]):
+            self.assertEqual(A.head_checks_state(HEAD), ("ok", []))
+        required = '{"name": "hosted fast: portable", "status": "completed", "conclusion": "cancelled"}'
+        with patch.object(A, "run", return_value=SimpleNamespace(stdout=required)), patch.object(A, "gh_json_lines", return_value=[]):
+            self.assertEqual(A.head_checks_state(HEAD), ("failed", ["hosted fast: portable"]))
+
 
 class UsageRecording(unittest.TestCase):
     def test_batch_retains_transcript_and_records_once_even_on_timeout(self):
@@ -1466,7 +1592,7 @@ class ReauditAfterDescriptionFix(unittest.TestCase):
         self.assertEqual(A.evaluate_pr(same, [self.LANE, self.blocked()], self.FILES), (False, "already audited on head"))
 
     def test_an_edit_past_what_the_model_reads_is_not_a_description_change(self):
-        long_read = pr(body="Closes #705. " + "x" * A.BODY_CHARS)
+        long_read = pr(body="Closes #705. " + "x" * A.PR_BODY_CHARS)
         past = pr(body=long_read["body"] + " edited past the cap")
         self.assertEqual(A.evaluate_pr(past, [self.LANE, self.audit(self.BLOCKING, "2026-10-15T02:44:00Z", read=long_read)],
                                        self.FILES), (False, "already audited on head"))

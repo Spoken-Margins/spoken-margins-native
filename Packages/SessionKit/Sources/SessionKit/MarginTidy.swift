@@ -208,6 +208,16 @@ public enum MarginTidy {
         "anyway", "yeah", "yes", "okay", "ok", "first", "now", "um", "uh",
     ]
 
+    /// Whether `text` reads as another language by the same test `fillerOnly` uses to leave it alone.
+    static func isForeign(_ text: String) -> Bool {
+        looksForeign(text.split(whereSeparator: \.isWhitespace).map(Token.init))
+    }
+
+    /// Whether `text` has an English function word.
+    static func isEnglish(_ text: String) -> Bool {
+        hasEnglishFunctionWord(text.split(whereSeparator: \.isWhitespace).map(Token.init))
+    }
+
     /// Whether a common function word of another language rules the text out, or most of its letters are not Latin.
     private static func looksForeign(_ tokens: [Token]) -> Bool {
         let words = tokens.map { $0.core.lowercased() }
@@ -251,6 +261,11 @@ public enum MarginTidyGuard {
         case nameMissing(String)
         case quotationMissing(String)
         case negationDropped
+        /// A capitalised word, not first in its sentence, that the speaker never said: a name the model brought in,
+        /// usually from the passage ("the colonel" becoming "Colonel Varga").
+        case nameAdded(String)
+        /// The Margin was said in another language and the proposal is in English.
+        case languageChanged
         case tooShort
         case tooLong
         case copiedFromPassage
@@ -272,14 +287,30 @@ public enum MarginTidyGuard {
         guard !originalWords.isEmpty else { return .emptyOriginal }
         guard !proposalWords.isEmpty else { return .emptyProposal }
 
-        // Every number, spelled as digits or as the words for small numbers, hundreds, thousands and percent.
-        // A hyphenated number ("twenty-five") counts as its parts.
-        let proposalLowered = Set(proposalWords.flatMap { $0.lowercased().split(separator: "-").map(String.init) })
-        let proposalNumbers = Set(numbers(in: proposal))
-        for number in numbers(in: original) where !proposalNumbers.contains(number) { return .numberMissing(number) }
-        for word in originalWords.flatMap({ $0.lowercased().split(separator: "-").map(String.init) })
-        where numberWords.contains(word) && !proposalLowered.contains(word) {
-            return .numberMissing(word)
+        // Every number, by its value: "forty two", "forty-two" and "42" are the same number, and so are "two thousand"
+        // and "2,000". "percent" may become "%". "one" after "the", "this", "no" and the like is a pronoun
+        // ("the one by Chen"), not a count.
+        let proposalValues = Set(numberPhrases(in: proposalWords).map(\.value))
+        for phrase in numberPhrases(in: originalWords) where !proposalValues.contains(phrase.value) {
+            return .numberMissing(phrase.text)
+        }
+        // A number inside a longer token ("1990s", "5-year", "COVID-19", "4:30", "3pm", "21st", "10x") keeps its digits.
+        let proposalDigitRuns = Set(digitRuns(in: proposal))
+        for word in originalWords where word.contains(where: \.isNumber) && numberValue(word) == nil {
+            for run in digitRuns(in: word) where !proposalDigitRuns.contains(run) { return .numberMissing(word) }
+        }
+        // A number word inside a longer token ("one-third", "three-quarters") is kept as said, hyphen or space.
+        let proposalLower = " " + proposalWords.map { $0.lowercased() }.joined(separator: " ") + " "
+        for word in originalWords {
+            let parts = word.lowercased().split(separator: "-").map(String.init)
+            guard parts.count > 1, parts.contains(where: { numberWordValues[$0] != nil }),
+                  !parts.allSatisfy({ numberWordValues[$0] != nil }) else { continue }
+            if !proposalLower.contains(" " + parts.joined(separator: "-") + " "),
+               !proposalLower.contains(" " + parts.joined(separator: " ") + " ") { return .numberMissing(word) }
+        }
+        let saysPercent: ([String]) -> Bool = { $0.contains { $0.lowercased() == "percent" } }
+        if saysPercent(originalWords) || original.contains("%"), !saysPercent(proposalWords), !proposal.contains("%") {
+            return .numberMissing("percent")
         }
 
         // Every capitalised word that is not the first of a sentence.
@@ -294,8 +325,25 @@ public enum MarginTidyGuard {
         let proposalSpans = Set(quotedSpans(in: proposal))
         for span in quotedSpans(in: original) where !proposalSpans.contains(span) { return .quotationMissing(span) }
 
-        // As many negations as were said, or more.
-        if negationCount(in: proposalWords) < negationCount(in: originalWords) { return .negationDropped }
+        // As many negations as were said, or more. A false start said twice ("it's not, it's not the whole story",
+        // "no no no") counts once: tidying it away is the point.
+        if negationCount(in: proposalWords) < negationCount(in: originalWords, collapsingRepeats: true) { return .negationDropped }
+
+        // No name the speaker did not say.
+        let originalLowerSet = Set(originalWords.flatMap { word in
+            [word.lowercased()] + word.lowercased().split(separator: "-").map(String.init) + nameStems(word).map { $0.lowercased() }
+        })
+        // A title written short ("Dr" for "doctor") is not a new name.
+        let spokenTitles = ["dr": "doctor", "mr": "mister", "mrs": "missus", "ms": "miz", "prof": "professor", "st": "saint"]
+        for name in capitalisedMidSentenceWords(in: proposal) {
+            let bare = name.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            if let spoken = spokenTitles[bare], originalLowerSet.contains(spoken) || originalLowerSet.contains(bare) { continue }
+            let stems = nameStems(name).map { $0.lowercased() } + [name.lowercased()]
+            if !stems.contains(where: originalLowerSet.contains) { return .nameAdded(name) }
+        }
+
+        // Said in another language, answered in English.
+        if MarginTidy.isForeign(original), !MarginTidy.isForeign(proposal), MarginTidy.isEnglish(proposal) { return .languageChanged }
 
         let ratio = Double(spokenWordCount(proposalWords)) / Double(spokenWordCount(originalWords))
         if ratio < lengthRange.lowerBound { return .tooShort }
@@ -355,27 +403,8 @@ public enum MarginTidyGuard {
         return Set((0...(words.count - copiedRunLength)).map { words[$0..<$0 + copiedRunLength].joined(separator: " ") })
     }
 
-    private static let numberWords: Set<String> = [
-        "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
-        "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "hundred", "thousand", "percent",
-    ]
-
-    /// Digit runs, with a decimal or thousands separator kept inside: "12", "3.5", "1,200".
-    private static func numbers(in text: String) -> [String] {
-        var result: [String] = [], current = ""
-        let characters = Array(text)
-        for (index, character) in characters.enumerated() {
-            if character.isNumber && character.isASCII {
-                current.append(character)
-            } else if ".,".contains(character), !current.isEmpty, index + 1 < characters.count, characters[index + 1].isNumber, characters[index + 1].isASCII {
-                current.append(character)
-            } else if !current.isEmpty {
-                result.append(current); current = ""
-            }
-        }
-        if !current.isEmpty { result.append(current) }
-        return result
-    }
+    /// Titles whose full stop does not end a sentence.
+    private static let abbreviatedTitles: Set<String> = ["dr", "mr", "mrs", "ms", "prof", "st"]
 
     private static func capitalisedMidSentenceWords(in text: String) -> [String] {
         var names: [String] = [], startOfSentence = true
@@ -385,7 +414,8 @@ public enum MarginTidyGuard {
                 names.append(word)
             }
             if !word.isEmpty { startOfSentence = false }
-            if let last = piece.last(where: { !"\"'”’)]”".contains($0) }), ".!?".contains(last) { startOfSentence = true }
+            if let last = piece.last(where: { !"\"'”’)]”".contains($0) }), ".!?".contains(last),
+               !abbreviatedTitles.contains(word.lowercased()) { startOfSentence = true }
         }
         return names
     }
@@ -407,9 +437,120 @@ public enum MarginTidyGuard {
     private static func normalizedSpan(_ span: String) -> String {
         span.replacingOccurrences(of: "’", with: "'")
             .trimmingCharacters(in: CharacterSet.alphanumerics.inverted.union(.whitespacesAndNewlines))
+            .lowercased()
     }
 
-    private static let negations: Set<String> = ["not", "no", "never", "nothing", "none", "neither", "nor", "without", "cannot"]
+    private static let negations: Set<String> = [
+        "not", "no", "never", "nothing", "none", "neither", "nor", "without", "cannot", "nobody", "nowhere",
+    ]
+
+    /// Words before a "one" that make it a pronoun rather than a number.
+    private static let pronounOneLeaders: Set<String> = ["the", "this", "that", "which", "each", "every", "any", "no", "another"]
+
+    /// Every run of digits in `text`, with thousands commas removed ("3,400" is "3400").
+    static func digitRuns(in text: String) -> [String] {
+        var runs: [String] = [], current = ""
+        let characters = Array(text)
+        for (index, character) in characters.enumerated() {
+            if character.isNumber { current.append(character); continue }
+            if character == ",", !current.isEmpty, index + 1 < characters.count, characters[index + 1].isNumber { continue }
+            if !current.isEmpty { runs.append(current); current = "" }
+        }
+        if !current.isEmpty { runs.append(current) }
+        return runs
+    }
+
+    /// The value of a token that is wholly a number written in digits ("3,400", "9.5"), else nil.
+    private static func numberValue(_ word: String) -> Double? {
+        let lowered = word.lowercased()
+        guard lowered.first?.isNumber == true else { return nil }
+        return Double(lowered.replacingOccurrences(of: ",", with: ""))
+    }
+
+    /// Words after a "one" that make it a count even after "the" ("the one percent", "the one in five").
+    private static let countAfterOne: Set<String> = ["percent", "in", "of", "out", "per"]
+
+    /// The numbers said in `words`, each with its value and how it was written: digit runs ("3,400", "9.5") and runs of
+    /// number words ("forty two", "twenty-five", "two hundred and five", "two thousand").
+    static func numberPhrases(in words: [String]) -> [(text: String, value: Double)] {
+        var result: [(text: String, value: Double)] = []
+        var pieces: [String] = [], total = 0.0, current = 0.0, inPhrase = false
+        func finish() {
+            if inPhrase { result.append((pieces.joined(separator: " "), total + current)) }
+            pieces = []; total = 0; current = 0; inPhrase = false
+        }
+        for (index, raw) in words.enumerated() {
+            let lowered = raw.lowercased()
+            if let value = numberValue(lowered) {
+                finish()
+                result.append((raw, value))
+                continue
+            }
+            let parts = lowered.split(separator: "-").map(String.init)
+            if parts.allSatisfy({ numberWordValues[$0] != nil }) {
+                let next = index + 1 < words.count ? words[index + 1].lowercased() : ""
+                if parts == ["one"], !inPhrase, index > 0, pronounOneLeaders.contains(words[index - 1].lowercased()),
+                   numberWordValues[next] == nil, numberValue(next) == nil, !countAfterOne.contains(next) { continue }
+                for part in parts {
+                    let value = numberWordValues[part]!
+                    if value == 100 {
+                        current = max(current, 1) * 100
+                    } else if value >= 1_000 {
+                        total += max(current, 1) * value
+                        current = 0
+                    } else {
+                        let tens = current.truncatingRemainder(dividingBy: 100)
+                        let continues = current == 0 || tens == 0 || (tens >= 20 && tens.truncatingRemainder(dividingBy: 10) == 0 && value < 10)
+                        if !continues || (current == 0 && total == 0 && inPhrase) { finish() }
+                        current += value
+                    }
+                    pieces.append(part)
+                    inPhrase = true
+                }
+                continue
+            }
+            if lowered == "and", inPhrase, index + 1 < words.count, numberWordValues[words[index + 1].lowercased()] != nil, current >= 100 { continue }
+            finish()
+        }
+        finish()
+        return result
+    }
+
+    private static let numberWordValues: [String: Double] = [
+        "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+        "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+        "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+        "hundred": 100, "thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000,
+    ]
+
+    /// Negations in `words`. With `collapsingRepeats`, a negation counts once when it is part of a stretch said twice in a
+    /// row (fillers aside): a false start ("I'm not, I'm not sure", "it's not, it's not") is said twice and meant once.
+    /// "no no no" counts once too. A double negative ("not not true", "I'm not saying it's not") counts twice.
+    private static func negationCount(in words: [String], collapsingRepeats: Bool) -> Int {
+        guard collapsingRepeats else { return negationCount(in: words) }
+        let spoken = words.map { $0.lowercased().replacingOccurrences(of: "’", with: "'") }
+            .filter { !DeterministicInterjectionCleanup.unambiguousFillers.contains($0) }
+        var count = 0, lastNegation: (word: String, index: Int)?
+        for (index, word) in spoken.enumerated() where negations.contains(word) || word.hasSuffix("n't") {
+            if let last = lastNegation, last.word == word, index - last.index <= 3,
+               repeatsStretch(spoken, previous: last.index, current: index) {
+                lastNegation = (word, index)
+                continue
+            }
+            count += 1
+            lastNegation = (word, index)
+        }
+        return count
+    }
+
+    /// Whether the words ending at `current` repeat the same number of words ending at `previous` ("it's not, it's not").
+    /// Two negations side by side repeat only for "no" ("no no"): "not not" is a double negative.
+    private static func repeatsStretch(_ spoken: [String], previous: Int, current: Int) -> Bool {
+        let length = current - previous
+        if length == 1 { return spoken[current] == "no" }
+        guard previous - length + 1 >= 0 else { return false }
+        return Array(spoken[(previous + 1)...current]) == Array(spoken[(previous - length + 1)...previous])
+    }
 
     private static func negationCount(in words: [String]) -> Int {
         words.filter { word in

@@ -9,6 +9,12 @@ import UIKit
 struct ExportScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @State private var isSharePresented = false
+    /// Why the toolbar's Share has nothing to send here (#5306), as the item screen's Share says it (#4229).
+    @State private var shareExplanation: ItemShareStart.Explanation?
+    @State private var checksShare = false
+    /// The session this screen showed when its Share opened the sheet. Opening the sheet moves `exportSessionId` to the
+    /// newest pass with a sendable Margin, so it is put back when the sheet closes, with a fresh preview (#5306).
+    @State private var sessionBeforeShare: String?
 
     var body: some View {
         NavigationStack {
@@ -20,7 +26,7 @@ struct ExportScreen: View {
                     Text(model.selectedItem.title)
                         .font(.headline)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Take a session out for yourself or your tools, as Markdown or JSON. To send Margins to a friend, use Share.")
+                    Text(ShareExportSwitch.exportScreenIntro)
                         .foregroundStyle(AppColors.secondaryText)
                     Text("Export a session")
                         .font(.headline)
@@ -173,8 +179,52 @@ struct ExportScreen: View {
                     }
                     .accessibilityIdentifier("export.home.button")
                 }
+                // One tap to the Share Margins sheet for the same item (#5306): the friend sheet the item screen's Share opens.
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(ShareExportSwitch.shareButtonTitle, systemImage: "square.and.arrow.up", action: switchToShare)
+                        .labelStyle(.titleAndIcon)
+                        .disabled(model.selectedItem.id.isEmpty || checksShare)
+                        .accessibilityHint(ShareExportSwitch.shareButtonHint)
+                        .accessibilityIdentifier("export.friendShare.button")
+                }
+            }
+            .onChange(of: model.isSharingInterjectionsPresented) { _, isPresented in
+                guard !isPresented, let sessionId = sessionBeforeShare else { return }
+                sessionBeforeShare = nil
+                model.openExport(sessionId: sessionId)
+            }
+            .alert(
+                shareExplanation?.title ?? "",
+                isPresented: Binding(get: { shareExplanation != nil }, set: { if !$0 { shareExplanation = nil } }),
+                presenting: shareExplanation
+            ) { _ in
+                Button("OK", role: .cancel) {}
+            } message: { explanation in
+                Text(explanation.message)
             }
             .miniPlayerKeepOut()
+        }
+    }
+
+    /// The toolbar's Share (#5306): the Share Margins sheet when this item has Margins to send, otherwise an alert that
+    /// says why, by the item screen's own rule (`ItemShareStart`). It starts where the item screen's Share starts (the
+    /// review with the listener's Margins picked, or the reply sheet when a friend's answers are waiting), so the two doors
+    /// can't disagree (Default taken on #5306). A second tap while the check runs does nothing.
+    private func switchToShare() {
+        guard !checksShare, !model.isSharingInterjectionsPresented else { return }
+        checksShare = true
+        let itemId = model.selectedItem.id
+        Task {
+            defer { checksShare = false }
+            let start = await model.itemShareStart()
+            guard model.selectedItem.id == itemId else { return }
+            switch start {
+            case .share:
+                let sessionId = model.exportSessionId
+                model.hangTelemetry.labels.scoped("exportShare") { model.openItemShareSheet() }
+                if model.isSharingInterjectionsPresented { sessionBeforeShare = sessionId }
+            case .nothingYet(let explanation): shareExplanation = explanation
+            }
         }
     }
 
@@ -217,14 +267,15 @@ struct MarginExportShare {
 extension View {
     /// The share sheet for a Margin's export while `share` is set; closing it clears it and removes the files. One sheet
     /// carries both the note alone and the recording with the note, since two sheets on one view can drop each other.
-    func marginExportShareSheet(_ share: Binding<MarginExportShare?>) -> some View {
+    /// `onFinished` hears how the sheet ended: completed or not, which activity took the file, and any error (#5051).
+    func marginExportShareSheet(_ share: Binding<MarginExportShare?>, onFinished: @escaping (_ completed: Bool, _ activityType: String?, _ failed: Bool) -> Void = { _, _, _ in }) -> some View {
         trackedSheet(isPresented: Binding(get: { share.wrappedValue != nil }, set: {
             guard !$0 else { return }
             share.wrappedValue?.discard()
             share.wrappedValue = nil
         })) {
             if let current = share.wrappedValue {
-                SessionActivityView(activityItems: current.urls, onSuccessfulCompletion: {})
+                SessionActivityView(activityItems: current.urls, onSuccessfulCompletion: {}, onFinished: onFinished)
             }
         }
     }
@@ -346,10 +397,12 @@ private struct SessionActivityView: UIViewControllerRepresentable {
     @Environment(\.dismiss) private var dismiss
     let activityItems: [Any]
     let onSuccessfulCompletion: () -> Void
+    var onFinished: ((_ completed: Bool, _ activityType: String?, _ failed: Bool) -> Void)?
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
-        controller.completionWithItemsHandler = { _, completed, _, _ in
+        controller.completionWithItemsHandler = { activityType, completed, _, error in
+            onFinished?(completed, activityType?.rawValue, error != nil)
             if completed {
                 onSuccessfulCompletion()
             }

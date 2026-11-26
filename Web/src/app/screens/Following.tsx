@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useRestoreFocus } from '../focus.ts';
-import type { Show } from '../../shared/model.ts';
+import type { Episode, Show } from '../../shared/model.ts';
 import { useData } from '../data.tsx';
 import { minutes, shortDate } from '../format.ts';
-import { ChevronIcon, CloseIcon, PlayIcon, PlusIcon, RefreshIcon } from '../icons.tsx';
+import { ChevronIcon, CloseIcon, MoreIcon, PlayIcon, PlusIcon, RefreshIcon } from '../icons.tsx';
+import { followedShows, isFollowed, onShowList, unfollowToast } from '../logic/follow-state.ts';
 import { followingMatches, followingRows, libraryRows, newestFirst, type LibraryRow } from '../logic/library.ts';
-import { inLibrary, libraryCountForShow } from '../logic/library-membership.ts';
+import { inLibrary, libraryCountForShow, SHARED_SHOW_PREFIX } from '../logic/library-membership.ts';
 import { plainError } from '../logic/messages.ts';
 import { checkedLabel, needsRelayLine } from '../logic/refresh.ts';
-import { suggestionsToShow } from '../logic/suggestions.ts';
+import { normalizeFeedUrl, suggestionsToShow } from '../logic/suggestions.ts';
 import { usePlayer } from '../player.tsx';
 import { useFeedRefresh } from '../refresh.tsx';
 import { services } from '../services.ts';
@@ -38,12 +39,16 @@ export function Following({
   const [returnTo, setReturnTo] = useState<string>();
   const refresh = useFeedRefresh();
   const { query, setQuery } = useTabSearch('following');
+  // Only followed shows (#4426): an unfollowed record stays stored but leaves Following.
+  const followed = useMemo(() => followedShows(data.shows), [data.shows]);
+  // A dismissed episode leaves its show's row and "N new", unless it is in the Library (#4426).
+  const listed = useCallback((episode: Episode) => onShowList(episode, data.dismissed, (id) => inLibrary(id, data.library)), [data.dismissed, data.library]);
   // Rebuilt only when the stored shows change, not on every keystroke.
-  const rows = useMemo(() => followingRows(data.shows, data.episodes, data.positions), [data.shows, data.episodes, data.positions]);
+  const rows = useMemo(() => followingRows(followed, data.episodes, data.positions, listed), [followed, data.episodes, data.positions, listed]);
   const matches = useMemo(() => followingMatches(query, rows), [query, rows]);
   const searching = query.trim() !== '';
   const episodeRows = useMemo(() => libraryRows(matches.episodes, data.shows, data.positions), [matches.episodes, data.shows, data.positions]);
-  const openShow = data.shows.find((s) => s.id === openShowId);
+  const openShow = followed.find((s) => s.id === openShowId);
 
   useEffect(() => {
     if (openShowId || !returnTo) return;
@@ -80,7 +85,7 @@ export function Following({
         aria-label={[
           `Open ${row.show.title}`,
           row.newCount > 0 ? `${row.newCount} new` : '',
-          row.newest ? `latest ${shortDate(row.newest.publishedAt)}: ${row.newest.title}` : 'no episodes yet',
+          row.newest ? `latest ${shortDate(row.newest.publishedAt)}: ${row.newest.title}` : row.dismissedCount > 0 ? 'every episode dismissed' : 'no episodes yet',
         ]
           .filter(Boolean)
           .join(', ')}
@@ -91,7 +96,7 @@ export function Following({
           {row.newest && <span className="row-sub">{row.newest.title}</span>}
           <span className="row-meta">
             {row.newCount > 0 && <span className="tag tag-outline">{row.newCount} new</span>}
-            {row.newest ? `Latest ${shortDate(row.newest.publishedAt)}` : 'No episodes yet'}
+            {row.newest ? `Latest ${shortDate(row.newest.publishedAt)}` : row.dismissedCount > 0 ? 'Every episode dismissed' : 'No episodes yet'}
           </span>
         </span>
         <span className="row-chevron" aria-hidden="true">
@@ -248,9 +253,105 @@ function ShowScreen({ show, onBack, onPlay }: { show: Show; onBack: () => void; 
   const data = useData();
   const player = usePlayer();
   const { toast } = useUi();
-  const rows = libraryRows(data.episodes.filter((e) => e.showId === show.id), data.shows, data.positions);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => heading.current?.focus(), []);
+  const [unfollowing, setUnfollowing] = useState(false);
+  const [dismissing, setDismissing] = useState<LibraryRow>();
+  const [dismissedOpen, setDismissedOpen] = useState(false);
+  // Each row's ⋯ by episode id, and the Dismissed episodes button: focus moves between them after a dismissal (#4426).
+  const moreButtons = useRef(new Map<string, HTMLButtonElement>());
+  const dismissedToggle = useRef<HTMLButtonElement>(null);
+  // Focus to move once the change has been drawn.
+  const afterRender = useRef<(() => void) | undefined>(undefined);
+  useEffect(() => {
+    const move = afterRender.current;
+    if (!move) return;
+    afterRender.current = undefined;
+    requestAnimationFrame(move);
+  });
+
+  const all = libraryRows(data.episodes.filter((e) => e.showId === show.id), data.shows, data.positions);
+  const inLib = (id: string) => inLibrary(id, data.library);
+  const rows = all.filter((row) => onShowList(row.episode, data.dismissed, inLib));
+  const dismissedRows = data.migrated ? all.filter((row) => !onShowList(row.episode, data.dismissed, inLib)) : [];
+  const listId = `dismissed-${show.id.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+
+  const play = (row: LibraryRow) => {
+    void player.open(row.episode.id);
+    onPlay();
+  };
+  const focusMore = (id: string) => () => moreButtons.current.get(id)?.focus();
+
+  const unfollow = async () => {
+    if (unfollowing) return;
+    setUnfollowing(true);
+    // Counted before the write, from what is stored now.
+    const toastLine = unfollowToast({
+      title: show.title,
+      shared: show.id.startsWith(SHARED_SHOW_PREFIX),
+      migrated: data.migrated,
+      inLibrary: libraryCountForShow(show.id, data.episodes, data.library, true),
+      leaving: libraryCountForShow(show.id, data.episodes, data.library, false),
+      hasMargins: data.margins.some((m) => all.some((row) => row.episode.id === m.episodeId)),
+    });
+    try {
+      await data.unfollowShow(show.id);
+    } catch {
+      setUnfollowing(false); // Already shown: the show is still followed, and the problem says why.
+      return;
+    }
+    // The row is already gone from this render, so focus falls back to the Following heading.
+    onBack();
+    const showId = show.id;
+    const title = show.title;
+    toast(toastLine, 'info', {
+      label: 'Undo',
+      run: () =>
+        data.undoUnfollow(showId).then(
+          () => {
+            toast(`Following ${title} again.`);
+            requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-show-id="${CSS.escape(showId)}"]`)?.focus());
+          },
+          () => undefined, // Already shown; the show can still be followed from the Follow sheet.
+        ),
+    });
+  };
+
+  const dismiss = async (row: LibraryRow) => {
+    const id = row.episode.id;
+    const title = row.episode.title;
+    const order = rows.map((r) => r.episode.id);
+    let previous;
+    try {
+      previous = await data.dismissEpisode(id);
+    } catch {
+      setDismissing(undefined); // Already shown; the row stays.
+      afterRender.current = focusMore(id);
+      return;
+    }
+    setDismissing(undefined);
+    afterRender.current = () => {
+      const at = order.indexOf(id);
+      const target =
+        order.slice(at + 1).map((other) => moreButtons.current.get(other)).find(Boolean) ??
+        order.slice(0, at).reverse().map((other) => moreButtons.current.get(other)).find(Boolean) ??
+        dismissedToggle.current ??
+        document.getElementById('show-title');
+      target?.focus();
+    };
+    toast(`Dismissed “${title}”.`, 'info', {
+      label: 'Undo',
+      run: () =>
+        data.undoDismiss(id, previous).then(
+          () => {
+            toast(`“${title}” is back in the list.`);
+            requestAnimationFrame(focusMore(id));
+          },
+          () => undefined, // Already shown; it can still be brought back from Dismissed episodes.
+        ),
+    });
+  };
+
   return (
     <div className="screen">
       <header className="screen-header screen-header-sub">
@@ -272,35 +373,152 @@ function ShowScreen({ show, onBack, onPlay }: { show: Show; onBack: () => void; 
         </div>
       </div>
       <div className="show-actions">
-        <button
-          type="button"
-          className="button"
-          onClick={() => {
-            // Counted before the write, while those episodes are still stored.
-            const leaving = libraryCountForShow(show.id, data.episodes, data.library, data.migrated);
-            void data.unfollow(show.id).then(
-              () => toast(unfollowedLine(show.title, leaving)),
-              () => undefined, // Already shown: the show is still followed, and the problem says why.
-            );
-            onBack();
-          }}
-        >
+        <button type="button" className="button" disabled={unfollowing} onClick={() => void unfollow()}>
           Unfollow
         </button>
       </div>
-      <ul className="rows" aria-label={`Episodes of ${show.title}`}>
-        {rows.map((row) => (
-          <FeedEpisodeRow
-            key={row.episode.id}
-            row={row}
-            onPlay={() => {
-              void player.open(row.episode.id);
-              onPlay();
-            }}
-          />
-        ))}
-      </ul>
+      {rows.length === 0 && dismissedRows.length > 0 ? (
+        <p className="muted">You’ve dismissed every episode here.</p>
+      ) : (
+        <ul className="rows" aria-label={`Episodes of ${show.title}`}>
+          {rows.map((row) => (
+            <FeedEpisodeRow
+              key={row.episode.id}
+              row={row}
+              onPlay={() => play(row)}
+              onMore={data.migrated && !inLib(row.episode.id) ? () => setDismissing(row) : undefined}
+              moreRef={(el) => {
+                if (el) moreButtons.current.set(row.episode.id, el);
+                else moreButtons.current.delete(row.episode.id);
+              }}
+            />
+          ))}
+        </ul>
+      )}
+      {dismissedRows.length > 0 && (
+        <>
+          <button
+            ref={dismissedToggle}
+            type="button"
+            className="dismissed-toggle"
+            aria-expanded={dismissedOpen}
+            aria-controls={listId}
+            onClick={() => setDismissedOpen((open) => !open)}
+          >
+            <span>Dismissed episodes ({dismissedRows.length})</span>
+            <span className={`margin-group-chevron${dismissedOpen ? ' is-open' : ''}`} aria-hidden="true">
+              <ChevronIcon />
+            </span>
+          </button>
+          {dismissedOpen && (
+            <ul id={listId} className="rows" aria-label={`Dismissed episodes of ${show.title}`}>
+              {dismissedRows.map((row) => (
+                <FeedEpisodeRow
+                  key={row.episode.id}
+                  row={row}
+                  onPlay={() => play(row)}
+                  trailing={
+                    <BringBack
+                      episodeId={row.episode.id}
+                      title={row.episode.title}
+                      onBack={() => {
+                        afterRender.current = () => (dismissedToggle.current ?? moreButtons.current.get(row.episode.id))?.focus();
+                      }}
+                    />
+                  }
+                />
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+      {dismissing && (
+        <DismissSheet
+          row={dismissing}
+          onDismiss={() => dismiss(dismissing)}
+          onCancel={() => {
+            const id = dismissing.episode.id;
+            setDismissing(undefined);
+            afterRender.current = focusMore(id);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** A dismissed episode's Bring back (#4426): puts it back in its show's list. */
+function BringBack({ episodeId, title, onBack }: { episodeId: string; title: string; onBack: () => void }) {
+  const data = useData();
+  const { toast } = useUi();
+  const [writing, setWriting] = useState(false);
+  return (
+    <button
+      type="button"
+      className="button library-add"
+      aria-label={`Bring back ${title}`}
+      disabled={writing}
+      onClick={() => {
+        setWriting(true);
+        data.bringBack(episodeId).then(
+          () => {
+            onBack();
+            toast(`“${title}” is back in the list.`);
+          },
+          () => setWriting(false), // Already shown; the row stays.
+        );
+      }}
+    >
+      Bring back
+    </button>
+  );
+}
+
+/**
+ * Dismiss asks nothing more than this (Undo covers a slip, #4426). Escape and Cancel close it with no change. While the
+ * write runs, Dismiss is disabled and the sheet stays open. The show screen moves focus itself when it closes.
+ */
+function DismissSheet({ row, onDismiss, onCancel }: { row: LibraryRow; onDismiss: () => Promise<void>; onCancel: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const first = useRef<HTMLButtonElement>(null);
+  const [writing, setWriting] = useState(false);
+  useEffect(() => {
+    const d = dialog.current;
+    if (d && !d.open) d.showModal();
+    first.current?.focus();
+  }, []);
+  return (
+    <dialog
+      ref={dialog}
+      className="sheet"
+      aria-labelledby="dismiss-title"
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!writing) onCancel();
+      }}
+    >
+      <h2 id="dismiss-title" className="remove-sheet-title">
+        {row.episode.title}
+      </h2>
+      <p className="muted">It leaves this list and the new count. Nothing is deleted.</p>
+      <div className="remove-sheet-actions">
+        <button
+          ref={first}
+          type="button"
+          className="button button-primary"
+          disabled={writing}
+          onClick={() => {
+            setWriting(true);
+            void onDismiss();
+          }}
+        >
+          Dismiss
+        </button>
+        <button type="button" className="button" disabled={writing} onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </dialog>
   );
 }
 
@@ -309,7 +527,23 @@ function ShowScreen({ show, onBack, onPlay }: { show: Show; onBack: () => void; 
  * show screen and the Episodes section of a Following search draw it alike; `kicker` is the show's title in the latter.
  * It has no current-episode state, as the show screen's rows never had.
  */
-function FeedEpisodeRow({ row, onPlay, kicker }: { row: LibraryRow; onPlay: () => void; kicker?: string }) {
+function FeedEpisodeRow({
+  row,
+  onPlay,
+  kicker,
+  onMore,
+  moreRef,
+  trailing,
+}: {
+  row: LibraryRow;
+  onPlay: () => void;
+  kicker?: string;
+  /** The ⋯ that opens Dismiss (#4426), on a show screen row not in the Library. */
+  onMore?: () => void;
+  moreRef?: (el: HTMLButtonElement | null) => void;
+  /** Drawn instead of Add (the Dismissed episodes list's Bring back). */
+  trailing?: ReactNode;
+}) {
   const data = useData();
   return (
     <li className={data.migrated ? 'show-episode' : undefined}>
@@ -326,16 +560,14 @@ function FeedEpisodeRow({ row, onPlay, kicker }: { row: LibraryRow; onPlay: () =
           </span>
         </span>
       </button>
-      {data.migrated && <LibraryControl episodeId={row.episode.id} title={row.episode.title} />}
+      {trailing ?? (data.migrated && <LibraryControl episodeId={row.episode.id} title={row.episode.title} />)}
+      {onMore && (
+        <button type="button" className="icon-button" aria-label={`More for ${row.episode.title}`} aria-haspopup="dialog" ref={moreRef} onClick={onMore}>
+          <MoreIcon />
+        </button>
+      )}
     </li>
   );
-}
-
-/** The unfollow toast, saying how many episodes leave the Library (#4425). */
-function unfollowedLine(title: string, leaving: number): string {
-  const tail = 'Its Margins stay in the Margins tab.';
-  if (leaving === 0) return `Unfollowed ${title}. ${tail}`;
-  return `Unfollowed ${title}. ${leaving === 1 ? '1 episode leaves' : `${leaving} episodes leave`} your Library. ${tail}`;
 }
 
 /** The show screen's Add, or the words "In Library" once the episode is in (#4425). Only drawn once the store is migrated. */
@@ -380,7 +612,7 @@ function useFollowFeed(onFollowed?: () => void) {
       setBusy(true);
       setProblem(undefined);
       try {
-        const read = await relay((relayAllowed) => services.sources.readFeed(feedUrl, { relayAllowed }));
+        const read = await relay((relayAllowed) => services.sources.readFeed(feedUrl, { relayAllowed }), { link: feedUrl });
         // Just read, so the next automatic refresh leaves it for 30 minutes.
         await data.follow({ ...read.show, refreshedAt: new Date().toISOString() }, newestFirst(read.episodes));
         toast(`Following ${read.show.title}. Open it to pick episodes for your Library.`);
@@ -415,7 +647,7 @@ function QuickAdd() {
   return (
     <>
       {problem && <ProblemLine problem={problem} />}
-      <SuggestedShows busy={busy} followedFeedUrls={data.shows.map((s) => s.feedUrl)} onFollow={(feedUrl) => void followFeed(feedUrl)} />
+      <SuggestedShows busy={busy} followedFeedUrls={followedShows(data.shows).map((s) => s.feedUrl)} onFollow={(feedUrl) => void followFeed(feedUrl)} />
     </>
   );
 }
@@ -525,7 +757,9 @@ function FollowSheet({ onClose, initialQuery }: { onClose: () => void; initialQu
     await runSearch(text);
   };
 
-  const followed = new Set(data.shows.map((s) => s.feedUrl));
+  // Only followed shows carry the tag: an unfollowed one offers Follow again (#4426, #646).
+  const followedList = followedShows(data.shows);
+  const followed = new Set(followedList.map((s) => normalizeFeedUrl(s.feedUrl)));
   return (
     <dialog ref={dialog} className="sheet" aria-labelledby="follow-title" onCancel={onClose}>
       <header className="sheet-header">
@@ -551,9 +785,13 @@ function FollowSheet({ onClose, initialQuery }: { onClose: () => void; initialQu
           </button>
         </div>
       </form>
+      {/* The app's Follow sheet footer, word for word (#4176): where a paid show's private RSS link comes from. */}
+      <p className="muted" data-testid="follow-private-feed-hint">
+        Or type a show’s feed link. For a paid show, such as one on Patreon, copy your private RSS link from the creator’s page.
+      </p>
       {problem && <ProblemLine problem={problem} />}
       {!results?.length && (
-        <SuggestedShows inSheet busy={busy} followedFeedUrls={data.shows.map((s) => s.feedUrl)} onFollow={(feedUrl) => void followFeed(feedUrl)} />
+        <SuggestedShows inSheet busy={busy} followedFeedUrls={followedList.map((s) => s.feedUrl)} onFollow={(feedUrl) => void followFeed(feedUrl)} />
       )}
       {results && results.length > 0 && (
         <ul className="rows" aria-label="Search results">
@@ -566,7 +804,7 @@ function FollowSheet({ onClose, initialQuery }: { onClose: () => void; initialQu
                   {show.author && <span className="row-meta">{show.author}</span>}
                 </span>
               </span>
-              {followed.has(show.feedUrl) ? (
+              {followed.has(normalizeFeedUrl(show.feedUrl)) ? (
                 <span className="tag tag-quiet">Following</span>
               ) : (
                 <button type="button" className="button" disabled={busy} onClick={() => void followFeed(show.feedUrl)}>

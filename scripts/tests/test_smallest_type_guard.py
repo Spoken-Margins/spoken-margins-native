@@ -46,7 +46,7 @@ PINNED_FOOTNOTE = {
     'Gate1RootView.swift': ['This note helps you choose what to send.'],
     'ExportScreen.swift': ['Native audio exports include only bounded listening context'],
     'SettingsScreen.swift': [
-        'Send transcripts of public episodes to the Spoken Margins server',
+        # "Send transcripts of public episodes…" left with the community-map switches (#5359).
         # The Share Diagnostics footer reads the shared text from SessionKit (#5126).
         '\\(DiagnosticsExportFile.contentsDescription) It stays on this device',
         'A private log of listening time, Margins, shares and finishes',

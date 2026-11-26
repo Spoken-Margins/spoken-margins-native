@@ -1,0 +1,22 @@
+{
+  "description": "Windows line endings, tabs and no-break spaces around a line, and blank lines between picks. A no-break space before the dash is not the \" — \" separator, so the whole field is the title.",
+  "text": "\r\n\t Show — Title One | 10 min | https://example.com/one  \r\n\r\n   \r\nB — Two | https://example.com/two\r\n",
+  "expected": [
+    {
+      "url": "https://example.com/one",
+      "kind": "other",
+      "claimedShow": null,
+      "claimedTitle": "Show — Title One",
+      "markedShowLink": false,
+      "line": "Show — Title One | 10 min | https://example.com/one"
+    },
+    {
+      "url": "https://example.com/two",
+      "kind": "other",
+      "claimedShow": "B",
+      "claimedTitle": "Two",
+      "markedShowLink": false,
+      "line": "B — Two | https://example.com/two"
+    }
+  ]
+}

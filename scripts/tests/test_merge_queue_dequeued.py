@@ -340,6 +340,83 @@ class NotifyTests(unittest.TestCase):
         self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'skipped: post failed')
 
 
+class OwnFailureTests(unittest.TestCase):
+    """#5281: a test that failed in a group of only main and this PR is this PR's; a second such failure of the same
+    commit holds it out of the queue. On 2026-11-24 #5207 was re-armed with no push after three failed groups."""
+    BASE = 'd' * 40
+
+    def github(self, compare='behind', comments=(), heads=None, cls=FakeGitHub):
+        runs = [run(2, LIVE, f'{mq.QUEUE_PREFIX}pr-7-{self.BASE}')]
+        return cls({
+            'actions/runs?event=merge_group': {'workflow_runs': runs},
+            f'commits/{LIVE}/check-runs': {'check_runs': [
+                {'name': 'hosted fast: portable', 'conclusion': 'failure', 'completed_at': '2026-11-24T19:26:00Z',
+                 'html_url': 'https://example.test/run/9'}]},
+            f'compare/main...{self.BASE}': compare if isinstance(compare, Exception) else {'status': compare},
+            'issues/7/comments': list(comments),
+        }, heads=heads)
+
+    def body(self, github):
+        return github.posts[0][1]['body']
+
+    def test_a_failure_alone_on_main_is_marked_as_the_prs_and_allows_one_retry(self):
+        for status in ('behind', 'identical'):
+            with self.subTest(status=status):
+                github = self.github(status)
+                self.assertEqual(mq.notify(github, event(), out=io.StringIO()), 'told')
+                self.assertIn(mq.OWN_FAILURE_MARKER.format(head=OTHER), self.body(github))  # the PR's head, not the group's
+                self.assertIn('retries this commit once', self.body(github))
+
+    def test_a_second_failure_alone_says_the_commit_is_held(self):
+        earlier = {'body': mq.OWN_FAILURE_MARKER.format(head=OTHER), 'user': {'login': mq.BOT}}
+        github = self.github(comments=[earlier])
+        mq.notify(github, event(), out=io.StringIO())
+        self.assertIn('will not take this commit again', self.body(github))
+
+    def test_a_marker_from_anyone_else_does_not_count(self):
+        forged = {'body': mq.OWN_FAILURE_MARKER.format(head=OTHER), 'user': {'login': 'someone'}}
+        github = self.github(comments=[forged])
+        mq.notify(github, event(), out=io.StringIO())
+        self.assertIn('retries this commit once', self.body(github))
+
+    def test_a_group_built_on_another_entry_or_unreadable_is_not_marked(self):
+        for compare in ('diverged', 'ahead', mq.ReadFailed('HTTP 502')):
+            with self.subTest(compare=compare):
+                github = self.github(compare)
+                mq.notify(github, event(), out=io.StringIO())
+                self.assertNotIn('own-failure', self.body(github))
+
+    def test_a_manual_removal_or_a_conflict_is_never_marked(self):
+        for reason in ('MANUAL', 'MERGE_CONFLICT'):
+            with self.subTest(reason=reason):
+                github = self.github()
+                mq.notify(github, event(reason=reason), out=io.StringIO())
+                self.assertNotIn('own-failure', self.body(github))
+
+    def test_a_requeue_that_slipped_in_before_the_label_came_off_is_undone(self):
+        # #5207 at 10:38:14 on 2026-11-24: the bridge's sweep queued it 5 s after GitHub removed it.
+        class WithStop(FakeGitHub):
+            stopped = None
+
+            def stop_merging(self, number, node_id, in_queue):
+                self.stopped = (number, node_id, in_queue)
+                return True
+        github = self.github(heads={OTHER}, cls=WithStop)
+        ev = event()
+        ev['pull_request']['node_id'] = 'PR_7'
+        mq.notify(github, ev, out=io.StringIO())
+        self.assertEqual(github.stopped, (7, 'PR_7', True))
+        github = self.github(heads=set(), cls=WithStop)
+        mq.notify(github, event(reason='MANUAL'), out=io.StringIO())
+        self.assertIsNone(github.stopped)  # a removal by hand already took it out
+
+    def test_the_bridge_reads_the_same_marker_and_limit(self):
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        import merge_queue_label_bridge as bridge
+        self.assertEqual(bridge.OWN_FAILURE.findall(mq.OWN_FAILURE_MARKER.format(head=LIVE)), [LIVE])
+        self.assertEqual(bridge.OWN_FAILURE_LIMIT, mq.OWN_FAILURE_LIMIT)
+
+
 class SetupFailureTests(unittest.TestCase):
     """A group whose every failed job failed outside the PR gets one delayed retry (#4940)."""
 
@@ -580,7 +657,9 @@ class StepTableTests(unittest.TestCase):
         'Unpack the compilation cache': SETUP, 'Build the app for the simulator (build-for-testing, no tests)': PLAN,
         'Keep the build log': TEST, 'How long it took': TEST, 'Keep the Mac test list': TEST,
         'Install BlackHole (virtual audio output)': SETUP, 'Changed files': TEST, 'Mac rest of the fast plan': PLAN,
+        'Mac build (merge queue, no tests)': PLAN,
         'Cancel the Mac jobs of this run': TEST, 'Tally the Linux retry-passes on': TEST,
+        'Repository guard tests': TEST,
         'Alert the owner if this PR is ready for his merge tap': TEST,
         'Start the merge run of each armed PR on this head': TEST, 'Changed web paths': TEST,
         'Is there a web app to test yet?': TEST, 'Install packages': PLAN, 'Build': TEST,

@@ -1,0 +1,30 @@
+{
+  "description": "An answer in the prompt's own form: numbered bold lines, a Why: line under each, a tracking parameter and a full stop after a link, a (show link) line, and a Sources list after the picks that is not read as more picks.",
+  "text": "Here are three episodes you could both talk about:\n\n1. **Tradeoffs — How Do We Keep the Nursing Shortage From Getting Worse?** | 32 min | clean | 08:15 | https://podcasts.apple.com/us/podcast/tradeoffs/id1480845603?i=1000537077641\nWhy: It's about the hospital she works in. Ask her: would she stay?\n\n2. **99% Invisible — The Kirkbride Plan** | 41 min | clean | 12:30 | https://podcasts.apple.com/us/podcast/99-invisible/id394775318?i=1000412345678&uo=4.\nWhy: Buildings meant to heal. Ask: what would a healing building look like now?\n\n3. **Radiolab — Colors** | 1 hr 5 min | clean | 22:00 | (show link) https://podcasts.apple.com/us/podcast/radiolab/id152249110\nWhy: I couldn't confirm the episode link. Ask: is blue a color you'd name first?\n\nSources:\n- [Tradeoffs on Apple Podcasts](https://podcasts.apple.com/us/podcast/tradeoffs/id1480845603)\n- https://www.wnycstudios.org/podcasts/radiolab",
+  "expected": [
+    {
+      "url": "https://podcasts.apple.com/us/podcast/tradeoffs/id1480845603?i=1000537077641",
+      "kind": "apple_episode",
+      "claimedShow": "Tradeoffs",
+      "claimedTitle": "How Do We Keep the Nursing Shortage From Getting Worse?",
+      "markedShowLink": false,
+      "line": "1. **Tradeoffs — How Do We Keep the Nursing Shortage From Getting Worse?** | 32 min | clean | 08:15 | https://podcasts.apple.com/us/podcast/tradeoffs/id1480845603?i=1000537077641"
+    },
+    {
+      "url": "https://podcasts.apple.com/us/podcast/99-invisible/id394775318?i=1000412345678&uo=4",
+      "kind": "apple_episode",
+      "claimedShow": "99% Invisible",
+      "claimedTitle": "The Kirkbride Plan",
+      "markedShowLink": false,
+      "line": "2. **99% Invisible — The Kirkbride Plan** | 41 min | clean | 12:30 | https://podcasts.apple.com/us/podcast/99-invisible/id394775318?i=1000412345678&uo=4."
+    },
+    {
+      "url": "https://podcasts.apple.com/us/podcast/radiolab/id152249110",
+      "kind": "apple_show",
+      "claimedShow": "Radiolab",
+      "claimedTitle": "Colors",
+      "markedShowLink": true,
+      "line": "3. **Radiolab — Colors** | 1 hr 5 min | clean | 22:00 | (show link) https://podcasts.apple.com/us/podcast/radiolab/id152249110"
+    }
+  ]
+}

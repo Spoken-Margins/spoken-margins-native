@@ -538,6 +538,8 @@ final class AppColorUsageGuardTests: XCTestCase {
     /// MarginRecordingScreen: the divider, and the end-phrase hint (#3940), white at 75% under the timer.
     /// FootnoteCardView: the note's words (white at 85%) and the card's fill (white at 10%), as `PinnedMarginCardView` draws
     /// the friend's card above the same passage (#3777).
+    /// PlaybackSpokenNoteAudioVersion: the note's version card in Listening options, white on the control colour as the
+    /// mixed audio card beside it in PlaybackScreen (#4779).
     /// Gate2LiveActivityWidget: the Margin circle's ring, white at 86% on its 16% fill (#4764), measured by its pair.
     private static let systemColorBaseline: [String: Int] = [
         "AppTopBanners.swift": 1, "EdgeSwipeBackTransition.swift": 1, "MarginRecordingScreen.swift": 2,
@@ -545,7 +547,7 @@ final class AppColorUsageGuardTests: XCTestCase {
         "LiveActivityTourPreview.swift": 1, "LiveSessionActivityWidget.swift": 8, "MiniPlayer.swift": 1,
         "PinnedMarginCardView.swift": 4, "PlaybackFeedbackTagView.swift": 3, "PlaybackLivePassageView.swift": 1,
         "PlaybackMarginRowView.swift": 1, "PlaybackMarginTranscriptionStatusView.swift": 1, "PlaybackPositionSlider.swift": 1,
-        "PlaybackScreen.swift": 6, "SpeechAskCardView.swift": 3, "WatchUntetheredView.swift": 28
+        "PlaybackScreen.swift": 6, "PlaybackSpokenNoteAudioVersion.swift": 1, "SpeechAskCardView.swift": 3, "WatchUntetheredView.swift": 28
     ]
 
     private func systemColorUses() throws -> [String: Int] {
@@ -594,11 +596,11 @@ final class AppColorUsageGuardTests: XCTestCase {
 
     /// The default placeholder is a system grey, 1.73:1 on the input fill in light mode. `AppTextField` and
     /// `AppSecureField` draw it in `secondaryText`. Only the system alerts keep a plain field: the system draws those.
-    /// The follow lists' alerts (#4046) are three of them: New list in the "Lists for <show>" sheet, New list on the Lists
-    /// screen, and Rename on a list's screen.
+    /// The follow lists' alerts (#4046) are four of them: New list in the "Lists for <show>" sheet, New list on the Lists
+    /// screen, and Rename and Include a list by link on a list's screen.
     private static let plainFieldAllowed: [String: Int] = [
         "ExperienceDesignSystem.swift": 3, "ExperienceItemDetailScreen.swift": 1, "ItemCollectionSheet.swift": 1,
-        "SpokenNoteRenameAlert.swift": 1, "FollowListPickerSheet.swift": 1, "FollowListsScreen.swift": 1, "FollowListScreen.swift": 1
+        "SpokenNoteRenameAlert.swift": 1, "FollowListPickerSheet.swift": 1, "FollowListsScreen.swift": 1, "FollowListScreen.swift": 2
     ]
 
     func testTextFieldsUseTheAppPlaceholderColour() throws {

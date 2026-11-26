@@ -168,6 +168,9 @@ test('follow a show, play, write a Margin, find it in Margins, and resume after 
   await tab(page, 'Margins');
   await expect(page.getByText('The guest’s point about tides is the one to send Sam.')).toBeVisible();
   await expect(page.getByRole('heading', { name: /Episode 3: No link, GUID and audio/ })).toBeVisible();
+  // Unfollowing deletes nothing (#4426): the episode with the Margin is still in the Library.
+  await tab(page, 'Library');
+  await expect(page.getByRole('list', { name: 'Episodes, newest first' }).getByText('Episode 3: No link, GUID and audio', { exact: true })).toBeVisible();
 });
 
 test('record a voice Margin with the microphone', async ({ page }, info) => {

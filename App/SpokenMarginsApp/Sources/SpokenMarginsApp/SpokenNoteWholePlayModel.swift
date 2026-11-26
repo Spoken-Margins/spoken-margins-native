@@ -15,9 +15,11 @@ final class SpokenNoteWholePlayModel: ObservableObject {
     @Published private(set) var isPreparing = false
     /// A plain line for a play that could not start, for an alert or the note screen's message line.
     @Published var message: String?
-    /// The note's sentences on the joined audio's clock, once known. The note screen reads it to light the sentence that is
-    /// sounding and to jump to one.
+    /// The note's sentences on the clock of the file that plays (the recording, or its Shorter pauses version, #4779),
+    /// once known. The note screen reads it to light the sentence that is sounding and to jump to one.
     @Published private(set) var timeline: SpokenNoteWholeTimeline?
+    /// The same sentences on the recording's clock, the one Margins are saved on. The note screen places Margins by it.
+    @Published private(set) var recordedTimeline: SpokenNoteWholeTimeline?
 
     /// The screen that asked has gone: a play that finishes now does not start anything.
     private var isAbandoned = false
@@ -30,9 +32,12 @@ final class SpokenNoteWholePlayModel: ObservableObject {
     ///   - beforeStart: work to finish before the note takes the audio session (a sentence handing it back).
     ///   - shouldStart: asked once the note is ready, so a screen that has since begun recording (which the join's seconds
     ///     allow) is not played over: when it says no, nothing starts.
+    ///   - ifNotReady: for a start routed here from elsewhere (the Library's Continue, a relaunch), what to do instead of
+    ///     showing a message when the note can't be got ready: that start goes on with the file the item names.
     func play(
         noteId: String, app: Gate1AppModel,
-        beforeStart: (@MainActor () async -> Void)? = nil, shouldStart: (@MainActor () -> Bool)? = nil
+        beforeStart: (@MainActor () async -> Void)? = nil, shouldStart: (@MainActor () -> Bool)? = nil,
+        ifNotReady: (@MainActor () -> Void)? = nil
     ) {
         let itemId = SpokenNoteItem.itemId(forNoteId: noteId)
         let isOpenSession = app.hasActiveSession && app.snapshot.itemId == itemId && app.snapshot.phase != .finished
@@ -51,50 +56,131 @@ final class SpokenNoteWholePlayModel: ObservableObject {
         isPreparing = true
         isAbandoned = false
         message = nil
+        let version = app.spokenNoteClean.version
+        // The open session's file, read from memory now: a version change under it restarts from this file's clock.
+        let openMediaURL = isOpenSession ? app.openSessionMediaURL : nil
         Task {
             await beforeStart?()
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<SpokenNoteWholePlayback.Prepared, Error> in
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<Ready, Error> in
                 do {
-                    return .success(try await SpokenNoteWholePlayback.prepare(
-                        store: noteStore, joiner: SpokenNoteAudioJoiner(), writer: store))
+                    // The file attached before, so a note whose version changed since its last play starts at the same
+                    // moment on the new one instead of carrying on with a place on the other clock (#4779). Both clocks
+                    // and the saved sessions are read here, off the main thread.
+                    let previous = isOpenSession ? openMediaURL : (try? store.loadItemSummary(id: itemId))?.media?.url
+                    let prepared = try await SpokenNoteWholePlayback.prepare(
+                        store: noteStore, joiner: SpokenNoteAudioJoiner(), writer: store, version: version, attach: false)
+                    let plan = SpokenNoteVersionSwitch.plan(previousMediaURL: previous, newMediaURL: prepared.audioURL.absoluteString)
+                    let sessions = plan != nil && !isOpenSession ? ((try? store.loadSessions(itemId: itemId)) ?? []) : []
+                    let recorded = noteStore.peek().flatMap { SpokenNoteWholePlayback.timeline(of: $0, inFolder: noteStore.folderURL) }
+                    return .success(Ready(prepared: prepared, plan: plan, savedSessions: sessions, recordedTimeline: recorded))
                 } catch {
                     return .failure(error)
                 }
             }.value
             isPreparing = false
             switch result {
-            case .success(let prepared):
+            case .success(let ready):
+                let prepared = ready.prepared
                 timelineRequests += 1
                 timeline = prepared.timeline
+                recordedTimeline = ready.recordedTimeline
                 guard !isAbandoned, shouldStart?() ?? true else { return }
+                // Chosen again while the file was read: get the newly chosen one ready instead (#4779).
+                guard app.spokenNoteClean.version == version else {
+                    play(noteId: noteId, app: app, shouldStart: shouldStart, ifNotReady: ifNotReady)
+                    return
+                }
+                // The open note was moved to the other file while this one was read: the plan is for a file no longer
+                // playing, so read again from where it is now.
+                guard !isOpenSession || app.openSessionMediaURL == openMediaURL else {
+                    play(noteId: noteId, app: app, shouldStart: shouldStart, ifNotReady: ifNotReady)
+                    return
+                }
                 let labels = MainThreadOperationLabels.shared // so a slow start names its step (#2256)
+                // A note not open now whose saved place is on the other version's clock: its sessions are set aside off
+                // the main thread first, and the file is attached only after that, right before the start (below).
+                if !isOpenSession, let startMs = Self.savedPlaceOnNewVersion(ready, addedAgainAt: app.addedAgainAt(forItem: itemId)) {
+                    let sessionBefore = app.snapshot.sessionId
+                    await app.setAsideSpokenNoteSessions(itemId: itemId)
+                    // The listener may have closed the screen, started something else or chosen again meanwhile.
+                    guard !isAbandoned, shouldStart?() ?? true, app.spokenNoteClean.version == version,
+                          app.snapshot.sessionId == sessionBefore else { return }
+                    labels.scoped("spokenNote.playOnNewVersion") {
+                        do {
+                            try SpokenNoteWholePlayback.attach(prepared, writer: store)
+                        } catch {
+                            message = Self.failureMessage(error)
+                            return
+                        }
+                        app.startSpokenNoteSession(itemId: itemId, atMs: startMs)
+                    }
+                    app.spokenNoteClean.notePlaybackStarted(noteId: noteId)
+                    return
+                }
                 labels.scoped("spokenNote.play") {
+                    // A version change under the open session attaches its file itself, right before the restart.
+                    if isOpenSession, !prepared.rebuilt,
+                       app.restartSpokenNote(prepared: prepared, plan: ready.plan, playing: true) { return }
+                    do {
+                        try SpokenNoteWholePlayback.attach(prepared, writer: store)
+                    } catch {
+                        message = Self.failureMessage(error)
+                        return
+                    }
                     if isOpenSession, prepared.rebuilt {
                         // A take was added since this note was last played, so the paused session holds the older, shorter file.
                         app.startNewSession(id: itemId)
                     } else if isOpenSession {
                         app.playPause()
                     } else {
+                        app.spokenNoteClean.routingItemId = itemId // this start already has the chosen version
                         app.startItem(id: itemId)
                     }
                 }
+                app.spokenNoteClean.notePlaybackStarted(noteId: noteId)
             case .failure(let error):
-                message = Self.failureMessage(error)
+                if let ifNotReady, !isAbandoned {
+                    ifNotReady()
+                } else {
+                    message = Self.failureMessage(error)
+                }
             }
         }
     }
 
+    /// What the off-main read hands back: the prepared file, the move onto it when it is the other version, and, for a
+    /// note not open now, its saved sessions when that move happens.
+    private struct Ready: Sendable {
+        let prepared: SpokenNoteWholePlayback.Prepared
+        let plan: SpokenNoteVersionSwitch?
+        let savedSessions: [Session]
+        let recordedTimeline: SpokenNoteWholeTimeline?
+    }
+
+    /// For a note with a saved session (not open now) whose place was kept on the other version's clock: the place on
+    /// the prepared file, or nil when the file is the same version or there is no session to carry on.
+    private static func savedPlaceOnNewVersion(_ ready: Ready, addedAgainAt: Date?) -> Int? {
+        guard let plan = ready.plan,
+              case .resume(let session) = PlayRule.startAction(sessions: ready.savedSessions, addedAgainAt: addedAgainAt) else { return nil }
+        return plan.startMs(playingMs: session.position.mediaTimeMs ?? 0)
+    }
+
     /// Reads where the note's takes sit in the joined file, for a note whose audio was joined before (it may be playing
-    /// now, or paused from earlier). A note never played has no joined file, and no timeline.
-    func refreshTimeline(note: SpokenNote, noteFolder: URL) {
+    /// now, or paused from earlier). A note never played has no joined file, and no timeline. `playingMediaURL` is the
+    /// file the open session plays when it is this note: the lit sentence follows that file's clock (#4779).
+    func refreshTimeline(note: SpokenNote, noteFolder: URL, playingMediaURL: String?) {
         timelineRequests += 1
         let request = timelineRequests
         Task {
-            let found = await Task.detached(priority: .utility) {
-                SpokenNoteWholePlayback.timeline(of: note, inFolder: noteFolder)
+            let (playing, recorded) = await Task.detached(priority: .utility) { () -> (SpokenNoteWholeTimeline?, SpokenNoteWholeTimeline?) in
+                let recorded = SpokenNoteWholePlayback.timeline(of: note, inFolder: noteFolder)
+                guard SpokenNoteCleanFiles.namesCleanAudio(playingMediaURL) else { return (recorded, recorded) }
+                return (SpokenNoteWholePlayback.timeline(of: note, inFolder: noteFolder, playingMediaURL: playingMediaURL), recorded)
             }.value
             // Reads can finish out of order: only the newest request's answer is kept.
-            if request == timelineRequests, found != timeline { timeline = found }
+            guard request == timelineRequests else { return }
+            if playing != timeline { timeline = playing }
+            if recorded != recordedTimeline { recordedTimeline = recorded }
         }
     }
 

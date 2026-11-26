@@ -20,9 +20,13 @@ public enum FingerprintSpineExportRepair {
         signatureAssetIDs: Set<String>
     ) -> EditionFingerprintSpineArtifact? {
         guard (1...500).contains(spine.itemId.count), spine.generatorVersion.count <= 200 else { return nil }
-        let episodeGUID = spine.episodeGUID.flatMap { $0.count <= 1_000 ? $0 : nil }
+        var episodeGUID = spine.episodeGUID.flatMap { $0.count <= 1_000 ? $0 : nil }
         // A spine naming another episode belongs to another edition.
         if let expected = item.episodeGUID, let actual = episodeGUID, expected != actual { return nil }
+        // The packet's item identity has already left out every link that may not go: one holding a secret (#168), and
+        // a restricted episode's audio and feed links (#5340). The spine names nothing the identity left out, so a GUID
+        // that is a link goes only when the identity kept it.
+        if item.episodeGUID == nil, let guid = episodeGUID, Self.isWebLink(guid) { episodeGUID = nil }
 
         var seenIDs = Set<String>(), seenSignatures = Set<String>()
         let kept = spine.landmarks
@@ -56,8 +60,11 @@ public enum FingerprintSpineExportRepair {
             id: spine.id,
             schemaVersion: spine.schemaVersion,
             itemId: spine.itemId,
-            // A feed can name an http:// or non-link reference; packets carry https links only.
-            canonicalURL: spine.canonicalURL.flatMap { SpokenMarginsPackageArchive.validHTTPSURL($0) ? $0 : nil },
+            // A feed can name an http:// or non-link reference; packets carry https links only. The link goes only when it
+            // is the identity's own (#5340): the spine stores the page or, with none, the audio link it was captured from.
+            canonicalURL: spine.canonicalURL.flatMap {
+                SpokenMarginsPackageArchive.validHTTPSURL($0) && Self.isIdentityLink($0, of: item) ? $0 : nil
+            },
             episodeGUID: episodeGUID,
             producingEditionDurationMs: spine.producingEditionDurationMs,
             producingEditionSHA256: spine.producingEditionSHA256.flatMap { SpokenMarginsPackageArchive.isSHA256($0) ? $0 : nil },
@@ -65,6 +72,16 @@ public enum FingerprintSpineExportRepair {
             generatorVersion: spine.generatorVersion,
             landmarks: landmarks
         )
+    }
+
+    private static func isIdentityLink(_ link: String, of item: SharedItemIdentity) -> Bool {
+        guard let mine = SharedItemIdentityBuilder.normalizedSharingURL(link) else { return false }
+        return [item.canonicalURL, item.originalURL].contains { $0.flatMap(SharedItemIdentityBuilder.normalizedSharingURL) == mine }
+    }
+
+    private static func isWebLink(_ value: String) -> Bool {
+        let scheme = URLComponents(string: value)?.scheme?.lowercased()
+        return scheme == "http" || scheme == "https"
     }
 
     /// At most `limit` landmarks, evenly spread over the episode, keeping the first and last.

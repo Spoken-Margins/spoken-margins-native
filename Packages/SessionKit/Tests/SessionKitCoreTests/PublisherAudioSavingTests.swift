@@ -24,9 +24,9 @@ final class PublisherAudioSavingTests: XCTestCase {
     func testTheRecordIsSavedForAnExistingItem() throws {
         let (store, item, directory) = try makeStoreAndItem()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let found = PublisherAudio(itemId: item.id, audioURL: "https://cdn.example.com/a.mp3", detectedFrom: "substack_voiceover")
+        let found = PublisherAudio(itemId: item.id, audioURL: "https://cdn.example.com/a.mp3", detectedFrom: "substack_post_voiceover")
 
-        let saved = try store.savePublisherAudioIfItemExists(found)
+        let saved = try store.savePublisherAudioIfItemExists(found).saved
 
         XCTAssertEqual(saved, found)
         XCTAssertEqual(try store.loadPublisherAudio(itemId: item.id), found)
@@ -35,9 +35,9 @@ final class PublisherAudioSavingTests: XCTestCase {
     func testNothingIsSavedWhenTheItemWasRemovedWhileThePageLoaded() throws {
         let (store, _, directory) = try makeStoreAndItem()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let found = PublisherAudio(itemId: "gone", audioURL: "https://cdn.example.com/a.mp3", detectedFrom: "substack_voiceover")
+        let found = PublisherAudio(itemId: "gone", audioURL: "https://cdn.example.com/a.mp3", detectedFrom: "substack_post_voiceover")
 
-        XCTAssertNil(try store.savePublisherAudioIfItemExists(found))
+        XCTAssertEqual(try store.savePublisherAudioIfItemExists(found), .itemGone)
         XCTAssertNil(try store.loadPublisherAudio(itemId: "gone"), "no orphan record is left for an item that is not there")
     }
 
@@ -45,9 +45,9 @@ final class PublisherAudioSavingTests: XCTestCase {
         let (store, item, directory) = try makeStoreAndItem()
         defer { try? FileManager.default.removeItem(at: directory) }
         try store.moveItemToTrash(id: item.id)
-        let found = PublisherAudio(itemId: item.id, audioURL: "https://cdn.example.com/a.mp3", detectedFrom: "substack_voiceover")
+        let found = PublisherAudio(itemId: item.id, audioURL: "https://cdn.example.com/a.mp3", detectedFrom: "substack_post_voiceover")
 
-        XCTAssertEqual(try store.savePublisherAudioIfItemExists(found), found, "a trashed article can still be restored with its voiceover")
+        XCTAssertEqual(try store.savePublisherAudioIfItemExists(found).saved, found, "a trashed article can still be restored with its voiceover")
     }
 
     func testTheSameRecordingKeepsItsTextMapAndADifferentOneStartsOver() throws {
@@ -57,11 +57,11 @@ final class PublisherAudioSavingTests: XCTestCase {
         mapped.textMapStatus = "aligned(3 of 3 sentences)"
         try store.savePublisherAudio(mapped)
 
-        let again = PublisherAudio(itemId: item.id, audioURL: "https://cdn.example.com/a.mp3", detectedFrom: "substack_voiceover")
-        XCTAssertEqual(try store.savePublisherAudioIfItemExists(again)?.textMapStatus, "aligned(3 of 3 sentences)")
+        let again = PublisherAudio(itemId: item.id, audioURL: "https://cdn.example.com/a.mp3", detectedFrom: "substack_post_voiceover")
+        XCTAssertEqual(try store.savePublisherAudioIfItemExists(again).saved?.textMapStatus, "aligned(3 of 3 sentences)")
 
-        let other = PublisherAudio(itemId: item.id, audioURL: "https://cdn.example.com/b.mp3", detectedFrom: "substack_voiceover")
-        XCTAssertNil(try store.savePublisherAudioIfItemExists(other)?.textMapStatus)
+        let other = PublisherAudio(itemId: item.id, audioURL: "https://cdn.example.com/b.mp3", detectedFrom: "substack_post_voiceover")
+        XCTAssertNil(try store.savePublisherAudioIfItemExists(other).saved?.textMapStatus)
         XCTAssertEqual(try store.loadPublisherAudio(itemId: item.id)?.audioURL, "https://cdn.example.com/b.mp3")
     }
 
@@ -69,12 +69,28 @@ final class PublisherAudioSavingTests: XCTestCase {
     func testTheSaveThroughStoreReaderIsSeenByTheNextRead() async throws {
         let (store, item, directory) = try makeStoreAndItem()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let found = PublisherAudio(itemId: item.id, audioURL: "https://cdn.example.com/a.mp3", detectedFrom: "substack_voiceover")
+        let found = PublisherAudio(itemId: item.id, audioURL: "https://cdn.example.com/a.mp3", detectedFrom: "substack_post_voiceover")
         let reader = StoreReader(store)
 
         _ = try await reader.read { try $0.savePublisherAudioIfItemExists(found) }
         let loaded = try await reader.read { try $0.loadPublisherAudio(itemId: item.id) }
 
         XCTAssertEqual(loaded, found)
+    }
+
+    /// #4640: the save runs the admission gate first, so a refused recording leaves nothing behind.
+    func testARefusedRecordingIsNotSaved() throws {
+        let (store, item, directory) = try makeStoreAndItem()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let refused = [
+            PublisherAudio(itemId: item.id, audioURL: "http://cdn.example.com/a.mp3", detectedFrom: "substack_post_voiceover"),
+            PublisherAudio(itemId: item.id, audioURL: "https://cdn.example.com/a.mp3", detectedFrom: "substack_voiceover"),
+            PublisherAudio(itemId: item.id, audioURL: "https://example.com/a.mp3", detectedFrom: "type3_audio_narration"),
+        ]
+        for audio in refused {
+            let result = try store.savePublisherAudioIfItemExists(audio)
+            XCTAssertNotNil(result.refusalDiagnostic, "\(audio.audioURL) \(audio.detectedFrom)")
+            XCTAssertNil(try store.loadPublisherAudio(itemId: item.id))
+        }
     }
 }

@@ -205,4 +205,23 @@ final class ReviewReturnPlaceTests: XCTestCase {
             XCTAssertFalse(reloaded.needsRestoring(from: 150_000))
         }
     }
+
+    /// A catch-up run's held note (#5238) survives a launch, sets only its own field, and an earlier build's note is not held.
+    func testAHeldNoteRoundTripsAndChangesNothingElse() throws {
+        let place = try XCTUnwrap(ReviewReturnPlace(sequence: review()))
+        XCTAssertNil(place.heldAtMediaTimeMs)
+        let held = place.held(at: 25_100)
+        XCTAssertEqual(held.heldAtMediaTimeMs, 25_100)
+        XCTAssertEqual(held.itemId, place.itemId)
+        XCTAssertEqual(held.returnToMediaTimeMs, place.returnToMediaTimeMs)
+        XCTAssertEqual(held.stretchStartMs, place.stretchStartMs)
+        XCTAssertEqual(held.stretchEndMs, place.stretchEndMs)
+        XCTAssertEqual(held.passedAMargin, place.passedAMargin)
+        try withIsolatedDefaults { defaults in
+            ReviewReturnPlaces(defaults: defaults).owe(held)
+            XCTAssertEqual(ReviewReturnPlaces(defaults: defaults).owed(itemId: "ep"), held)
+        }
+        let old = Data(#"{"itemId":"ep","returnToMediaTimeMs":12000,"stretchStartMs":0,"stretchEndMs":40000,"passedAMargin":true}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(ReviewReturnPlace.self, from: old).heldAtMediaTimeMs)
+    }
 }

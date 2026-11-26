@@ -222,6 +222,7 @@ extension Gate1AppModel {
             return
         }
         guard !recordingNavigationIsLocked, handOffPlayingMarginToRecording() else { return }
+        noteCatchUp(.recordingStarted) // "Your Margin is saved" takes the caught-up card's slot (#4785)
         suggestSharedMarginReply()
         let voiceCaptureRequestID = marginCapture.beginVoiceRequest()
         AppHaptics.play(.started)
@@ -424,24 +425,30 @@ extension Gate1AppModel {
     func finishInterjection(endedByPhrase: Bool) {
         guard snapshot.isRecording, let verdict = verdictForSavingRecording() else { return }
         let held = heldMarginVoice // a Margin recorded over a voice leaves the source paused for it to play on (#1672)
+        let keptPlace = catchUpPlaceToKeepThroughASave() // a catch-up run's place: the source stays paused and Play gives it back (#5238)
         let labels = hangTelemetry.labels
+        let hadSavedBefore = isOnboardingStepComplete(.firstInterjection) // read before this save marks it (#4713)
+        var savedId: String?, willPlayBack = false
         run { engine in
             defer { labels.scoped("marginSave.signal") { recordSpokenMarginSavedBeforeFailure(engine.lastScheduledTranscriptionInterjectionId) } }
-            snapshot = try engine.finishInterjection(audioRef: nil, resumesSource: held == nil)
+            snapshot = try engine.finishInterjection(audioRef: nil, resumesSource: held == nil && keptPlace == nil)
+            savedId = engine.lastScheduledTranscriptionInterjectionId; willPlayBack = hearItLandWillPlayBack(hadSavedMarginBefore: hadSavedBefore, heldVoice: held != nil)
             if held?.kind == .own { noteMarginRecordedOverHeldOwnMargin(engine.lastScheduledTranscriptionInterjectionId) }
             // The item detail is read off the main thread, as Pause does (#2102): the read costs most of a second on
             // a long item, and every Margin save waited for it (#2967). The new Margin shows when the read lands.
             refreshSelectedItemInBackground()
             labels.scoped("marginSave.onboarding") { recordSavedInterjectionForOnboarding() }
-            labels.scoped("marginSave.transcription") { transcribeAndRecordSavedSpokenMargin(endedByPhrase: endedByPhrase) }
+            labels.scoped("marginSave.transcription") { transcribeAndRecordSavedSpokenMargin(endedByPhrase: endedByPhrase, hearItLandWillRun: willPlayBack) }
             labels.scoped("marginSave.report") { reportMarginSaved(verdict) }
         }
         if !snapshot.isRecording {
             clearRecordingPresentation()
             refreshMarginRowsInBackground(forItem: snapshot.itemId)
             resumeHeldMarginVoice(held)
+            keepCatchUpPlaceAfterASave(keptPlace)
         }
         streamingSpeechQueue.resumeAfterInterjection()
+        hearItLandAfterSpokenSave(willPlayBack: willPlayBack, savedId: savedId) // after every resume (#4713)
     }
 
     func recordSavedInterjectionForOnboarding() {
@@ -462,7 +469,7 @@ extension Gate1AppModel {
         }
         recordFinalCaptureDiagnostics("cancelled")
         run { engine in
-            snapshot = try engine.cancelInterjection(resumesSource: held == nil)
+            snapshot = try engine.cancelInterjection(resumesSource: held == nil && !catchUpPlaceIsWaiting)
             refreshSelectedItemInBackground()
             AppHaptics.play(feeling)
             reportSuccess("Cancelled Margin.")
@@ -495,6 +502,7 @@ extension Gate1AppModel {
             marginCapture.clearPermissionDenied()
             snapshot = engine.snapshot
             marginCapture.openDraft(makeWrittenMarginDraft(for: capture, store: store, replyChoice: MarginReplyChoice(suggested: reply)))
+            noteCatchUp(.recordingStarted) // a written Margin puts the caught-up card away, as a spoken one does (#4785)
             clearRecordingPresentation()
         } catch {
             streamingSpeechQueue.resumeAfterInterjection()
@@ -525,7 +533,7 @@ extension Gate1AppModel {
         recordFinalCaptureDiagnostics("switched_to_written")
         do {
             let store = try requireStore()
-            let capture = try engine.switchRecordingToWrittenInterjection(resumesSource: held == nil)
+            let capture = try engine.switchRecordingToWrittenInterjection(resumesSource: held == nil && !catchUpPlaceIsWaiting)
             snapshot = engine.snapshot // the screen leaves the recording, and the capture watch ends with it
             lastError = nil
             marginCapture.clearPermissionDenied()
@@ -566,6 +574,7 @@ extension Gate1AppModel {
             if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
             refreshSelectedItemInBackground()
             refreshMarginRowsInBackground(forItem: draft.capture.itemId)
+            hearItLandAfterWrittenSave(itemId: draft.capture.itemId, atMs: draft.capture.anchor.mediaTimeMs) // card + "first Margin heard" (#4713, #4711)
             if draft.priorWasPlaying && snapshot.status == .paused {
                 AppHaptics.play(.warning)
                 reportWarning("Margin saved. Playback is paused; tap Play to continue.", savesMargin: true)

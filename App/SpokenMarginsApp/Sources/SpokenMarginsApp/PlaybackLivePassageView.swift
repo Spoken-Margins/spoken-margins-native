@@ -5,33 +5,12 @@ import SwiftUI
 import UIKit
 
 /// What the Now tab's scene is doing, shared by the playback screen (which sees the scroll) and the passage (which
-/// draws the scene): the scene state, whether the header is on screen, and which sentences are (#4453).
+/// draws the scene): the scene state and which sentences are on screen (#4453).
 ///
 /// It follows the playhead and never moves audio. All of its rules are `PlaybackNowSceneState`'s, which is host-tested.
 @MainActor
 final class NowSceneController: ObservableObject {
     @Published private(set) var state: PlaybackNowSceneState?
-    /// Whether the Now header, with the Library arrow in it, is on screen. Following scrolls it away. Two thresholds
-    /// decide it (`NowHeaderVisibility`), so the toolbar arrow it brings can't move the header back and forth (#4739).
-    @Published private(set) var headerIsVisible = true
-    private var header = NowHeaderVisibility()
-
-    /// Whether at least `NowHeaderVisibility.goneBelow` of the header is on screen.
-    func headerReachedGoneThreshold(_ visible: Bool) {
-        header.reachedGoneThreshold(visible)
-        publishHeader()
-    }
-
-    /// Whether at least `NowHeaderVisibility.backAt` of the header is on screen.
-    func headerReachedBackThreshold(_ visible: Bool) {
-        header.reachedBackThreshold(visible)
-        publishHeader()
-    }
-
-    /// Published only on a change, so a threshold report that changes nothing redraws nothing.
-    private func publishHeader() {
-        if headerIsVisible != header.isVisible { headerIsVisible = header.isVisible }
-    }
     /// Whether the scene lights its playing row: false on a spoken note that is not the one playing, or before its first
     /// worded sentence (#4780). Articles always light. Back to playing shows only while it is true.
     @Published var showsLit = true

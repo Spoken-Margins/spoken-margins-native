@@ -31,7 +31,26 @@ input[type=text]{display:block;width:100%;min-height:48px;margin-top:8px;padding
 #retry{display:block;margin-top:12px}
 #quiz-message,#quiz-status{margin:16px 0 0;padding:14px 16px;border-left:6px solid var(--orange);background:var(--tile);border-radius:0 14px 14px 0;font-size:18px}
 #prompt-text{display:block;width:100%;font:16px/1.4 ui-monospace,Menlo,monospace;color:var(--ink);background:var(--tile);border:2px solid var(--muted);border-radius:10px;padding:12px;resize:vertical}
-#copy-status{margin:8px 0 0;font-size:16px;color:var(--muted)}
+#copy-status,#follow-up-status{margin:8px 0 0;font-size:16px;color:var(--muted)}
+h3{font-size:20px;line-height:1.25;margin:24px 0 10px}
+.field-label{display:block;font-size:20px;font-weight:700;margin:0 0 8px}
+#answer-text,#follow-up-text{display:block;width:100%;font:16px/1.4 ui-monospace,Menlo,monospace;color:var(--ink);background:var(--tile);border:2px solid var(--muted);border-radius:10px;padding:12px;resize:vertical}
+#check,#copy-follow-up{display:flex;align-items:center;justify-content:center;width:100%;min-height:56px;margin-top:12px;padding:12px 16px;border:0;border-radius:14px;background:var(--blue);color:var(--blueink);font:inherit;font-weight:700;cursor:pointer}
+#check-message{margin:12px 0 0;font-size:18px}
+#check-message:empty,#follow-up-status:empty{margin:0}
+#check-results{list-style:none;margin:12px 0 0;padding:0}
+.check-row{margin:0 0 10px;padding:12px 14px;background:var(--tile);border:2px solid var(--line);border-left-width:6px;border-radius:12px;overflow-wrap:anywhere}
+.check-row.works{border-left-color:var(--blue)}
+.check-row.look{border-left-color:var(--orange)}
+.check-row p{margin:0}
+.check-name{font-weight:700}
+.check-link{font-size:16px}
+.check-link a{color:var(--blue);text-underline-offset:3px}
+.check-status{margin-top:4px !important}
+.check-icon{display:inline-block;min-width:1.2em;font-weight:700}
+.works .check-icon{color:var(--blue)}
+.look .check-icon{color:var(--orange)}
+#none-worked{margin:12px 0 0;padding:14px 16px;border-left:6px solid var(--orange);background:var(--tile);border-radius:0 14px 14px 0;font-size:18px}
 #quiz-message:empty,#quiz-status:empty{margin:0;padding:0;border:0}
 #copy-status:empty{margin:0}
 .reset{margin:24px 0 0}
@@ -51,7 +70,20 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,a:focus-visible,
 <textarea id="prompt-text" readonly rows="14" aria-labelledby="prompt-heading"></textarea>
 <button type="button" id="copy">Copy prompt</button>
 <p id="copy-status" aria-live="polite"></p>
-<p>Paste it into your own assistant, like ChatGPT, Claude or Gemini, with web search turned on.</p>
+<p>Paste it into your own assistant, like ChatGPT, Claude or Gemini, with web search turned on. Then paste its answer below to check the links.</p>
+<h2 id="check-heading">Check the links</h2>
+<label for="answer-text" class="field-label">Your assistant's answer</label>
+<textarea id="answer-text" rows="8" autocomplete="off" spellcheck="false"></textarea>
+<button type="button" id="check">Check links</button>
+<p id="check-message" aria-live="polite"></p>
+<ul id="check-results" aria-labelledby="check-heading" hidden></ul>
+<p id="none-worked" hidden></p>
+<div id="follow-up" hidden>
+<h3 id="follow-up-heading">Ask again for the ones that didn't work</h3>
+<textarea id="follow-up-text" readonly rows="8" aria-labelledby="follow-up-heading"></textarea>
+<button type="button" id="copy-follow-up">Copy follow-up prompt</button>
+<p id="follow-up-status" aria-live="polite"></p>
+</div>
 </section>
 <p class="reset" hidden><button type="button" id="start-over">Start over</button></p>
 <p class="pitch">Have the conversation in Spoken Margins: pause the episode and leave a spoken note, a Margin, at the moment you want to talk about. It's in private beta. <a href="/join/">Try Spoken Margins</a></p>

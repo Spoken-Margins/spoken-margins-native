@@ -15,7 +15,7 @@ import SessionKit
 ///   listener-gated entry points the Substack voiceover lookup uses (#2368).
 public enum TypeIIIAudioNarration {
     /// Where a recording's record says it came from.
-    public static let detectedFrom = "type3_audio_narration"
+    public static let detectedFrom = PublisherAudioSource.typeIIIAudioNarration.rawValue
     public static let findEndpoint = "https://api.type3.audio/narration/find"
     /// A longer address is not a post address.
     public static let maximumAddressLength = 2_048

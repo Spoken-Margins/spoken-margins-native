@@ -96,24 +96,22 @@ export async function remove(store: StoreName, key: string): Promise<void> {
   await done(tx);
 }
 
-/** Removes a show and its episodes and positions in one transaction. Its Margins stay. */
-export async function removeShow(showId: string, episodeIds: readonly string[]): Promise<void> {
-  const db = await open();
-  const tx = db.transaction(['shows', 'episodes', 'positions'], 'readwrite');
-  tx.objectStore('shows').delete(showId);
-  for (const id of episodeIds) {
-    tx.objectStore('episodes').delete(id);
-    tx.objectStore('positions').delete(id);
-  }
-  await done(tx);
-}
-
-/** Writes a refreshed show and its new or changed episodes in one transaction (#2977). */
+/**
+ * Writes a refreshed show and its new or changed episodes in one transaction (#2977). Only refresh calls it. The stored
+ * show is read inside the same transaction: if the listener unfollowed it meanwhile (#4426), the episodes are written
+ * and the show record is left as it is, so a feed read or refresh write in flight can't undo an unfollow. The `put`
+ * calls are made from the `get`'s callback with no `await` between, or the transaction would commit early.
+ */
 export async function putShowWithEpisodes(show: Show, episodes: readonly Episode[]): Promise<void> {
   const db = await open();
   const tx = db.transaction(['shows', 'episodes'], 'readwrite');
-  tx.objectStore('shows').put(show);
-  for (const episode of episodes) tx.objectStore('episodes').put(episode);
+  const shows = tx.objectStore('shows');
+  const stored = shows.get(show.id);
+  stored.onsuccess = () => {
+    const record = stored.result as Show | undefined;
+    if (!(record && Object.hasOwn(record, 'unfollowedAt'))) shows.put(show);
+    for (const episode of episodes) tx.objectStore('episodes').put(episode);
+  };
   await done(tx);
 }
 

@@ -43,6 +43,18 @@ public struct ParsedFeedItem: Equatable, Sendable {
     /// `banner_image`. Https only; nil when the entry names none. It is never the show's image,
     /// which stays on `ParsedFeed.imageURL`.
     public var imageURL: String? = nil
+    /// The item's first enclosure that isn't a picture, as written, whatever its type (#4640): RSS `<enclosure>`, Atom
+    /// `link rel="enclosure"`, JSON Feed `attachments`. `audioURL` keeps its own rules; the article feed route reads
+    /// these to decide for itself.
+    public var enclosureURL: String? = nil
+    public var enclosureType: String? = nil
+    /// The enclosure's `length` (or JSON Feed `size_in_bytes`), when the feed gives a positive one.
+    public var enclosureLengthBytes: Int? = nil
+    /// The publisher asked directories not to list this episode: `<itunes:block>Yes</itunes:block>` on the episode or
+    /// on the whole show (#5340; Apple's convention, https://podcasters.apple.com/support/823-podcast-requirements).
+    /// Any other value, or no tag, is false. It restricts what leaves the device on its own
+    /// (`AutomaticSourceAccess`); it is not proof that the feed is private.
+    public var publisherBlocked: Bool = false
 }
 
 public struct ParsedFeed: Equatable, Sendable {
@@ -54,6 +66,8 @@ public struct ParsedFeed: Equatable, Sendable {
     /// The show's own artwork: RSS `<itunes:image href>` or `<image><url>`, Atom `<logo>` or
     /// `<icon>`, JSON Feed `icon`. Https only; nil when the feed names none (#773).
     public var imageURL: String? = nil
+    /// The show's own `<itunes:block>Yes</itunes:block>` (#5340). Every item of a blocked show is blocked too.
+    public var publisherBlocked: Bool = false
 }
 
 public enum FeedParserError: Error, LocalizedError, Equatable {
@@ -100,17 +114,31 @@ public final class FeedParser: @unchecked Sendable {
             items: Array(delegate.items.prefix(limits.maximumEntries)).map { item in
                 var item = item
                 item.publisherPlatform = delegate.feedGenerator.nilIfEmpty?.lowercased()
+                // The show's block may come after its items in the file, so it is applied once the whole feed is read.
+                if delegate.channelBlocked { item.publisherBlocked = true }
                 return item
             },
             imageURL: [delegate.itunesImage, delegate.channelImage, delegate.atomLogo, delegate.atomIcon]
-                .lazy.compactMap(httpsLink).first
+                .lazy.compactMap(httpsLink).first,
+            publisherBlocked: delegate.channelBlocked
         )
     }
 
     private func parseJSON(_ data: Data) throws -> ParsedFeed {
         struct JSONFeed: Decodable {
             struct Item: Decodable {
-                struct Attachment: Decodable { var url: String; var mime_type: String? }
+                struct Attachment: Decodable {
+                    var url: String; var mime_type: String?; var size_in_bytes: Int?
+                    enum CodingKeys: String, CodingKey { case url, mime_type, size_in_bytes }
+                    // The size is only a hint for the article feed route (#4640): a string or out-of-range value is
+                    // dropped, never a reason to reject the whole feed.
+                    init(from decoder: Decoder) throws {
+                        let c = try decoder.container(keyedBy: CodingKeys.self)
+                        url = try c.decode(String.self, forKey: .url)
+                        mime_type = try c.decodeIfPresent(String.self, forKey: .mime_type)
+                        size_in_bytes = try? c.decodeIfPresent(Int.self, forKey: .size_in_bytes)
+                    }
+                }
                 var id: String?
                 var url: String?
                 var external_url: String?
@@ -145,6 +173,7 @@ public final class FeedParser: @unchecked Sendable {
             let rawSummary = item.summary ?? item.content_text ?? item.content_html
             let content = item.content_html.map(FeedArticleBodyText.html) ?? item.content_text.map(sanitize)
             let author = item.authors?.compactMap(\.name).joined(separator: ", ").nilIfEmpty ?? item.author?.name
+            let enclosure = item.attachments?.first { !$0.url.isEmpty && !($0.mime_type ?? "").lowercased().hasPrefix("image/") }
             return ParsedFeedItem(
                 id: item.id ?? url,
                 title: sanitize(item.title ?? "Untitled"),
@@ -157,7 +186,10 @@ public final class FeedParser: @unchecked Sendable {
                 guid: item.id?.nilIfEmpty,
                 imageURL: [item.image, item.banner_image].lazy.compactMap { $0.flatMap(httpsLink) }.first
                     ?? item.attachments?.lazy.filter { ($0.mime_type ?? "").lowercased().hasPrefix("image/") }
-                        .compactMap { httpsLink($0.url) }.first
+                        .compactMap { httpsLink($0.url) }.first,
+                enclosureURL: enclosure?.url,
+                enclosureType: enclosure?.mime_type?.nilIfEmpty,
+                enclosureLengthBytes: enclosure?.size_in_bytes.flatMap { $0 > 0 ? $0 : nil }
             )
         }
         return ParsedFeed(format: .json, title: sanitize(decoded.title), homePageURL: decoded.home_page_url, feedURL: decoded.feed_url, items: items, imageURL: decoded.icon.flatMap(httpsLink))
@@ -175,6 +207,7 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
     var channelImage = ""
     var atomLogo = ""
     var atomIcon = ""
+    var channelBlocked = false
     var items: [ParsedFeedItem] = []
     var tooDeep = false
     private var inChannelImage = false
@@ -212,11 +245,15 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
             if inEntry {
                 if rel == "alternate" { item?.url = href }
                 if rel == "enclosure", (attributeDict["type"] ?? "").lowercased().hasPrefix("audio/") { item?.audioURL = href }
+                if rel == "enclosure" { item?.noteEnclosure(url: href, type: attributeDict["type"], length: attributeDict["length"]) }
                 if rel == "enclosure", (attributeDict["type"] ?? "").lowercased().hasPrefix("image/"), item?.enclosureImage == nil { item?.enclosureImage = href }
             } else if rel == "self" { feedURL = href } else if rel == "alternate" { homePageURL = href }
         }
         if format == .rss, name == "enclosure", (attributeDict["type"] ?? "").lowercased().hasPrefix("audio/") {
             item?.audioURL = attributeDict["url"]
+        }
+        if format == .rss, name == "enclosure", let url = attributeDict["url"] {
+            item?.noteEnclosure(url: url, type: attributeDict["type"], length: attributeDict["length"])
         }
         if format == .rss, name == "enclosure", (attributeDict["type"] ?? "").lowercased().hasPrefix("image/"),
            item?.enclosureImage == nil {
@@ -248,6 +285,9 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
         let name = normalized(qName ?? elementName)
         let value = sanitize(text)
+        if PublisherBlockSignal.isBlock(qName ?? elementName, namespaceURI: namespaceURI, value: text) {
+            if inEntry { item?.blocked = true } else { channelBlocked = true }
+        }
         if inEntry {
             switch name {
             case "title": item?.title = value
@@ -305,6 +345,14 @@ private struct ItemBuilder {
     var mediaThumbnail: String?
     var mediaContentImage: String?
     var enclosureImage: String?
+    var enclosure: (url: String, type: String?, length: Int?)?
+    var blocked = false
+    /// Keeps the first enclosure that isn't a picture (#4640).
+    mutating func noteEnclosure(url: String, type: String?, length: String?) {
+        guard enclosure == nil, !url.isEmpty, !(type ?? "").lowercased().hasPrefix("image/") else { return }
+        let bytes = length.flatMap { Int($0.trimmingCharacters(in: .whitespaces)) }.flatMap { $0 > 0 ? $0 : nil }
+        enclosure = (url, type?.nilIfEmpty, bytes)
+    }
     func build() -> ParsedFeedItem? {
         // Podcast feeds, paid ones especially, often give episodes audio and a GUID but no
         // <link> (#179). The enclosure then stands in for the link, so identity falls back to
@@ -327,7 +375,11 @@ private struct ItemBuilder {
             content: content?.nilIfEmpty,
             guid: guid?.nilIfEmpty,
             imageURL: [itunesImage, mediaThumbnail, mediaContentImage, enclosureImage].lazy
-                .compactMap { $0.flatMap(httpsLink) }.first
+                .compactMap { $0.flatMap(httpsLink) }.first,
+            enclosureURL: enclosure?.url,
+            enclosureType: enclosure?.type,
+            enclosureLengthBytes: enclosure?.length,
+            publisherBlocked: blocked
         )
     }
 }
@@ -368,4 +420,20 @@ private func sanitize(_ value: String) -> String {
 
 private extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
+/// Apple's `<itunes:block>Yes</itunes:block>` (#5340; https://podcasters.apple.com/support/823-podcast-requirements):
+/// the publisher asks directories not to list the show, or one episode. Read by both feed parsers.
+enum PublisherBlockSignal {
+    static let appleNamespace = "http://www.itunes.com/dtds/podcast-1.0.dtd"
+
+    /// `Yes` is the only value Apple gives a meaning; case and surrounding space are ignored. The element counts when its
+    /// prefix is `itunes` as written (`FeedParser` does not process namespaces) or its namespace is Apple's (the
+    /// resolver's parser does, so a feed that binds Apple's namespace to another prefix is still read).
+    static func isBlock(_ qualifiedName: String, namespaceURI: String?, value: String) -> Bool {
+        let parts = qualifiedName.lowercased().split(separator: ":")
+        guard parts.last == "block" else { return false }
+        let apple = (parts.count == 2 && parts[0] == "itunes") || namespaceURI?.lowercased() == appleNamespace
+        return apple && value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "yes"
+    }
 }

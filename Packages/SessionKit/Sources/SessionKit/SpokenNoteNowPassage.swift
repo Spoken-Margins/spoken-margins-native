@@ -208,9 +208,6 @@ public enum SpokenNoteNowPassage {
             }
             return isNativeAudio ? .audio : .text
         }
-
-        /// Whether the layout is a scene of text, which can scroll the header (and its Library arrow) away.
-        public var hasScene: Bool { self == .text || self == .noteWords }
     }
 
     /// What a tap on one of a note's sentence rows does: the note screen's own conditions

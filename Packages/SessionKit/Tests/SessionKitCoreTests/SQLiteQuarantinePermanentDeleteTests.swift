@@ -291,4 +291,20 @@ final class SQLiteQuarantinePermanentDeleteTests: XCTestCase {
         try store.deleteItem(id: "item-1")
         XCTAssertNil(try? store.loadItem(id: "item-1"))
     }
+
+    /// #4640: the listener's voice choice names its item in the payload, so a set-aside row goes with that item.
+    func testAVoiceChoiceRowOfTheItemGoesAndAnotherItemsStays() throws {
+        try seed()
+        for item in ["item-1", "item-10"] {
+            try quarantine("publisher_audio_choice", item,
+                           #"{"itemId":"\#(item)","prefersAppVoice":true,"chosenAt":"2026-11-23T00:00:00Z","from-a-future-build":true}"#)
+        }
+        let store = try SQLiteSessionStore(path: path)
+
+        try store.deleteItem(id: "item-1")
+
+        let kept = try quarantinedKeys()
+        XCTAssertFalse(kept.contains("publisher_audio_choice/item-1"))
+        XCTAssertTrue(kept.contains("publisher_audio_choice/item-10"), "item-10 is not item-1")
+    }
 }

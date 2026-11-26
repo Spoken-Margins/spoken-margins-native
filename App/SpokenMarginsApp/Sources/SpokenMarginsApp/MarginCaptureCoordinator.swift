@@ -149,6 +149,11 @@ final class MarginCaptureCoordinator: ObservableObject {
         sharedReplyMemory.ended(at: date)
     }
 
+    /// The window ends now: the source jumped away from the friend's Margin, or the listener's own voice started (#5238).
+    func forgetSharedReply() {
+        sharedReplyMemory.forget()
+    }
+
     // MARK: Finishing, and the shield that follows
 
     /// Save was tapped. False when a finish is already under way. The flag and then the shield, in this order.

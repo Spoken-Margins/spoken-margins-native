@@ -20,6 +20,7 @@ ALLOWED = {
     'Packages/SessionKit/Sources/SessionKit/InMemoryRepository.swift': 'the in-memory repository (tests)',
     'Packages/SessionKit/Sources/SessionKit/SessionEngine.swift': 'new Margins; updates go through updateInterjection, in one transaction',
     'Packages/SessionKit/Sources/SessionKit/RecordingDraftJournal.swift': 'saves the Margin it just made from a draft',
+    'Packages/SessionKit/Sources/SessionKit/LiveMarginMove.swift': 'writes each moved Margin once, new, in the move transaction (#4233)',
     'Packages/SessionKit/Sources/SessionKit/LiveSessionMarginPlacer.swift': 'saves a Margin right after it creates it, before any capture can finish',
     'Packages/SessionKit/Sources/SessionKitSharing/SharingFoundation.swift': 'imports new Margins; recordExport runs in one transaction',
     'Packages/SessionKit/Sources/SessionKitPersistence/SQLiteSessionStore.swift': 'the store itself',

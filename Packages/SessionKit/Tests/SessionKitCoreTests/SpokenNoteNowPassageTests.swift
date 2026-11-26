@@ -313,7 +313,6 @@ final class SpokenNoteNowPassageTests: XCTestCase {
                 XCTAssertEqual(L.choose(isNativeAudio: nativeAudio, isSpokenNote: true, availability: availability), expected)
             }
         }
-        XCTAssertEqual([L.audio, .text, .noteWords, .noteNoWords, .noteLoading].map(\.hasScene), [false, true, true, false, false])
     }
 
     func testRowTap() {

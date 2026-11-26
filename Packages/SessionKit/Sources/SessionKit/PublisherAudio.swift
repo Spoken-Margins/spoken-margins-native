@@ -64,8 +64,26 @@ public struct PublisherAudio: Codable, Equatable, Sendable {
     }
 }
 
+/// The listener's choice of voice for one article that has the publisher's audio (#4640): set by "Use the App's
+/// Voice" in Listening options, removed by "Play Publisher's Audio". Kept as its own record kind beside the item, so
+/// earlier builds never read it and deleting the item removes it.
+public struct PublisherAudioChoice: Codable, Equatable, Sendable {
+    public var itemId: String
+    public var prefersAppVoice: Bool
+    public var chosenAt: Date
+
+    public init(itemId: String, prefersAppVoice: Bool, chosenAt: Date) {
+        self.itemId = itemId
+        self.prefersAppVoice = prefersAppVoice
+        self.chosenAt = chosenAt
+    }
+}
+
 /// Stores that don't adopt this simply remember no publisher audio.
 public protocol PublisherAudioRepository {
     func savePublisherAudio(_ audio: PublisherAudio) throws
     func loadPublisherAudio(itemId: String) throws -> PublisherAudio?
+    func loadPublisherAudioChoice(itemId: String) throws -> PublisherAudioChoice?
+    func savePublisherAudioChoice(_ choice: PublisherAudioChoice) throws
+    func deletePublisherAudioChoice(itemId: String) throws
 }

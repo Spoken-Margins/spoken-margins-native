@@ -51,6 +51,7 @@ struct PlaybackScreen: View {
     @State private var mediaScrubState = PlaybackScrubState()
     @State private var textScrubState = PlaybackScrubState()
     @State private var isSleepTimerPresented = false
+    @State private var isFindInTextPresented = false
     @State private var sourceTextTarget: PlaybackTextReaderTarget?
     @State private var isPlaybackOptionsPresented = false
     @State private var pendingOptionsDestination: OptionsDestination?
@@ -67,8 +68,8 @@ struct PlaybackScreen: View {
     @State private var firstMarginPromptAnnounced = false // said once per showing (#5036)
 
     /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
-    /// looks first. On Now it sits in line with the title, so the screen gets no taller (#2262).
-    private var libraryExitButton: some View {
+    /// looks first: the top-left corner on every tab (#5329).
+    private func libraryExitButton() -> some View {
         Button(action: model.openLibrary) {
             Image(systemName: "chevron.left").font(.body.weight(.semibold)).minimumTapTarget()
         }
@@ -78,7 +79,7 @@ struct PlaybackScreen: View {
         // "Library" twice (#5036). The bottom button keeps its visible word as its name.
         .accessibilityLabel("Back to Library")
         .accessibilityHint("Leaves this screen. Playback keeps going.")
-        .accessibilityIdentifier("playback.exit.button")
+        .accessibilityIdentifier(PlaybackLeadingControl.libraryExitIdentifier)
     }
 
     /// The selected item is a spoken note (#4780). A note whose reference can't be read keeps the audio layout.
@@ -131,10 +132,9 @@ struct PlaybackScreen: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // The take card's shape, in the Now screen's own always-dark colours: the light-mode panel would put white words
-        // on a pale card here (#3733).
-        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.2)))
+        // The Now screen's own always-dark plate, the one the mixed audio card draws and the colour audit measures: the
+        // light-mode panel would put white words on a pale card here (#3733).
+        .background(AppColors.watchControl.opacity(0.72), in: RoundedRectangle(cornerRadius: 14))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("playback.now.note.noWords")
     }
@@ -185,15 +185,6 @@ struct PlaybackScreen: View {
                                     }
                                     if model.isFirstMarginPromptShowing { FirstMarginPromptCard() }
                                     playbackHeader
-                                        // The Library arrow lives in the header; once following scrolls it away, the toolbar shows it (#4453).
-                                        // Gone below one threshold, back above another, so the toolbar arrow's own bar
-                                        // layout can't flip it on every pass (#4739).
-                                        .onScrollVisibilityChange(threshold: NowHeaderVisibility.goneBelow) {
-                                            nowScene.headerReachedGoneThreshold($0)
-                                        }
-                                        .onScrollVisibilityChange(threshold: NowHeaderVisibility.backAt) {
-                                            nowScene.headerReachedBackThreshold($0)
-                                        }
                                     capturePermissionRecovery
                                     importedCommentaryControl
                                     switch nowLayout {
@@ -322,6 +313,9 @@ struct PlaybackScreen: View {
                                     .background(AppColors.listeningBackground)
                             }
                         }
+                        // The whole pinned stack is opaque, so nothing added to it later can let the scrolling passage
+                        // show through its words (#5016: the speech card was see-through).
+                        .background(AppColors.listeningBackground)
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if !timelineDock.hidesDock { playbackControls }
@@ -336,6 +330,13 @@ struct PlaybackScreen: View {
                 // "Go to this moment in the source" lands on Now for a written Margin too (#3961); a spoken one is also covered
                 // above, and both set the same pane. The first value is never acted on, so a later open never jumps panes.
                 .onChange(of: model.showNowRequests) { _, _ in selectedPane = .now }
+                .onChange(of: PublisherAudioAttribution.PlayingVoice(itemId: model.snapshot.itemId, source: model.snapshot.publisherAudioSource)) { old, new in
+                    // VoiceOver hears the automatic switches within one item; a tapped switch is announced by the row's
+                    // redraw, and a new item or the end of playback is no switch (#4640).
+                    guard !PublisherVoiceSwitchTap.consume(new.source), UIAccessibility.isVoiceOverRunning,
+                          let announcement = PublisherAudioAttribution.switchAnnouncement(from: old, to: new) else { return }
+                    UIAccessibility.post(notification: .announcement, argument: announcement)
+                }
                 // The dock returns only once the keyboard has left the Timeline editor (#4043); a missed hide can't
                 // strand it.
                 .tracksKeyboard(for: $timelineDock)
@@ -368,9 +369,20 @@ struct PlaybackScreen: View {
             .toolbar {
                 PlaybackLeadingToolbar(
                     pane: leadingControlPane, timelineEditorHasFocus: timelineDock.hidesDock,
-                    nowHeaderIsVisible: nowScene.headerIsVisible || !nowLayout.hasScene,
                     returnToNow: { selectedPane = .now }
-                ) { libraryExitButton }
+                ) { libraryExitButton() }
+                if selectedPane == .timeline,
+                   FindInTextPresentation.buttonState(isRecordedAudio: model.selectedItem.isNativeAudio, text: model.selectedItem.text) != .hidden {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { isFindInTextPresented = true } label: {
+                            Label(FindInTextPresentation.buttonLabel, systemImage: "magnifyingglass")
+                        }
+                        .accessibilityIdentifier("playback.findInText.button")
+                    }
+                }
+            }
+            .trackedSheet(isPresented: $isFindInTextPresented) {
+                FindInTextSheet().environmentObject(model)
             }
             .scrollDismissesKeyboard(.interactively)
             .trackedSheet(item: $selectedInterjection) { interjection in
@@ -391,6 +403,9 @@ struct PlaybackScreen: View {
                 NavigationStack {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 18) {
+                            if let noteId = playingSpokenNoteId {
+                                SpokenNoteAudioVersionControl(clean: model.spokenNoteClean, noteId: noteId, placement: .listeningOptions)
+                            }
                             playbackRateControl
                             mixedAudioControl
                             PlaybackFollowOptionsView()
@@ -398,6 +413,7 @@ struct PlaybackScreen: View {
                                 fraction: model.renderedFractionForPlayback,
                                 isNativeAudio: model.selectedItem.isNativeAudio
                             )
+                            ListeningOptionsVoiceRow()
                             onDeviceSpeechGenerationControl
                             reflectionOptions
                             conversation
@@ -812,17 +828,15 @@ struct PlaybackScreen: View {
         // title is small for the whole friend listen and never changes with the card's stage (#3598, #3220).
         let titleMode = PlaybackTitleMode.choose(cardSlotHeld: model.pinnedMarginCard != nil)
         return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 4) {
-                libraryExitButton
-                PlaybackSourceTitleView(
-                    title: model.playbackItemHeaderTitle,
-                    mode: titleMode,
-                    sourceName: model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
-                    sleepTimerState: model.sleepTimerState,
-                    sleepTimerRemainingSeconds: model.sleepTimerRemainingSeconds,
-                    showItem: model.openCurrentPlaybackItem
-                )
-            }
+            // The title starts at the left margin, in line with the text below; the Library arrow is in the bar (#5329).
+            PlaybackSourceTitleView(
+                title: model.playbackItemHeaderTitle,
+                mode: titleMode,
+                sourceName: model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
+                sleepTimerState: model.sleepTimerState,
+                sleepTimerRemainingSeconds: model.sleepTimerRemainingSeconds,
+                showItem: model.openCurrentPlaybackItem
+            )
 
             // The compact title already is the show name, so the show appears once while a friend's card is up (#3598).
             if titleMode.showsSeparateShowLine, model.selectedItem.isNativeAudio,
@@ -832,6 +846,21 @@ struct PlaybackScreen: View {
                     .font(.subheadline)
                     .foregroundStyle(AppColors.watchSecondary)
                     .accessibilityIdentifier("playback.showTitle")
+            }
+
+            if let noteId = playingSpokenNoteId {
+                SpokenNoteAudioVersionLine(clean: model.spokenNoteClean, noteId: noteId)
+            }
+
+            // Whose audio reads the article (#4640): only while the publisher's recording plays it.
+            if titleMode.showsSeparateShowLine, !model.selectedItem.isNativeAudio, model.snapshot.itemId == model.selectedItem.id,
+               let line = PublisherAudioAttribution.headerLine(
+                   source: model.snapshot.publisherAudioSource,
+                   siteHost: PublisherAudioAttribution.siteName(fromOriginalLink: model.selectedItem.originalSourceURL?.absoluteString)) {
+                Text(line)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.watchSecondary)
+                    .accessibilityIdentifier("playback.publisherAudioLine")
             }
 
             // The line is about the listener's own Margins, so it waits while a friend's Margin has the screen (#3790).
@@ -848,8 +877,8 @@ struct PlaybackScreen: View {
             // The chapter title is not repeated here: the dock's chapter row, right above the bar, already shows it
             // and opens the same item details (#1475).
         }
-        // A container, so the Library chevron and the title button keep their own identifiers: an identifier on a
-        // plain stack is copied onto every child, which made the chevron the first "playback.title" button (#2894).
+        // A container, so the title button and the lines below keep their own identifiers: an identifier on a plain
+        // stack is copied onto every child, which made the old Library chevron the first "playback.title" button (#2894).
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("playback.title")
     }
@@ -1242,6 +1271,12 @@ struct PlaybackScreen: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("playback.mixedAudio.control")
         }
+    }
+
+    /// The note behind the item playing on Now, when it is a spoken note (#4779).
+    private var playingSpokenNoteId: String? {
+        guard model.selectedItem.id == model.snapshot.itemId else { return nil }
+        return SpokenNoteItem.noteId(fromReference: model.selectedItem.externalReference)
     }
 
     @ViewBuilder

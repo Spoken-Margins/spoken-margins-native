@@ -11,8 +11,11 @@ public enum MapTextDisclosure {
     /// The address a source can be checked at, or nil when it has none to check. Only an item added from a web
     /// address (an article, or an episode from a feed or link) has a public copy to compare; a file from Files, an
     /// EPUB, an audiobook, imported audio, pasted text and a spoken note do not, and can never earn the mark.
+    /// An episode whose feed blocks it from directories or holds an access secret has none either (#5340): what its
+    /// publisher or its feed says is known already, so no check is made and its map text stays on this phone.
     public static func checkableAddress(of item: Item) -> String? {
-        guard item.externalReferenceType == "url",
+        guard AutomaticSourceAccess.restriction(of: item) == nil,
+              item.externalReferenceType == "url",
               let link = ShareableLinkPolicy.shareableLink(item.externalReference),
               let components = URLComponents(string: link),
               components.scheme?.lowercased() == "https",
