@@ -55,6 +55,15 @@ public enum SpokenNoteNowPassage {
         private let timedIsSorted: Bool
         private let timeline: SpokenNoteWholeTimeline?
 
+        /// The words on the clock of the file the open session plays (`playingMediaURL`; nil when the note isn't the
+        /// open item): the Shorter pauses version's when it names that version, else the joined recording's (#4779).
+        /// Now lights and seeks by these times. A version that no longer matches the takes gives rows with no times,
+        /// never the recording's. It reads files, so call it off the main actor.
+        public init(note: SpokenNote, inFolder folder: URL, playingMediaURL: String?) {
+            self.init(note: note, timeline: SpokenNoteWholePlayback.timeline(
+                of: note, inFolder: folder, playingMediaURL: playingMediaURL))
+        }
+
         public init(note: SpokenNote, timeline: SpokenNoteWholeTimeline?) {
             var text = ""
             var starts: [Int] = []

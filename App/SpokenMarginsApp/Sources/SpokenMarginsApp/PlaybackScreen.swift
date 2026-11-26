@@ -97,7 +97,9 @@ struct PlaybackScreen: View {
 
     private func reloadNoteWords() {
         guard isSpokenNote else { return }
-        noteTranscript.load(externalReference: model.selectedItem.externalReference) {
+        // The rows' times are on the clock of the file playing, which differs under Shorter pauses (#4779).
+        let playing = model.snapshot.itemId == model.selectedItem.id ? model.openSessionMediaURL : nil
+        noteTranscript.load(externalReference: model.selectedItem.externalReference, playingMediaURL: playing) {
             try model.applicationSupportDirectory()
         }
     }
@@ -239,6 +241,7 @@ struct PlaybackScreen: View {
                             .onChange(of: model.snapshot.itemId == model.selectedItem.id) { _, isThisItem in
                                 if isThisItem { reloadNoteWords() }
                             }
+                            .onChange(of: model.openSessionMediaURL) { _, _ in reloadNoteWords() }
                             .onReceive(NotificationCenter.default.publisher(for: .spokenNoteChanged)
                                 .receive(on: DispatchQueue.main)) { _ in reloadNoteWords() }
                             .trackedFullScreenCover(item: $openedNote, onDismiss: { reloadNoteWords() }) { opening in

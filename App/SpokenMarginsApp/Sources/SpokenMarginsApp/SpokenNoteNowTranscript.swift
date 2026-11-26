@@ -25,9 +25,15 @@ final class SpokenNoteNowTranscript: ObservableObject {
     }
 
     /// The last read of each note opened in this run. The playback screen is built again on every open and while a
-    /// Margin is recorded, so without it the words would pop in each time. Memory only, one entry per note; a stale
-    /// entry is replaced by the read that always follows.
+    /// Margin is recorded, so without it the words would pop in each time. Memory only, one entry per note and file
+    /// clock, so words timed for one version are never shown for the other; a stale entry is replaced by the read that
+    /// always follows.
     private static var lastResult: [String: Result] = [:]
+
+    private static func cacheKey(noteId: String, playingMediaURL: String?) -> String {
+        guard let playingMediaURL, SpokenNoteCleanFiles.namesCleanAudio(playingMediaURL) else { return noteId }
+        return "\(noteId) \(playingMediaURL)"
+    }
 
     /// The note `availability` and `words` belong to. The screen shows them only for the note it has selected, so a
     /// change of item never draws the last note's words for a pass.
@@ -35,9 +41,11 @@ final class SpokenNoteNowTranscript: ObservableObject {
     private var requests = 0
 
     /// Reads the note named by an item's reference. A reference that is no note clears to `.loading` with no words.
+    /// - Parameter playingMediaURL: the file the open session plays when it is this note, else nil. The rows' times are
+    ///   on that file's clock, so the caller loads again when it changes.
     /// - Parameter applicationSupport: where the notes live: the app passes `model.applicationSupportDirectory`, a
     ///   test a temporary folder. A throw reads as no words.
-    func load(externalReference: String?, applicationSupport: () throws -> URL) {
+    func load(externalReference: String?, playingMediaURL: String? = nil, applicationSupport: () throws -> URL) {
         requests += 1
         let request = requests
         guard let noteId = SpokenNoteItem.noteId(fromReference: externalReference) else {
@@ -45,10 +53,11 @@ final class SpokenNoteNowTranscript: ObservableObject {
             publish(Result(availability: .loading, words: nil))
             return
         }
+        let key = Self.cacheKey(noteId: noteId, playingMediaURL: playingMediaURL)
         if self.noteId != noteId {
             self.noteId = noteId
             // Another note: start from its last read, or Loading, never from the previous note's words.
-            publish(Self.lastResult[noteId] ?? Result(availability: .loading, words: nil))
+            publish(Self.lastResult[key] ?? Result(availability: .loading, words: nil))
         }
         let store: SpokenNoteStore?
         do {
@@ -57,7 +66,7 @@ final class SpokenNoteNowTranscript: ObservableObject {
             store = nil
         }
         guard let store else {
-            finish(Result(availability: .noWords, words: nil), noteId: noteId, request: request)
+            finish(Result(availability: .noWords, words: nil), noteId: noteId, key: key, request: request)
             return
         }
         Task { [weak self] in
@@ -65,18 +74,18 @@ final class SpokenNoteNowTranscript: ObservableObject {
                 let note = store.peek()
                 let availability = SpokenNoteNowPassage.Availability(note: note)
                 guard let note, availability != .noWords else { return Result(availability: availability, words: nil) }
-                let timeline = SpokenNoteWholePlayback.timeline(of: note, inFolder: store.folderURL)
-                return Result(availability: availability, words: SpokenNoteNowPassage.Words(note: note, timeline: timeline))
+                return Result(availability: availability, words: SpokenNoteNowPassage.Words(
+                    note: note, inFolder: store.folderURL, playingMediaURL: playingMediaURL))
             }.value
-            self?.finish(read, noteId: noteId, request: request)
+            self?.finish(read, noteId: noteId, key: key, request: request)
         }
     }
 
-    private func finish(_ result: Result, noteId: String, request: Int) {
+    private func finish(_ result: Result, noteId: String, key: String, request: Int) {
         // Reads can finish out of order, or for a note no longer shown: only the newest request's answer is kept, in the
         // cache too, so an older read finishing last never replaces a newer one.
         guard request == requests, self.noteId == noteId else { return }
-        Self.lastResult[noteId] = result
+        Self.lastResult[key] = result
         publish(result)
     }
 
