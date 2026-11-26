@@ -267,6 +267,18 @@ struct ExperienceShowScreen: View {
         .accessibilityHint("Stops following this show. Everything already in your Library is kept. You can undo right after.")
         .accessibilityIdentifier("show.unfollow")
         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+        // Not for me (#4285): unfollows, then stops the show being suggested on this iPhone. Its own row, in the
+        // same style, so a tap can never reach Unfollow.
+        Button(role: .destructive) {
+            model.notForMeShow(subscription)
+        } label: {
+            Label(FollowingDismissMessages.notForMeTitle, systemImage: FollowingDismissMessages.notForMeSystemImage)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .buttonStyle(.borderless)
+        .accessibilityHint(CatalogPackWords.showNotForMeHint)
+        .accessibilityIdentifier(CatalogPackWords.showNotForMeIdentifier)
+        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
     }
 
     /// A waiting episode keeps the row actions Following's stream had: add, play now, dismiss. A played one is

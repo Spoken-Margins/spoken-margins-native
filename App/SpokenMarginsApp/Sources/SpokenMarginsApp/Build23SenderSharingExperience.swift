@@ -6,15 +6,16 @@ import SwiftUI
 @MainActor
 struct Build23SenderSharingExperience: View {
     @ObservedObject var coordinator: Build23SharingCoordinator
+    @EnvironmentObject private var model: Gate1AppModel
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var hasBegun = false
     @State private var isSystemSharePresented = false
     @State private var verifiedShareURLForPresentation: URL?
     @State private var isAutoCleanChoicePresented = false
-    /// What the listener asked for while the packet was still being made; delivered once it is ready.
-    @State private var pendingShare: Build23PendingShare?
     @State private var showsSharingOptions = false
+    /// A first link tapped while voices are made asks for consent at the tap (#4647), not seconds later.
+    @State private var isWaitConsentPresented = false
     /// The stage last announced to VoiceOver, so a stage change says its heading once (#3728).
     @State private var announcedStage: VoiceOverAnnouncements.SharingStep = .select
     #if SM_SHARE_LINK_CREATION
@@ -45,6 +46,69 @@ struct Build23SenderSharingExperience: View {
         #else
         content
         #endif
+    }
+
+    /// The heading with Cancel, and Export for the same item (#5306). With Export the row is an `AdaptiveStack`: side by
+    /// side while all three fit on one line each, otherwise the heading above Export and Cancel, and at accessibility
+    /// sizes each on its own line, so no label breaks mid-word and Cancel stays on screen. A reply sheet offers no
+    /// Export and keeps its row as it was.
+    @ViewBuilder
+    private func senderHeader(_ snapshot: Build23SharingSnapshot) -> some View {
+        if ShareExportSwitch.offersExport(isReplyBack: snapshot.isReplyBack) {
+            AdaptiveStack(spacing: 12) {
+                senderHeading
+                AdaptiveSpacer()
+                AdaptiveStack(spacing: 16) {
+                    Button(ShareExportSwitch.exportButtonTitle, systemImage: "doc.text") {
+                        switchToExport()
+                    }
+                    .labelStyle(.titleAndIcon)
+                    .disabled(model.exportSessionForShareSwitch() == nil)
+                    .accessibilityHint(ShareExportSwitch.exportButtonHint)
+                    .accessibilityIdentifier("build23.sender.export")
+                    senderCancel
+                }
+            }
+        } else {
+            HStack(alignment: .center) {
+                senderHeading
+                Spacer()
+                senderCancel
+            }
+        }
+    }
+
+    private var senderHeading: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(coordinator.senderHeading)
+                .font(.headline)
+                .foregroundStyle(AppColors.text)
+                .accessibilityIdentifier("build23.sender.heading")
+            // Replies arrive marked new, so the friend can hear just them (#4785).
+            if let caption = coordinator.senderCaption {
+                Text(caption)
+                    .font(.footnote)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("build23.sender.caption")
+            }
+        }
+    }
+
+    private var senderCancel: some View {
+        Button("Cancel", role: .cancel) {
+            coordinator.send(.cancel)
+        }
+        .accessibilityIdentifier("build23.sender.cancel")
+    }
+
+    /// The header's Export (#5306): close this sheet the way Cancel does, then open the Export screen on the same item.
+    /// The session is read first, while the sheet still names the one it was sharing from.
+    /// Nothing closes when Export could not open: no session to export, or a Margin being recorded.
+    private func switchToExport() {
+        guard let sessionId = model.exportSessionForShareSwitch(), !model.recordingNavigationIsLocked else { return }
+        coordinator.send(.cancel)
+        model.openExportFromShareSheet(sessionId: sessionId)
     }
 
     /// Whether the main Share button makes a link. False in a build without links, while the server says no, and when this
@@ -80,17 +144,7 @@ struct Build23SenderSharingExperience: View {
 
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                HStack(alignment: .center) {
-                    Text(coordinator.senderHeading)
-                        .font(.headline)
-                        .foregroundStyle(AppColors.text)
-                        .accessibilityIdentifier("build23.sender.heading")
-                    Spacer()
-                    Button("Cancel", role: .cancel) {
-                        coordinator.send(.cancel)
-                    }
-                    .accessibilityIdentifier("build23.sender.cancel")
-                }
+                senderHeader(snapshot)
                 backToSelectionLink(snapshot)
                 if let error = shareError(snapshot) {
                     FailureMessageLabel(error)
@@ -143,11 +197,26 @@ struct Build23SenderSharingExperience: View {
                     if let step = snapshot.pinnedStep {
                         Build23PinnedStepLine(step: step)
                     }
+                    if snapshot.stage == .review, snapshot.showsList, !isOneMarginShare(snapshot) {
+                        // The top card scrolls away; the count stays in reach (#4647).
+                        Text(ShareReviewCardWords.barCount(included: snapshot.includedCount, total: snapshot.selectableCount))
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("build23.sender.bar.count")
+                    }
                     linkStatusLines
-                    primaryAction(snapshot)
-                        .controlSize(.large)
-                        .frame(maxWidth: .infinity)
-                    secondaryAction(snapshot)
+                    if let count = snapshot.sendWaitCount, snapshot.stage == .review {
+                        Build23SendWaitRow(count: count) {
+                            coordinator.send(.stopSendWait)
+                        }
+                    } else {
+                        primaryAction(snapshot)
+                            .controlSize(.large)
+                            .frame(maxWidth: .infinity)
+                        secondaryAction(snapshot)
+                    }
                     fileCaption(snapshot)
                 }
                 .padding(.horizontal, 20)
@@ -167,8 +236,8 @@ struct Build23SenderSharingExperience: View {
         }
         .onCompatibleChange(of: snapshot.previewState) { previewState in
             let stage = coordinator.snapshot.stage
-            if previewState == .ready, stage != .select, let requested = pendingShare {
-                pendingShare = nil
+            if previewState == .ready, stage != .select, let requested = coordinator.pendingShare {
+                coordinator.pendingShare = nil
                 deliver(requested)
                 return
             }
@@ -188,6 +257,33 @@ struct Build23SenderSharingExperience: View {
         } message: {
             Text(ShareCleanupWords.alertMessage)
         }
+        // A voice the waited share needed didn't come (#4647): ask once, after every wait has ended.
+        .alert(
+            ShareReviewCardWords.failureTitle(count: snapshot.sendWaitFailedCount ?? 1),
+            isPresented: Binding(
+                get: { coordinator.sendWaitFailedCount != nil },
+                set: { if !$0, coordinator.sendWaitFailedCount != nil { coordinator.send(.sendWaitNotNow) } }
+            )
+        ) {
+            Button(ShareReviewCardWords.shareAnyway) {
+                coordinator.send(.sendWaitShareAnyway)
+            }
+            Button(ShareReviewCardWords.notNow, role: .cancel) {
+                coordinator.send(.sendWaitNotNow)
+            }
+        } message: {
+            Text(ShareReviewCardWords.failureMessage(count: snapshot.sendWaitFailedCount ?? 1))
+        }
+        // A first link while voices are made: the consent words, at the tap (#4647).
+        .alert(ShareLinkConsentCopy.title, isPresented: $isWaitConsentPresented) {
+            Button(ShareLinkConsentCopy.accept) {
+                ServerSendConsent.record(.shareLinks)
+                coordinator.send(.beginSendWait(.link))
+            }
+            Button(ShareLinkConsentCopy.decline, role: .cancel) {}
+        } message: {
+            Text(ShareLinkConsentCopy.message)
+        }
         .trackedSheet(isPresented: $isSystemSharePresented, onDismiss: finishSystemShare) {
             if let packageURL = verifiedShareURLForPresentation {
                 SharedSpokenMarginsPackageActivityView(
@@ -203,6 +299,8 @@ struct Build23SenderSharingExperience: View {
         switch snapshot.stage {
         case .select:
             selectStage(snapshot)
+        case .review where snapshot.showsList:
+            listStage(snapshot)
         case .review:
             reviewStage(snapshot)
         case .recipientPreview:
@@ -221,10 +319,10 @@ struct Build23SenderSharingExperience: View {
                 advanceToReview(from: snapshot)
             }
             .filledActionButton()
-            .disabled(!snapshot.canAdvance || snapshot.isPreparingAll)
+            .disabled(!snapshot.canAdvance)
             .accessibilityIdentifier("build23.sender.select.continue")
         case .review where sharesLink:
-            linkShareButton(isWorking: Build23ShareRequestPolicy.showsMakingLink(isMakingLink: isMakingLink, pendingShare: pendingShare))
+            linkShareButton(isWorking: Build23ShareRequestPolicy.showsMakingLink(isMakingLink: isMakingLink, pendingShare: coordinator.pendingShare))
                 .disabled(!snapshot.canAdvance || linkButtonBlocked)
                 .accessibilityIdentifier("build23.sender.review.share")
         case .review:
@@ -235,7 +333,7 @@ struct Build23SenderSharingExperience: View {
             .disabled(!snapshot.canAdvance)
             .accessibilityIdentifier("build23.sender.review.share")
         case .recipientPreview where sharesLink:
-            linkShareButton(isWorking: Build23ShareRequestPolicy.showsMakingLink(isMakingLink: isMakingLink, pendingShare: pendingShare))
+            linkShareButton(isWorking: Build23ShareRequestPolicy.showsMakingLink(isMakingLink: isMakingLink, pendingShare: coordinator.pendingShare))
                 .disabled(snapshot.previewState != .ready || linkButtonBlocked)
                 .accessibilityIdentifier("build23.sender.preview.share")
         case .recipientPreview:
@@ -295,9 +393,13 @@ struct Build23SenderSharingExperience: View {
         if let identifier = Build23SenderPresentation.topBackToSelectionIdentifier(
             stage: snapshot.stage,
             previewState: snapshot.previewState,
-            hasVerifiedPreview: snapshot.verifiedPreview != nil
+            hasVerifiedPreview: snapshot.verifiedPreview != nil,
+            showsList: snapshot.showsList
         ) {
-            Build23BackToSelectionButton(identifier: identifier) {
+            Build23BackToSelectionButton(
+                identifier: identifier,
+                title: snapshot.showsList ? ShareReviewCardWords.backToYourMargins : "Back to selection"
+            ) {
                 coordinator.send(.returnToSelect)
             }
         }
@@ -375,36 +477,52 @@ struct Build23SenderSharingExperience: View {
         .accessibilityIdentifier("build23.sender.stage.select")
     }
 
-    private func selectionControls(_ snapshot: Build23SharingSnapshot) -> some View {
+    /// The top card: the title, the count, the Select buttons, the switch and the run's progress. On the list (#4647) a
+    /// one-Margin share hides the count and the Select buttons, and nothing here is disabled by cleanup; while a share
+    /// waits for voices every control is inert.
+    private func selectionControls(_ snapshot: Build23SharingSnapshot, oneMargin: Bool = false) -> some View {
         let visibleMargins = Build23SenderPresentation.filteredMargins(in: snapshot)
-        let includedCount = snapshot.margins.filter(\.isIncluded).count
         // A Margin with no place can't be chosen, so it is not counted as one to choose (#4233).
-        let selectableCount = snapshot.margins.filter(\.hasPlace).count
+        let selectableCount = snapshot.selectableCount
+        let inert = snapshot.isSendWaiting
         return ExperienceSurface(tint: AppColors.softGreen) {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(VoiceOverAnnouncements.SharingStep.select.title)
                         .font(.title3.weight(.semibold))
                         .screenTitle()
-                    Text("\(includedCount) of \(selectableCount) selected")
-                        .font(.subheadline)
-                        .foregroundStyle(AppColors.secondaryText)
+                        .accessibilityIdentifier(snapshot.showsList ? "build23.sender.stage.list" : "build23.sender.stage.select.title")
+                    if snapshot.showsList, let caption = snapshot.reviewCaption {
+                        Text(caption)
+                            .font(.footnote)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("build23.sender.review.starredCaption")
+                    }
+                    if !oneMargin {
+                        Text(ShareReviewCardWords.barCount(included: snapshot.includedCount, total: selectableCount))
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("build23.sender.count")
+                    }
                     if !snapshot.margins.isEmpty, selectableCount == 0 {
                         Text(ShareableMargins.allWithoutPlaceLine)
                             .font(.subheadline)
                             .foregroundStyle(AppColors.text)
                             .accessibilityIdentifier("build23.sender.noPlace.all")
                     }
-                    Build23WrappingLayout(spacing: 8) {
-                        Button("Select all shown") {
-                            setVisibleIncluded(true, margins: visibleMargins)
+                    if !oneMargin {
+                        Build23WrappingLayout(spacing: 8) {
+                            Button("Select all shown") {
+                                setVisibleIncluded(true, margins: visibleMargins)
+                            }
+                            Button("Select none shown") {
+                                setVisibleIncluded(false, margins: visibleMargins)
+                            }
                         }
-                        Button("Select none shown") {
-                            setVisibleIncluded(false, margins: visibleMargins)
-                        }
+                        .buttonStyle(.bordered)
+                        .disabled(inert || visibleMargins.isEmpty)
                     }
-                    .buttonStyle(.bordered)
-                    .disabled(snapshot.isPreparingAll || visibleMargins.isEmpty)
                 }
 
                 Divider()
@@ -417,6 +535,7 @@ struct Build23SenderSharingExperience: View {
                     )
                 )
                 .font(.headline)
+                .disabled(inert)
                 .accessibilityIdentifier("build23.sender.auto-clean")
 
                 Text(ShareCleanupWords.switchCaption(isOn: snapshot.autoCleanSelectedEnabled))
@@ -436,6 +555,7 @@ struct Build23SenderSharingExperience: View {
                         Button("Cancel", role: .cancel) {
                             coordinator.send(.cancelPreparation)
                         }
+                        .disabled(inert)
                     }
                 } else if snapshot.preparationTotal > 0 {
                     if snapshot.preparationFailures == 0 {
@@ -529,6 +649,7 @@ struct Build23SenderSharingExperience: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .disabled(snapshot.isSendWaiting)
                     .accessibilityValue(snapshot.filter == filter ? "Selected" : "Not selected")
                     .accessibilityIdentifier("build23.sender.filter.\(filter.rawValue)")
                 }
@@ -551,7 +672,7 @@ struct Build23SenderSharingExperience: View {
                 ForEach(visibleMargins) { margin in
                     Build23MarginSelectionRow(
                         margin: margin,
-                        isEnabled: !snapshot.isPreparingAll,
+                        isEnabled: true,
                         onSetIncluded: { setIncluded($0, marginID: margin.id) }
                     )
                 }
@@ -577,7 +698,7 @@ struct Build23SenderSharingExperience: View {
                 ForEach(margins) { margin in
                     Build23MarginSelectionRow(
                         margin: margin,
-                        isEnabled: !snapshot.isPreparingAll,
+                        isEnabled: true,
                         onSetIncluded: { setIncluded($0, marginID: margin.id) }
                     )
                 }
@@ -715,6 +836,81 @@ struct Build23SenderSharingExperience: View {
         coordinator.send(.selectMargin(togglesEditor && selectedEditorID == marginID ? nil : marginID))
     }
 
+    /// One Margin to share ("Share this Margin"): there is nothing to choose, so the count, the Select buttons and the
+    /// chips are hidden (#4647).
+    private func isOneMarginShare(_ snapshot: Build23SharingSnapshot) -> Bool {
+        snapshot.margins.count == 1
+    }
+
+    /// The Share Margins list (#4647): a sheet that isn't a reply shows its Margins in one column, words first, and the
+    /// sender switches, reads, edits and shares from here. There is no Next, no Back and no navigator.
+    private func listStage(_ snapshot: Build23SharingSnapshot) -> some View {
+        let visibleMargins = Build23SenderPresentation.filteredMargins(in: snapshot)
+        let oneMargin = isOneMarginShare(snapshot)
+        let inert = snapshot.isSendWaiting
+        return VStack(alignment: .leading, spacing: 20) {
+            selectionControls(snapshot, oneMargin: oneMargin)
+            if !oneMargin {
+                filterBar(snapshot)
+            }
+
+            if visibleMargins.isEmpty {
+                marginList(visibleMargins, snapshot: snapshot)
+            } else {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(visibleMargins) { margin in
+                        Build23MarginListCard(
+                            margin: margin,
+                            isEditing: snapshot.selectedMarginID == margin.id,
+                            isInert: inert,
+                            send: { coordinator.send($0) },
+                            onEdit: { coordinator.send(.selectMargin(margin.id)) },
+                            onDone: { coordinator.send(.selectMargin(nil)) }
+                        )
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Build23PreviewRow {
+                    coordinator.send(.buildRecipientPreview)
+                }
+                .disabled(!snapshot.canAdvance || snapshot.readiness.isWaiting || inert)
+                // The preview row and "Listen without ums" are the only controls that wait for a voice.
+                if snapshot.readiness.isWaiting {
+                    Text(ShareReviewCardWords.previewWaiting)
+                        .font(.footnote)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("build23.sender.preview.waiting")
+                }
+            }
+
+            DisclosureGroup("Sharing options", isExpanded: $showsSharingOptions) {
+                VStack(alignment: .leading, spacing: 16) {
+                    senderDetails(snapshot)
+                        .disabled(inert)
+                    Build23TransportConsequenceCard(
+                        transport: snapshot.transport,
+                        rightsConfirmed: snapshot.confirmsPrivateSharingRights
+                    )
+                    Text("\(snapshot.itemTitle) · From \(snapshot.senderDisplayLabel)")
+                        .font(.subheadline)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 12)
+            }
+            .font(.headline)
+            .accessibilityIdentifier("build23.sender.sharing-options")
+        }
+        // One column, at most 700 pt and centred, at every width (#4647).
+        .frame(maxWidth: 700, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("build23.sender.list")
+    }
+
     private func reviewStage(_ snapshot: Build23SharingSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 20) {
             Text(VoiceOverAnnouncements.SharingStep.review.title)
@@ -756,7 +952,8 @@ struct Build23SenderSharingExperience: View {
             Build23PreviewRow {
                 coordinator.send(.buildRecipientPreview)
             }
-            .disabled(!snapshot.canAdvance)
+            // A packet never carries a voice still being made (#4647): the preview waits for it, as Share does.
+            .disabled(!snapshot.canAdvance || snapshot.readiness.isWaiting || snapshot.isSendWaiting)
         }
         .onAppear(perform: normalizeReviewSelection)
     }
@@ -837,7 +1034,8 @@ struct Build23SenderSharingExperience: View {
                 Text(detail)
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
-                Button("Back to selection", systemImage: "arrow.left") {
+                Button(coordinator.snapshot.showsList ? ShareReviewCardWords.backToYourMargins : "Back to selection",
+                       systemImage: "arrow.left") {
                     coordinator.send(.returnToSelect)
                 }
                 .buttonStyle(.bordered)
@@ -920,6 +1118,8 @@ struct Build23SenderSharingExperience: View {
 
     private func normalizeReviewSelection() {
         let snapshot = coordinator.snapshot
+        // On the list only a card's editor button and Done set the selection (#4647).
+        guard !snapshot.showsList || snapshot.stage == .select else { return }
         let includedMargins = snapshot.margins.filter(\.isIncluded)
         if let selectedMarginID = snapshot.selectedMarginID,
            includedMargins.contains(where: { $0.id == selectedMarginID }) {
@@ -931,6 +1131,15 @@ struct Build23SenderSharingExperience: View {
 
     private func applyFilter(_ filter: ShareMarginDraftFilter) {
         coordinator.send(.setFilter(filter))
+        // On the list a chip never opens an editor; an editor whose card the chip hides closes (#4647).
+        if coordinator.snapshot.showsList {
+            let refreshed = coordinator.snapshot
+            if let selected = refreshed.selectedMarginID,
+               !Build23SenderPresentation.filteredMargins(in: refreshed).contains(where: { $0.id == selected }) {
+                coordinator.send(.selectMargin(nil))
+            }
+            return
+        }
         let refreshed = coordinator.snapshot
         let visibleMargins = Build23SenderPresentation.filteredMargins(in: refreshed)
         if let selectedMarginID = refreshed.selectedMarginID,
@@ -973,31 +1182,46 @@ struct Build23SenderSharingExperience: View {
 
     /// Makes the packet if it isn't ready, then sends it the way the listener asked.
     private func share(_ kind: Build23PendingShare) {
+        let snapshot = coordinator.snapshot
+        // A second tap while a share waits does nothing: one wait, one export (#4647).
+        guard !snapshot.isSendWaiting else { return }
         coordinator.recordShareSelection() // one line per tap; not in deliver, so a tap never logs twice (#4173)
+        // A voice the share needs is still being made: wait for it, never send without it (#4647). A first link asks
+        // for consent here, at the tap, so the sender answers while the voices are made.
+        if snapshot.stage == .review, snapshot.readiness.isWaiting {
+            if kind == .link, !ServerSendConsent.hasConsented(to: .shareLinks) {
+                isWaitConsentPresented = true
+            } else {
+                coordinator.send(.beginSendWait(kind))
+            }
+            return
+        }
         if coordinator.verifiedShareFileURL != nil {
             deliver(kind)
             return
         }
-        pendingShare = kind
+        coordinator.pendingShare = kind
         coordinator.send(.buildRecipientPreview)
         // Export can fail synchronously, before SwiftUI observes .building.
-        if case .failed = coordinator.previewState { pendingShare = nil }
+        if case .failed = coordinator.previewState { coordinator.pendingShare = nil }
     }
 
     /// The stage is replaced in place and focus can stay on the bottom button, so say where the sheet is now (#3728).
     /// `onCompatibleChange` hands over only the new value, so the previous stage is kept in `announcedStage`.
     private func announceStage(_ stage: Build23SharingStage) {
-        let step = Self.step(for: stage)
+        let step = Self.step(for: stage, showsList: coordinator.snapshot.showsList)
         if let text = VoiceOverAnnouncements.sharingStage(from: announcedStage, to: step) {
             AccessibilityNotification.Announcement(text).post()
         }
         announcedStage = step
     }
 
-    private static func step(for stage: Build23SharingStage) -> VoiceOverAnnouncements.SharingStep {
+    /// The list is the Choose step for VoiceOver (#4647): back from the preview it says "Choose Margins", and nothing is
+    /// announced when the sheet opens on it.
+    static func step(for stage: Build23SharingStage, showsList: Bool) -> VoiceOverAnnouncements.SharingStep {
         switch stage {
         case .select: .select
-        case .review: .review
+        case .review: showsList ? .select : .review
         case .recipientPreview: .recipientPreview
         case .share: .share
         }
@@ -1005,8 +1229,10 @@ struct Build23SenderSharingExperience: View {
 
     /// A share asked for, or a link being made, for a packet the screen no longer shows is dropped (#3751 audit).
     private func dropStaleShareRequests(stage: Build23SharingStage, previewState: Build23SharingPreviewState) {
-        if !Build23ShareRequestPolicy.keepsPendingShare(stage: stage, previewState: previewState) {
-            pendingShare = nil
+        // A share waiting for voices has no packet yet: it is the wait's to keep or drop (#4647).
+        if coordinator.sendWait == nil,
+           !Build23ShareRequestPolicy.keepsPendingShare(stage: stage, previewState: previewState) {
+            coordinator.pendingShare = nil
         }
         #if SM_SHARE_LINK_CREATION
         if !Build23ShareRequestPolicy.keepsLink(stage: stage, previewState: previewState),
@@ -1037,7 +1263,7 @@ struct Build23SenderSharingExperience: View {
 
     private func shareError(_ snapshot: Build23SharingSnapshot) -> String? {
         if case .failed(let message) = snapshot.previewState { return message }
-        if snapshot.previewState == .stale { return "Your selection changed. Review it and share again." }
+        if snapshot.previewState == .stale { return ShareReviewCardWords.staleSelection }
         return snapshot.errorMessage
     }
 

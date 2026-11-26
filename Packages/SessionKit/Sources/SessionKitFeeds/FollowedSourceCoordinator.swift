@@ -794,6 +794,7 @@ public actor FollowedSourceCoordinator {
 
         let seenAt = Date()
         let feedKey = FeedURLKey.make(subscription.source.canonicalURL)
+        let feedIsPrivate = ShareableLinkPolicy.shareableLink(subscription.source.canonicalURL) == nil
         var saved: [FeedEntry] = []
         for item in retainedItems {
             let id = Self.entryID(subscriptionID: subscription.id, itemID: item.id)
@@ -814,6 +815,9 @@ public actor FollowedSourceCoordinator {
                 episodeGUID: item.guid,
                 firstSeenAt: FollowBaseline.firstSeenAt(existing: existing[id], followMoment: followMoment, now: seenAt)
             )
+            // Where the episode came from, carried to the item it is added as (#5340).
+            if item.publisherBlocked { entry.publisherBlocked = true }
+            if feedIsPrivate { entry.fromPrivateFeed = true }
             // Before anything reads the state (Add every new item takes `.unseen` entries only). An episode the
             // listener already added stays imported.
             if entry.state != .imported, entry.state != .dismissed, isMarkedNotForMe(entry, feedKey: feedKey) {

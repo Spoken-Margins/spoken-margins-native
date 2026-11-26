@@ -52,6 +52,10 @@ struct ExperienceSourcesScreen: View, Equatable {
 
     /// A friend with Margins on more than one item, whose items are open.
     @State private var openFriend: FollowingFriends.Friend?
+    /// Followed reading lists (#4341): their own object, so a refresh redraws their rows and nothing else.
+    @ObservedObject private var papers = PaperSourcesState.shared
+    /// The reading list whose screen is open.
+    @State private var openPapers: String?
 
     /// The shows are pushed inside this stack, so the list is not destroyed when one opens and keeps its own place
     /// (#2395). It takes no scroll binding from the root: the tab bar redraws on every model publish, and a fresh binding
@@ -74,6 +78,8 @@ struct ExperienceSourcesScreen: View, Equatable {
         var list: FollowingShowList
         var feedRows: [FollowingFeed.Row]
         var showsEmptyState: Bool
+        /// The show list has loaded once; reading lists are drawn only after, like friends (#3753).
+        var showsLoaded: Bool
         var hasFollowCandidates: Bool
         var isOfflineSnapshot: Bool
         var quickFolderFileCount: Int
@@ -81,7 +87,7 @@ struct ExperienceSourcesScreen: View, Equatable {
         var quickFolderName: String?
         var quickFolderPath: String?
         var quickFolderProblem: QuickFolderStatus.Problem?
-        var importingEntryIds: Set<String>
+        var entryImports: FollowedEntryImports
         var subscriptionIDs: [String]
         /// What `FollowingByList` needs to tell which rows are in a list.
         var subscriptions: [FeedSubscription]
@@ -97,6 +103,7 @@ struct ExperienceSourcesScreen: View, Equatable {
             list = model.followingShowListCache
             feedRows = model.followingFeedRows(friends: friends)
             showsEmptyState = model.followingShowsEmptyState(friends: friends)
+            showsLoaded = model.followingShowListLoaded
             hasFollowCandidates = !model.followedSourceCandidates.isEmpty
             isOfflineSnapshot = model.selectedProfileId.contains("offline")
             // New files in the Quick Folder. They used to arrive in Following's stream; the folder is a place to open now.
@@ -105,7 +112,7 @@ struct ExperienceSourcesScreen: View, Equatable {
             quickFolderName = folder.name
             quickFolderPath = folder.path
             quickFolderProblem = folder.problem
-            importingEntryIds = model.importingFollowedSourceEntryIds
+            entryImports = model.followedEntryImports
             subscriptionIDs = model.feedSubscriptions.map(\.id)
             subscriptions = model.feedSubscriptions
             isRefreshingFollowedSources = model.isRefreshingFollowedSources
@@ -117,15 +124,21 @@ struct ExperienceSourcesScreen: View, Equatable {
         let _ = ScreenRedrawProbe.record("following")
         #endif
         let inputs = feed.inputs
-        // Under a list chip only that list's shows are drawn; under All nothing changes (J13).
+        // A followed reading list is following something (#4341), so the empty state waits for none.
+        let showsEmptyState = FollowingFeed.showsEmptyState(showsEmpty: inputs.showsEmptyState, papersLoaded: papers.loaded, followsPapers: !papers.records.isEmpty)
+        let selectedList = showsEmptyState ? nil : FollowingByList.resolvedSelection(selectedListID, in: listsState.lists)
+        // Under a list chip only that list's shows are drawn; under All nothing changes (J13). Reading lists sit among
+        // friends and shows under All, by the newest date a paper joined them, and are hidden under a chip like friends.
         let byList = FollowingByList.screen(
-            selected: inputs.showsEmptyState ? nil : selectedListID, lists: listsState.lists, feedRows: inputs.feedRows, shows: inputs.list,
+            selected: selectedList, lists: listsState.lists,
+            feedRows: FollowingFeed.rows(inputs.feedRows, splicingPapers: papers.visibleRows, showsLoaded: inputs.showsLoaded && papers.loaded), shows: inputs.list,
             subscriptions: inputs.subscriptions
         )
+        let quietPapers = selectedList == nil ? papers.quietRows : []
         NavigationStack(path: $path) {
             let list = FollowingShowList(rows: inputs.list.rows, quiet: byList.quiet)
             List {
-                if !listsState.lists.isEmpty, !inputs.showsEmptyState {
+                if !listsState.lists.isEmpty, !showsEmptyState {
                     listChipRow(lists: listsState.lists)
                 }
                 // The change card and the strongest suggestion, under the chips (#4046 PR 7b, 12).
@@ -156,7 +169,7 @@ struct ExperienceSourcesScreen: View, Equatable {
                     quickFolderRow(quickFolder)
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
-                if inputs.showsEmptyState {
+                if showsEmptyState {
                     SMExperienceEmptyState(
                         systemImage: "dot.radiowaves.left.and.right",
                         title: "You’re not following anything yet",
@@ -206,22 +219,27 @@ struct ExperienceSourcesScreen: View, Equatable {
                     switch row {
                     case .friend(let friend): friendRow(friend)
                     case .show(let show): showRow(show)
+                    case .papers(let row): paperSourceRow(row)
                     }
                 }
-                if !list.quiet.isEmpty {
+                if !list.quiet.isEmpty || !quietPapers.isEmpty {
                     Section {
                         if isQuietExpanded {
                             ForEach(list.quiet) { row in showRow(row) }
+                            ForEach(quietPapers) { row in paperSourceRow(row) }
                         }
                     } header: {
-                        quietHeader(list)
+                        quietHeader(title: "Quiet (\(list.quiet.count + quietPapers.count))")
                     }
                 }
             }
             .background(AppColors.bone)
             .scrollContentBackground(.hidden)
             .listStyle(.plain)
-            .refreshable { await model.pullToRefreshFollowing() }
+            .refreshable {
+                await model.pullToRefreshFollowing()
+                await papers.refresh(model: model, pulled: true)
+            }
             .motionAnimation(.smooth(duration: 0.24), value: byList.rows.map(\.id))
             // A list of only Quiet shows opens its Quiet group, since that is all it has.
             .onChange(of: byList.opensQuietGroup) { _, opens in if opens { isQuietExpanded = true } }
@@ -248,7 +266,7 @@ struct ExperienceSourcesScreen: View, Equatable {
                 // sat at the leading edge while the other tabs centre their titles, even with only Lists and plus (#4955).
                 // Refresh is the pull-down.
                 // Hidden while the listener follows nothing, so the empty Following tab is unchanged.
-                if !inputs.showsEmptyState {
+                if !showsEmptyState {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button(action: { isShowingLists = true }) {
                             Label(FollowListWords.listsTitle, systemImage: "list.bullet").labelStyle(.iconOnly)
@@ -306,11 +324,17 @@ struct ExperienceSourcesScreen: View, Equatable {
                 FollowingFriendItemsScreen(friend: friend)
                     .miniPlayerKeepOut()
             }
+            .navigationDestination(item: $openPapers) { sourceID in
+                FollowedPapersScreen(sourceID: sourceID)
+                    .miniPlayerKeepOut()
+            }
             .navigationDestination(isPresented: $isShowingQuickFolder) {
                 QuickFolderFilesScreen(artwork: artwork)
                     .miniPlayerKeepOut()
             }
             .task { if !isEdgeSwipePreview { model.refreshQuickAddFeed(force: false, trigger: .tabAppear) } } // the swipe's preview fetches nothing (#106)
+            // Reading lists are read on the same open as the shows, at most every 30 minutes unless pulled (#4341).
+            .task { if !isEdgeSwipePreview { await papers.refresh(model: model, pulled: false) } }
             // The catalog gives followed shows their artwork (#773).
             .task { if !isEdgeSwipePreview { await catalogDrawer.loadSnapshot() } }
             .background { FollowingShowRowsReload(model: model) }
@@ -376,8 +400,9 @@ struct ExperienceSourcesScreen: View, Equatable {
             open: { path.append(row.id) },
             play: { model.playNewestEpisode(of: row) },
             add: { model.addPreviewedEpisode(of: row) },
-            isPlayStarting: row.playEntryID.map { feed.inputs.importingEntryIds.contains($0) } ?? false,
-            isAdding: row.newestEntryID.map { feed.inputs.importingEntryIds.contains($0) } ?? false,
+            // A swipe Add shows "Adding…"; only a ▶ tap shows the ▶ spinner (#5328).
+            isPlayStarting: feed.inputs.entryImports.isPlayStarting(row.playEntryID),
+            isAdding: feed.inputs.entryImports.isAdding(row.newestEntryID),
             queueAction: showRowQueueAction(row),
             queue: { model.queueNewestEpisode(of: row) }
         )
@@ -415,6 +440,54 @@ struct ExperienceSourcesScreen: View, Equatable {
                 Button("Lists…") { listsSheetShow = subscription }
             }
         }
+        .listRowInsets(EdgeInsets(
+            top: 0,
+            leading: horizontalSizeClass == .regular ? 28 : 16,
+            bottom: 0,
+            trailing: horizontalSizeClass == .regular ? 28 : 16
+        ))
+        .listRowSeparator(.hidden)
+        .listRowBackground(AppColors.bone)
+    }
+
+    /// A followed reading list (#4341): its name over "Zotero · 4 new papers", and a chevron into its papers. No ▶:
+    /// nothing plays until a paper is added.
+    private func paperSourceRow(_ row: PaperSourceRow) -> some View {
+        Button { openPapers = row.id } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.title2)
+                    .foregroundStyle(AppColors.evergreen)
+                    .frame(width: 56, height: 56)
+                    .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(row.title)
+                        .font(.headline)
+                        .foregroundStyle(AppColors.text)
+                        .multilineTextAlignment(.leading)
+                    Text(row.detail)
+                        .font(.subheadline)
+                        .foregroundStyle(AppColors.secondaryText)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.secondaryText)
+                    .frame(width: 44, height: 44)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(AppColors.panel)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(row.accessibilityLabel)
+        .accessibilityHint("Opens the list's papers.")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("sources.papers.\(row.id)")
         .listRowInsets(EdgeInsets(
             top: 0,
             leading: horizontalSizeClass == .regular ? 28 : 16,
@@ -479,12 +552,12 @@ struct ExperienceSourcesScreen: View, Equatable {
     }
 
     /// "Quiet (2)", a button that opens and closes the group. The count and the chevron say what it holds.
-    private func quietHeader(_ list: FollowingShowList) -> some View {
+    private func quietHeader(title: String) -> some View {
         Button {
             isQuietExpanded.toggle()
         } label: {
             HStack {
-                Text(list.quietTitle)
+                Text(title)
                     .font(.headline)
                     .foregroundStyle(AppColors.text)
                 Spacer()
@@ -499,9 +572,9 @@ struct ExperienceSourcesScreen: View, Equatable {
         .buttonStyle(.plain)
         .textCase(nil)
         .accessibilityIdentifier("sources.quietGroup")
-        .accessibilityLabel(list.quietTitle)
+        .accessibilityLabel(title)
         .accessibilityValue(isQuietExpanded ? "Expanded" : "Collapsed")
-        .accessibilityHint("Shows you have set to Quiet.")
+        .accessibilityHint("Shows and reading lists you have set to Quiet.")
         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
     }
 

@@ -7,7 +7,7 @@ The app target is generated from `project.yml` using XcodeGen and links the loca
 - link `Packages/SessionKit`
 - use `SessionKitPersistence.SQLiteSessionStore` for local state
 - use `SessionKitAudio.SystemSpeechPlaybackClient` and `SystemRecordingClient` on device
-- use `SessionKitAI.FixtureAIProvider` in tests; the app itself calls no AI provider directly and uses only the on-device model (the opt-in "Help make listening maps" upload goes to the Spoken Margins server, which drafts maps)
+- use `SessionKitAI.FixtureAIProvider` in tests; the app itself calls no AI provider directly and uses only the on-device model (community listening maps were removed in #5359)
 - bundle only `Contracts/fixtures/items`, `maps` and `capabilities`, the seed data and profiles the app reads at run time (#3075)
 
 Build the simulator app without signing:

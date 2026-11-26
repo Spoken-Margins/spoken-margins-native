@@ -64,8 +64,8 @@ struct PlaybackScreen: View {
     @State private var firstMarginPromptAnnounced = false // said once per showing (#5036)
 
     /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
-    /// looks first. On Now it sits in line with the title, so the screen gets no taller (#2262).
-    private var libraryExitButton: some View {
+    /// looks first: the top-left corner on every tab (#5329).
+    private func libraryExitButton() -> some View {
         Button(action: model.openLibrary) {
             Image(systemName: "chevron.left").font(.body.weight(.semibold)).minimumTapTarget()
         }
@@ -75,7 +75,7 @@ struct PlaybackScreen: View {
         // "Library" twice (#5036). The bottom button keeps its visible word as its name.
         .accessibilityLabel("Back to Library")
         .accessibilityHint("Leaves this screen. Playback keeps going.")
-        .accessibilityIdentifier("playback.exit.button")
+        .accessibilityIdentifier(PlaybackLeadingControl.libraryExitIdentifier)
     }
 
     /// The first-Margin prompt is on screen: it is due and the Now pane, the only one that draws it, is showing (#5036).
@@ -108,15 +108,6 @@ struct PlaybackScreen: View {
                                     }
                                     if model.isFirstMarginPromptShowing { FirstMarginPromptCard() }
                                     playbackHeader
-                                        // The Library arrow lives in the header; once following scrolls it away, the toolbar shows it (#4453).
-                                        // Gone below one threshold, back above another, so the toolbar arrow's own bar
-                                        // layout can't flip it on every pass (#4739).
-                                        .onScrollVisibilityChange(threshold: NowHeaderVisibility.goneBelow) {
-                                            nowScene.headerReachedGoneThreshold($0)
-                                        }
-                                        .onScrollVisibilityChange(threshold: NowHeaderVisibility.backAt) {
-                                            nowScene.headerReachedBackThreshold($0)
-                                        }
                                     capturePermissionRecovery
                                     importedCommentaryControl
                                     if model.selectedItem.isNativeAudio {
@@ -274,9 +265,8 @@ struct PlaybackScreen: View {
             .toolbar {
                 PlaybackLeadingToolbar(
                     pane: leadingControlPane, timelineEditorHasFocus: timelineDock.hidesDock,
-                    nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio,
                     returnToNow: { selectedPane = .now }
-                ) { libraryExitButton }
+                ) { libraryExitButton() }
                 if selectedPane == .timeline,
                    FindInTextPresentation.buttonState(isRecordedAudio: model.selectedItem.isNativeAudio, text: model.selectedItem.text) != .hidden {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -307,22 +297,22 @@ struct PlaybackScreen: View {
             }
             .trackedSheet(isPresented: $isPlaybackOptionsPresented, onDismiss: performPendingOptionsNavigation) {
                 NavigationStack {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 18) {
-                            playbackRateControl
-                            mixedAudioControl
-                            PlaybackFollowOptionsView()
-                            PlaybackPreparedAudioView(
-                                fraction: model.renderedFractionForPlayback,
-                                isNativeAudio: model.selectedItem.isNativeAudio
-                            )
-                            ListeningOptionsVoiceRow()
-                            onDeviceSpeechGenerationControl
-                            reflectionOptions
-                            conversation
-                            sessionActionDock
+                    ListeningOptionsColumn {
+                        if let noteId = playingSpokenNoteId {
+                            SpokenNoteAudioVersionControl(clean: model.spokenNoteClean, noteId: noteId, placement: .listeningOptions)
                         }
-                        .padding(20)
+                        playbackRateControl
+                        mixedAudioControl
+                        PlaybackFollowOptionsView()
+                        PlaybackPreparedAudioView(
+                            fraction: model.renderedFractionForPlayback,
+                            isNativeAudio: model.selectedItem.isNativeAudio
+                        )
+                        ListeningOptionsVoiceRow()
+                        onDeviceSpeechGenerationControl
+                        reflectionOptions
+                        conversation
+                        sessionActionDock
                     }
                     .background(AppColors.listeningBackground)
                     .navigationTitle("Listening options")
@@ -577,40 +567,12 @@ struct PlaybackScreen: View {
     }
 
     private var sessionActionDock: some View {
-        HStack(spacing: 8) {
-            Button {
-                closeOptions(to: .item)
-            } label: {
-                Image(systemName: "info.circle")
-                    .frame(width: 48, height: 48)
-            }
-            .accessibilityLabel("Details")
-            .accessibilityIdentifier("playback.item.button")
-
-            Button(action: openTimeline) {
-                Label("Timeline", systemImage: "list.bullet.rectangle")
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(maxWidth: .infinity, minHeight: 48)
-            }
-            .accessibilityIdentifier("playback.timeline.button")
-
-            Button {
-                closeOptions(to: .export)
-            } label: {
-                Image(systemName: "doc.text")
-                    .frame(width: 48, height: 48)
-            }
-            .disabled(!model.hasActiveSession)
-            .accessibilityLabel("Export")
-            .accessibilityIdentifier("playback.export.button")
-        }
-        .font(.subheadline.weight(.semibold))
-        .buttonStyle(.bordered)
-        .tint(.white)
-        .foregroundStyle(.white)
-        .padding(8)
-        .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        ListeningOptionsActionDock(
+            exportDisabled: !model.hasActiveSession,
+            showDetails: { closeOptions(to: .item) },
+            showTimeline: openTimeline,
+            showExport: { closeOptions(to: .export) }
+        )
     }
 
     private func openTimeline() {
@@ -731,26 +693,28 @@ struct PlaybackScreen: View {
         // title is small for the whole friend listen and never changes with the card's stage (#3598, #3220).
         let titleMode = PlaybackTitleMode.choose(cardSlotHeld: model.pinnedMarginCard != nil)
         return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 4) {
-                libraryExitButton
-                PlaybackSourceTitleView(
-                    title: model.playbackItemHeaderTitle,
-                    mode: titleMode,
-                    sourceName: model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
-                    sleepTimerState: model.sleepTimerState,
-                    sleepTimerRemainingSeconds: model.sleepTimerRemainingSeconds,
-                    showItem: model.openCurrentPlaybackItem
-                )
-            }
+            // The title starts at the left margin, in line with the text below; the Library arrow is in the bar (#5329).
+            PlaybackSourceTitleView(
+                title: model.playbackItemHeaderTitle,
+                mode: titleMode,
+                sourceName: model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
+                sleepTimerState: model.sleepTimerState,
+                sleepTimerRemainingSeconds: model.sleepTimerRemainingSeconds,
+                showItem: model.openCurrentPlaybackItem
+            )
 
             // The compact title already is the show name, so the show appears once while a friend's card is up (#3598).
             if titleMode.showsSeparateShowLine, model.selectedItem.isNativeAudio,
-               let show = model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
-               !show.isEmpty {
+               let show = PlaybackTitleMode.showName(
+                   sourceTitle: model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle) {
                 Text(show)
                     .font(.subheadline)
                     .foregroundStyle(AppColors.watchSecondary)
                     .accessibilityIdentifier("playback.showTitle")
+            }
+
+            if let noteId = playingSpokenNoteId {
+                SpokenNoteAudioVersionLine(clean: model.spokenNoteClean, noteId: noteId)
             }
 
             // Whose audio reads the article (#4640): only while the publisher's recording plays it.
@@ -778,8 +742,8 @@ struct PlaybackScreen: View {
             // The chapter title is not repeated here: the dock's chapter row, right above the bar, already shows it
             // and opens the same item details (#1475).
         }
-        // A container, so the Library chevron and the title button keep their own identifiers: an identifier on a
-        // plain stack is copied onto every child, which made the chevron the first "playback.title" button (#2894).
+        // A container, so the title button and the lines below keep their own identifiers: an identifier on a plain
+        // stack is copied onto every child, which made the old Library chevron the first "playback.title" button (#2894).
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("playback.title")
     }
@@ -1172,6 +1136,12 @@ struct PlaybackScreen: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("playback.mixedAudio.control")
         }
+    }
+
+    /// The note behind the item playing on Now, when it is a spoken note (#4779).
+    private var playingSpokenNoteId: String? {
+        guard model.selectedItem.id == model.snapshot.itemId else { return nil }
+        return SpokenNoteItem.noteId(fromReference: model.selectedItem.externalReference)
     }
 
     @ViewBuilder

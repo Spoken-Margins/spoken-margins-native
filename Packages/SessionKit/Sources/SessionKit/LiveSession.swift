@@ -241,11 +241,16 @@ public struct LiveSessionPlayingThen: Codable, Equatable, Sendable {
     /// Nil when nothing said where on the item it was (a Watch target with no position).
     public var positionMs: Int?
     public var source: Source
+    /// The file that played, whose clock `positionMs` is on: a spoken note's Shorter pauses version runs on its own
+    /// (#4779). Nil when not known (a Watch's own position, or a hint saved before it was kept). An optional key, so a
+    /// build that doesn't know it still opens the session.
+    public var playingMediaURL: String?
 
-    public init(itemId: String, positionMs: Int?, source: Source) {
+    public init(itemId: String, positionMs: Int?, source: Source, playingMediaURL: String? = nil) {
         self.itemId = itemId
         self.positionMs = positionMs
         self.source = source
+        self.playingMediaURL = playingMediaURL
     }
 }
 

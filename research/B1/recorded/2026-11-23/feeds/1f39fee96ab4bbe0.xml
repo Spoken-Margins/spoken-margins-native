@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<rss version="2.0"
+  xmlns:atom="http://www.w3.org/2005/Atom"
+  xmlns:cc="http://web.resource.org/cc/"
+  xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+  xmlns:media="http://search.yahoo.com/mrss/"
+  xmlns:content="http://purl.org/rss/1.0/modules/content/"
+  xmlns:podcast="https://podcastindex.org/namespace/1.0"
+  xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0"
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+
+  <channel>
+    <atom:link href="https://rss.libsyn.com/shows/567665/destinations/4909910.xml" rel="self" type="application/rss+xml"/>
+    <title>Trade Talks</title>
+    <pubDate>Tue, 26 May 2026 22:02:55 +0000</pubDate>
+    <lastBuildDate>Tue, 26 May 2026 22:02:55 +0000</lastBuildDate>
+    <generator>Libsyn RSSgen 1.0</generator>
+    <link>https://tradetalkspodcast.com/podcast/</link>
+    <language>en-US</language>
+    <copyright><![CDATA[© Trade Talks 2025]]></copyright>
+    <docs>https://tradetalkspodcast.com/podcast/</docs>
+    <itunes:summary><![CDATA[Chad P. Bown (Peterson Institute for International Economics) hosts a podcast about the economics of international trade and policy. From trade wars to trade deals, this podcast covers trade developments with insights and economic analysis from one of the world's top trade geeks.]]></itunes:summary>
+    <image>
+      <url>https://static.libsyn.com/p/assets/c/5/6/3/c563ae5e19fafca1d959afa2a1bf1c87/trade-talks-logo-1400-square.png</url>
+      <title>Trade Talks</title>
+      <link><![CDATA[https://tradetalkspodcast.com/podcast/]]></link>
+    </image>
+    <itunes:author>Chad P. Bown</itunes:author>
+		<itunes:category text="Education" />
+<itunes:category text="Business" />
+    <itunes:image href="https://static.libsyn.com/p/assets/c/5/6/3/c563ae5e19fafca1d959afa2a1bf1c87/trade-talks-logo-1400-square.png" />
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:owner>
+      <itunes:name>Chad P. Bown</itunes:name>
+      <itunes:email>webmaster@piie.com</itunes:email>
+    </itunes:owner>
+    <description><![CDATA[Chad P. Bown (Peterson Institute for International Economics) hosts a podcast about the economics of international trade and policy. From trade wars to trade deals, this podcast covers trade developments with insights and economic analysis from one of the world's top trade geeks.]]></description>
+    
+    <itunes:type>episodic</itunes:type>
+    
+
+    <itunes:keywords />
+
+    
+
+    
+    <podcast:locked owner="webmaster@piie.com">yes</podcast:locked>
+    
+    
+    
+    
+    
+    

@@ -837,7 +837,7 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertIn('fast hot-file-ok=1 scripts/verify-tests.py --plan fast', self.log.read_text())
 
-    def commit_the_host_check_python(self, subject, slow_tier=False):
+    def commit_the_host_check_python(self, subject, slow_tier=False, main_mac=False):
         """Commit a fake `.venv/bin/python` (what the build runs verify-tests.py with) as the new tip.
 
         It logs its command line to FAKE_LOG and exits with FAKE_FAST_EXIT. `slow_tier`: the commit has
@@ -845,6 +845,9 @@ class PhoneBuildTests(unittest.TestCase):
         if slow_tier:
             (self.repo / 'scripts/slow_tier.py').write_text('SLOW_SWIFT_TESTS = {}\n')
             self.git('add', 'scripts/slow_tier.py')
+        if main_mac:  # the commit's verify-tests.py has --plan main-mac (#5281)
+            (self.repo / 'scripts/verify-tests.py').write_text("PLANS = ('slow', 'mac-build', 'main-mac')\n")
+            self.git('add', 'scripts/verify-tests.py')
         (self.repo / '.venv/bin').mkdir(parents=True)
         python = self.repo / '.venv/bin/python'
         python.write_text('#!/bin/sh\necho "fast $*" >> "$FAKE_LOG"\nexit ${FAKE_FAST_EXIT:-0}\n')
@@ -853,9 +856,10 @@ class PhoneBuildTests(unittest.TestCase):
         self.git('commit', '-q', '-m', subject)
         self.tip = self.git('rev-parse', 'HEAD')
 
-    def build_the_merge_commit(self, runs_checks, slow_tier=False, **extra):
+    def build_the_merge_commit(self, runs_checks, slow_tier=False, main_mac=False, **extra):
         """Build a tip that reads "Merge pull request #12: ..." (the fake gh serves PR 12's merge check)."""
-        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing', slow_tier=slow_tier)
+        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing', slow_tier=slow_tier,
+                                          main_mac=main_mac)
         done = self.run_build(**{'FAKE_TIP': self.tip, **extra})
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         calls = self.log.read_text()
@@ -874,7 +878,17 @@ class PhoneBuildTests(unittest.TestCase):
         calls = self.log.read_text()
         self.assertIn('fast scripts/verify-tests.py --plan slow', calls)
         checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
-        self.assertIn('slow tier (--plan slow) ran on this exact commit', checks)
+        self.assertIn("main-slow's tests (--plan slow) ran on this exact commit", checks)
+
+    def test_a_commit_with_main_mac_runs_every_test_main_slow_runs_first(self):
+        # #5281: the merge queue builds on the Mac and runs no Mac tests, so a commit main-slow hasn't passed gets
+        # main-slow's whole plan (the Mac tests and the slow tier), not the slow tier alone.
+        self.build_the_merge_commit(runs_checks=False, slow_tier=True, main_mac=True, FAKE_SLOW_STATE='none')
+        calls = self.log.read_text()
+        self.assertIn('fast scripts/verify-tests.py --plan main-mac', calls)
+        self.assertNotIn('--plan slow', calls)
+        checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
+        self.assertIn("main-slow's tests (--plan main-mac) ran on this exact commit", checks)
 
     def test_a_green_slow_tier_on_the_commit_is_not_run_again(self):
         self.build_the_merge_commit(runs_checks=False, slow_tier=True, FAKE_SLOW_STATE='success')
@@ -889,10 +903,19 @@ class PhoneBuildTests(unittest.TestCase):
         checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
         self.assertIn('from before the slow tier', checks)
 
-    def test_a_red_slow_tier_stops_the_build(self):
+    def test_a_red_main_slow_on_the_commit_stops_the_build_without_a_local_plan(self):
+        # #5281 audit: main-slow failed on this commit, so a test it runs is known red; --plan slow alone could pass.
+        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing', slow_tier=True, main_mac=True)
+        done = self.run_build(FAKE_TIP=self.tip, FAKE_SLOW_STATE='failure')
+        self.assert_build_stopped(done, 'main-slow failed on this exact commit (its Mac tests or the slow tier); '
+                                        'build a commit it passes', builds_after=False)
+        self.assertNotIn('--plan slow', self.log.read_text())
+        self.assertNotIn('--plan main-mac', self.log.read_text())
+
+    def test_a_failing_local_main_slow_plan_stops_the_build(self):
         self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing', slow_tier=True)
-        done = self.run_build(FAKE_TIP=self.tip, FAKE_SLOW_STATE='failure', FAKE_FAST_EXIT='1')
-        self.assert_build_stopped(done, 'the slow tier (--plan slow) failed', builds_after=False)
+        done = self.run_build(FAKE_TIP=self.tip, FAKE_SLOW_STATE='none', FAKE_FAST_EXIT='1')
+        self.assert_build_stopped(done, "main-slow's tests (--plan slow) failed", builds_after=False)
 
     def test_a_safe_remerge_builds_release_without_repeating_host_or_simulator_checks(self):
         self.build_the_merge_commit(runs_checks=False, FAKE_SAFE_REMERGE='1')
@@ -1229,6 +1252,43 @@ class TrunkT3PickTests(unittest.TestCase):
             self.assertEqual(module.take_or_build(args, self.tip, self.tip), 0)
         build.assert_not_called()
         ancestor.assert_called_once_with(self.older, 'c' * 40)
+
+
+class NoTestsBuildTests(unittest.TestCase):
+    """--no-tests (the owner's Desktop shortcut, 2026-11-25): builds the exact commit here, asks main-t3 nothing."""
+
+    def setUp(self):
+        self.module = load_phone_build()
+        self.phone = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.phone)
+
+    def run_take(self, guard=None):
+        module = self.module
+        args = unittest.mock.Mock(source='hosted', commit=None, if_changed=False, no_tests=True)
+        with unittest.mock.patch.dict(os.environ, {'SM_PHONE_DIR': str(self.phone)}), \
+                unittest.mock.patch.object(module, 'guard_reason', return_value=guard), \
+                unittest.mock.patch.object(module, 't3_pick') as pick, \
+                unittest.mock.patch.object(module, 'take_hosted') as hosted, \
+                unittest.mock.patch.object(module, 'build', return_value=0) as build:
+            code = module.take_or_build(args, 'a' * 40, 'a' * 40)
+        return code, pick, hosted, build
+
+    def test_builds_the_tip_here_with_no_main_t3_gate_even_when_the_source_is_hosted(self):
+        code, pick, hosted, build = self.run_take()
+        self.assertEqual(code, 0)
+        build.assert_called_once_with('a' * 40, no_tests=True)
+        pick.assert_not_called()
+        hosted.assert_not_called()
+
+    def test_the_disk_and_memory_guard_still_applies(self):
+        code, pick, hosted, build = self.run_take(guard='free disk is 3.0 GB')
+        self.assertEqual(code, self.module.EXIT_SKIPPED)
+        build.assert_not_called()
+
+    def test_the_build_record_says_no_tests_ran(self):
+        self.assertIn('NO TESTS RUN', self.module.NO_TESTS_CHECKS)
+        source = (SCRIPTS / 'phone-build').read_text()
+        self.assertIn('checks = NO_TESTS_CHECKS if no_tests else runner_tested(sha)', source)
 
 
 class NearestSlowResultTests(unittest.TestCase):

@@ -147,6 +147,92 @@ final class BulkPreparationRunTests: XCTestCase {
         XCTAssertEqual(host.currentWhenReturned["a"], true, "nothing replaced the run, so the counter still matched when it returned")
         XCTAssertEqual(host.liveFromOtherTask["a"], true, "a bare cancel touches no counter, so a task that was not cancelled still sees a live ticket")
     }
+
+    // MARK: A queue that changes while the run goes (#4647)
+
+    func testAnItemAppendedDuringARunGoesLastAndIsCountedOnce() async {
+        let host = ScriptedHost()
+        let run = BulkPreparationRun()
+        run.start(ids: ["a"], host: host)
+        await host.waitForLog(count: 1)
+        XCTAssertEqual(host.pending, ["a"])
+
+        XCTAssertTrue(run.append(id: "b"))
+        XCTAssertTrue(run.append(id: "b"), "already queued: still true, not added twice")
+        XCTAssertTrue(run.append(id: "a"), "in progress: not added again")
+        XCTAssertEqual(host.log, [.began("a"), .appended("b")])
+        XCTAssertEqual(host.pending, ["a", "b"])
+
+        host.release("a")
+        await host.waitForLog(count: 4)
+        host.release("b")
+        await host.waitForLog(count: 6)
+        XCTAssertEqual(host.log, [.began("a"), .appended("b"), .finishedOne(prepared: true), .began("b"),
+                                  .finishedOne(prepared: true), .completed])
+        XCTAssertTrue(host.pending.isEmpty)
+    }
+
+    func testAppendWithNoLiveRunSaysSoAndAddsNothing() async {
+        let host = ScriptedHost()
+        let run = BulkPreparationRun()
+        XCTAssertFalse(run.append(id: "a"), "no run yet")
+        run.start(ids: [], host: host)
+        await host.waitForLog(count: 1)
+        XCTAssertFalse(run.append(id: "a"), "the run has ended")
+        XCTAssertEqual(host.log, [.completed])
+        XCTAssertTrue(run.pending.isEmpty)
+    }
+
+    func testAnItemSkippedBeforeItsTurnIsReportedSkippedAndNeverStarts() async {
+        let host = ScriptedHost()
+        let run = BulkPreparationRun()
+        run.start(ids: ["a", "b", "c"], host: host)
+        await host.waitForLog(count: 1)
+
+        XCTAssertTrue(run.skip(id: "b"))
+        XCTAssertFalse(run.skip(id: "a"), "the item in progress is not skipped from outside")
+        XCTAssertFalse(run.skip(id: "zzz"))
+        XCTAssertEqual(host.pending, ["a", "c"])
+
+        host.release("a")
+        await host.waitForLog(count: 4)
+        host.release("c")
+        await host.waitForLog(count: 6)
+        XCTAssertEqual(host.log, [.began("a"), .skipped, .finishedOne(prepared: true), .began("c"),
+                                  .finishedOne(prepared: true), .completed])
+    }
+
+    func testARequeuedItemGoesToTheEndAndIsCountedOnlyWhenItFinishes() async {
+        let host = ScriptedHost()
+        let run = BulkPreparationRun()
+        run.start(ids: ["a", "b"], host: host)
+        await host.waitForLog(count: 1)
+        host.release("a", outcome: .requeued)
+        await host.waitForLog(count: 2)
+        XCTAssertEqual(host.log, [.began("a"), .began("b")], "nothing is reported for a requeued item")
+        XCTAssertEqual(host.pending, ["a", "b"])
+        host.release("b")
+        await host.waitForLog(count: 4)
+        host.release("a")
+        await host.waitForLog(count: 6)
+        XCTAssertEqual(host.log, [.began("a"), .began("b"), .finishedOne(prepared: true), .began("a"),
+                                  .finishedOne(prepared: true), .completed])
+    }
+
+    func testCancelLeavesTheQueueEmpty() async {
+        let host = ScriptedHost()
+        let run = BulkPreparationRun()
+        run.start(ids: ["a", "b"], host: host)
+        await host.waitForLog(count: 1)
+        run.append(id: "c")
+        run.invalidateAndCancel()
+        XCTAssertTrue(run.pending.isEmpty)
+        XCTAssertTrue(host.pending.isEmpty)
+        XCTAssertFalse(run.append(id: "d"), "a cancelled run takes nothing more")
+        host.release("a")
+        await host.waitForReturn(of: "a")
+        XCTAssertEqual(host.log, [.began("a"), .appended("c")], "the late result neither counts nor starts b")
+    }
 }
 
 @MainActor
@@ -154,6 +240,8 @@ private final class ScriptedHost: BulkPreparationHost {
     enum Event: Equatable {
         case began(String)
         case finishedOne(prepared: Bool)
+        case skipped
+        case appended(String)
         case completed
     }
 
@@ -162,10 +250,12 @@ private final class ScriptedHost: BulkPreparationHost {
     private(set) var currentWhenReturned: [String: Bool] = [:]
     /// What the ticket says from a task that was never cancelled: only the run counter can make this false.
     private(set) var liveFromOtherTask: [String: Bool] = [:]
-    private var parked: [String: CheckedContinuation<Bool, Never>] = [:]
+    private var parked: [String: CheckedContinuation<BulkPreparationOutcome, Never>] = [:]
+    /// The pending set the run last reported.
+    private(set) var pending: Set<String> = []
     private var waiters: [(condition: () -> Bool, continuation: CheckedContinuation<Void, Never>)] = []
 
-    func prepareForBulkRun(itemID: String, ticket: BulkPreparationTicket) async -> Bool {
+    func prepareForBulkRun(itemID: String, ticket: BulkPreparationTicket) async -> BulkPreparationOutcome {
         record(.began(itemID))
         let result = await withCheckedContinuation { parked[itemID] = $0 }
         liveWhenReturned[itemID] = ticket.isLive
@@ -175,13 +265,28 @@ private final class ScriptedHost: BulkPreparationHost {
         return result
     }
 
-    func bulkRunDidFinishOne(prepared: Bool) { record(.finishedOne(prepared: prepared)) }
+    func bulkRunDidFinishOne(_ outcome: BulkPreparationOutcome) {
+        switch outcome {
+        case .prepared: record(.finishedOne(prepared: true))
+        case .fellBack: record(.finishedOne(prepared: false))
+        case .skipped: record(.skipped)
+        case .requeued: XCTFail("a requeued item is never reported")
+        }
+    }
+
+    func bulkRunDidAppend(itemID: String) { record(.appended(itemID)) }
+
+    func bulkRunPendingDidChange(_ pending: Set<String>) { self.pending = pending }
 
     func bulkRunDidComplete() { record(.completed) }
 
     /// Lets the parked item return. It does nothing for an item that is not parked.
     func release(_ id: String, prepared: Bool = true) {
-        parked.removeValue(forKey: id)?.resume(returning: prepared)
+        release(id, outcome: prepared ? .prepared : .fellBack)
+    }
+
+    func release(_ id: String, outcome: BulkPreparationOutcome) {
+        parked.removeValue(forKey: id)?.resume(returning: outcome)
     }
 
     /// Returns once the log holds `count` events.

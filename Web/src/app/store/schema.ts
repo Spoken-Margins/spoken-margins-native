@@ -23,6 +23,9 @@
 //    row per episode the listener's Library holds or dropped, under the key `library:<episode id>` with the value
 //    `{ in, at }`. All are settings rows that default when missing, so an older copy ignores them (`readSettings` skips
 //    keys it doesn't know). Still shape 2: no record changed and no store was added.
+//    #4426: a show record may carry `unfollowedAt` (the listener unfollowed it; the record and its episodes stay), and
+//    one settings row per dismissed episode, under the key `dismissed:<episode id>` with the value `{ dismissed, at }`.
+//    An older copy ignores both. Still shape 2.
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
 
 export const DB_VERSION = 1;
@@ -108,6 +111,21 @@ export interface Membership {
 /** Membership rows by episode id. Episodes with no row are not in the Library once it is migrated. */
 export type LibraryMembership = Readonly<Record<string, Membership>>;
 
+/** The settings-store key prefix of an episode's dismissal row (#4426): `dismissed:<episode id>`. */
+export const DISMISSED_PREFIX = 'dismissed:';
+
+/**
+ * Whether the listener dismissed an episode from its show's list (#4426). `dismissed: false` is a dismissal undone or
+ * brought back. `at` is when the row was written, as an ISO date.
+ */
+export interface DismissedRow {
+  dismissed: boolean;
+  at: string;
+}
+
+/** Dismissal rows by episode id. An episode with no row is not dismissed. */
+export type Dismissals = Readonly<Record<string, DismissedRow>>;
+
 export interface Snapshot {
   shows: Show[];
   episodes: Episode[];
@@ -116,6 +134,8 @@ export interface Snapshot {
   settings: Settings;
   /** Library membership by episode id (#4425), read from the `library:` setting rows. */
   library: LibraryMembership;
+  /** Dismissals by episode id (#4426), read from the `dismissed:` setting rows. */
+  dismissed: Dismissals;
 }
 
 export interface SettingRow {
@@ -194,6 +214,25 @@ export function readMembership(rows: readonly SettingRow[]): LibraryMembership {
 }
 
 /**
+ * Dismissals from the `dismissed:<episode id>` setting rows (#4426). A row whose value is not an object with a boolean
+ * `dismissed` and a string `at`, or whose key names no episode, is skipped. No prototype, as in `readMembership`.
+ */
+export function readDismissed(rows: readonly SettingRow[]): Dismissals {
+  const dismissed: Record<string, DismissedRow> = Object.create(null) as Record<string, DismissedRow>;
+  for (const row of rows) {
+    if (typeof row.key !== 'string' || !row.key.startsWith(DISMISSED_PREFIX)) continue;
+    const id = row.key.slice(DISMISSED_PREFIX.length);
+    if (!id) continue;
+    const value = row.value;
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) continue;
+    const { dismissed: isDismissed, at } = value as { dismissed?: unknown; at?: unknown };
+    if (typeof isDismissed !== 'boolean' || typeof at !== 'string') continue;
+    dismissed[id] = { dismissed: isDismissed, at };
+  }
+  return dismissed;
+}
+
+/**
  * Reads stored rows of any shape into the current one. Records pass through as they are, unknown fields
  * included, so a write back keeps what a newer copy added. A store from a newer copy is read the same way and
  * its version row is left alone.
@@ -207,6 +246,7 @@ export function upgrade(rows: StoredRows): Upgraded {
     positions: rows.positions,
     settings: readSettings(rows.settings),
     library: readMembership(rows.settings),
+    dismissed: readDismissed(rows.settings),
   };
   // 1 to 2 changed no record, only added the version row (and settings that default when missing).
   const writes = from < SCHEMA_VERSION ? [{ key: SCHEMA_KEY, value: SCHEMA_VERSION }] : [];

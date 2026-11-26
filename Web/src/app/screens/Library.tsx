@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock } from '../../shared/clock.ts';
+import type { Show } from '../../shared/model.ts';
 import { useData } from '../data.tsx';
 import { useRestoreFocus } from '../focus.ts';
 import { minutes, shortDate } from '../format.ts';
@@ -7,6 +8,7 @@ import { MoreIcon, PauseIcon, PlayIcon } from '../icons.tsx';
 import { useMarginFilePicker, type OpenMarginFile } from '../import.tsx';
 import { libraryVoiceTag } from '../logic/episode-voice-words.ts';
 import { episodeVoice } from '../logic/playability.ts';
+import { isFollowed } from '../logic/follow-state.ts';
 import { followsAShow, libraryEpisodes, stillMovedOut } from '../logic/library-membership.ts';
 import { libraryRows, libraryRowMatches, marginAuthors, type LibraryRow } from '../logic/library.ts';
 import { usePlayer } from '../player.tsx';
@@ -23,13 +25,13 @@ export function Library({ onPlay, onFindShows, onGoFollowing, onOpenFile }: { on
   const picker = useMarginFilePicker(onOpenFile);
   const { query, setQuery } = useTabSearch('library');
   const allRows = useMemo(
-    () => libraryRows(libraryEpisodes(data.episodes, data.library, data.migrated), data.shows, data.positions),
+    () => libraryRows(libraryEpisodes(data.episodes, data.library, data.migrated, data.shows), data.shows, data.positions),
     [data.episodes, data.library, data.migrated, data.shows, data.positions],
   );
   const authors = useMemo(() => marginAuthors(data.margins), [data.margins]);
   const rows = useMemo(() => allRows.filter((row) => libraryRowMatches(query, row, authors)), [allRows, authors, query]);
   // What the one-time move left on Following that the listener hasn't since added, played or removed (#4425).
-  const movedOutCount = data.migrated ? stillMovedOut(data.settings.libraryMovedOut, data.episodes, data.library).length : 0;
+  const movedOutCount = data.migrated ? stillMovedOut(data.settings.libraryMovedOut, data.episodes, data.library, data.shows).length : 0;
   // The ⋯ button of each row, by episode id: after a Remove, focus moves to a neighbour's (#4424).
   const moreButtons = useRef(new Map<string, HTMLButtonElement>());
   const screen = useRef<HTMLDivElement>(null);
@@ -49,7 +51,7 @@ export function Library({ onPlay, onFindShows, onGoFollowing, onOpenFile }: { on
     try {
       const previous = await data.removeFromLibrary(id);
       pendingFocus.current = { gone: id, order };
-      toast(hasMargins ? `Removed “${title}” from your Library. Its Margins stay in the Margins tab.` : `Removed “${title}” from your Library.`, 'info', {
+      toast(removedLine(title, hasMargins, row.show), 'info', {
         label: 'Undo',
         run: () =>
           data.putBackInLibrary(id, previous).then(
@@ -206,6 +208,16 @@ export function Library({ onPlay, onFindShows, onGoFollowing, onOpenFile }: { on
       {removing && <RemoveSheet row={removing} onRemove={() => void remove(removing)} onClose={() => setRemoving(undefined)} />}
     </div>
   );
+}
+
+/**
+ * The Remove toast. A Margin on the episode wins, since the Margins tab still reaches it; an episode of a show the
+ * listener unfollowed says how to find it again (#4426), since no show screen lists it now.
+ */
+export function removedLine(title: string, hasMargins: boolean, show: Show | undefined): string {
+  if (hasMargins) return `Removed “${title}” from your Library. Its Margins stay in the Margins tab.`;
+  if (show && !isFollowed(show)) return `Removed “${title}” from your Library. Follow ${show.title} again to find it.`;
+  return `Removed “${title}” from your Library.`;
 }
 
 /** Remove from Library asks nothing more than this (Undo covers a slip). Escape and Cancel close it with no change. */

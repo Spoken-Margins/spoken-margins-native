@@ -51,15 +51,28 @@ final class SourceCatalogPacksTests: XCTestCase {
         XCTAssertTrue(new.entries.contains { $0.recentPublishedAt != nil })
     }
 
-    func testANewBuildReadsTodaysCatalogsWithNoPacksOrDates() throws {
-        for url in [try Self.smallURL(), try Self.publishedURL()] {
-            let catalog = try JSONDecoder().decode(SourceCatalog.self, from: Data(contentsOf: url))
-            XCTAssertNil(catalog.packs, url.lastPathComponent)
-            XCTAssertTrue(catalog.entries.allSatisfy { $0.recentPublishedAt == nil }, url.lastPathComponent)
-            let validated = try SourceCatalogValidator.validated(catalog)
-            XCTAssertNil(validated.packs, "a catalog with no packs stays without packs")
-            XCTAssertEqual(validated.entries.count, catalog.entries.count)
-        }
+    func testANewBuildReadsACatalogWithNoPacksOrDates() throws {
+        let url = try Self.smallURL()
+        let catalog = try JSONDecoder().decode(SourceCatalog.self, from: Data(contentsOf: url))
+        XCTAssertNil(catalog.packs, url.lastPathComponent)
+        XCTAssertTrue(catalog.entries.allSatisfy { $0.recentPublishedAt == nil }, url.lastPathComponent)
+        let validated = try SourceCatalogValidator.validated(catalog)
+        XCTAssertNil(validated.packs, "a catalog with no packs stays without packs")
+        XCTAssertEqual(validated.entries.count, catalog.entries.count)
+    }
+
+    /// The bundled catalog carries the eight packs since contentVersion 4 (#4285, PR 5). It still decodes with the
+    /// reader of a build from before packs, and validates with every pack kept.
+    func testTheBundledCatalogCarriesItsPacksAndAnOlderBuildStillReadsIt() throws {
+        let data = try Data(contentsOf: Self.publishedURL())
+        let old = try JSONDecoder().decode(ShippedSourceCatalogV3.self, from: data)
+        let catalog = try JSONDecoder().decode(SourceCatalog.self, from: data)
+        XCTAssertEqual(old.entries.map(\.id), catalog.entries.map(\.id))
+        let packs = try XCTUnwrap(catalog.packs)
+        XCTAssertEqual(packs.count, 8)
+        XCTAssertTrue(catalog.entries.contains { $0.recentPublishedAt != nil })
+        let validated = try SourceCatalogValidator.validated(catalog)
+        XCTAssertEqual(validated.packs?.map(\.id), packs.map(\.id))
     }
 
     func testTheFixtureRoundTripsThroughTheEncoderWithItsPacksAndDates() throws {

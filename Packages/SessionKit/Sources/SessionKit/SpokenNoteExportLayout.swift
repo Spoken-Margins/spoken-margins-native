@@ -98,11 +98,15 @@ public struct SpokenNoteExportLayout: Equatable, Sendable {
     ///   - itemId: the note's Library item. Only active Margins on the item itself are laid out.
     ///   - itemText: the Library row's text, used only in the fallback.
     ///   - storedTimeline: the row's stored transcript timeline (the last playback's).
+    ///   - storedTimelineClock: when the item names the note's Shorter pauses version, the map onto that file's clock,
+    ///     which the stored timeline is on (#4779, #5288); nil when it is on the recording's. Margin times are saved on the
+    ///     recording's clock, and the export stays as recorded, so the stored times are read back onto it.
     public init(
         input: SpokenNoteExportInput?,
         itemId: String,
         itemText: String,
         storedTimeline: TranscriptTimeline?,
+        storedTimelineClock: SpokenNoteCleanMap? = nil,
         margins: [Interjection]
     ) {
         let noteMargins = margins
@@ -118,13 +122,13 @@ public struct SpokenNoteExportLayout: Equatable, Sendable {
         } else {
             source = .lastPlayback
             text = itemText
-            recordings = Self.fallbackRecordings(itemText: itemText, storedTimeline: storedTimeline)
+            recordings = Self.fallbackRecordings(itemText: itemText, storedTimeline: storedTimeline, clock: storedTimelineClock)
         }
         let segmentLocation = Self.segmentLocations(recordings)
         for margin in noteMargins {
             guard margin.hasPlace,
                   let segmentId = Self.placedSegmentId(
-                    margin.anchor, input: input, storedTimeline: storedTimeline,
+                    margin.anchor, input: input, storedTimeline: storedTimeline, storedTimelineClock: storedTimelineClock,
                     recordings: recordings, segmentLocation: segmentLocation
                   ),
                   let (recordingIndex, sentenceIndex) = segmentLocation[segmentId] else {
@@ -165,10 +169,12 @@ public struct SpokenNoteExportLayout: Equatable, Sendable {
         return result
     }
 
-    private static func fallbackRecordings(itemText: String, storedTimeline: TranscriptTimeline?) -> [Recording] {
+    private static func fallbackRecordings(itemText: String, storedTimeline: TranscriptTimeline?, clock: SpokenNoteCleanMap?) -> [Recording] {
         let segments = storedTimeline?.segments ?? []
+        // A sentence's time on the recording's clock, as the rest of the export is (#4779).
         var sentences = segments.map {
-            Sentence(segmentId: $0.id, text: $0.text, startChar: $0.startChar, startMs: $0.startMs, marginIds: [])
+            Sentence(segmentId: $0.id, text: $0.text, startChar: $0.startChar,
+                     startMs: clock?.recordedMs(fromCleanMs: $0.startMs) ?? $0.startMs, marginIds: [])
         }
         if segments.isEmpty {
             // No timeline: the row's text is one block, and nothing can be placed on it.
@@ -201,6 +207,7 @@ public struct SpokenNoteExportLayout: Equatable, Sendable {
         _ anchor: Anchor,
         input: SpokenNoteExportInput?,
         storedTimeline: TranscriptTimeline?,
+        storedTimelineClock: SpokenNoteCleanMap?,
         recordings: [Recording],
         segmentLocation: [String: (Int, Int)]
     ) -> String? {
@@ -213,10 +220,13 @@ public struct SpokenNoteExportLayout: Equatable, Sendable {
         } else {
             // The note's file without its joined layout, or the fallback: the id first, then the stored timeline's time.
             if let id = anchor.transcriptSegmentId, segmentLocation[id] != nil { return id }
-            if let timeMs = anchor.mediaTimeMs,
-               let segment = storedTimeline?.segments.last(where: { $0.startMs <= timeMs }),
-               segmentLocation[segment.id] != nil {
-                return segment.id
+            // The saved time is on the recording's clock; the stored timeline is on the clock of the file the item
+            // names, which is the Shorter pauses version's once that is attached (#5288). Compare on that one clock.
+            if let savedMs = anchor.mediaTimeMs {
+                let timeMs = storedTimelineClock?.cleanMs(fromRecordedMs: savedMs) ?? savedMs
+                if let segment = storedTimeline?.segments.last(where: { $0.startMs <= timeMs }), segmentLocation[segment.id] != nil {
+                    return segment.id
+                }
             }
         }
         // A read-aloud Margin from before #3662: a place, but neither a media time nor a segment id.

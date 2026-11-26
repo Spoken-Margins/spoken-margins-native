@@ -127,18 +127,30 @@ extension Gate1AppModel {
     }
 
     /// Starts the next queued item when the one that was playing reaches its end. Not while a sleep timer is running:
-    /// the listener asked for the audio to stop, and a queued item would play on past it.
+    /// the listener asked for the audio to stop, and a queued item would play on past it. Each end is recorded in
+    /// Diagnostics as `playQueue.advance` (advanced, or skipped with its reason; no ids or titles), so an export says why
+    /// a queue did not move on (#5358).
     func playQueueSnapshotChanged(from previous: SessionSnapshot, to current: SessionSnapshot) {
-        guard PlayQueueAdvance.shouldAdvance(from: previous, to: current), !sleepTimerIsActive else { return }
         let available = Set(libraryItems.map(\.id))
+        let isAvailable: (String) -> Bool = { available.contains($0) }
+        guard let decision = PlayQueueAdvance.decision(
+            from: previous, to: current, sleepTimerActive: sleepTimerIsActive,
+            queueHasNext: PlayQueueController.current(self).peekNext(isAvailable: isAvailable) != nil
+        ) else { return }
+        guard decision == .advance else {
+            recordDeveloperDiagnostic("playQueue.advance", decision.diagnosticFields)
+            return
+        }
         var next: String?
-        PlayQueueController.update(self) { next = $0.popNext(isAvailable: { available.contains($0) }) }
+        PlayQueueController.update(self) { next = $0.popNext(isAvailable: isAvailable) }
         guard let next else { return }
         // After this snapshot change has settled: starting a session writes the snapshot again. The queue moved on
         // by itself, so no new publisher page is read for it (#4640, the 2026-10-21 rule).
         Task { @MainActor [weak self] in
             guard let self else { return }
-            hangTelemetry.labels.scoped("playQueueAdvance") { startItem(id: next, trigger: .queueAdvance) }
+            hangTelemetry.labels.scoped("playQueueAdvance") { _ = startItem(id: next, trigger: .queueAdvance) }
+            let started = snapshot.itemId == next // `activeItemId` is set before a start that can still be refused
+            recordDeveloperDiagnostic("playQueue.advance", (started ? decision : .skipped(.startRefused)).diagnosticFields)
         }
     }
 }

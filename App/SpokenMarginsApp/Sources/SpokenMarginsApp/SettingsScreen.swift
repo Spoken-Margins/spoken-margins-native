@@ -33,8 +33,6 @@ struct SettingsScreen: View, Equatable {
     @State private var showsAllRecentlyDeleted = false
     @State private var isResetConfirmationPresented = false
     @State private var isPreparingDiagnostics = false
-    @AppStorage(CommunityMapUploadService.optInKey) private var helpsMakeListeningMaps = false
-    @AppStorage(CommunityMapFetchService.optInKey) private var looksUpCommunityMaps = false
     /// One switch for both ends of opened marks (#5275). On unless turned off; SessionKit reads an unset key as on too.
     @AppStorage(ShareLinkOpenedPolicy.defaultsKey) private var showsOpenedReceipts = true
     /// The Supertonic download card's "Open Voices" lands here and opens Voices (#1820).
@@ -425,6 +423,9 @@ struct SettingsScreen: View, Equatable {
                     }
                     .accessibilityIdentifier("settings.yourAI.row")
                     NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
+                    // #4341: the listener's own Zotero library, followed as papers from Following.
+                    NavigationLink("Zotero") { ZoteroSettingsScreen().miniPlayerKeepOut() }
+                        .accessibilityIdentifier("settings.zotero.row")
                     NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
                 } header: {
                     Text("Import & Export")
@@ -432,24 +433,6 @@ struct SettingsScreen: View, Equatable {
                     Text(QuickFolderStatus.sectionFooter)
                 }
                 Section("Privacy & Legal") {
-                    Toggle(isOn: $helpsMakeListeningMaps) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Help make listening maps")
-                            Text("Send transcripts of public episodes to the Spoken Margins server, which turns them into maps and then deletes them.")
-                                .font(.footnote)
-                                .foregroundStyle(AppColors.secondaryText)
-                        }
-                    }
-                    .accessibilityIdentifier("settings.communityMaps.toggle")
-                    Toggle(isOn: $looksUpCommunityMaps) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Look up community maps")
-                            Text("When you open or play a public podcast episode with no chapters, ask the Spoken Margins server for a map other listeners helped make. This tells the server which episode you opened, and it can see your IP address.")
-                                .font(.caption)
-                                .foregroundStyle(AppColors.secondaryText)
-                        }
-                    }
-                    .accessibilityIdentifier("settings.communityMapLookup.toggle")
                     Toggle(isOn: $showsOpenedReceipts) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Show when links are opened")
@@ -475,7 +458,7 @@ struct SettingsScreen: View, Equatable {
                         LabeledContent("Processing", value: "On device")
                             .accessibilityIdentifier("settings.ai.processing")
                         LabeledContent("Apple Foundation Model", value: inputs.localFoundationModelAvailabilityDescription)
-                        Text("Margin summaries are made on this device. Publisher podcast chapters and deterministic native-text Listening Maps do not require AI. Spoken Margins has no third-party AI provider or API key setting. If you turn on Help make listening maps, podcast transcripts go to the Spoken Margins server, which uses an AI service to draft maps.")
+                        Text("Margin summaries are made on this device. Publisher podcast chapters and deterministic native-text Listening Maps do not require AI. Spoken Margins has no third-party AI provider or API key setting.")
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
                             .accessibilityIdentifier("settings.ai.releaseBoundary")

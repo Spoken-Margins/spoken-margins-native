@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:psc="http://podlove.org/simple-chapters" xmlns:omny="https://omny.fm/rss-extensions" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:acast="https://schema.acast.com/1.0/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <omny:organizationId>e73c998e-6e60-432f-8610-ae210140c5b1</omny:organizationId>
+    <omny:networkId>de2d5a4d-9a01-4513-bc1d-ae3e01435926</omny:networkId>
+    <omny:programId>c0ae8c6e-22f0-4e9b-ac1c-ae390037ac53</omny:programId>
+    <omny:playlistId>7f5a4714-6b10-4ccf-a424-ae390037ac70</omny:playlistId>
+    <language>en-US</language>
+    <atom:link rel="self" type="application/rss+xml" href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/c0ae8c6e-22f0-4e9b-ac1c-ae390037ac53/7f5a4714-6b10-4ccf-a424-ae390037ac70/podcast.rss" />
+    <atom:link rel="first" type="application/rss+xml" href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/c0ae8c6e-22f0-4e9b-ac1c-ae390037ac53/7f5a4714-6b10-4ccf-a424-ae390037ac70/podcast.rss?page=1" />
+    <atom:link rel="last" type="application/rss+xml" href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/c0ae8c6e-22f0-4e9b-ac1c-ae390037ac53/7f5a4714-6b10-4ccf-a424-ae390037ac70/podcast.rss?page=1" />
+    <itunes:new-feed-url>https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/c0ae8c6e-22f0-4e9b-ac1c-ae390037ac53/7f5a4714-6b10-4ccf-a424-ae390037ac70/podcast.rss</itunes:new-feed-url>
+    <title>Cautionary Tales with Tim Harford</title>
+    <link>https://www.pushkin.fm/</link>
+    <description><![CDATA[<p>We tell our children unsettling fairy tales to teach them valuable lessons, but these Cautionary Tales are for the education of the grown ups &ndash; and they are all true. Tim Harford (Financial Times, BBC, author of &ldquo;The Data Detective&rdquo;) brings you stories of awful human error, tragic catastrophes, and hilarious fiascos. They'll delight you, scare you, but also make you wiser. New episodes every Friday.</p>]]></description>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>We tell our children unsettling fairy tales to teach them valuable lessons, but these Cautionary Tales are for the education of the grown ups – and they are all true. Tim Harford (Financial Times, BBC, author of “The Data Detective”) brings you stories of awful human error, tragic catastrophes, and hilarious fiascos. They'll delight you, scare you, but also make you wiser. New episodes every Friday.</itunes:summary>
+    <itunes:owner>
+      <itunes:name>Pushkin Industries</itunes:name>
+      <itunes:email>feeds@pushkin.fm</itunes:email>
+    </itunes:owner>
+    <itunes:author>Pushkin Industries</itunes:author>
+    <copyright>2026 2025 Pushkin Industries</copyright>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:category text="History"></itunes:category>
+    <itunes:category text="Society &amp; Culture"></itunes:category>
+    <itunes:image href="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/c0ae8c6e-22f0-4e9b-ac1c-ae390037ac53/7f5a4714-6b10-4ccf-a424-ae390037ac70/image.jpg?t=1650471153&amp;size=Large" />
+    <image>
+      <url>https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/c0ae8c6e-22f0-4e9b-ac1c-ae390037ac53/7f5a4714-6b10-4ccf-a424-ae390037ac70/image.jpg?t=1650471153&amp;size=Large</url>
+      <title>Cautionary Tales with Tim Harford</title>
+      <link>https://www.pushkin.fm/</link>
+    </image>
+    

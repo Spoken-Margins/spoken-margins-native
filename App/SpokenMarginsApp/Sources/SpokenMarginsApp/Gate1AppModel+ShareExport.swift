@@ -26,8 +26,10 @@ extension Gate1AppModel {
     @discardableResult
     func exportSharedInterjections(presentsReadySheet: Bool = true) async -> URL? {
         guard !sharingState.isExporting else { return nil }
-        guard !sharingState.isBulkPreparing else {
-            sharingState.errorMessage = "Finish or cancel bulk preparation before sharing."
+        // A packet never carries a voice that is still being made (#4647): the sheet waits for it before it asks. Voices
+        // the packet doesn't need (a left-out Margin, one set to As recorded or Words only) don't hold it.
+        if case .waiting(let count) = shareSendReadiness {
+            sharingState.errorMessage = ShareReviewCardWords.waiting(count: count)
             return nil
         }
         // A Margin with no place never goes in a packet, whatever its switch says (#4233).
@@ -263,11 +265,13 @@ extension Gate1AppModel {
         )
     }
 
-    /// Mirrors the link the packet builder keeps, so the share screen never promises a private feed link (#168).
+    /// Mirrors the link the packet builder keeps, so the share screen never promises a private feed link (#168) or a
+    /// restricted episode's audio or feed link (#5340).
     func secureSharedItemURL<Fields: LibraryItemFields>(for item: Fields) -> String? {
-        ShareableLinkPolicy.shareableLink(
+        AutomaticSourceAccess.sendableLink(
             item.externalReference.flatMap(SharedItemIdentityBuilder.normalizedSharingURL)
-                ?? item.media?.url.flatMap(SharedItemIdentityBuilder.normalizedSharingURL)
+                ?? item.media?.url.flatMap(SharedItemIdentityBuilder.normalizedSharingURL),
+            of: item
         )
     }
 

@@ -74,10 +74,12 @@ export function libraryRows(
 export interface FollowingRow {
   show: Show;
   newest: Episode | undefined;
-  /** All of the show's episodes, newest first. */
+  /** The show's listed episodes (all of them with no `listed` predicate), newest first. */
   episodes: Episode[];
   /** Episodes the listener hasn't started. */
   newCount: number;
+  /** The show's episodes `listed` left out (dismissed, #4426). 0 with no predicate. */
+  dismissedCount: number;
 }
 
 /** One row per show, the show with the newest episode first (Four tabs: "sorted by newest"). */
@@ -85,11 +87,20 @@ export function followingRows(
   shows: readonly Show[],
   episodes: readonly Episode[],
   positions: readonly PlaybackPosition[],
+  listed?: (episode: Episode) => boolean,
 ): FollowingRow[] {
   const started = new Set(positions.filter((p) => p.seconds > 0).map((p) => p.episodeId));
+  // Grouped once, so a long feed costs one pass rather than one per show.
+  const byShow = new Map<string, Episode[]>();
+  for (const episode of episodes) {
+    const list = byShow.get(episode.showId);
+    if (list) list.push(episode);
+    else byShow.set(episode.showId, [episode]);
+  }
   const rows = shows.map((show) => {
-    const own = newestFirst(episodes.filter((e) => e.showId === show.id));
-    return { show, newest: own[0], episodes: own, newCount: own.filter((e) => !started.has(e.id)).length };
+    const all = byShow.get(show.id) ?? [];
+    const own = newestFirst(listed ? all.filter(listed) : all);
+    return { show, newest: own[0], episodes: own, newCount: own.filter((e) => !started.has(e.id)).length, dismissedCount: all.length - own.length };
   });
   return rows.sort((a, b) => {
     const d = time(b.newest?.publishedAt) - time(a.newest?.publishedAt);

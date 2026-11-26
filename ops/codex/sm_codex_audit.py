@@ -651,18 +651,38 @@ def issue_sections(body: str) -> dict[str, str]:
 _PR_HEADING_RE = re.compile(r"(?im)^\s*#{1,6}\s*\**\s*PR\s*#(\d+)\b.*$")
 
 
+# A line that only repeats an audit heading, as a model sometimes starts its answer (#5332): the Claude or the legacy
+# Codex heading, with or without its sha, bold, a Markdown heading mark or a trailing colon.
+_REPEATED_HEADING_RE = re.compile(
+    r"(?i)^[#>*_\s]*(?:claude audit|codex audit(?: \(astra\))?)(?: on `?[0-9a-f]{7,40}`?)?[*_:\s]*$")
+
+
+def verdict_first(section: str) -> str:
+    """The section as it goes under the audit heading, with its verdict on the first line.
+
+    The runner reads the verdict as the first non-empty line after the heading (`lane_merge_rules.audit_blocker`,
+    #441), and only by its first characters. So lines that repeat the heading are dropped (#5332: on #5180 the
+    model's own "**Claude audit on `e5f6547`**" sat where the verdict belongs, and a clean audit held the PR), and
+    the emphasis markup in front of a clean verdict goes ("**No blocking findings.**"). Anything else stays as the
+    model wrote it, so a section with findings still reads as findings.
+    """
+    lines = (section or "").strip().splitlines()
+    while lines and (not lines[0].strip() or _REPEATED_HEADING_RE.match(lines[0])):
+        lines.pop(0)
+    text = "\n".join(lines).strip()
+    bare = text.lstrip("*_#> \t")
+    if re.match(r"(?i)no (blocking )?findings\b", bare):
+        text = bare
+    return text
+
+
 def split_sections(output: str, numbers: list[int]) -> dict[int, str]:
     """Split the reviewer's answer into {pr_number: section text} by "### PR #N"."""
     marks = [(m.start(), m.end(), int(m.group(1))) for m in _PR_HEADING_RE.finditer(output or "")]
     out: dict[int, str] = {}
     for idx, (_, end, num) in enumerate(marks):
         stop = marks[idx + 1][0] if idx + 1 < len(marks) else len(output)
-        text = output[end:stop].strip()
-        # The runner reads the verdict by its first characters, so "**No blocking findings.**" would
-        # hold the PR as if it had findings: drop the emphasis markup in front of a clean verdict.
-        bare = text.lstrip("*_#> \t")
-        if re.match(r"(?i)no (blocking )?findings\b", bare):
-            text = bare
+        text = verdict_first(output[end:stop])
         if num in numbers and text and num not in out:
             out[num] = text
     return out
@@ -680,7 +700,7 @@ def build_comment(number: int, sha: str, section: str, batch: list[int], *, revi
         "Claude": ("Claude audit", "Posted by the mechanical audit script; Claude ran read-only; "
                    "findings are Claude's own."),
     }[reviewer]
-    lines = [f"**{heading} on `{sha[:7]}`**", "", section.strip(), "", "---"]
+    lines = [f"**{heading} on `{sha[:7]}`**", "", verdict_first(section), "", "---"]
     others = [n for n in batch if n != number]
     if others:
         footer += " Batched with " + ", ".join(f"#{n}" for n in others) + "."

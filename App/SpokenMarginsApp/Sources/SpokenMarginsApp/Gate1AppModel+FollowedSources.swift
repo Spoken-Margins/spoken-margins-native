@@ -28,6 +28,7 @@ extension Gate1AppModel {
         let reader = StoreReader(store)
         if let latest = try await reader.latestFeedSubscriptions() {
             feedSubscriptions = latest
+            await reconcileNotForMeHides(with: latest) // a followed source is never hidden (#4285)
             return latest
         }
         return try await reader.feedSubscriptions()
@@ -485,8 +486,18 @@ extension Gate1AppModel {
         }
     }
 
+    /// Every Following entry with a fetch running, whoever started it.
+    var importingFollowedSourceEntryIds: Set<String> { followedEntryImports.importing }
+
     func importFollowedSourceEntry(_ entry: FeedEntry, openWhenFinished: Bool = false, playWhenFinished: Bool = false, startedByListener: Bool = true) {
-        guard importingFollowedSourceEntryIds.insert(entry.id).inserted else { return }
+        guard followedEntryImports.begin(entry.id, play: playWhenFinished) else {
+            // One fetch per entry, so the item lands once. A ▶ tap on an episode a swipe is already adding rides on that
+            // fetch and plays the item when it lands (#5328), unless the listener opens or starts something else first.
+            if playWhenFinished, followedEntryImports.canJoinForPlay(entry.id) {
+                followedEntryImports.joinForPlay(entry.id, token: followedPlayIntent.begin())
+            }
+            return
+        }
         // Opening or playing waits on a fetch; anything the listener opens or starts meanwhile wins (#2124).
         let intent = openWhenFinished || playWhenFinished ? followedPlayIntent.begin() : nil
         Task { [weak self] in
@@ -494,7 +505,7 @@ extension Gate1AppModel {
             // The item this import saved, once it has; a wish to queue it hears it, or that nothing was saved (#4044).
             var landedItemId: String?
             defer {
-                self.importingFollowedSourceEntryIds.remove(entry.id)
+                self.followedEntryImports.end(entry.id)
                 self.settleQueueWish(key: entry.id, itemId: landedItemId)
             }
             do {
@@ -551,6 +562,9 @@ extension Gate1AppModel {
                         landedItemId = audio?.itemId ?? itemId
                     }
                 }
+                // A ▶ tap that joined this fetch plays the item as soon as it has landed (#5328).
+                if let landedItemId, let joinedPlay = self.followedEntryImports.takeJoinedPlay(entry.id),
+                   self.followedPlayIntent.finish(joinedPlay) { self.startItem(id: landedItemId) }
                 guard imported else { return }
                 try await self.followedSourceCoordinator?.setEntryState(id: entry.id, state: .imported)
                 await self.performFollowedSourceRefresh(force: false, trigger: .localChange)
@@ -562,7 +576,9 @@ extension Gate1AppModel {
         }
     }
 
-    func unfollowSource(id: String) {
+    /// `then` runs after the unfollow has landed and the list is published, and only when it landed (#4285: a hide is
+    /// written there, after the show has left the list the hide reconcile reads).
+    func unfollowSource(id: String, then: (@MainActor () async -> Void)? = nil) {
         guard let coordinator = followedSourceCoordinator else { return }
         // The show leaves its follow lists with it (#4046). The member is read before the subscription goes.
         let member = feedSubscriptions.first { $0.id == id }.map { FollowListEditing.member(for: $0) }
@@ -570,6 +586,7 @@ extension Gate1AppModel {
             let unfollowed: Void? = try? await coordinator.unfollow(subscriptionId: id)
             if unfollowed != nil, let member { await self?.removeFromFollowLists(member) }
             await self?.publishFeedSubscriptionsAfterChange()
+            if unfollowed != nil { await then?() }
             await self?.performFollowedSourceRefresh(force: false, trigger: .localChange)
         }
     }
