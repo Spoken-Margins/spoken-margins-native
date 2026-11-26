@@ -102,6 +102,7 @@ extension Gate1AppModel {
     /// waits for it to end (#4955).
     func pullToRefreshFollowing() async {
         refreshQuickAccessFolder()
+        replyBoxes.pullToRefresh() // answers through share links (#4675); never holds the spinner
         await Task { [self] in
             // The gate refuses only while a pass runs, and the flag goes true with no await after the gate accepts, so a nil
             // with the flag set means a running pass took this request; a nil from a store that couldn't open comes after

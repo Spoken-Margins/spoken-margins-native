@@ -31,7 +31,9 @@ const (
 	// gates the web app's feed and page relay (#2985), off by default.
 	// Clubs gates the club mailbox (#1799): off by default, and it can only
 	// ever turn clubs off, never on, for a build that lacks the app's own
-	// build-time flag.
+	// build-time flag. Replies gates reply boxes (#4675, docs/design/reply-mailbox.md): the box a share
+	// link upload may make, and every club route for a box of that kind, in place of clubs. Off by default,
+	// and like clubs it can only turn the feature off.
 	ServiceLinks          = "links"
 	ServiceAttest         = "attest"
 	ServiceBridge         = "bridge"
@@ -40,10 +42,11 @@ const (
 	ServiceMapUploadToken = "mapUploadToken"
 	ServiceRelay          = "relay"
 	ServiceClubs          = "clubs"
+	ServiceReplies        = "replies"
 )
 
 // KnownServices are the switches the owner can flip.
-var KnownServices = []string{ServiceLinks, ServiceAttest, ServiceBridge, ServiceMaps, ServiceTokens, ServiceMapUploadToken, ServiceRelay, ServiceClubs}
+var KnownServices = []string{ServiceLinks, ServiceAttest, ServiceBridge, ServiceMaps, ServiceTokens, ServiceMapUploadToken, ServiceRelay, ServiceClubs, ServiceReplies}
 
 type Service struct {
 	Enabled bool `json:"enabled"`

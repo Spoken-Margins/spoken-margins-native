@@ -331,6 +331,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         case "listening_rule": return columns(ListeningRule.self, item: { _ in nil })
         case "show_less_mark": return columns(ShowLessMark.self, item: { _ in nil })
         case TranscriptTimes.recordKind: return columns(TranscriptTimes.self, item: { $0.itemId })
+        case ReplyBoxRecord.recordKind: return columns(ReplyBoxRecord.self, item: { _ in nil })
         default: return nil
         }
     }
@@ -1636,6 +1637,41 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             guard var record = try loadPaperSources().first(where: { $0.id == id }) else { return nil }
             try change(&record)
             try savePaperSource(record)
+            return record
+        }
+    }
+
+    /// A reply box (#4675, `docs/design/reply-mailbox.md` piece 3): its own record kind with no item_id, so no table or
+    /// index changes and schema 5 stays, an older build never queries the kind, and deleting an item never deletes one.
+    /// The record id is the box id.
+    public func saveReplyBox(_ record: ReplyBoxRecord) throws {
+        try save(kind: ReplyBoxRecord.recordKind, id: record.boxId, sessionId: nil, itemId: nil, value: record)
+    }
+
+    /// Oldest first, then by id, so the order is the same on every read.
+    public func loadReplyBoxes() throws -> [ReplyBoxRecord] {
+        let records: [ReplyBoxRecord] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;",
+            [ReplyBoxRecord.recordKind]
+        )
+        return records.sorted { ($0.createdAt, $0.boxId) < ($1.createdAt, $1.boxId) }
+    }
+
+    public func loadReplyBox(id: String) throws -> ReplyBoxRecord? {
+        try loadOptional(kind: ReplyBoxRecord.recordKind, id: id)
+    }
+
+    public func deleteReplyBox(id: String) throws {
+        try deleteRecord(kind: ReplyBoxRecord.recordKind, id: id)
+    }
+
+    /// The read and the save in one transaction, so a pickup's cursor and a Stop Answers tap never undo each other.
+    @discardableResult
+    public func updateReplyBox(id: String, _ change: (inout ReplyBoxRecord) throws -> Void) throws -> ReplyBoxRecord? {
+        try withTransaction {
+            guard var record = try loadReplyBox(id: id) else { return nil }
+            try change(&record)
+            try saveReplyBox(record)
             return record
         }
     }
@@ -3152,3 +3188,4 @@ extension SQLiteSessionStore: CommunityMapUploadRepository {
 extension SQLiteSessionStore: ConcurrentSessionRepository {}
 
 extension SQLiteSessionStore: PaperSourceStoring {}
+extension SQLiteSessionStore: ReplyBoxStoring {}

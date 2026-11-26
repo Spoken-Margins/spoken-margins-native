@@ -1,0 +1,32 @@
+{
+  "_comment": "Reply box test vector (#4675, docs/design/reply-mailbox.md). A reply box is a club of two made by the sender's phone with each share link. K is the box's secret; it never leaves the phone. The four values come from HKDF-SHA-256 over K with an empty salt and the club info strings (sm-club-id-v1, -read-v1, -post-v1, -seal-v1), exactly as club-sealing-vector.json. The reply part is JSON {v,box,post,seal} sealed with the LINK key as SMLINK part 4 (additional data = the 8-byte header only, as for preview part 1 and packet part 2), served at GET /l/<id>/reply. An answer is a club post: SMLINK part 2 sealed with the seal key, additional data = header || 16 box id bytes. uploadHeaders are what the phone adds to POST /api/v1/links. Made once by a Go program from fixed bytes; Go, Swift and web tests check it. Not a real box: never reuse these keys.",
+  "answer": {
+    "aadHex": "534d4c494e4b0102db2cca0ae411a02aaa5bb11180f32235",
+    "nonceHex": "d0d1d2d3d4d5d6d7d8d9dadb",
+    "part": 2,
+    "plaintextBase64": "UEsDBHJlcGx5IHBhY2tldCBieXRlcywgbm90IGEgcmVhbCBhcmNoaXZlIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+    "sealedBase64": "U01MSU5LAQLQ0dLT1NXW19jZ2tu7QCVppo88E2jrA/GMz0BEEWo3hQTja2FkZ13Dx5TWNCz1gERyCC6JPJRb+Gfy+qfPSL7QxFhFmqVKhqhjASZShW/Kv985iidEB127os4IBkAX0lxU03mVwOXw"
+  },
+  "boxKeyFragment": "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8",
+  "id": "db2cca0ae411a02aaa5bb11180f32235",
+  "linkKeyFragment": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+  "postHash": "54746b3d04c76aa2bf61cf3f944d3e5998d13deaba03b8ae765d245e176ea8de",
+  "postProof": "857fc68e067fda679ef2204c203197259d4e93507c9f9f2327c1fff98cf304d1",
+  "readHash": "0e0212bd367d818cad560a5678f570cd3ab44aaa94ca9732b1c289a8fde8c00e",
+  "readProof": "ddbbcc48ae6ce8a384003b7918333c9463acd7c5a616fc8db1cd00eba3288d3b",
+  "replyPart": {
+    "aadHex": "534d4c494e4b0104",
+    "nonceHex": "c0c1c2c3c4c5c6c7c8c9cacb",
+    "part": 4,
+    "plaintext": "{\"box\":\"db2cca0ae411a02aaa5bb11180f32235\",\"post\":\"857fc68e067fda679ef2204c203197259d4e93507c9f9f2327c1fff98cf304d1\",\"seal\":\"CDlin6xluIL8FchVvgO7d-XgsOwU9bhylE8Nlr9tQf0\",\"v\":1}",
+    "sealedBase64": "U01MSU5LAQTAwcLDxMXGx8jJyssRsVue+01xyR5HbNhKvPNt5Hiz4X2XZAwYLjXDl4CYBbn8NHvYTBBj3b0chLCM88qjWxECfZwPQx1fts8xb89AXnLb6ZohqhSZRiMXLeBtIAHLHvdjWLEsgHN1Oh1+z5XuXIyWb44vYMyfl0SQBDR3ajIFXz2dYnMp7Q+/OxW0S9h96g/L2mQVtXXMiR3KejWZlGohhywbdmUrwIJVer2OH1lX5oOVNt4N4kkXY/7mybKU+SvD/ZU03kvO4avc7A=="
+  },
+  "sealKeyBase64URL": "CDlin6xluIL8FchVvgO7d-XgsOwU9bhylE8Nlr9tQf0",
+  "sealKeyHex": "0839629fac65b882fc15c855be03bb77e5e0b0ec14f5b872944f0d96bf6d41fd",
+  "uploadHeaders": {
+    "X-SM-Reply-Id": "db2cca0ae411a02aaa5bb11180f32235",
+    "X-SM-Reply-Part": "U01MSU5LAQTAwcLDxMXGx8jJyssRsVue+01xyR5HbNhKvPNt5Hiz4X2XZAwYLjXDl4CYBbn8NHvYTBBj3b0chLCM88qjWxECfZwPQx1fts8xb89AXnLb6ZohqhSZRiMXLeBtIAHLHvdjWLEsgHN1Oh1+z5XuXIyWb44vYMyfl0SQBDR3ajIFXz2dYnMp7Q+/OxW0S9h96g/L2mQVtXXMiR3KejWZlGohhywbdmUrwIJVer2OH1lX5oOVNt4N4kkXY/7mybKU+SvD/ZU03kvO4avc7A==",
+    "X-SM-Reply-Post-Hash": "54746b3d04c76aa2bf61cf3f944d3e5998d13deaba03b8ae765d245e176ea8de",
+    "X-SM-Reply-Read-Hash": "0e0212bd367d818cad560a5678f570cd3ab44aaa94ca9732b1c289a8fde8c00e"
+  }
+}

@@ -46,6 +46,44 @@ func (s *Server) clubsOn(w http.ResponseWriter) bool {
 	return true
 }
 
+// repliesUp is the reply boxes' switch (#4675, reply_box.go): it governs every club route for a box of kind
+// reply, in place of clubs.
+func (s *Server) repliesUp() bool {
+	doc, err := s.Config.Current()
+	return err == nil && doc.Enabled(config.ServiceReplies) && s.Clubs != nil
+}
+
+// boxOn is clubsOn for a route that names a box: a reply box answers to the replies switch, a club to the
+// clubs switch, and an id that is neither is let through to the store's 404 while either is on. When it
+// answers false it has already answered 503 disabled.
+func (s *Server) boxOn(w http.ResponseWriter, id string) (clubs.BoxInfo, bool) {
+	box := s.box(id)
+	return box, s.boxUp(w, box)
+}
+
+func (s *Server) box(id string) clubs.BoxInfo {
+	if s.Clubs == nil {
+		return clubs.BoxInfo{}
+	}
+	return s.Clubs.Box(id)
+}
+
+func (s *Server) boxUp(w http.ResponseWriter, box clubs.BoxInfo) bool {
+	up := false
+	switch {
+	case box.Reply:
+		up = s.repliesUp()
+	case box.Exists:
+		up = s.clubsUp()
+	default:
+		up = s.clubsUp() || s.repliesUp()
+	}
+	if !up {
+		fail(w, http.StatusServiceUnavailable, "disabled")
+	}
+	return up
+}
+
 func clubHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -191,8 +229,15 @@ func (s *Server) createClub(w http.ResponseWriter, r *http.Request) {
 // postClub is POST /api/v1/clubs/{id}/posts: the post proof as a bearer value and the sealed packet as
 // the body. 201 with the post's number.
 func (s *Server) postClub(w http.ResponseWriter, r *http.Request) {
+	id, proof := r.PathValue("id"), clubProof(r)
+	box := s.box(id)
+	if answerable(box) {
+		// Before every check, so a browser can read each error (reply_box.go), including the 404 of a box that
+		// has ended and gone, which the page must show as "can't take answers" rather than a network failure.
+		s.replyCORS(w, r)
+	}
 	clubHeaders(w)
-	if !s.clubsOn(w) {
+	if !s.boxUp(w, box) {
 		return
 	}
 	now := s.Now()
@@ -201,14 +246,23 @@ func (s *Server) postClub(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusTooManyRequests, "rate_limited")
 		return
 	}
-	id, proof := r.PathValue("id"), clubProof(r)
 	// Ask before reading the body, so a stranger cannot make the server buffer a packet.
 	if err := s.Clubs.Check(id, clubs.Post, proof, now); err != nil {
 		clubFailure(w, err)
 		return
 	}
+	maxPost := int64(clubs.MaxPostBytes)
+	if box.Reply {
+		// A reply box takes answers only while its link is live: a link that has ended, was reported, held or
+		// taken down ends the box's posts with it, with no separate hook.
+		if s.Links == nil || s.Links.Live(box.LinkID, now) != nil {
+			fail(w, http.StatusGone, "expired_or_removed")
+			return
+		}
+		maxPost = clubs.ReplyMaxPostBytes
+	}
 	// A declared length over the cap is refused before anything is read or counted.
-	if r.ContentLength > clubs.MaxPostBytes {
+	if r.ContentLength > maxPost {
 		fail(w, http.StatusRequestEntityTooLarge, "too_large")
 		return
 	}
@@ -221,7 +275,7 @@ func (s *Server) postClub(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusServiceUnavailable, "busy")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, clubs.MaxPostBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, maxPost)
 	packet, err := io.ReadAll(r.Body)
 	if err != nil {
 		var large *http.MaxBytesError
@@ -249,7 +303,7 @@ func (s *Server) postClub(w http.ResponseWriter, r *http.Request) {
 // post after number n.
 func (s *Server) listClubPosts(w http.ResponseWriter, r *http.Request) {
 	clubHeaders(w)
-	if !s.clubsOn(w) {
+	if _, ok := s.boxOn(w, r.PathValue("id")); !ok {
 		return
 	}
 	after := 0
@@ -273,7 +327,7 @@ func (s *Server) listClubPosts(w http.ResponseWriter, r *http.Request) {
 // Number 0 is the club's sealed header.
 func (s *Server) getClubItem(w http.ResponseWriter, r *http.Request) {
 	clubHeaders(w)
-	if !s.clubsOn(w) {
+	if _, ok := s.boxOn(w, r.PathValue("id")); !ok {
 		return
 	}
 	seq, err := strconv.Atoi(r.PathValue("seq"))

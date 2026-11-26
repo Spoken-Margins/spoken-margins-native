@@ -107,6 +107,8 @@
 	<true/>
 	<key>SMBuildCommit</key>
 	<string>$(SM_BUILD_COMMIT)</string>
+	<key>SMLinkReplies</key>
+	<string>$(SM_LINK_REPLIES)</string>
 	<key>SMPhoneBuild</key>
 	<string>$(SM_PHONE_BUILD)</string>
 	<key>SMShareLinkCreation</key>

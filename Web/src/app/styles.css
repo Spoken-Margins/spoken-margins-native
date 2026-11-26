@@ -2682,6 +2682,15 @@ body:not(:has(.mini-player)) .toasts {
   text-align: start;
 }
 
+/* "Send as a file instead" under "Send to <sender>" (#4675): today's file button as a text button. */
+.button-text {
+  background: none;
+  box-shadow: none;
+  padding: 0 8px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 /* ---------- The listen-here card (#5265): Margins on something the browser can't play, heard on the card ----------
    The arrival preview's plate and pinned bar; rows reuse the Margins tab's row. Playing and Heard are words, never colour alone. */
 .arrival-listen .arrival-source a,

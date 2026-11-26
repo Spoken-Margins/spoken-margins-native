@@ -258,6 +258,10 @@ private struct Build23ImportedLayerList: View, Equatable {
                 .accessibilityIdentifier("build23.imported.layer.\(layer.id).report")
             }
 
+            // An answer through one of this phone's reply boxes: "Report this answer" and "Stop answers through this link"
+            // (#4675, screen D). Such a layer came with no share link, so "Report this link" above never shows beside it.
+            ReplyBoxCardActions(replyBoxes: coordinator.replyBoxes, layerID: layer.id, senderLabel: layer.senderLabel)
+
             // Only for Margins whose packet named a sender; an older packet has none, so there is nothing to hide by (#2846).
             if layer.senderId != nil {
                 Button(role: .destructive) {

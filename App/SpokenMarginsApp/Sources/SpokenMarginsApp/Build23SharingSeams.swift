@@ -425,6 +425,14 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     /// The links the item's friend Margins came from, for "Report" in the item's ⋯ menu (#2239). Empty for Margins
     /// from a file.
     @Published private(set) var reportEntries: [ShareLinkReport.Entry] = []
+    /// The reply boxes behind card D on a friend's card (#4675).
+    var replyBoxes: ReplyBoxCoordinator { model.replyBoxes }
+    /// The item the verified packet was built from, named in a reply box's record (#4675). Taken when the build started
+    /// (the export reads the open item then), never at link time: the open item can change while the sheet is up. Nil
+    /// with no verified packet, and then a link carries no box.
+    var sharedItemID: String? { verifiedPreview == nil ? nil : verifiedPreviewItemID }
+    /// The open item when the build behind `verifiedPreview` started; set and cleared with it.
+    private var verifiedPreviewItemID: String?
 
     init(model: Gate1AppModel) {
         self.model = model
@@ -710,7 +718,10 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     /// The friends' cards for the item, and the intro's "Tell Sam you got it" (#3902), worked out together so the reply
     /// graph is built once.
     private func makeImportedLayers(from item: ItemDetailState) -> ([Build23ImportedLayerSnapshot], ReplyReceiptButton.Content?) {
-        let receipts = ReplyReceipt.offers(on: item)
+        // An answer that came through a reply box (#4675) offers no "Tell <friend> you got it": the browser friend's page
+        // already said it was sent, and that friend has no packet thread to answer in.
+        let boxes = replyBoxes
+        let receipts = ReplyReceipt.offers(on: item).excluding { boxes.answer(carrying: $0) != nil }
         let layers = makeLayerSnapshots(from: item, receipts: receipts)
         let intro = receipts.newest.flatMap { offer in
             layers.first { $0.id == offer.layerId }.map { ReplyReceiptButton.Content(offer: offer, itemTitle: $0.itemTitle) }
@@ -1011,6 +1022,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         previewTask = nil
         previewFingerprint = nil
         verifiedPreview = nil
+        verifiedPreviewItemID = nil
         previewState = .notBuilt
         stage = newStage
     }
@@ -1054,6 +1066,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         }
         previewTask?.cancel()
         verifiedPreview = nil
+        verifiedPreviewItemID = nil
         previewFingerprint = nil
         previewState = .building
         stage = .recipientPreview
@@ -1061,6 +1074,9 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         previewTask = Task { [weak self] in
             // The archive is written off the main thread (#2510), so the build is awaited here, not in the tap.
             guard let model = self?.model else { return }
+            // The export builds the packet from the item open as it starts (it reads it before its first suspension, and
+            // gives up if the open item changes while it builds), so this is the item the packet is for (#4675).
+            let builtItemID = model.selectedItem.id
             // The file this build wrote, never the model's last one: a build that stopped early wrote none.
             let builtURL = await model.exportSharedInterjections(presentsReadySheet: false)
             guard let self,
@@ -1086,6 +1102,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                     return
                 }
                 self.previewFingerprint = fingerprint
+                self.verifiedPreviewItemID = builtItemID
                 self.verifiedPreview = preview
                 self.previewState = .ready
                 self.model.isSharedSpokenMarginsPackagePresented = false

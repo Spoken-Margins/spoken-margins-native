@@ -70,6 +70,12 @@ public enum ReplyReceipt {
         public let byLayer: [String: Offer]
         /// The offer from the newest such packet (`newestOffer`).
         public let newest: Offer?
+
+        /// The same offers without those for the layers `isExcluded` names, such as answers that came through a reply
+        /// box (#4675). When the newest offer is excluded, the intro offers none rather than an older packet's.
+        public func excluding(_ isExcluded: (String) -> Bool) -> ItemOffers {
+            ItemOffers(byLayer: byLayer.filter { !isExcluded($0.key) }, newest: newest.flatMap { isExcluded($0.layerId) ? nil : $0 })
+        }
     }
 
     /// The offers on one item, worked out from its own Margins and its friends' packets as stored, so they come back after

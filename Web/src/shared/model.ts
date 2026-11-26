@@ -71,6 +71,11 @@ export interface Margin {
    * written into a packet. Absent on a Margin that was never shared, or shared before this was kept.
    */
   sharedAs?: string[];
+  /**
+   * The share link whose reply box this Margin went back through (#4675, "Send to <sender>"): the link's id, set after
+   * the server took the post. Never written into a packet. Absent on a Margin never sent that way.
+   */
+  sentThrough?: string;
   /** The Margin this one answers (2026-10-25 call: recorded during a friend's Margin = a reply). */
   replyToId?: string;
   /**

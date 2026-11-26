@@ -41,7 +41,7 @@ const (
 
 func (s *Server) reportClub(w http.ResponseWriter, r *http.Request) {
 	clubHeaders(w)
-	if !s.clubsOn(w) {
+	if _, ok := s.boxOn(w, r.PathValue("id")); !ok {
 		return
 	}
 	if s.Reports == nil {
@@ -215,7 +215,7 @@ func (s *Server) holdReportedClub(w http.ResponseWriter, r *http.Request, id str
 // reportClubReason adds the written reason to a report already filed.
 func (s *Server) reportClubReason(w http.ResponseWriter, r *http.Request) {
 	clubHeaders(w)
-	if !s.clubsOn(w) {
+	if _, ok := s.boxOn(w, r.PathValue("id")); !ok {
 		return
 	}
 	if s.Reports == nil {

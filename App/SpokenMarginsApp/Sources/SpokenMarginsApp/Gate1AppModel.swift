@@ -260,7 +260,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var spokenMarginsPackageImportReview: SpokenMarginsPackageImportReview? { didSet { packageImport.adoptReviewFromViews(spokenMarginsPackageImportReview) } }
     @Published var isImportingSpokenMarginsPackage = false { didSet { packageImport.adoptIsImportingFromViews(isImportingSpokenMarginsPackage) } }
     @Published var spokenMarginsPackageImportError: String? { didSet { packageImport.adoptErrorFromViews(spokenMarginsPackageImportError) } }
-    private(set) lazy var packageImport = SpokenMarginsPackageImportCoordinator(environment: .live(model: self))
+    private(set) lazy var packageImport = SpokenMarginsPackageImportCoordinator(environment: .live(model: self)); private(set) lazy var replyBoxes = ReplyBoxCoordinator(model: self) // answers through share links (#4675)
     @Published var pendingImportedCommentary: ImportedCommentaryPrompt? {
         didSet {
             if oldValue?.id != pendingImportedCommentary?.id {
@@ -977,7 +977,7 @@ final class Gate1AppModel: ObservableObject {
         OnDeviceVoiceGovernor.app.setAppBackgrounded(true) // every on-device voice is paced while away (#1679)
         syncPlaybackProgressForLifecycle(refreshingItem: false) // saves the position; re-reading the item decoded a mapped transcript on main as iOS waited, unseen (#2184)
         refreshLockScreenSurfacesForLifecycle()
-        scheduleAutomaticAudioPreparationIfNeeded()
+        scheduleAutomaticAudioPreparationIfNeeded(); if entersBackground { replyBoxes.appLeftFront() } // a reply-box check never runs away from the front (#4675)
     }
 
     private func reflectTextAudioPrewarmStatusIfActive(itemId: String) {
@@ -1012,7 +1012,7 @@ final class Gate1AppModel: ObservableObject {
         backgroundRefresh.requestAnnouncement() // the reload that publishes also announces audio that finished while away and schedules audio and episode-map preparation (they walk the fresh rows)
         refreshLibraryRowsInBackground(mustPublish: true)
         if canPrepareLibraryAudio { startForegroundAudioPreparationIfNeeded() } // a background task may have ended while the app was away (#534)
-        refreshQuickAddFeed(force: false, trigger: .foreground)
+        refreshQuickAddFeed(force: false, trigger: .foreground); replyBoxes.appBecameActive() // answers through share links, at most every 2 minutes (#4675)
     }
 
     func clearReproducibleOfflineAudio() {

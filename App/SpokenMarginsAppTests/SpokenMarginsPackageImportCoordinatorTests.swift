@@ -1262,3 +1262,94 @@ private final class ImportHarness {
         )
     }
 }
+
+// MARK: A reply box's quiet import (#4675)
+
+/// `stageQuietly`, the import a reply box's pickup runs for each fetched answer (`docs/design/reply-mailbox.md` piece 7):
+/// no review, no banner of its own, no navigation; only an answer placed on the shared item gets in.
+extension SpokenMarginsPackageImportCoordinatorTests {
+    private func replyBoxRecord(itemId: String) -> ReplyBoxRecord {
+        ReplyBoxRecord(
+            box: .random(), linkId: String(repeating: "a", count: 32), itemId: itemId, sharedPackageDigest: "sha256:shared",
+            createdAt: Date(), expiresAt: Date().addingTimeInterval(30 * 86_400)
+        )
+    }
+
+    /// The sender's own copy of the essay, made here the way a friend's file makes one, and the sides cleared after.
+    private func seedSharedItem(in h: ImportHarness) async throws -> String {
+        let first = try h.writePacket(named: "alpha", text: Self.alphaText)
+        assertStaged(await h.coordinator.stage(from: first.url))
+        await h.confirmCurrentReview()
+        h.confirmations.removeAll()
+        h.shownItems.removeAll()
+        h.openedItems.removeAll()
+        h.events.removeAll()
+        return "item-shared-\(first.digest.prefix(20))"
+    }
+
+    func testAQuietImportOfAnAnswerToTheSharedItemRaisesBannerCAndNothingElse() async throws {
+        let h = try makeHarness()
+        let itemId = try await seedSharedItem(in: h)
+        let answer = try h.writePacket(named: "answer", text: Self.alphaText, notes: ["An answer from the browser."])
+        let record = replyBoxRecord(itemId: itemId)
+
+        let outcome = await h.coordinator.stageQuietly(from: answer.url, for: record)
+
+        guard case .imported(let imported) = outcome else { return XCTFail("expected an import, got \(outcome)") }
+        XCTAssertEqual(try h.store.loadImportedCommentaryLayer(packageDigest: answer.digest)?.itemId, itemId, "on the shared item")
+        XCTAssertEqual(imported.itemTitle, "Essay alpha", "the sender's own Library title")
+        XCTAssertEqual(imported.newMarginCount, 1)
+        let banner = try XCTUnwrap(ReplyArrivalWords.banner(for: [ReplyArrival(
+            boxId: record.boxId, seq: 1, layerId: imported.layerId, itemId: itemId, itemTitle: imported.itemTitle,
+            senderLabel: imported.senderLabel, newMarginCount: imported.newMarginCount)]))
+        XCTAssertEqual(banner.text, "Cole answered you on Essay alpha")
+        XCTAssertEqual(banner.destination, .item(id: itemId))
+        XCTAssertEqual(h.confirmations, [], "banner C is the only output: no arrival words of the import's own")
+        XCTAssertEqual(h.shownItems, [], "nothing opens")
+        XCTAssertEqual(h.openedItems, [])
+        XCTAssertEqual(h.events, [], "no review, no importing flag, no error")
+        XCTAssertNil(h.coordinator.review)
+        XCTAssertEqual(h.openFailures.count, 0)
+        XCTAssertEqual(h.failures, [])
+
+        // Fetched again (a relaunch between the fetch and the cursor): the same layer, nothing new to announce.
+        guard case .imported(let again) = await h.coordinator.stageQuietly(from: answer.url, for: record) else {
+            return XCTFail("a packet already in comes back as the same layer")
+        }
+        XCTAssertEqual(again.layerId, imported.layerId)
+        XCTAssertEqual(again.newMarginCount, 0)
+        XCTAssertEqual(h.shownItems, [], "the duplicate never opens its item either")
+    }
+
+    func testAQuietImportDropsAnotherItemsPacketSilently() async throws {
+        let h = try makeHarness()
+        let itemId = try await seedSharedItem(in: h)
+        let other = try h.writePacket(named: "beta", text: Self.betaText)
+        let foldersBefore = h.incomingFolderNames()
+
+        let outcome = await h.coordinator.stageQuietly(from: other.url, for: replyBoxRecord(itemId: itemId))
+
+        guard case .dropped = outcome else { return XCTFail("another item's packet must be dropped, got \(outcome)") }
+        XCTAssertNil(try h.store.loadImportedCommentaryLayer(packageDigest: other.digest), "nothing saved")
+        XCTAssertNil(try? h.store.loadItem(id: "item-shared-\(other.digest.prefix(20))"), "no item added to the Library")
+        XCTAssertTrue(h.diagnostics["lastReplyBoxImport"]?.hasPrefix("dropped:") == true)
+        XCTAssertEqual(h.openFailures.count, 0, "a silent drop: no failure sheet")
+        XCTAssertEqual(h.failures, [])
+        XCTAssertEqual(h.confirmations, [])
+        XCTAssertNil(h.coordinator.review, "never offered for review")
+        XCTAssertEqual(h.incomingFolderNames(), foldersBefore, "its working folder is gone")
+    }
+
+    func testAQuietImportOfAnUnreadableFileIsADropNotASheet() async throws {
+        let h = try makeHarness()
+        let itemId = try await seedSharedItem(in: h)
+        let junk = h.root.appendingPathComponent("junk.spokenmargins")
+        try Data("not a zip".utf8).write(to: junk)
+
+        let outcome = await h.coordinator.stageQuietly(from: junk, for: replyBoxRecord(itemId: itemId))
+
+        XCTAssertEqual(outcome, .dropped(.unreadable))
+        XCTAssertEqual(h.openFailures.count, 0)
+        XCTAssertEqual(h.failures, [])
+    }
+}

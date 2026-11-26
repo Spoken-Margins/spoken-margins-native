@@ -59,7 +59,10 @@ public struct LibraryRowLines: Equatable, Sendable {
         guard shared.new > 0 else { return count }
         let from: String
         switch shared.senders.count {
-        case 1: from = "from \(shared.senders[0].name)"
+        case 1:
+            // A browser friend who typed no name arrives with an empty one (#4675): never "new from " with nothing after it.
+            let name = shared.senders[0].name.trimmingCharacters(in: .whitespacesAndNewlines)
+            from = name.isEmpty ? "from a friend" : "from \(name)"
         case 0: from = "from a friend"
         default: from = "from friends"
         }

@@ -125,7 +125,8 @@ It also says there is "no developer-operated … backend", but rows 1 and 2 use 
 > 2. Settings › **Hidden senders** lists everyone you have hidden, each with **Show again**.
 > 3. To hide one Margin and keep the rest, tap **Hide this Margin** on its card in the item, or open it from the Margins tab and tap **Hide this Margin**. It disappears from every list and from playback on this phone. Settings › **Hidden Margins** lists each one with **Show again**.
 > 4. Margins that came from a share link also show **Report this link**, which opens the link's page in the browser, where a short form needs no account. The server stops serving a reported link at once and the developer reads the report record and can remove a link by its id. Nobody reads the reported content, because shares are end-to-end encrypted.
-> 5. The contact address for anything else is in Settings › Help & Diagnostics › Support.
+> 5. A friend who opens your share link in a browser can answer through it (#4675). Answers reach only the phone that made the link; the link lets a friend add an answer but never read the box. On an answer's card, About offers **Stop answers through this link**, after which new answers through that link don't arrive, and **Report this answer**, a short in-app form that sends the report to the developer and, by default, also stops answers. A reported answer is hidden on this phone at once.
+> 6. The contact address for anything else is in Settings › Help & Diagnostics › Support.
 >
 > **Voices:** the James and Lily voices run on the device. They require accepting the in-app Terms of Use, which supplement Apple's standard EULA. The system voice works without it.
 >

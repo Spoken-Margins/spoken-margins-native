@@ -426,6 +426,7 @@ extension SpokenMarginsPackageImportCoordinator.Environment {
                 guard let model else { return }
                 try await model.reloadLibraryRowsOffMain(store: store) // on screen when it returns, as the direct read was
             },
+            refreshSelectedItemQuietly: { [weak model] in model?.refreshSelectedItemInBackground() },
             labels: model.hangTelemetry.labels
         )
     }
