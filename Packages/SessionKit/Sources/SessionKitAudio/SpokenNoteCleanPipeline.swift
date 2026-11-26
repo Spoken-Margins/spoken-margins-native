@@ -73,11 +73,11 @@ public struct SpokenNoteCleanPipeline: Sendable {
                 cut = saved.cut
             } else {
                 let flags = try silentFlags(url)
+                var cutFingerprint = takeFingerprint
                 if version == .withoutUms {
                     do {
                         let segments = try await transcriber.transcribe(fileAt: url)
                         cut = SpokenNoteTakeCut.make(withoutUms: segments, silentFlags: flags.flags, durationMs: flags.durationMs)
-                        try SpokenNoteCleanFiles.write(SpokenNoteCutFile(takeFingerprint: takeFingerprint, cut: cut), to: cutURL)
                     } catch {
                         if error is CancellationError || Task.isCancelled { throw CancellationError() }
                         // A take the transcriber can't read (often one with no speech) still has its pauses shortened,
@@ -85,12 +85,12 @@ public struct SpokenNoteCleanPipeline: Sendable {
                         transcriptFailures += 1
                         lastTranscriptError = error
                         cut = SpokenNoteTakeCut.make(words: [], silentFlags: flags.flags, durationMs: flags.durationMs)
-                        try SpokenNoteCleanFiles.write(SpokenNoteCutFile(takeFingerprint: untranscribedFingerprint, cut: cut), to: cutURL)
+                        cutFingerprint = untranscribedFingerprint
                     }
                 } else {
                     cut = SpokenNoteTakeCut.make(words: [], silentFlags: flags.flags, durationMs: flags.durationMs)
-                    try SpokenNoteCleanFiles.write(SpokenNoteCutFile(takeFingerprint: takeFingerprint, cut: cut), to: cutURL)
                 }
+                try SpokenNoteCleanFiles.write(SpokenNoteCutFile(takeFingerprint: cutFingerprint, cut: cut), to: cutURL)
             }
             doneUnits += Double(take.durationMs) * readShare
             report(doneUnits / totalUnits)
