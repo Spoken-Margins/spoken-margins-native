@@ -152,9 +152,8 @@ final class SkimStopsOwnWrittenTests: XCTestCase {
         // Two hours, a note every 24 s, and a chapter every ten minutes.
         let notes = (0..<300).map { note("n\($0)", ms: 1_000 + $0 * 24_000) }
         let chapters = (0..<12).map { mediaChapter("c\($0)", $0 * 600_000) }
-        let started = Date()
+        // No wall-clock ceiling here (docs/testing.md, "Waiting in tests" rule 7): this checks what 300 notes produce.
         let list = stops(ownWritten: notes, chapters: chapters)
-        XCTAssertLessThan(Date().timeIntervalSince(started), 2, "a generous ceiling: the arrows read the list while a view builds")
         let stopIds = Set(list.stops.map(\.id))
         for margin in notes where !stopIds.contains(margin.id) {
             let ms = try XCTUnwrap(margin.anchor.mediaTimeMs)

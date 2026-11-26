@@ -1,13 +1,22 @@
 {
-  "originHash" : "d933ccd6305ac8613083ed33daa4a8f659a05709c935c514d4bfd9119a541cb3",
+  "originHash" : "7c7284d851e2c129523c7cbe46e7c678868eb43812125ffd180b86f8818411fd",
   "pins" : [
     {
-      "identity" : "onnxruntime-swift-package-manager",
+      "identity" : "swift-asn1",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Spoken-Margins/onnxruntime-swift-package-manager.git",
+      "location" : "https://github.com/apple/swift-asn1.git",
       "state" : {
-        "revision" : "c3ec41ce3767f9c492bf9c74a781fd296e52f063",
-        "version" : "1.24.3"
+        "revision" : "97fd57437fc94cfa6b62f2b8f84c50f433534e17",
+        "version" : "1.7.5"
+      }
+    },
+    {
+      "identity" : "swift-crypto",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-crypto.git",
+      "state" : {
+        "revision" : "95ba0316a9b733e92bb6b071255ff46263bbe7dc",
+        "version" : "3.15.1"
       }
     },
     {
