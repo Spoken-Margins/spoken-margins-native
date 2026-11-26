@@ -6,6 +6,7 @@ import hashlib
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -34,6 +35,7 @@ PATH_SCHEMA_RULES = [
     ("fixtures/sharing/commentary-layer.json", "shared-commentary-layer.schema.json"),
     ("fixtures/sharing/listening-map-proposal*.json", "portable-listening-map-proposal.schema.json"),
     ("fixtures/sharing/margin-conversation.json", "margin-conversation.schema.json"),
+    ("fixtures/margins-control-center/cases.json", "margins-control-center-cases.schema.json"),
     ("fixtures/turns/*.json", "conversation-turn.schema.json", "array"),
     ("fixtures/exports/*.json", "session-export.schema.json"),
     ("fixtures/watch/offline-package.json", "watch-audio-package.schema.json"),
@@ -57,7 +59,19 @@ PATH_SCHEMA_RULES = [
     ("fixtures/voice-model-catalog/neighbour-inputs.json", "voice-model-catalog-neighbour-inputs.schema.json"),
     ("fixtures/podcast-search/test-names.json", "podcast-search-test-list.schema.json"),
     ("fixtures/podcast-search/itunes-responses/*.json", "itunes-search-response.schema.json"),
+    ("fixtures/feeds/zotero-*.json", "zotero-library-item.schema.json", "array"),
+    ("fixtures/feeds/zotero-api/group-collections.json", "zotero-collection.schema.json", "array"),
+    ("fixtures/feeds/zotero-api/collection-record.json", "zotero-collection.schema.json"),
+    ("fixtures/feeds/zotero-api/group-record.json", "zotero-group.schema.json"),
+    ("fixtures/feeds/pubmed-rss/*.xml", "pubmed-rss.schema.json", "pubmed-rss"),
+    ("fixtures/copy-length-note/cases.json", "copy-length-note-cases.schema.json", "array"),
+    ("quiz/find-something.v1.json", "find-something-quiz.schema.json"),
+    ("fixtures/find-something/prompt-*.json", "find-something-prompt-fixture.schema.json"),
+    ("fixtures/find-something/paste-*.json", "find-something-paste-fixture.schema.json"),
+    ("fixtures/find-something/title-match.json", "find-something-title-match.schema.json"),
     ("traces/*.json", "session-trace.schema.json"),
+    ("fixtures/share-link-attest/requests/*.json", "share-link-attest-request.schema.json"),
+    ("fixtures/share-link-attest/responses/*.json", "share-link-attest-response.schema.json"),
 ]
 
 NEGATIVE_PATH_SCHEMA_RULES = [
@@ -67,6 +81,7 @@ NEGATIVE_PATH_SCHEMA_RULES = [
     ("fixtures/invalid/voice-model-catalog/*.json", "voice-model-catalog-envelope.schema.json"),
     ("fixtures/invalid/voice-model-catalog-payload/*.json", "voice-model-catalog.schema.json"),
     ("fixtures/invalid/listening-signals/*.json", "i4-engagement.schema.json"),
+    ("fixtures/invalid/find-something-quiz/*.json", "find-something-quiz.schema.json"),
 ]
 
 # Remote source catalogs (seam I2): the published catalog and its manifest, and each
@@ -117,10 +132,47 @@ def load_json(path: Path):
         return json.load(handle)
 
 
+PUBMED_DC = "{http://purl.org/dc/elements/1.1/}"
+PUBMED_CONTENT = "{http://purl.org/rss/1.0/modules/content/}encoded"
+
+
+def pubmed_rss_summary(path: Path) -> dict:
+    """A recorded PubMed search RSS reply read into the fields PubMedPaperReader reads (#5201)."""
+    channel = ElementTree.parse(path).getroot().find("channel")
+    if channel is None:
+        return {}
+
+    def text(element, name):
+        found = element.find(name)
+        return found.text if found is not None and found.text is not None else None
+
+    def present(fields):
+        return {key: value for key, value in fields.items() if value is not None}
+
+    items = []
+    for item in channel.findall("item"):
+        items.append(present({
+            "title": text(item, "title"),
+            "guid": text(item, "guid"),
+            "pubDate": text(item, "pubDate"),
+            "date": text(item, PUBMED_DC + "date"),
+            "source": text(item, PUBMED_DC + "source"),
+            "creators": [c.text or "" for c in item.findall(PUBMED_DC + "creator")],
+            "identifiers": [i.text or "" for i in item.findall(PUBMED_DC + "identifier")],
+            "content": text(item, PUBMED_CONTENT),
+        }))
+    return present({"generator": text(channel, "generator"), "title": text(channel, "title"), "items": items})
+
+
 def validate_file(path: Path, schema_path: Path, mode: str | None = None) -> list[str]:
     schema = load_json(schema_path)
     validator = Draft202012Validator(schema, format_checker=FormatChecker())
-    if mode == "jsonl":
+    if mode == "pubmed-rss":
+        try:
+            instances = [pubmed_rss_summary(path)]
+        except ElementTree.ParseError as error:
+            return [f"{path}: not XML: {error}"]
+    elif mode == "jsonl":
         with path.open("r", encoding="utf-8") as handle:
             instances = [json.loads(line) for line in handle if line.strip()]
     else:

@@ -384,6 +384,74 @@ final class SubstackSourceElementsTests: XCTestCase {
         XCTAssertEqual(try tables("Price -- not a | table\n\n\(prose("More"))"), [])
     }
 
+    private let tableBlock = "| A | B |\n| --- | --- |\n| 1 | 2 |"
+
+    /// #4451: the page shows code in a fence as code, so table-like text in one is no Table row. A fence is three or
+    /// more backticks or tildes, indented up to three spaces, closed by the same mark at least as long; an unclosed
+    /// fence runs to the end. A line like "```code```" is inline code and opens nothing.
+    func testTableLikeTextInACodeFenceIsNotATable() throws {
+        XCTAssertEqual(try tables("```\n\(tableBlock)\n```"), [], "backtick fence")
+        XCTAssertEqual(try tables("~~~\n\(tableBlock)\n~~~"), [], "tilde fence")
+        XCTAssertEqual(try tables("```markdown\n\(tableBlock)\n```"), [], "a fence with an info string")
+        XCTAssertEqual(try tables("   ```\n\(tableBlock)\n   ```"), [], "a fence indented three spaces")
+        XCTAssertEqual(try tables("````\n```\n\(tableBlock)\n```\n````"), [], "a shorter fence does not close a longer one")
+        XCTAssertEqual(try tables("~~~\n```\n\(tableBlock)\n```\n~~~"), [], "another mark does not close a fence")
+        XCTAssertEqual(try tables("```\n\(tableBlock)"), [], "an unclosed fence runs to the end")
+        XCTAssertEqual(try tables("```\ncode\n```\n\n\(tableBlock)").map(\.label), ["A · B"], "a table after a closed fence")
+        XCTAssertEqual(try tables("\(tableBlock)\n\n```\n\(tableBlock)\n```").map(\.label), ["A · B"], "only the one outside the fence")
+        XCTAssertEqual(try tables("```not a fence```\n\n\(tableBlock)").map(\.label), ["A · B"], "inline code opens no fence")
+        XCTAssertEqual(try tables("```\ncode\n``` trailing\n\(tableBlock)\n```").map(\.label), [],
+                       "a closing mark with words after it does not close")
+        XCTAssertEqual(try tables("| A | B |\n| --- | --- |\n| 1 | 2 |\n```\n| 3 | 4 |\n```").first?.rows, [["A", "B"], ["1", "2"]],
+                       "a fence ends the table above it and its lines are not rows")
+    }
+
+    /// The same class: a picture or a link written inside a fence is code too. The text is exactly what it was.
+    func testPicturesAndLinksInACodeFenceAreNotElements() throws {
+        let fenced = "```\nsee [a](https://a.example/x)\n\n![](https://substackcdn.com/image/c.jpg)\n[![p](https://substackcdn.com/image/d.jpg)](https://a.example/y)\n```"
+        let markdown = "# Post\n\n\(prose("Lead"))\n\n\(fenced)\n\n[outside](https://b.example/z)\n\n\(prose("Tail"))"
+        let parsed = try parse(markdown)
+        XCTAssertEqual(parsed.elements.map(\.kind), [.link])
+        XCTAssertEqual(parsed.elements.first?.url, "https://b.example/z")
+        let without = try ObsidianMarkdownParser.parse(fileName: "Rates", contents: markdown, fallbackTitle: "Rates")
+        XCTAssertEqual(parsed.text, without.text)
+    }
+
+    /// #4451, GFM: a table is broken at the first blank line or the start of another block; every other line below the
+    /// divider is a body row, with or without a pipe, padded to the header's width.
+    func testRowsWithoutAPipeAfterATableAreDecidedByGFM() throws {
+        XCTAssertEqual(try tables("\(tableBlock)\nplain row").first?.rows, [["A", "B"], ["1", "2"], ["plain row", ""]],
+                       "a line with no pipe is a body row")
+        XCTAssertEqual(try tables("\(tableBlock)\nplain row\n| 3 | 4 |").first?.rows,
+                       [["A", "B"], ["1", "2"], ["plain row", ""], ["3", "4"]], "and the table goes on after it")
+        XCTAssertEqual(try tables("\(tableBlock)\nsee this | that").first?.rows, [["A", "B"], ["1", "2"], ["see this", "that"]],
+                       "a paragraph line with a pipe is a body row too (GFM)")
+        XCTAssertEqual(try tables("\(tableBlock)\n\nplain line").first?.rows, [["A", "B"], ["1", "2"]], "a blank line ends it")
+        XCTAssertEqual(try tables("\(tableBlock)\n   \nplain line").first?.rows, [["A", "B"], ["1", "2"]], "so does a line of spaces")
+        for block in ["> quote", "# Heading", "## Heading ##", "- item", "* item", "+ item", "1. item", "2) item", "---", "* * *",
+                      "___", "<div>", "<!-- note -->", "```", "~~~"] {
+            XCTAssertEqual(try tables("\(tableBlock)\n\(block)").first?.rows, [["A", "B"], ["1", "2"]], "\(block) starts another block")
+        }
+        for notABlock in ["#hashtag", "-5 degrees", "*emphasis* here", "1.5 million", "2024 was a year", "<3 love", "--", "~~strike~~"] {
+            XCTAssertEqual(try tables("\(tableBlock)\n\(notABlock)").first?.rows?.count, 3, "\(notABlock) is a body row")
+        }
+        for inline in ["<a href=\"x\">link</a> | y", "<em>x</em> | y", "<https://a.example> | y", "<span>a</span>", "    - item", "    # code"] {
+            XCTAssertEqual(try tables("\(tableBlock)\n\(inline)").first?.rows?.count, 3, "\(inline) is a body row")
+        }
+        for html in ["<div>", "<p>text", "</div>", "<table>", "<br/>", "<custom-tag>", "<?php", "<!DOCTYPE html>", "  <hr>"] {
+            XCTAssertEqual(try tables("\(tableBlock)\n\(html)").first?.rows?.count, 2, "\(html) starts an HTML block")
+        }
+        // A picture on a line of its own under a table is a picture, not a row of cells.
+        let withPicture = try parse("# Post\n\n\(prose("Lead"))\n\n\(tableBlock)\n![](https://substackcdn.com/image/c.jpg)\nCaption words.\n\n\(prose("Tail"))")
+        XCTAssertEqual(withPicture.elements.map(\.kind), [.table, .picture])
+        XCTAssertEqual(withPicture.elements.first?.rows, [["A", "B"], ["1", "2"]])
+        XCTAssertEqual(try tables("\(tableBlock)\n\\|").first?.rows?.last, ["|", ""], "a lone escaped pipe is a one-cell row")
+        // The page text never changes, only the preview grid.
+        let markdown = "# Post\n\n\(prose("Lead"))\n\n\(tableBlock)\nplain row\n\n\(prose("Tail"))"
+        let without = try ObsidianMarkdownParser.parse(fileName: "Rates", contents: markdown, fallbackTitle: "Rates")
+        XCTAssertEqual(try parse(markdown).text, without.text)
+    }
+
     func testARecordWithATableRoundTripsAndAnOlderReaderSkipsIt() throws {
         let table = SourceElement(id: "e00000", kind: .table, start: 3, label: "A · B", url: "", rows: [["A", "B"], ["1", "2"]])
         let picture = SourceElement(id: "e00001", kind: .picture, start: 9, label: "P", url: "https://x.example/p.jpg")

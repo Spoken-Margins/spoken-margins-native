@@ -181,6 +181,10 @@ public struct LiveSessionMargin: Codable, Equatable, Sendable, Identifiable {
     public var photoPlace: LiveSessionPlace?
     /// True once the photo has been read for a page number, whether or not it had one, so it is read once.
     public var photoRead: Bool?
+    /// What our own player was playing when this Margin was taken, kept when filing put it in a session instead of on that
+    /// item (#4233, PR 5). Only a later move onto that item reads it; filing never does. Optional, so a session saved by an
+    /// earlier build still reads, and an earlier build re-saving the session drops only this hint.
+    public var playingThen: LiveSessionPlayingThen?
 
     public init(
         id: String, text: String, markedAt: Date, sessionOffsetMs: Int = 0, whereNote: String? = nil, isBlindMark: Bool = false,
@@ -211,6 +215,42 @@ public struct LiveSessionMargin: Codable, Equatable, Sendable, Identifiable {
     public var spokenTranscript: String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return isSpoken && !trimmed.isEmpty ? trimmed : nil
+    }
+}
+
+/// The item our own player was playing when a Margin that went into a live session was taken (#4233 Design 2.9.1).
+/// It outlives the player's in-memory runs, which are lost at relaunch. It is evidence, never a place: a move onto
+/// `itemId` may use `positionMs` only when the item has a media clock and the position is inside it.
+public struct LiveSessionPlayingThen: Codable, Equatable, Sendable {
+    /// Where the item and position came from.
+    public enum Source: String, Codable, Equatable, Sendable {
+        /// The player's own record of playing the item.
+        case playerRun
+        /// The item the listener chose on the Watch ("On this episode"), with the position the Watch saw, if any.
+        case watchTarget
+        /// A source this build doesn't know (a later build's), read so the session still opens.
+        case unknown
+
+        public init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = Source(rawValue: raw) ?? .unknown
+        }
+    }
+
+    public var itemId: String
+    /// Nil when nothing said where on the item it was (a Watch target with no position).
+    public var positionMs: Int?
+    public var source: Source
+    /// The file that played, whose clock `positionMs` is on: a spoken note's Shorter pauses version runs on its own
+    /// (#4779). Nil when not known (a Watch's own position, or a hint saved before it was kept). An optional key, so a
+    /// build that doesn't know it still opens the session.
+    public var playingMediaURL: String?
+
+    public init(itemId: String, positionMs: Int?, source: Source, playingMediaURL: String? = nil) {
+        self.itemId = itemId
+        self.positionMs = positionMs
+        self.source = source
+        self.playingMediaURL = playingMediaURL
     }
 }
 

@@ -112,6 +112,9 @@ VERSION_MILESTONE = re.compile(r'^\d+(?:\.\d+)+$')
 RELEASE_ALIASES = {'Showcase': '0.2'}    # until the owner renames the milestone (#3636)
 CLAIM_STALE = dt.timedelta(hours=6)      # another thread's claim this old and quiet is released
 STALL_GRACE = dt.timedelta(hours=1)      # the Mac finisher gets this long on a stalled PR first
+# A merge conflict needs no Mac and no person: merging main in is the whole fix, so the worker takes it on its next tick
+# instead of leaving it an hour for the finisher (owner, 2026-11-24). lane_conflicts.py marks its hand-off this way.
+CONFLICT_MARK_RE = re.compile(r'<!-- lane-conflict(?:-no-merge-ref)? head=')
 FAULT_COOLDOWN = dt.timedelta(minutes=30)
 MAX_FAULTS = 3             # faults in a row (within FAULT_WINDOW) before an issue is parked as blocked
 FAULT_WINDOW = dt.timedelta(hours=24)
@@ -171,7 +174,7 @@ def pacing_hold(gate, now: dt.datetime, dial: dict, usage_info: dict, free_bytes
     holds exactly when the Dial would not wake the project, plus the Mac's disk and memory."""
     if dial['mode'] == 'off' or dial['threads'] == 0:
         return 'the Dial is Off or allows 0 Claude threads'
-    if usage_info['halted']:
+    if gate.breaker_holds(dial, usage_info):   # Cloud max ignores it, as the Dial says
         return 'the Mac tick says HALT (usage breaker: Claude)'
     if free_bytes is not None and free_bytes < MIN_FREE_GIB * 2**30:
         return f'only {free_bytes / 2**30:.0f} GiB free disk (needs {MIN_FREE_GIB})'
@@ -555,9 +558,13 @@ def stalled_since(pr: dict) -> Optional[str]:
     if report:
         return 'lane FAIL on head', comment_time(report)
     if 'needs-mac' in label_names(pr):
-        handing = max((comment_time(c) for c in comments if HANDING_RE.match(c.get('body') or '')),
-                      default=pr.get('createdAt') or '')
-        return 'needs-mac', handing
+        handoffs = [c for c in comments if HANDING_RE.match(c.get('body') or '')]
+        if not handoffs:
+            return 'needs-mac', pr.get('createdAt') or ''
+        newest = max(handoffs, key=comment_time)
+        if CONFLICT_MARK_RE.search(newest.get('body') or ''):
+            return 'merge conflict', comment_time(newest)
+        return 'needs-mac', comment_time(newest)
     return None
 
 
@@ -583,7 +590,8 @@ def finish_eligible(pr: dict, now: dt.datetime, held: set = frozenset()) -> tupl
         return False, 'touches lane machinery'
     comments = pr.get('comments') or []
     try:
-        if not at or now - parse_time(at) < STALL_GRACE:
+        grace = dt.timedelta(0) if why == 'merge conflict' else STALL_GRACE
+        if not at or now - parse_time(at) < grace:
             return False, f'{why}, but under an hour old: the Mac finisher goes first'
     except ValueError:
         return False, f'{why}, but its time is unreadable'
@@ -687,8 +695,10 @@ def build_issue_prompt(number: int, title: str, body: str, branch: str, run: int
         f'- Work until the PR is open into `{BASE_BRANCH}` with "Closes #{number}", has the `automerge` label and, '
         'if the diff needs simulator tests, its `/lane T3` request with `lane:queued`. Before arming, have a '
         'fresh-context helper agent review your diff against the issue\'s Done when and Must not break, and fix '
-        'what it finds. Run `.venv/bin/python scripts/verify-tests.py --plan fast` before pushing, and write a '
-        'regression test that fails without the fix. Then stop: the next job is chosen by the worker, not you.',
+        'what it finds. Build the whole issue in this one PR, even if the issue plans several steps (Cole, '
+        '2026-11-23). Before pushing, run only the host tests your change touches (`scripts/test-scope.py` names '
+        'them; the lane runs the full suites), and write a regression test that fails without the fix. Then stop: '
+        'the next job is chosen by the worker, not you.',
         '- Do not post stop notes, claim notes or hand-offs: the wrapper does.',
     ]
     return '\n'.join(lines)
@@ -994,8 +1004,11 @@ class Ops:
             return f'error: {exc}'
         try:
             report = json.loads(res.stdout or '')
-            told = (f"{len(report.get('card_missing', []))} card missing, {len(report.get('labelled', []))} labelled, "
-                    f"{len(report.get('unknown', []))} unknown")
+            ended = len(report.get('ended_by_merge', []))
+            told = ', '.join([f"{len(report.get('card_missing', []))} card missing",
+                              f"{len(report.get('labelled', []))} labelled"]
+                             + ([f'{ended} ended by merge'] if ended else [])
+                             + [f"{len(report.get('unknown', []))} unknown"])
         except (ValueError, AttributeError, TypeError):
             told = one_line(res.stderr or res.stdout or 'no output')
         return f'exit {res.returncode}: {told}'

@@ -39,17 +39,25 @@ extension Gate1AppModel {
         if let preparedAudioCoordinator { return preparedAudioCoordinator }
         let coordinator = PreparedAudioCoordinator(
             repository: store,
-            rootDirectory: supportDirectory.appending(path: "PreparedAudio", directoryHint: .isDirectory)
+            rootDirectory: supportDirectory.appending(path: "PreparedAudio", directoryHint: .isDirectory),
+            report: preparedAudioReport
         )
         preparedAudioCoordinator = coordinator
         return coordinator
+    }
+
+    /// Where the prepared-audio coordinator says it dropped chunks or started a manifest over, so the Diagnostics export
+    /// answers what happened to a listener's prepared audio (#4383).
+    var preparedAudioReport: @Sendable (String, String) -> Void {
+        { [weak self] key, value in Task { @MainActor in self?.diagnostics[key] = value } }
     }
 
     /// The followed-source coordinator, created on first use and kept. Only `configureOfflineServices`
     /// passes the artwork file; this fallback never does, as before (#1003).
     func requireFollowedSourceCoordinator(store: SQLiteSessionStore) -> FollowedSourceCoordinator {
         if let followedSourceCoordinator { return followedSourceCoordinator }
-        let coordinator = FollowedSourceCoordinator(repository: store, signals: .app)
+        let coordinator = FollowedSourceCoordinator(repository: store, setAside: FollowingRuleInputs.setAside(store: store), signals: .app, suppressedEntry: notForMeSuppressedEntry)
+        Task { [weak self] in await self?.loadNotForMe() } // read early; a refresh round still awaits it (#4285)
         followedSourceCoordinator = coordinator
         return coordinator
     }

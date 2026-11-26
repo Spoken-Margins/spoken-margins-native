@@ -1,0 +1,128 @@
+[
+    {
+        "key": "5B74JAMI",
+        "version": 8180,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/5B74JAMI",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/5B74JAMI",
+                "type": "text/html"
+            },
+            "up": {
+                "href": "https://api.zotero.org/groups/2205533/items/JA3W6QNM",
+                "type": "application/json"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "numChildren": 0
+        },
+        "data": {
+            "key": "5B74JAMI",
+            "version": 8180,
+            "parentItem": "JA3W6QNM",
+            "itemType": "attachment",
+            "linkMode": "imported_url",
+            "title": "Full Text PDF",
+            "accessDate": "2025-04-30T00:34:44Z",
+            "url": "https://etd.ohiolink.edu/acprod/odb_etd/ws/send_file/send?accession=osu148674672383062&disposition=inline",
+            "note": "",
+            "contentType": "application/pdf",
+            "charset": "",
+            "filename": "Adams - 1974 - Building a foundation for evaluation of instruction in higher education and continuing education .pdf",
+            "md5": null,
+            "mtime": null,
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-04-30T00:34:44Z",
+            "dateModified": "2025-04-30T00:34:44Z"
+        }
+    },
+    {
+        "key": "577MVUDU",
+        "version": 7038,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/items/577MVUDU",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/items/577MVUDU",
+                "type": "text/html"
+            },
+            "up": {
+                "href": "https://api.zotero.org/groups/2205533/items/MZCKNDMM",
+                "type": "application/json"
+            }
+        },
+        "meta": {
+            "createdByUser": {
+                "id": 254032,
+                "username": "dunning",
+                "name": "Andrew Dunning",
+                "links": {
+                    "alternate": {
+                        "href": "https://www.zotero.org/dunning",
+                        "type": "text/html"
+                    }
+                }
+            },
+            "numChildren": 0
+        },
+        "data": {
+            "key": "577MVUDU",
+            "version": 7038,
+            "parentItem": "MZCKNDMM",
+            "itemType": "attachment",
+            "linkMode": "imported_url",
+            "title": "Full Text",
+            "accessDate": "2025-04-14T07:00:34Z",
+            "url": "https://europepmc.org/articles/pmc2982237?pdf=render",
+            "note": "",
+            "contentType": "application/pdf",
+            "charset": "",
+            "filename": "Wroe et al. - 2010 - The craniomandibular mechanics of being human.pdf",
+            "md5": null,
+            "mtime": null,
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2025-04-14T07:00:34Z",
+            "dateModified": "2025-04-14T07:00:34Z"
+        }
+    }
+]

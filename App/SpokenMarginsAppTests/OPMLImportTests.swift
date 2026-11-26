@@ -126,6 +126,17 @@ final class OPMLImportTests: XCTestCase {
         XCTAssertEqual(refreshCount, 0)
     }
 
+    /// #4858: a Shortcut's home-network feed opens unticked, so Follow N counts only the rest; nothing is fetched.
+    func testAShortcutsHomeNetworkFeedOpensUnticked() async throws {
+        let importer = makeImporter()
+        importer.load(feedLinks: ["Pod One https://feeds.example.com/one.xml", "My NAS http://nas.local/podcast.xml"])
+        let shown = try preview(importer)
+        XCTAssertEqual(shown.toFollow.map(\.title), ["Pod One", "My NAS"])
+        XCTAssertEqual(importer.selected, [shown.toFollow[0].id])
+        XCTAssertEqual(OPMLImportPreviewWords.row(shown.toFollow[1], source: importer.origin.wordsSource).detail, OPMLImportPreviewWords.homeNetworkDetail)
+        XCTAssertTrue(OPMLFeedsURLProtocol.requestedPaths.isEmpty, "not one feed was fetched")
+    }
+
     func testAFeedThatFailsIsListedWithItsReasonAndTheRestStillFollow() async throws {
         let importer = makeImporter()
         importer.load(data: Data(Self.brokenFeedOPML.utf8))
@@ -178,8 +189,10 @@ final class OPMLImportTests: XCTestCase {
         let importer = try XCTUnwrap(drawer.shortcutImport)
         XCTAssertEqual(importer.origin, .shortcut)
         var fileRows = try preview(fromFile)
-        // A list of links has no title and no folders (nothing shows folders); every row is otherwise the same.
+        // A list of links has no title and no folders (nothing shows folders), so it has no lists either
+        // (#4606 builds them from the folders); every row is otherwise the same.
         fileRows.documentTitle = nil
+        fileRows.lists = []
         fileRows.alreadyFollowed = fileRows.alreadyFollowed.map { var feed = $0; feed.folders = []; return feed }
         fileRows.duplicatesInFile = fileRows.duplicatesInFile.map { var feed = $0; feed.folders = []; return feed }
         XCTAssertEqual(try preview(importer), fileRows)
@@ -222,6 +235,67 @@ final class OPMLImportTests: XCTestCase {
         XCTAssertTrue(try store.loadFeedSubscriptions().isEmpty)
     }
 
+    /// #4683, Design 2h: the AI's suggestions open the same preview under their own title and refusals; Follow reports
+    /// exactly the links it followed, and a closed preview settles those plus the ones it never offered.
+    func testTheAIsSuggestionsOpenTheSamePreviewTitledForTheAI() async throws {
+        _ = try await followMutedShowWithADismissedEntry()
+        OPMLFeedsURLProtocol.reset()
+        let drawer = CatalogDrawerModel(store: nil, subscriptions: { [] }, follow: { _ in "" }, makeOPMLImport: { [unowned self] in self.makeImporter() })
+        var closed: [OPMLImportModel] = []
+        drawer.importClosed = { closed.append($0) }
+        let passed = ["https://feeds.example.com/pod1.xml", "https://feeds.example.com/followed.xml", "https://podcasts.apple.com/us/podcast/id1", "https://feeds.example.com/blog.xml"]
+
+        XCTAssertTrue(drawer.openShortcutImport(feedLinks: passed, origin: .assistant))
+        let importer = try XCTUnwrap(drawer.shortcutImport)
+        XCTAssertEqual(importer.origin, .assistant)
+        XCTAssertEqual(OPMLImportScreen.title(for: importer.origin), "Suggested by your AI")
+        XCTAssertEqual(try preview(importer).toFollow.map(\.title), ["https://feeds.example.com/pod1.xml", "https://feeds.example.com/blog.xml"])
+        XCTAssertTrue(OPMLFeedsURLProtocol.requestedURLs.isEmpty, "nothing fetched before Follow")
+        XCTAssertEqual(importer.settledFeedLinks(), ["https://feeds.example.com/followed.xml", "https://podcasts.apple.com/us/podcast/id1"],
+                       "closing now keeps the two it offers")
+
+        var reported: [[String]] = []
+        importer.onFollowed = { reported.append($0) }
+        // Untick the blog: only Pod One is followed.
+        let blog = try XCTUnwrap(try preview(importer).toFollow.last)
+        importer.setSelected(blog, false)
+        await importer.followSelected()
+        XCTAssertEqual(reported, [["https://feeds.example.com/pod1.xml"]])
+        XCTAssertEqual(importer.settledFeedLinks(), [
+            "https://feeds.example.com/pod1.xml", "https://feeds.example.com/followed.xml", "https://podcasts.apple.com/us/podcast/id1",
+        ], "the unticked blog stays suggested")
+
+        drawer.didDismiss()
+        XCTAssertEqual(closed.map(ObjectIdentifier.init), [ObjectIdentifier(importer)], "closing the drawer tells whoever listens, once")
+    }
+
+    func testTheAIsListRefusalsNameTheAI() {
+        XCTAssertEqual(
+            OPMLImportModel.message(for: OPMLError.tooLarge, origin: .assistant),
+            "Your AI's list is more than 4 MB of text, which is more than a podcast list needs. Nothing was imported.")
+        XCTAssertEqual(OPMLImportModel.message(for: OPMLError.tooManyOutlines, origin: .assistant), "Your AI's list has more than 5,000 lines. Nothing was imported.")
+        XCTAssertTrue(OPMLImportModel.Origin.assistant.isLinkList)
+        XCTAssertTrue(OPMLImportModel.Origin.shortcut.isLinkList)
+        XCTAssertFalse(OPMLImportModel.Origin.file.isLinkList)
+        XCTAssertEqual(OPMLImportScreen.title(for: .shortcut), "Import from Apple Podcasts", "the Shortcut's title is unchanged")
+    }
+
+    func testASecondListWhileTheFirstFollowsIsTurnedAway() async throws {
+        OPMLFeedsURLProtocol.reset()
+        let gate = AsyncStream<Void>.makeStream()
+        let drawer = CatalogDrawerModel(store: nil, subscriptions: { [] }, follow: { _ in "" }, makeOPMLImport: {
+            OPMLImportModel(subscriptions: { [] }, follow: { _ in for await _ in gate.stream { break } })
+        })
+        XCTAssertTrue(drawer.openShortcutImport(feedLinks: ["https://feeds.example.com/pod1.xml"], origin: .assistant))
+        let first = try XCTUnwrap(drawer.shortcutImport)
+        first.startFollowing()
+        try await pollUntil { first.isFollowing }
+        XCTAssertFalse(drawer.openShortcutImport(feedLinks: ["https://feeds.example.com/pod2.xml"], origin: .assistant))
+        XCTAssertTrue(drawer.shortcutImport === first)
+        gate.continuation.yield()
+        gate.continuation.finish()
+    }
+
     /// The running app sets the bridge to its own drawer; each test swaps in its own and puts the app's back.
     private func withShortcutBridge(
         drawer: CatalogDrawerModel,
@@ -236,6 +310,71 @@ final class OPMLImportTests: XCTestCase {
         defer { (FollowPodcastsShortcutBridge.catalogDrawer, FollowPodcastsShortcutBridge.prepare, FollowPodcastsShortcutBridge.sheetIsOpen) = prior }
         try await body()
     }
+
+    // MARK: - #4920: Select All, Deselect All and search
+
+    func testDeselectAllFollowsNothingAndNeverCallsFollow() async throws {
+        var followCalls = 0
+        let importer = OPMLImportModel(subscriptions: { [] }, follow: { _ in followCalls += 1 })
+        importer.load(data: Data(Self.twelveShowOPML.utf8))
+        XCTAssertEqual(importer.selected.count, 12)
+        XCTAssertEqual(importer.selection?.showsSearch, true)
+        importer.deselectAllShown()
+        XCTAssertTrue(importer.selected.isEmpty)
+        await importer.followSelected()
+        XCTAssertEqual(followCalls, 0)
+        guard case .preview = importer.phase else { return XCTFail("Follow with nothing ticked stays on the preview: \(importer.phase)") }
+        XCTAssertTrue(OPMLFeedsURLProtocol.requestedURLs.isEmpty)
+    }
+
+    func testDeselectAllThenTwoSearchesFollowsExactlyTheTwoTickedFromAFile() async throws {
+        let importer = makeImporter()
+        importer.load(data: Data(Self.twelveShowOPML.utf8))
+        try await followTwoBySearch(importer)
+    }
+
+    func testDeselectAllThenTwoSearchesFollowsExactlyTheTwoTickedFromALinkList() async throws {
+        let importer = makeImporter()
+        importer.load(feedLinks: Self.twelveShowLinks)
+        XCTAssertEqual(importer.origin, .shortcut)
+        try await followTwoBySearch(importer)
+    }
+
+    private func followTwoBySearch(_ importer: OPMLImportModel) async throws {
+        XCTAssertEqual(try preview(importer).toFollow.count, 12)
+        XCTAssertEqual(importer.selection?.newRows.prefix(3).map(\.title), ["Show 1", "Show 2", "Show 3"], "A to Z, numbers by value")
+        importer.deselectAllShown()
+
+        importer.searchText = "Show 3"
+        let three = try XCTUnwrap(importer.matches?.new.first)
+        XCTAssertEqual(importer.matches?.new.map(\.title), ["Show 3"])
+        importer.setSelected(three, true)
+
+        importer.searchText = "show 7 "
+        let seven = try XCTUnwrap(importer.matches?.new.first)
+        XCTAssertEqual(seven.title, "Show 7")
+        importer.setSelected(seven, true)
+        XCTAssertEqual(importer.selection.map { $0.hiddenTickedCount(importer.matches!) }, 1)
+        XCTAssertEqual(importer.selected.count, 2, "Follow counts the ticked show the search hides")
+
+        await importer.followSelected()
+        XCTAssertEqual(importer.searchText, "", "following clears the search")
+        guard case .finished(let result) = importer.phase else { return XCTFail("\(importer.phase)") }
+        XCTAssertEqual(Set(result.followed.map(\.title)), ["Show 3", "Show 7"])
+        XCTAssertEqual(Set(try store.loadFeedSubscriptions().map(\.source.canonicalURL)), [
+            "https://feeds.example.com/show3.xml", "https://feeds.example.com/show7.xml",
+        ])
+    }
+
+    /// Twelve shows in reverse order, so the preview's A to Z order differs from the file's.
+    static let twelveShowLinks = (1...12).reversed().map { "Show \($0) https://feeds.example.com/show\($0).xml" }
+
+    static let twelveShowOPML = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <opml version="2.0"><body>
+    \((1...12).reversed().map { #"  <outline type="rss" text="Show \#($0)" xmlUrl="https://feeds.example.com/show\#($0).xml"/>"# }.joined(separator: "\n"))
+    </body></opml>
+    """
 
     /// `mixedOPML` as the lines a Shortcut passes: names before links, two in one text, and junk for the outline with no link.
     static let mixedLinks = [

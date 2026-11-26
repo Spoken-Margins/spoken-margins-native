@@ -144,8 +144,9 @@ final class EpisodeMapPreparerTests: XCTestCase {
         model.prepareEpisodeMap(itemId: "another-item")
         XCTAssertEqual(model.statusMessage, "An episode map is already being prepared.")
 
+        // `cancel(itemId:)` calls `task?.cancel()` on the main actor before it returns, so the run's flag has already
+        // flipped, or been left alone, by the next line. There is no later moment to wait for.
         model.episodeMapPreparer.cancel(itemId: "another-item")
-        try await Task.sleep(for: .milliseconds(50))
         XCTAssertFalse(task.isCancelled, "cancelling a different item must not cancel this run")
         XCTAssertEqual(model.episodeMapPreparationStatus, "Transcribing on device")
 
@@ -510,7 +511,7 @@ private final class ScriptedEpisodeTranscriber: SourceTranscriptionClient, @unch
         await counter.value
     }
 
-    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription) async throws -> TranscriptTimeline {
         let call = await counter.next()
         if let onCall { await onCall() }
         if hangFirstCall, call == 1 {

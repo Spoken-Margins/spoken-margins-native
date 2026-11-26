@@ -1,0 +1,46 @@
+# Starts main-t3 on a push to main (#4839). main-t3.yml's schedule is often dropped by GitHub (3 to 5 of about 10 a day
+# on 2026-11-21), so a merged break could sit untested for hours. This workflow does one thing: dispatch main-t3.yml
+# unless a main-t3 run did simulator work in the last 3 hours (scripts/main_t3.py kick). A skipped push is not queued;
+# the next tick tests the head. The Mac run itself is main-t3.yml's, in its one concurrency group, deciding from the
+# head's own status like a tick, so a push never makes two runs race or replaces a tick or a release cut with a run
+# that would skip.
+#
+# A dispatch made with the workflow token starts a run (workflow_dispatch is exempt from the rule that the token starts
+# nothing). Linux only, a minute per push.
+name: main-t3-push
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# One decision at a time, so two quick merges cannot both dispatch; a waiting decision is replaced by a newer one, which
+# reads the same runs and decides the same way.
+concurrency:
+  group: main-t3-push
+  cancel-in-progress: false
+
+jobs:
+  kick:
+    name: 'kick: start main-t3 if none ran in the last 3 hours'
+    # Only from the trunk.
+    if: github.ref_name == (vars.SM_TRUNK || 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write  # dispatch main-t3.yml and read its runs and jobs
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Dispatch main-t3 unless one ran lately
+        env:
+          TRUNK: ${{ vars.SM_TRUNK || 'main' }}
+        run: python3 scripts/main_t3.py kick --ref "$TRUNK"

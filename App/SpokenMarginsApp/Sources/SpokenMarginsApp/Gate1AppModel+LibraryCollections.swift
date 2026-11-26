@@ -1,25 +1,40 @@
 import Foundation
 import SessionKit
 
-/// The Library as narrowed by the collection chip (#4343). The collections and the selection live in
-/// `LibraryCollectionModel`; these are the model's reads of them.
+/// The Library's lists with collections (#3769). The collections and the Collections | All Items choice live in
+/// `LibraryCollectionModel`; the rules are `LibraryCollectionListEngine`. These are the model's reads of them.
 extension Gate1AppModel {
-    /// What the Library lists: the selected collection's rows, then the listener's filter, sort and search.
+    /// Every item row the Library's filter, sort and search keep, flat (the All Items view's rows).
     var visibleLibraryItems: [LibraryItemRow] {
-        LibraryCollectionScope.visibleLibraryItems(libraryItems, query: libraryQuery, in: libraryCollections.selection)
+        LibraryQueryEngine.visibleLibraryItems(libraryItems, query: libraryQuery)
     }
 
-    /// What "Completed hidden" adds when the finished items it hides hold a friend's Margins (#3794), or nil.
-    var libraryCompletedHiddenNote: String? {
-        LibraryQueryEngine.completedHiddenNote(LibraryCollectionScope.rows(libraryItems, in: libraryCollections.selection), query: libraryQuery)
+    /// What the Library lists in the current view: collection rows and item rows, the Continue row first.
+    func libraryListing(currentItemID: String?) -> [LibraryCollectionEntry] {
+        LibraryCollectionListEngine.listing(
+            rows: libraryItems, collections: libraryCollections.collections, imported: libraryCollections.folders,
+            query: libraryQuery, mode: libraryCollections.viewMode, currentItemID: currentItemID)
     }
 
-    /// Whether every row in scope is finished, read over the collection's own rows when one is selected.
+    /// Every collection as a row, alphabetical: the collection screen and Add to Collection read these.
+    var libraryCollectionRows: [LibraryCollectionRow] {
+        LibraryCollectionListEngine.collectionRows(
+            rows: libraryItems, collections: libraryCollections.collections, imported: libraryCollections.folders)
+    }
+
+    /// How many finished items the listening filter hides, for the line at the end of the Library (#4698).
+    var libraryCompletedHiddenCount: Int {
+        LibraryQueryEngine.completedHiddenCount(libraryItems, query: libraryQuery)
+    }
+
+    /// Whether the default view has nothing left to do, with a collection counted as one row in the Collections view.
     var libraryIsCaughtUp: Bool {
-        LibraryQueryEngine.libraryIsCaughtUp(LibraryCollectionScope.rows(libraryItems, in: libraryCollections.selection), query: libraryQuery)
+        LibraryCollectionListEngine.isCaughtUp(
+            rows: libraryItems, collections: libraryCollections.collections, imported: libraryCollections.folders,
+            query: libraryQuery, mode: libraryCollections.viewMode)
     }
 
-    /// Connects the collections to the model at launch, so its views redraw when the selection changes.
+    /// Connects the collections to the model at launch, so its views redraw when they or the view choice change.
     func wireLibraryCollections() {
         libraryCollections.forwardWillChange(to: objectWillChange)
         // A save or delete here stales any Library read already in flight, which carries the collections as they were.

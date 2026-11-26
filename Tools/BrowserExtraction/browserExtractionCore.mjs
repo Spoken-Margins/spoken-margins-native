@@ -148,6 +148,235 @@ export function captureSelectedText(globalRef, documentRef) {
   return buildPayload(globalRef, documentRef, "selected_text", "plain_text", text);
 }
 
+// A table's cells as a Markdown table, so speech announces it once ("Table not
+// read.") and Timeline draws it, instead of reading every cell as a sentence
+// (#5364). Spans are laid out on a grid: a cell's text fills every column and
+// row it covers. The first row is the header, whatever its cells are tagged.
+const TABLE_CELL_BREAKS = new Set(["td", "th", "tr", "p", "div", "br", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre"]);
+const MAX_TABLE_SPAN = 1000;
+
+function tableSpan(cell, attribute) {
+  const value = Number.parseInt(String(cell.getAttribute(attribute) ?? "").trim(), 10);
+  return Number.isFinite(value) && value >= 1 ? Math.min(value, MAX_TABLE_SPAN) : 1;
+}
+
+// The cell's words, with a space where a paragraph or line break separates
+// them. Read only: the fallback path runs on the listener's live page.
+function cellWords(node, parts) {
+  if (node.nodeType === 3) {
+    parts.push(node.nodeValue);
+    return;
+  }
+  const tag = String(node.tagName || "").toLowerCase();
+  if (tag === "script" || tag === "style") {
+    return;
+  }
+  const breaks = TABLE_CELL_BREAKS.has(tag);
+  if (breaks) {
+    parts.push(" ");
+  }
+  for (const child of Array.from(node.childNodes || [])) {
+    cellWords(child, parts);
+  }
+  if (breaks) {
+    parts.push(" ");
+  }
+}
+
+function tableCellText(cell) {
+  const parts = [];
+  for (const child of Array.from(cell.childNodes || [])) {
+    cellWords(child, parts);
+  }
+  return normalizeWhitespace(parts.join("")).replace(/\|/g, "\\|");
+}
+
+function ownTableRows(table) {
+  return Array.from(table.querySelectorAll("tr")).filter(row => row.closest("table") === table);
+}
+
+// A data table (#5364 audits): no nested table, at least two of its own rows with two or more cells (a header and a
+// body row, so a one-row table never takes over a page), and no cell that reads like a page's content: a heading, two
+// or more paragraphs, list items, quotes, code blocks or divs, a pair of line breaks, or more than 40 words. That
+// test looks at what a content cell holds, not at how it is marked up, so a sidebar beside text laid out with <p>s,
+// <div>s or <br><br> is a layout table. A layout table's text is read as the page's own blocks.
+export const DATA_TABLE_CELL_WORD_LIMIT = 40;
+
+function hasLineBreakPair(cell) {
+  let previousWasBreak = false;
+  for (const node of walkNodes(cell)) {
+    if (node.nodeType === 3) {
+      if (String(node.nodeValue || "").trim()) {
+        previousWasBreak = false;
+      }
+      continue;
+    }
+    if (node.nodeType !== 1) {
+      continue;
+    }
+    if (String(node.tagName || "").toLowerCase() === "br") {
+      if (previousWasBreak) {
+        return true;
+      }
+      previousWasBreak = true;
+    }
+  }
+  return false;
+}
+
+function walkNodes(root) {
+  const nodes = [];
+  const visit = node => {
+    for (const child of Array.from(node.childNodes || [])) {
+      nodes.push(child);
+      visit(child);
+    }
+  };
+  visit(root);
+  return nodes;
+}
+
+export function isLayoutCell(cell) {
+  if (cell.querySelector("h1,h2,h3,h4,h5,h6") || cell.querySelectorAll("p,li,blockquote,pre,div").length >= 2) {
+    return true;
+  }
+  if (hasLineBreakPair(cell)) {
+    return true;
+  }
+  return normalizeWhitespace(cell.textContent || "").split(" ").filter(Boolean).length > DATA_TABLE_CELL_WORD_LIMIT;
+}
+
+export function isDataTable(table) {
+  if (table.querySelector("table")) {
+    return false;
+  }
+  const cells = row => Array.from(row.children).filter(cell => /^(td|th)$/i.test(String(cell.tagName || "")));
+  const rows = ownTableRows(table);
+  if (rows.filter(row => cells(row).length >= 2).length < 2) {
+    return false;
+  }
+  return !rows.some(row => cells(row).some(isLayoutCell));
+}
+
+export function tableToMarkdown(table) {
+  const grid = [];
+  const tableRows = ownTableRows(table);
+  tableRows.forEach((row, rowIndex) => {
+    grid[rowIndex] ??= [];
+    let column = 0;
+    for (const cell of Array.from(row.children)) {
+      const tag = String(cell.tagName || "").toLowerCase();
+      if (tag !== "td" && tag !== "th") {
+        continue;
+      }
+      while (grid[rowIndex][column] !== undefined) {
+        column += 1;
+      }
+      const text = tableCellText(cell);
+      const columns = tableSpan(cell, "colspan");
+      // A row span never makes rows the table doesn't have.
+      const rows = Math.min(tableSpan(cell, "rowspan"), tableRows.length - rowIndex);
+      for (let down = 0; down < rows; down += 1) {
+        grid[rowIndex + down] ??= [];
+        for (let across = 0; across < columns; across += 1) {
+          grid[rowIndex + down][column + across] = text;
+        }
+      }
+      column += columns;
+    }
+  });
+  const rows = grid.filter(row => row && row.some(cell => cell));
+  const width = Math.max(0, ...rows.map(row => row.length));
+  if (!rows.length || width === 0) {
+    return "";
+  }
+  // A <caption> names the table; keep it as a line above the rows.
+  const caption = Array.from(table.children).find(child => String(child.tagName || "").toLowerCase() === "caption");
+  const captionText = caption ? tableCellText(caption).replace(/\\\|/g, "|") : "";
+  const line = row => `| ${Array.from({ length: width }, (_, index) => row[index] ?? "").join(" | ")} |`;
+  const markdown = [line(rows[0]), `| ${Array(width).fill("---").join(" | ")} |`, ...rows.slice(1).map(line)].join("\n");
+  return captionText ? `${captionText}\n\n${markdown}` : markdown;
+}
+
+// Defuddle keeps a table as HTML when any cell has a colspan or rowspan
+// attribute, even colspan="1" (alignment.anthropic.com marks every cell so),
+// and the app turns each cell's paragraph into a line of its own. Give every
+// such table back as Markdown. A table that won't parse is left as it was.
+// Defuddle writes a table it keeps as HTML on lines of its own, so only a
+// "<table" that opens a line, outside a code fence, starts one: a code sample
+// or a mention of <table> in prose is left as written. A table with no
+// closing tag is left too, and the scan goes on after it.
+const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/;
+const TABLE_LINE = /^ {0,3}<table\b/i;
+
+function htmlTableBlocks(markdown) {
+  const blocks = [];
+  const tokens = /<table\b[^>]*>|<\/table\s*>/gi;
+  let fence = null;
+  let offset = 0;
+  while (offset < markdown.length) {
+    const lineEnd = markdown.indexOf("\n", offset);
+    const next = lineEnd === -1 ? markdown.length : lineEnd + 1;
+    const line = markdown.slice(offset, lineEnd === -1 ? markdown.length : lineEnd);
+    const fenceMark = line.match(FENCE_LINE);
+    if (fence) {
+      if (fenceMark && fenceMark[1][0] === fence[0] && fenceMark[1].length >= fence.length) {
+        fence = null;
+      }
+    } else if (fenceMark) {
+      fence = fenceMark[1];
+    } else if (TABLE_LINE.test(line)) {
+      tokens.lastIndex = offset;
+      let depth = 0;
+      let end = -1;
+      for (let match = tokens.exec(markdown); match; match = tokens.exec(markdown)) {
+        depth += match[0][1] === "/" ? -1 : 1;
+        if (depth === 0) {
+          end = match.index + match[0].length;
+          break;
+        }
+      }
+      if (end !== -1) {
+        blocks.push([offset + line.length - line.trimStart().length, end]);
+        const after = markdown.indexOf("\n", end);
+        offset = after === -1 ? markdown.length : after + 1;
+        continue;
+      }
+    }
+    offset = next;
+  }
+  return blocks;
+}
+
+export function htmlTablesAsMarkdown(markdown, documentRef) {
+  const blocks = htmlTableBlocks(markdown);
+  if (!blocks.length || !documentRef?.createElement) {
+    return markdown;
+  }
+  let result = "";
+  let previous = 0;
+  for (const [start, end] of blocks) {
+    // A template parses without loading the pictures or running anything in it.
+    const holder = documentRef.createElement("template");
+    holder.innerHTML = markdown.slice(start, end);
+    const table = (holder.content || holder).querySelector("table");
+    const converted = table ? tableToMarkdown(table) : "";
+    if (!converted) {
+      result += markdown.slice(previous, end);
+    } else {
+      // Only the blank lines around the table are tidied, never the rest.
+      const before = markdown.slice(previous, start).replace(/\s*$/, "");
+      result += `${before}${before ? "\n\n" : ""}${converted}\n\n`;
+      // Skip the blank lines that followed the HTML table.
+      const rest = markdown.slice(end).match(/^\s*/)[0].length;
+      previous = end + rest;
+      continue;
+    }
+    previous = end;
+  }
+  return (result + markdown.slice(previous)).replace(/\n\n$/, previous >= markdown.length ? "" : "\n\n");
+}
+
 // Defuddle strips every element whose class or id starts with "ad-" or ends
 // with "-ad" as an advertisement. A few publishers name the article body that
 // way (e-flux: "article__body article__body--with-ad"), and then the essay
@@ -204,9 +433,9 @@ export function extractReadableMarkdown(documentRef) {
   } finally {
     restoreAdNames();
   }
-  const markdown = normalizeSocialEmbedsForReading(
+  const markdown = htmlTablesAsMarkdown(normalizeSocialEmbedsForReading(
     String(result.contentMarkdown || result.content || "")
-  ).trim();
+  ), documentRef).trim();
   if (!markdown || markdown.startsWith("Partial conversion completed with errors.")) {
     throw new Error("No readable page text was found.");
   }
@@ -221,11 +450,30 @@ export function fallbackReadableMarkdown(documentRef) {
     throw new Error("No article, main content, or page body was available.");
   }
 
-  const selector = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre";
+  const selector = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,table";
   // Parent block text includes all descendants, including nested lists and
   // quotations. Never deduplicate by prose: repeated sibling text is authored.
+  // A layout table is no block: its headings and paragraphs are (#5364 audit).
+  const dataTables = new Map();
+  const isBlock = element => {
+    if (String(element.tagName || "").toLowerCase() !== "table") {
+      return true;
+    }
+    if (!dataTables.has(element)) {
+      dataTables.set(element, isDataTable(element));
+    }
+    return dataTables.get(element);
+  };
+  const insideBlock = element => {
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+      if (parent.matches?.(selector) && isBlock(parent)) {
+        return true;
+      }
+    }
+    return false;
+  };
   const blocks = Array.from(root.querySelectorAll(selector))
-    .filter(element => !element.parentElement?.closest(selector));
+    .filter(element => isBlock(element) && !insideBlock(element));
   const rendered = blocks.map(renderFallbackBlock).filter(Boolean);
   const markdown = rendered.join("\n\n").trim();
   const fallbackText = normalizeWhitespace(root.innerText || root.textContent || "");
@@ -240,6 +488,10 @@ function renderFallbackBlock(element) {
   const tagName = String(element.tagName || "").toLowerCase();
   if (tagName === "p" && element.closest?.("li,blockquote")) {
     return null;
+  }
+  if (tagName === "table") {
+    // A cell's paragraphs are not sentences of their own (#5364).
+    return tableToMarkdown(element) || null;
   }
   const text = normalizeWhitespace(element.innerText || element.textContent || "");
   if (!text) {

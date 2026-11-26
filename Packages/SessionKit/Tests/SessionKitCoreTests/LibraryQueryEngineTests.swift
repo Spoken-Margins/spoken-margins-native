@@ -128,13 +128,39 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(ids(rows, LibraryQuery(query: "ZOË", listeningState: .unfinished)), ["zoe"], "the sender matches though the title does not")
     }
 
+    /// #4649: three friends sent Margins; searching one friend's name must leave the row saying who matched.
+    func testARowFoundOnlyBySenderSaysWhoMatched() {
+        let three = SharedMarginTally(total: 5, new: 0, senders: [
+            .init(key: "c", name: "Cole", count: 2), .init(key: "s", name: "Sam", count: 2), .init(key: "a", name: "Ana", count: 1)])
+        let found = Row(id: "found", title: "Essay", sharedMargins: three)
+        let query = LibraryQuery(query: "Sam", listeningState: .all)
+        XCTAssertEqual(ids([found], query), ["found"], "the search lists it")
+        XCTAssertEqual(LibraryQueryEngine.matchedSenderLine(found, query: query), "From Sam and 2 friends")
+        XCTAssertTrue(LibraryQueryEngine.matchedSenderLine(found, query: query)?.contains("Sam") ?? false)
+        // A row that matched by title, source or author says nothing extra, even if a sender matches too.
+        let byTitle = Row(id: "title", title: "Sam's notes", sharedMargins: three)
+        XCTAssertNil(LibraryQueryEngine.matchedSenderLine(byTitle, query: query))
+        XCTAssertNil(LibraryQueryEngine.matchedSenderLine(Row(id: "src", title: "Essay", sourceTitle: "Samizdat", sharedMargins: three), query: query))
+        XCTAssertNil(LibraryQueryEngine.matchedSenderLine(Row(id: "au", title: "Essay", author: "SAM Hill", sharedMargins: three), query: query))
+        // No search, no match, a list that does not search senders, no friends' Margins.
+        XCTAssertNil(LibraryQueryEngine.matchedSenderLine(found, query: LibraryQuery(query: "", listeningState: .all)))
+        XCTAssertNil(LibraryQueryEngine.matchedSenderLine(found, query: LibraryQuery(query: "Zed", listeningState: .all)))
+        XCTAssertNil(LibraryQueryEngine.matchedSenderLine(found, query: query, includingSenders: false))
+        XCTAssertNil(LibraryQueryEngine.matchedSenderLine(Row(id: "none", title: "Essay"), query: query))
+        // Every row the search lists only through a sender carries a line naming a sender that matches.
+        let rows = [found, Row(id: "two", title: "Other", sharedMargins: from("Sam")), byTitle, Row(id: "plain", title: "Plain")]
+        for row in LibraryQueryEngine.visibleLibraryItems(rows, query: query) {
+            let byMetadata = row.id == "title"
+            XCTAssertEqual(LibraryQueryEngine.matchedSenderLine(row, query: query) != nil, !byMetadata, row.id)
+        }
+    }
+
     func testAListThatSaysTitleSourceOrAuthorDoesNotSearchBySender() {
         let rows = [Row(id: "cole", title: "Essay", sharedMargins: from("Cole"))]
         XCTAssertEqual(LibraryQueryEngine.visibleLibraryItems(rows, query: LibraryQuery(query: "Cole", listeningState: .all), includingSenders: false).map(\.id), [])
-        XCTAssertEqual(LibraryCollectionScope.checklistRows(rows, search: "Cole").map(\.id), [], "the collection checklist")
     }
 
-    func testCompletedHiddenNamesWhoseMarginsItHides() {
+    func testCompletedHiddenCountsWhatTheListeningFilterLeavesOut() {
         let rows = [
             Row(id: "done-cole", isCompleted: true, sharedMargins: from("Cole")),
             Row(id: "done-none", isCompleted: true),
@@ -142,25 +168,13 @@ final class LibraryQueryEngineTests: XCTestCase {
             Row(id: "done-new", isCompleted: true, sharedMargins: from("Sam", new: 1))
         ]
         let unfinished = LibraryQuery(listeningState: .unfinished)
-        XCTAssertEqual(LibraryQueryEngine.completedHiddenNote(rows, query: unfinished), "1 has Margins from Cole",
+        XCTAssertEqual(LibraryQueryEngine.completedHiddenCount(rows, query: unfinished), 2,
                        "the finished item with new Margins stays listed (#4103), so it isn't hidden")
-        XCTAssertNil(LibraryQueryEngine.completedHiddenNote(rows, query: LibraryQuery(listeningState: .all)), "nothing is hidden")
-        XCTAssertNil(LibraryQueryEngine.completedHiddenNote(rows, query: LibraryQuery(listeningState: .completed)))
-        XCTAssertEqual(LibraryQueryEngine.completedHiddenNote(rows, query: LibraryQuery(listeningState: .unplayed)), "2 have Margins from friends",
-                       "Unplayed hides both finished items that have friends' Margins")
-        XCTAssertNil(LibraryQueryEngine.completedHiddenNote([Row(id: "done", isCompleted: true)], query: unfinished))
-        XCTAssertNil(LibraryQueryEngine.completedHiddenNote([Row](), query: unfinished))
-    }
-
-    func testCompletedHiddenReadsOnlyTheSelectedCollection() {
-        let rows = [
-            Row(id: "in", isCompleted: true, sharedMargins: from("Cole")),
-            Row(id: "out", isCompleted: true, sharedMargins: from("Sam"))
-        ]
-        let collection = ItemCollection(id: "c", name: "HIST", itemIDs: ["in"], createdAt: Date(timeIntervalSince1970: 1))
-        let scoped = LibraryCollectionScope.rows(rows, in: ItemCollectionScope(collection))
-        XCTAssertEqual(LibraryQueryEngine.completedHiddenNote(scoped, query: LibraryQuery(listeningState: .unfinished)), "1 has Margins from Cole")
-        XCTAssertEqual(LibraryQueryEngine.completedHiddenNote(rows, query: LibraryQuery(listeningState: .inProgress)), "2 have Margins from friends")
+        XCTAssertEqual(LibraryQueryEngine.completedHiddenCount(rows, query: LibraryQuery(listeningState: .all)), 0, "nothing is hidden")
+        XCTAssertEqual(LibraryQueryEngine.completedHiddenCount(rows, query: LibraryQuery(listeningState: .completed)), 0)
+        XCTAssertEqual(LibraryQueryEngine.completedHiddenCount(rows, query: LibraryQuery(listeningState: .unplayed)), 3,
+                       "Unplayed hides every finished item, new Margins or not")
+        XCTAssertEqual(LibraryQueryEngine.completedHiddenCount([Row](), query: unfinished), 0)
     }
 
     func testCompletedHiddenOnlyCountsWhatTheOtherFiltersAndTheSearchWouldList() {
@@ -168,12 +182,37 @@ final class LibraryQueryEngineTests: XCTestCase {
             Row(id: "pdf", mediaType: "pdf", isCompleted: true, sharedMargins: from("Cole")),
             Row(id: "text", isCompleted: true, sharedMargins: from("Sam"))
         ]
-        XCTAssertEqual(LibraryQueryEngine.completedHiddenNote(rows, query: LibraryQuery(listeningState: .unfinished)), "2 have Margins from friends")
-        XCTAssertEqual(LibraryQueryEngine.completedHiddenNote(rows, query: LibraryQuery(query: "Sam", listeningState: .unfinished)), "1 has Margins from Sam",
+        XCTAssertEqual(LibraryQueryEngine.completedHiddenCount(rows, query: LibraryQuery(listeningState: .unfinished)), 2)
+        XCTAssertEqual(LibraryQueryEngine.completedHiddenCount(rows, query: LibraryQuery(query: "Sam", listeningState: .unfinished)), 1,
                        "searching 'Sam' leaves out the item Cole sent")
-        XCTAssertEqual(LibraryQueryEngine.completedHiddenNote(rows, query: LibraryQuery(contentType: .pdf, listeningState: .unfinished)), "1 has Margins from Cole",
+        XCTAssertEqual(LibraryQueryEngine.completedHiddenCount(rows, query: LibraryQuery(contentType: .pdf, listeningState: .unfinished)), 1,
                        "a PDF filter leaves the text item out of what is hidden")
-        XCTAssertNil(LibraryQueryEngine.completedHiddenNote(rows, query: LibraryQuery(query: "nobody", listeningState: .unfinished)))
+        XCTAssertEqual(LibraryQueryEngine.completedHiddenCount(rows, query: LibraryQuery(query: "nobody", listeningState: .unfinished)), 0)
+    }
+
+    func testTheFinishedFooterTapKeepsTheSearchAndListsTheFinishedMatches() {
+        let rows = [
+            Row(id: "done-pill", title: "Pill", isCompleted: true),
+            Row(id: "open-other", title: "Other")
+        ]
+        let table: [(query: String, listening: LibraryListeningStateFilter, includes: Bool, after: LibraryListeningStateFilter, visible: [String])] = [
+            ("pill", .unfinished, true, .all, ["done-pill"]),
+            ("pill", .unplayed, true, .all, ["done-pill"]),
+            ("pill", .inProgress, true, .all, ["done-pill"]),
+            ("  PILL ", .unfinished, true, .all, ["done-pill"]),
+            ("", .unfinished, false, .completed, ["done-pill"]),
+            ("   ", .unfinished, false, .completed, ["done-pill"]),
+            ("\n", .unplayed, false, .completed, ["done-pill"])
+        ]
+        for row in table {
+            let query = LibraryQuery(query: row.query, listeningState: row.listening)
+            XCTAssertEqual(LibraryQueryEngine.revealsFinishedWithinSearch(query: query), row.includes, "label for '\(row.query)'")
+            let revealed = LibraryQueryEngine.queryRevealingFinished(query)
+            XCTAssertEqual(revealed.listeningState, row.after, "listening for '\(row.query)'")
+            XCTAssertEqual(revealed.query, row.query, "the tap keeps the search text")
+            XCTAssertEqual(LibraryQueryEngine.visibleLibraryItems(rows, query: revealed, includingSenders: true).map(\.id), row.visible, "list for '\(row.query)'")
+            XCTAssertEqual(LibraryQueryEngine.completedHiddenCount(rows, query: revealed), 0, "nothing left hidden for '\(row.query)'")
+        }
     }
 
     func testAFinishedItemWithNewSharedMarginsIsNotCaughtUp() {

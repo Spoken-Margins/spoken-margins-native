@@ -5,11 +5,18 @@
 //
 // Seeded links, all under the test vector's key (research/B4/contracts/fixtures/share-link-sealing-vector.json):
 //   AbCdEf123456   the vector's own sealed packet and preview, byte for byte (its packet is not a real packet)
-//   vectorvoice01  Contracts/fixtures/web-packets/web-voice.spokenmargins sealed under the vector's key
+//   vectorvoice01  Contracts/fixtures/web-packets/web-voice.spokenmargins sealed under the vector's key, naming the 180 s the specs serve
+//   vectorvoice33  the same, from a copy 33 s longer than the one served: the copy-length note shows (#4614)
 //   vectorpost01   a Substack post's Margins: the web-written packet's Margins moved onto the post's words, each with
 //                  only how far through the post it sits (what the iPhone app writes for an article; #4421)
 //   vectorarticle1 an article on an ordinary site (not Substack) with Margins that carry only how far through they sit:
 //                  no audio of its own and no voice to look up, so a browser can't play it (#4454)
+//   vectorapple01  an Apple Podcasts episode with only its page: the owner's 2026-11-20 share, whose packet held the episode
+//                  page and no audio address and no GUID (#4767, #4783). Two timed Margins, as vectorvoice01's
+//   vectorapple02  the same page-only shape as the owner's 2026-11-22 share of a 2019 episode: Apple's lookup of the show does not
+//                  list it, so its audio is found only in the show's feed (#4783)
+//   vectornewer01  vectorvoice01's packet declaring a required capability this page doesn't know, as a packet from a newer
+//                  Spoken Margins does: the page says it is a version gap, not damage (#5266)
 //   expired00001   answers 410, as an expired link does
 //   switchedoff1   answers 503 `disabled`, as the server does while links are switched off
 // Run: node e2e/link-stub-server.ts (Node 24 strips the types). Port 4174, or SM_LINK_STUB_PORT.
@@ -40,9 +47,41 @@ const OFF = 'switchedoff1';
 
 links.set('AbCdEf123456', { preview: b64(vector.preview.sealedBase64), packet: b64(vector.packet.sealedBase64) });
 const voicePacket = new Uint8Array(readFileSync(join(repo, 'Contracts/fixtures/web-packets/web-voice.spokenmargins')));
+// The committed packet says its episode is 1,800,000 ms (30 minutes); the specs serve 180 seconds of audio, so a link that
+// names the committed length would show the copy-length note (#4614). The seeded links name the length the specs serve.
+const SERVED_EPISODE_MS = 180_000;
+/** The committed voice packet with the length of the copy its Margins were made on. */
+const voicePacketOfLength = (durationMs: number): Promise<Uint8Array> =>
+  withLayer(
+    voicePacket,
+    () => {},
+    (manifest) => {
+      manifest.item = { ...(manifest.item as Record<string, unknown>), durationMs };
+    },
+  );
 links.set('vectorvoice01', {
   preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
-  packet: await sealPart(voicePacket, PART.packet, vectorKey),
+  packet: await sealPart(await voicePacketOfLength(SERVED_EPISODE_MS), PART.packet, vectorKey),
+});
+// The same packet from a copy 33 seconds longer than the one served (about 15% of the longer copy): the note shows (#4614).
+links.set('vectorvoice33', {
+  preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
+  packet: await sealPart(await voicePacketOfLength(SERVED_EPISODE_MS + 33_000), PART.packet, vectorKey),
+});
+// A packet from a newer Spoken Margins: it needs a capability this page has never heard of (#5266).
+links.set('vectornewer01', {
+  preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
+  packet: await sealPart(
+    await withLayer(
+      await voicePacketOfLength(SERVED_EPISODE_MS),
+      () => {},
+      (manifest) => {
+        manifest.requiredCapabilities = [...((manifest.requiredCapabilities as string[] | undefined) ?? []), 'spokenmargins.capability.from-the-future.v1'];
+      },
+    ),
+    PART.packet,
+    vectorKey,
+  ),
 });
 
 const writtenPacket = new Uint8Array(readFileSync(join(repo, 'Contracts/fixtures/web-packets/web-written.spokenmargins')));
@@ -89,6 +128,46 @@ const essayPacket = await withLayer(
 links.set('vectorarticle1', {
   preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
   packet: await sealPart(essayPacket, PART.packet, vectorKey),
+});
+
+const APPLE_EPISODE = 'https://podcasts.apple.com/us/podcast/people-parks-and-policy-with-rffs-margaret-walls/id1445582279?i=1000427709574';
+const applePacket = await withLayer(
+  voicePacket,
+  () => {},
+  (manifest) => {
+    manifest.item = {
+      canonicalURL: APPLE_EPISODE,
+      originalURL: APPLE_EPISODE,
+      itemType: 'podcast',
+      title: 'People, Parks, and Policy with RFF’s Margaret Walls',
+      showTitle: 'Resources Radio',
+      durationMs: SERVED_EPISODE_MS,
+    };
+  },
+);
+links.set('vectorapple01', {
+  preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
+  packet: await sealPart(applePacket, PART.packet, vectorKey),
+});
+
+const applePacketOutsideLookup = await withLayer(
+  voicePacket,
+  () => {},
+  (manifest) => {
+    manifest.item = {
+      canonicalURL: APPLE_EPISODE,
+      originalURL: APPLE_EPISODE,
+      itemType: 'podcast',
+      // As the feed words it, with the straight apostrophe and the comma after "Policy" that Apple's own page leaves out.
+      title: "People, Parks, and Policy, with RFF's Margaret Walls",
+      showTitle: 'Resources Radio',
+      durationMs: 1_295_000,
+    };
+  },
+);
+links.set('vectorapple02', {
+  preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
+  packet: await sealPart(applePacketOutsideLookup, PART.packet, vectorKey),
 });
 
 const TYPES: Record<string, string> = {

@@ -8,6 +8,7 @@ import SessionKit
 struct PinnedMarginCardView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @State private var playbackTick = 0 // bumped by each progress tick: the countdown follows the playhead (#2074)
+    @State private var caughtUpShare: PlainTextShare? // "Let Cole know" on the caught-up card (#4785)
 
     private var moment: MarginMomentSequence? { model.marginMoment }
     private var isReview: Bool { moment?.isReview == true }
@@ -24,6 +25,8 @@ struct PinnedMarginCardView: View {
             }
         }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
+        // Sending or cancelling leaves the caught-up card up; only Dismiss or moving on puts it away (#4785).
+        .trackedSheet(item: $caughtUpShare) { PlainTextShareSheet(text: $0.text) }
         // A Margin that waits for a tap, or could not play, appears at the top of Now while VoiceOver's focus is elsewhere:
         // say so once, when the card enters that stage or another Margin replaces it (#3728). `VoiceOverAnnouncements`
         // decides; the stages that play aloud, and a guided Margin's 420 ms beat, stay silent. The key carries the Margin's
@@ -39,7 +42,8 @@ struct PinnedMarginCardView: View {
     private var announcementKey: VoiceOverAnnouncements.CardKey {
         VoiceOverAnnouncements.CardKey(
             card: model.pinnedMarginCard,
-            marginID: model.pendingImportedCommentary?.interjection.id ?? model.playingImportedCommentary?.interjection.id)
+            marginID: model.pendingImportedCommentary?.interjection.id ?? model.playingImportedCommentary?.interjection.id
+                ?? model.shownSilentMarginLanding?.marginId) // a second landing on a Margin from the same sender is announced too (#4934)
     }
 
     private func content(_ card: PinnedMarginCard) -> some View {
@@ -58,24 +62,30 @@ struct PinnedMarginCardView: View {
                pending.interjection.approvedTranscript, playsByItself: pending.layer.revealMode == .guided) {
             return said
         }
-        guard let moment, model.playingImportedCommentary == nil, model.pendingImportedCommentary == nil else { return card.detail }
+        guard model.playingImportedCommentary == nil, model.pendingImportedCommentary == nil else { return card.detail }
+        // The length of the copy playing now, for the copy-length note (#4175).
+        let listenerCopyMs = model.snapshot.itemId == model.selectedItem.id ? model.snapshot.currentPlaybackDurationMs : nil
+        guard let moment else {
+            // Ordinary playback counting down to a friend's Margin (J5 step 2): the card is about the next one ahead.
+            let target = model.pinnedCardUpNextPrompt.map { prompt in
+                PinnedMarginCardDetail.Target(
+                    interjection: prompt.interjection, layer: prompt.layer, plan: prompt.plan, placingDescription: nil,
+                    listenerCopyMs: listenerCopyMs, subject: card.subject)
+            }
+            return PinnedMarginCardDetail.line(for: card, moment: nil, target: target)
+        }
         let current = moment.playing ?? moment.target
         // A podcast Margin that isn't playing yet says where it will play, in the same words as its row (#3789).
-        if let row = model.sharedMarginRows.first(where: { $0.id == current.marginId }) {
-            if row.layer.itemIdentity.itemType == .podcast {
-                if let note = SharedMarginPlacementWording.pinnedCardLine(for: row.placementPlan), current.caption == nil,
-                   !moment.isPlayingMargin {
-                    return note
-                }
-            } else if let placing = row.placementStatus.positionDescription {
-                return placing
-            }
+        let target = model.sharedMarginRows.first(where: { $0.id == current.marginId }).map { row in
+            PinnedMarginCardDetail.Target(
+                interjection: row.interjection, layer: row.layer, plan: row.placementPlan,
+                placingDescription: row.placementStatus.positionDescription, listenerCopyMs: listenerCopyMs, subject: card.subject)
         }
-        if let caption = current.caption { return caption }
-        if !moment.isPlayingMargin, current.isApproximate || model.marginMomentPositionIsApproximate {
-            return SharedMarginPlacementWording.approximatePositionNote
-        }
-        return card.detail
+        return PinnedMarginCardDetail.line(
+            for: card,
+            moment: .init(isPlayingMargin: moment.isPlayingMargin, caption: current.caption,
+                          isApproximate: current.isApproximate || model.marginMomentPositionIsApproximate),
+            target: target)
     }
 
     private func perform(_ job: PinnedMarginCard.Action.Job) {
@@ -87,6 +97,11 @@ struct PinnedMarginCardView: View {
         case .keepListening, .stopReview, .stopPlayingMine: model.endMarginMoment()
         case .listen: model.listenToPendingImportedCommentary()
         case .dismiss: model.skipPendingImportedCommentary()
+        case .dismissSilentMargin: model.dismissSilentMarginLanding()
+        case .startEarlier: model.startMarginEarlier()
+        case .letFriendKnow:
+            if case .caughtUp(_, _, let text, _) = model.pinnedMarginCard?.stage { caughtUpShare = PlainTextShare(text: text) }
+        case .dismissCaughtUp: model.noteCatchUp(.dismissed)
         }
     }
 
@@ -153,6 +168,12 @@ struct PinnedMarginCardBody: View {
         .background(AppColors.listeningBackground)
     }
 
+    /// The stages whose detail line is a Margin's own words, which can be long.
+    private var capsDetail: Bool {
+        if case .silentHere = card.stage { return true }
+        return card.stage == .waitingForTap
+    }
+
     /// The headline, the position and the detail line.
     private var words: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -183,8 +204,9 @@ struct PinnedMarginCardBody: View {
             detailText
                 .font(.footnote)
                 .foregroundStyle(.white.opacity(0.85))
-                // The transcript of a Margin waiting for a tap is capped at every size, so Listen and Dismiss stay on the screen.
-                .lineLimit(card.stage == .waitingForTap ? (isLargeText ? 4 : 2) : (isLargeText ? nil : 2))
+                // The transcript of a Margin waiting for a tap, or of a silent one the listener went to (#4934), is capped at every
+                // size, so Listen and Dismiss stay on the screen.
+                .lineLimit(capsDetail ? (isLargeText ? 4 : 2) : (isLargeText ? nil : 2))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 // VoiceOver reads the plain words. The inline icon (`detailText`) is only a picture of the control the words name.
@@ -208,24 +230,26 @@ struct PinnedMarginCardBody: View {
         switch card.stage {
         case .speaking, .reading, .voicePaused, .loading: "waveform"
         case .failed: "exclamationmark.triangle"
-        case .comingUp, .waitingForTap, .upNext: "text.bubble"
-        case .answerSaved: "checkmark.circle"
-        case .lastMargin: "text.bubble"
+        case .comingUp, .waitingForTap, .silentHere, .upNext: "text.bubble"
+        case .answerSaved, .savedHere: "checkmark.circle"
+        case .lastMargin, .caughtUp: "text.bubble"
         }
     }
 
     /// The identifiers a review's UI tests already look for, kept on the same words.
     private var headlineIdentifier: String {
+        if case .caughtUp = card.stage { return "pinnedCard.caughtUp" }
         guard isReview else { return "marginCard.headline" }
         if case .comingUp = card.stage { return "review.comingUp" }
         if card.stage == .speaking || card.stage == .reading || card.stage == .voicePaused { return "review.playing" }
         return "marginCard.headline"
     }
 
-    /// One row, one button per job; a stage with nowhere to go draws no row at all.
+    /// One row, one button per job; a stage with nowhere to go draws no row at all. At accessibility3 and above "Start a
+    /// minute earlier" is left off, so the stacked card keeps within its height budget (#4171).
     @ViewBuilder
     private var buttons: some View {
-        let actions = card.actions
+        let actions = card.shownActions(atAccessibility3OrLarger: dynamicTypeSize >= .accessibility3)
         if !actions.isEmpty {
             let row = isLargeText ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
             row { ForEach(actions, id: \.job) { button($0) } }
@@ -279,6 +303,10 @@ struct PinnedMarginCardBody: View {
         case .keepListening, .stopReview, .stopPlayingMine: "marginMoment.end"
         case .listen: "importedCommentary.listen"
         case .dismiss: "importedCommentary.dismiss"
+        case .dismissSilentMargin: "marginCard.silent.dismiss"
+        case .startEarlier: "marginCard.startEarlier"
+        case .letFriendKnow: "pinnedCard.letFriendKnow"
+        case .dismissCaughtUp: "pinnedCard.dismissCaughtUp"
         }
     }
 
@@ -288,7 +316,9 @@ struct PinnedMarginCardBody: View {
         case .skipThisMargin: "forward.end.fill"
         case .retry: "arrow.clockwise"
         case .playMomentNow, .listen: "play.fill"
-        case .keepListening, .stopReview, .stopPlayingMine, .dismiss: "xmark"
+        case .keepListening, .stopReview, .stopPlayingMine, .dismiss, .dismissSilentMargin, .dismissCaughtUp: "xmark"
+        case .startEarlier: "gobackward.60"
+        case .letFriendKnow: "square.and.arrow.up"
         }
     }
 }

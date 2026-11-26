@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitTestInputs
 import XCTest
 
 /// #1974: a recipient reads where a shared Margin sits in plain words, not an offset or an enum name.
@@ -80,6 +81,118 @@ final class SharedMarginPlacementWordingTests: XCTestCase {
                 XCTAssertEqual(Set([first.joined(separator: " "), second.joined(separator: " ")]),
                                ["Placed here", "Placed roughly here"], "\(first) vs \(second)")
             }
+        }
+    }
+
+    // MARK: - The copy-length note (#4175)
+
+    private struct CopyLengthCase {
+        let note: String
+        let senderMs: Int?
+        let listenerMs: Int?
+        let expect: String
+        let farApart: Bool?
+        let amount: String?
+    }
+
+    /// The table the web's test reads too (`Contracts/fixtures/copy-length-note/cases.json`). A length JSON cannot hold
+    /// ("Infinity", "NaN") and a null both read as nil here, never through `Double(...)`.
+    private func copyLengthCases() throws -> [CopyLengthCase] {
+        let data = try TestInputs.data(.contracts, "fixtures/copy-length-note/cases.json")
+        let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+        return rows.map { row in
+            CopyLengthCase(
+                note: row["note"] as? String ?? "", senderMs: row["senderMs"] as? Int, listenerMs: row["listenerMs"] as? Int,
+                expect: row["expect"] as? String ?? "", farApart: row["farApart"] as? Bool, amount: row["amount"] as? String)
+        }
+    }
+
+    func testTheCopyLengthRuleMatchesEveryRowOfTheSharedTable() throws {
+        let cases = try copyLengthCases()
+        XCTAssertGreaterThanOrEqual(cases.count, 15, "the shared table shrank")
+        for row in cases {
+            let difference = CopyLengthDifference(senderMs: row.senderMs, listenerMs: row.listenerMs)
+            if row.expect == "none" {
+                XCTAssertNil(difference, row.note)
+            } else {
+                XCTAssertEqual(difference?.direction.rawValue, row.expect, row.note)
+                XCTAssertEqual(difference?.farApart, row.farApart, row.note)
+                XCTAssertEqual(difference?.amount, row.amount, row.note)
+            }
+        }
+    }
+
+    /// A packet's `durationMs` is any integer. A value near `Int.max` made `5 * apart` trap, and the pinned card asks
+    /// twice a second, so opening that Margin would crash the app (review of #4175). The shared table has no such row
+    /// because the web uses doubles; this is SessionKit's own.
+    func testAnAbsurdLengthInAPacketGivesNoNoteAndNeverTraps() {
+        for huge in [Int.max, Int.max - 1, Int.max / 5, Int.max / 5 + 1, 1_000_000_000_001, Int.min] {
+            XCTAssertNil(CopyLengthDifference(senderMs: huge, listenerMs: 1_800_000), "\(huge) as the sender's length")
+            XCTAssertNil(CopyLengthDifference(senderMs: 1_800_000, listenerMs: huge), "\(huge) as the listener's length")
+            XCTAssertNil(CopyLengthDifference(senderMs: huge, listenerMs: huge), "\(huge) for both")
+        }
+        XCTAssertEqual(CopyLengthDifference(senderMs: 1_000_000_000_000, listenerMs: 1_000_000)?.farApart, true,
+                       "the ceiling itself still works")
+    }
+
+    func testTheNoteNamesTheSizeOfTheDifferenceInThreeSentences() {
+        func line(_ sender: Int?, _ listener: Int?, _ subject: PinnedMarginCard.Subject, atSenderClock: Bool = true,
+                  plan: SharedMarginPlacementPlan = .roughly(mediaTimeMs: 300_000)) -> String? {
+            SharedMarginPlacementWording.pinnedCardLine(
+                for: plan, atSenderClock: atSenderClock, senderCopyMs: sender, listenerCopyMs: listener, subject: subject)
+        }
+        // #4614's pair, a web packet at the sender's clock with no fingerprint (the web-packet device condition).
+        XCTAssertEqual(line(1_946_018, 1_913_000, .friend("Cole")),
+                       "Your copy is about 35 seconds shorter than Cole's, so Margins may be that far off.")
+        XCTAssertEqual(line(1_946_018, 1_976_118, .friend("Cole")),
+                       "Your copy is about 30 seconds longer than Cole's, so Margins may be that far off.")
+        XCTAssertEqual(line(1_800_000, 600_000, .friend("Cole")),
+                       "Your copy is about 20 minutes shorter than Cole's, so Margins may not line up.")
+        XCTAssertEqual(line(1_800_000, 2_400_000, .friend("Cole")),
+                       "Your copy is about 10 minutes longer than Cole's, so Margins may not line up.")
+        // No name, a stand-in and a name too long for a button never stretch the card.
+        XCTAssertEqual(line(1_946_018, 1_913_000, .friend(nil)),
+                       "Your copy is about 35 seconds shorter than your friend's, so Margins may be that far off.")
+        XCTAssertEqual(line(1_946_018, 1_913_000, .friend("A friend")),
+                       "Your copy is about 35 seconds shorter than your friend's, so Margins may be that far off.")
+        XCTAssertEqual(line(1_946_018, 1_913_000, .friend("Alexandria Bartholomew-Featherstonehaugh the Third")),
+                       "Your copy is about 35 seconds shorter than Alexandria's, so Margins may be that far off.")
+        XCTAssertEqual(line(1_946_018, 1_913_000, .friend("Bartholomew-Featherstonehaugh")),
+                       "Your copy is about 35 seconds shorter than your friend's, so Margins may be that far off.")
+    }
+
+    func testTheGenericCautionStaysWhenThereIsNothingToSayAboutTheLengths() {
+        let caution = SharedMarginPlacementWording.approximatePositionNote
+        func line(_ sender: Int?, _ listener: Int?, atSenderClock: Bool = true) -> String? {
+            SharedMarginPlacementWording.pinnedCardLine(
+                for: .roughly(mediaTimeMs: 300_000), atSenderClock: atSenderClock, senderCopyMs: sender,
+                listenerCopyMs: listener, subject: .friend("Cole"))
+        }
+        XCTAssertEqual(line(nil, 1_913_000), caution, "the sender's length is missing")
+        XCTAssertEqual(line(1_946_018, nil), caution, "the player has not reported a length yet")
+        XCTAssertEqual(line(0, 1_913_000), caution)
+        XCTAssertEqual(line(1_800_000, 1_809_999), caution, "under 10 s apart")
+        // A Margin shifted by its matched neighbours already has the ad difference taken out.
+        XCTAssertEqual(line(1_946_018, 1_913_000, atSenderClock: false), caution)
+        // An unknown place has no time to warn about, whatever the lengths say.
+        for plan in [SharedMarginPlacementPlan.placed(mediaTimeMs: 1), .afterOthers, .notPlayable] {
+            XCTAssertNil(SharedMarginPlacementWording.pinnedCardLine(
+                for: plan, atSenderClock: true, senderCopyMs: 1_946_018, listenerCopyMs: 1_913_000, subject: .friend("Cole")),
+                         "\(plan)")
+        }
+    }
+
+    /// The card draws one line under its headline within a height budget (#3597), so the note stays short for the
+    /// longest name a button carries and the biggest difference, and never prints an enum name.
+    func testTheLongestNoteStaysShort() throws {
+        for row in try copyLengthCases() where row.expect != "none" {
+            let note = try XCTUnwrap(SharedMarginPlacementWording.pinnedCardLine(
+                for: .roughly(mediaTimeMs: 1), atSenderClock: true, senderCopyMs: row.senderMs, listenerCopyMs: row.listenerMs,
+                subject: .friend("Fourteen chars")), row.note)
+            XCTAssertLessThanOrEqual(note.count, 100, "\(row.note): \(note)")
+            XCTAssertFalse(note.contains("farApart"), row.note)
+            XCTAssertTrue(note.contains(row.expect), row.note)
+            XCTAssertTrue(note.contains(try XCTUnwrap(row.amount)), row.note)
         }
     }
 

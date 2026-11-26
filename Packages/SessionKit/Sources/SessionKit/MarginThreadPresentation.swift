@@ -182,13 +182,14 @@ public enum MarginThreadPresentation {
         )
         var result: [MarginReference: Node] = [:]
         for margin in localMargins where margin.itemId == itemId && margin.status == "active" {
-            let reference = MarginReference.local(margin.id)
+            let reference = MarginReference.local(margin.sessionScopedId)
             result[reference] = Node(
                 reference: reference,
                 senderLabel: MarginLayerSynthesis.ownSenderLabel,
                 text: margin.displayText ?? margin.cleanedTranscript ?? margin.transcript ?? "",
                 createdAt: margin.createdAt,
-                timeMs: margin.anchor.mediaTimeMs.flatMap { $0 >= 0 ? $0 : nil }
+                // A Margin with no place (#4233) stores a 0 that is not a time: it follows the timed ones, by creation.
+                timeMs: margin.hasPlace ? margin.anchor.mediaTimeMs.flatMap { $0 >= 0 ? $0 : nil } : nil
             )
         }
         for margin in importedMargins {

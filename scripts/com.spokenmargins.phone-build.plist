@@ -22,6 +22,7 @@
   <string>com.spokenmargins.phone-build</string>
   <key>ProgramArguments</key>
   <array>
+    <string>@HOME@/.claude/bin/sm-agent-env</string>
     <string>/usr/bin/python3</string>
     <string>@HOME@/SpokenMarginsOps/repo/scripts/phone-build</string>
     <string>--if-changed</string>
@@ -30,6 +31,8 @@
   <string>@HOME@/SpokenMarginsOps/repo</string>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>SM_AGENT_AS_APP</key>
+    <string>1</string>  <!-- act as the agents' GitHub App through sm-agent-env (#4915); remove to roll back -->
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>SM_PIN_CHECKOUT</key>

@@ -50,12 +50,14 @@ enum Build23SenderPresentation {
     /// `Build23VerifiedShareActions` was. While the preview builds, "back" would leave the build task running and a
     /// failed build would then pull the listener off the selection screen; the other preview states already carry
     /// their own "Back to selection" in the unavailable-preview notice.
+    /// On the Share Margins list (#4647) the review step is the list itself, so it has no back.
     static func topBackToSelectionIdentifier(
-        stage: Build23SharingStage, previewState: Build23SharingPreviewState, hasVerifiedPreview: Bool
+        stage: Build23SharingStage, previewState: Build23SharingPreviewState, hasVerifiedPreview: Bool,
+        showsList: Bool = false
     ) -> String? {
         switch stage {
         case .review:
-            "build23.sender.review.back"
+            showsList ? nil : "build23.sender.review.back"
         case .recipientPreview:
             previewState == .ready && hasVerifiedPreview ? "build23.sender.preview.edit" : nil
         case .select, .share:
@@ -77,19 +79,6 @@ enum Build23SenderPresentation {
 
     static func requiresPayloadRightsAssertion(for transport: Build23RecipientTransport) -> Bool {
         transport == .embeddedText
-    }
-
-    static func stageTitle(_ stage: Build23SharingStage) -> String {
-        switch stage {
-        case .select:
-            "Select"
-        case .review:
-            "Review"
-        case .recipientPreview:
-            "Recipient Preview"
-        case .share:
-            "Share"
-        }
     }
 
     static func representationTitle(_ representation: ShareMarginRepresentationChoice) -> String {
@@ -132,37 +121,6 @@ enum Build23SenderPresentation {
             return trimmed
         }
         return "[\(trimmed.isEmpty ? "pause" : trimmed)]"
-    }
-}
-
-struct Build23SharingStageProgress: View {
-    let currentStage: Build23SharingStage
-
-    var body: some View {
-        let stages = Build23SharingStage.allCases
-        let currentIndex = stages.firstIndex(of: currentStage) ?? 0
-
-        LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 132), spacing: 10)],
-            alignment: .leading,
-            spacing: 10
-        ) {
-            ForEach(Array(stages.enumerated()), id: \.offset) { index, stage in
-                let isComplete = index < currentIndex
-                let isCurrent = index == currentIndex
-                HStack(spacing: 8) {
-                    Image(systemName: isComplete ? "checkmark.circle.fill" : (isCurrent ? "circle.inset.filled" : "circle"))
-                        .accessibilityHidden(true)
-                    Text(Build23SenderPresentation.stageTitle(stage))
-                        .font(.subheadline.weight(isCurrent ? .semibold : .regular))
-                        .lineLimit(2)
-                }
-                .foregroundStyle(isCurrent || isComplete ? AppColors.evergreen : AppColors.secondaryText)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(Build23SenderPresentation.stageTitle(stage)), \(isComplete ? "complete" : (isCurrent ? "current" : "not started"))")
-            }
-        }
-        .accessibilityIdentifier("build23.sender.stage.progress")
     }
 }
 
@@ -301,11 +259,13 @@ struct Build23VerifiedShareActions: View {
 /// own line under the header. The identifier is the caller's, so each step keeps its own.
 struct Build23BackToSelectionButton: View {
     let identifier: String
+    /// "Back to your Margins" on the preview of a sheet that isn't a reply, whose back returns to the list (#4647).
+    var title = "Back to selection"
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Label("Back to selection", systemImage: "chevron.left")
+            Label(title, systemImage: "chevron.left")
                 .frame(minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
         }
@@ -388,6 +348,37 @@ struct Build23PreviewRow: View {
     }
 }
 
+/// The pinned bar while a tapped share waits for voices (#4647): the tapped button becomes a disabled row that counts
+/// down, and "Stop sharing" under it ends the wait. The cleanup keeps running.
+struct Build23SendWaitRow: View {
+    let count: Int
+    let onStop: () -> Void
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                ProgressView()
+                Text(ShareReviewCardWords.waiting(count: count))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .padding(.vertical, 4)
+            .background(AppColors.softGreen, in: RoundedRectangle(cornerRadius: 12))
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("build23.sender.sendWait.row")
+
+            Button(role: .cancel, action: onStop) {
+                Text(ShareReviewCardWords.stopSharing)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .tint(AppColors.evergreen)
+            .accessibilityIdentifier("build23.sender.sendWait.stop")
+        }
+    }
+}
+
 struct Build23MarginSelectionRow: View {
     let margin: Build23SharingMarginSnapshot
     let isEnabled: Bool
@@ -426,7 +417,8 @@ struct Build23MarginSelectionRow: View {
                             Build23PlaceholderTag()
                         }
 
-                        Text(margin.isLeftOutForMissingText ? "Left out: no transcript yet" : (margin.isIncluded ? "Included" : "Tap to include"))
+                        Text(!margin.hasPlace ? ShareableMargins.noPlaceLine
+                            : (margin.isLeftOutForMissingText ? "Left out: no transcript yet" : (margin.isIncluded ? "Included" : "Tap to include")))
                             .font(.caption)
                             .foregroundStyle(margin.isIncluded && !margin.isLeftOutForMissingText ? AppColors.evergreen : AppColors.secondaryText)
                     }
@@ -434,7 +426,7 @@ struct Build23MarginSelectionRow: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(!isEnabled)
+                .disabled(!isEnabled || !margin.hasPlace)
                 .accessibilityLabel("\(margin.isStarred ? "Starred " : "")Margin, \(margin.spokenWordsDescription), \(margin.shareStatusDescription)")
                 .accessibilityIdentifier("build23.sender.margin.row.\(margin.id)")
 
@@ -451,8 +443,10 @@ struct Build23MarginSelectionRow: View {
                 // the switch beside it would be a second, identical control to swipe past (#3730).
                 .accessibilityHidden(true)
                 .accessibilityIdentifier("build23.sender.margin.include.\(margin.id)")
-                .disabled(!isEnabled)
+                .disabled(!isEnabled || !margin.hasPlace)
             }
+            // Dimmed, and the line above says why: the words carry the meaning, not the dimming (#4233).
+            .opacity(margin.hasPlace ? 1 : 0.6)
         }
     }
 }
@@ -505,25 +499,152 @@ struct Build23ReviewSelectionRow: View {
     }
 }
 
+/// A wait the sender may act on: a clock or a speech bubble and one plain sentence, in the ordinary label colour so
+/// colour carries no meaning (#3839).
+struct Build23ReviewStepRow: View {
+    let step: ShareReviewSteps.Step
+    var identifier: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: Self.symbol(step.icon))
+                .foregroundStyle(AppColors.text)
+                .accessibilityHidden(true)
+            Text(step.text)
+                .font(.subheadline)
+                .foregroundStyle(AppColors.text)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(identifier)
+    }
+
+    static func symbol(_ icon: ShareReviewSteps.Icon) -> String {
+        switch icon {
+        case .clock: "clock"
+        case .words: "text.bubble"
+        }
+    }
+}
+
+/// The step above "Share link" in the pinned bar. From the first accessibility size it is limited to two lines with a
+/// "More" button that opens the full text, so the bar never covers more than half the screen (#3839); the full step also
+/// stays on the Margin's card.
+struct Build23PinnedStepLine: View {
+    let step: ShareReviewSteps.Step
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var showsFullText = false
+
+    private var isLimited: Bool { typeSize >= .accessibility1 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: Build23ReviewStepRow.symbol(step.icon))
+                    .foregroundStyle(AppColors.text)
+                    .accessibilityHidden(true)
+                Text(step.text)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.text)
+                    .lineLimit(isLimited ? 2 : nil)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("build23.sender.review.placementStep")
+
+            if isLimited {
+                Button(ShareReviewCardWords.more) { showsFullText = true }
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityHint("Shows the whole message")
+                    .accessibilityIdentifier("build23.sender.review.placementStep.more")
+            }
+        }
+        .trackedSheet(isPresented: $showsFullText) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(ShareReviewCardWords.pinnedStepSheetTitle)
+                    .font(.headline)
+                Text(step.text)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Done") { showsFullText = false }
+                    .filledActionButton()
+                Spacer(minLength: 0)
+            }
+            .padding(24)
+            .presentationDetents([.medium, .large])
+        }
+    }
+}
+
 @MainActor
 struct Build23MarginEditor: View {
     let margin: Build23SharingMarginSnapshot
     let send: (Build23SenderAction) -> Void
     @State private var showsPositionContext = false
 
+    /// The one badge a card can wear: it explains why the Margin is waiting or won't go. Every Margin on this step is otherwise included.
+    private var badge: String? {
+        if let waiting = margin.waitingBadge { return waiting }
+        if margin.isLeftOutForMissingText { return "Left out: no transcript yet" }
+        return margin.isIncluded ? nil : "Not included"
+    }
+
     var body: some View {
         ExperienceSurface(tint: AppColors.softGreen) {
             VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Review this Margin")
-                        .font(.title3.weight(.semibold))
-                        .screenTitle()
-                        .foregroundStyle(AppColors.text)
-                        .accessibilityIdentifier("build23.sender.margin.editor.\(margin.id)")
-                    Spacer()
-                    Text(margin.isLeftOutForMissingText ? "Left out: no transcript yet" : (margin.isIncluded ? "Included" : "Not included"))
+                // No card title and no "Included" badge: the page heading and the navigator say which Margin this is,
+                // and every Margin on this step is included (#3839).
+                if let badge {
+                    Text(badge)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(margin.isIncluded && !margin.isLeftOutForMissingText ? AppColors.evergreen : AppColors.secondaryText)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .accessibilityIdentifier("build23.sender.margin.badge.\(margin.id)")
+                }
+
+                ForEach(Array(margin.steps.enumerated()), id: \.offset) { index, step in
+                    Build23ReviewStepRow(step: step, identifier: "build23.sender.margin.step.\(margin.id).\(index)")
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(ShareReviewCardWords.friendGets)
+                        .font(.headline)
+
+                    Picker(
+                        ShareReviewCardWords.friendGets,
+                        selection: Binding(
+                            get: { margin.representation },
+                            set: { send(.setRepresentation(id: margin.id, choice: $0)) }
+                        )
+                    ) {
+                        if margin.hasOriginalVoice {
+                            Text(ShareCleanupWords.asRecorded).tag(ShareMarginRepresentationChoice.original)
+                        }
+                        if margin.hasCleanedVoice {
+                            Text(ShareCleanupWords.withoutUms).tag(ShareMarginRepresentationChoice.cleaned)
+                        }
+                        Text(ShareCleanupWords.wordsOnly).tag(ShareMarginRepresentationChoice.textOnly)
+                    }
+                    .segmentedUnlessLargeText()
+                    .accessibilityIdentifier("build23.sender.representation.\(margin.id)")
+
+                    Build23VersionCaption(representation: margin.representation, marginID: margin.id)
+
+                    if margin.representation == .textOnly {
+                        Build23ReadAloudControl(margin: margin, send: send)
+                    }
+                }
+
+                Build23AudioPreviewControls(
+                    representation: margin.representation,
+                    originalURL: margin.originalVoiceURL,
+                    cleanedURL: margin.cleanedVoiceURL
+                )
+
+                // Directly under the Listen control, only for a placed Margin on an episode or audio file (#4171).
+                if let leadIn = margin.leadIn {
+                    Build23LeadInRow(marginID: margin.id, leadIn: leadIn, send: send)
                 }
 
                 if margin.isPreparing {
@@ -544,166 +665,36 @@ struct Build23MarginEditor: View {
                 }
                 // A Margin with no word-level timing shows nothing here: the sender can do nothing about it (#3853, #3839).
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Share as")
-                        .font(.headline)
-                    Text(margin.hasCleanedVoice
-                        ? "Choose the version the recipient will receive."
-                        : "Cleaned voice becomes available after this Margin is cleaned successfully.")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.secondaryText)
-
-                    Picker(
-                        "Share as",
-                        selection: Binding(
-                            get: { margin.representation },
-                            set: { send(.setRepresentation(id: margin.id, choice: $0)) }
-                        )
-                    ) {
-                        if margin.hasOriginalVoice {
-                            Text(ShareCleanupWords.asRecorded).tag(ShareMarginRepresentationChoice.original)
-                        }
-                        if margin.hasCleanedVoice {
-                            Text(ShareCleanupWords.withoutUms).tag(ShareMarginRepresentationChoice.cleaned)
-                        }
-                        Text(ShareCleanupWords.wordsOnly).tag(ShareMarginRepresentationChoice.textOnly)
-                    }
-                    .segmentedUnlessLargeText()
-                    .accessibilityIdentifier("build23.sender.representation.\(margin.id)")
-
-                    if margin.representation == .textOnly {
-                        // A text Margin is read aloud by the friend's phone unless you ask it not to; they can change it (#3427).
-                        Toggle(
-                            "Read aloud on their phone",
-                            isOn: Binding(
-                                get: { margin.readAloud },
-                                set: { send(.setReadAloud(id: margin.id, readAloud: $0)) }
-                            )
-                        )
-                        .accessibilityIdentifier("build23.sender.readAloud.\(margin.id)")
-                        Text(margin.readAloud
-                            ? "Their phone reads it out as your words, and Skim stops at it. They can turn that off."
-                            : "They read it on the screen instead. Skim passes it. They can turn reading on.")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
-                    }
-                }
-
-                Build23AudioPreviewControls(
-                    originalURL: margin.originalVoiceURL,
-                    cleanedURL: margin.cleanedVoiceURL
-                )
-
                 if !margin.reviewTokens.isEmpty {
                     Build23InlineTranscriptEditor(tokens: margin.reviewTokens) { token in
-                        switch token.kind {
-                        case .word:
-                            guard let segmentID = token.segmentID else { return }
-                            send(.toggleTranscriptWord(draftID: margin.id, segmentID: segmentID))
-                        case .pause:
-                            guard let decisionID = token.decisionID else { return }
-                            send(.setCleanupDecision(
-                                draftID: margin.id,
-                                decisionID: decisionID,
-                                accepted: !token.isRemoved
-                            ))
-                        }
+                        if let action = Build23TokenToggle.action(for: token, marginID: margin.id) { send(action) }
                     }
                 } else if let placeholder = margin.placeholderText {
                     Build23PlaceholderWordsEditor(margin: margin, placeholder: placeholder, send: send)
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Reviewed transcript")
+                        Text(ShareReviewCardWords.yourWords)
                             .font(.headline)
                         Build23ExpandableTranscript(text: margin.reviewedText)
                     }
                 }
 
-                DisclosureGroup("Placement details", isExpanded: $showsPositionContext) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("These excerpts help place the Margin for the recipient. Most people do not need to edit them.")
-                            .font(.footnote)
-                            .foregroundStyle(AppColors.secondaryText)
-                        AppTextField(
-                            "Words before this Margin",
-                            text: Binding(
-                                get: { margin.anchorBefore },
-                                set: { send(.setAnchorBefore(id: margin.id, text: $0)) }
-                            ),
-                            axis: .vertical
-                        )
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Words before this Margin")
-                        .accessibilityIdentifier("build23.sender.anchor.before.\(margin.id)")
-
-                        AppTextField(
-                            "Words after this Margin",
-                            text: Binding(
-                                get: { margin.anchorAfter },
-                                set: { send(.setAnchorAfter(id: margin.id, text: $0)) }
-                            ),
-                            axis: .vertical
-                        )
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Words after this Margin")
-                        .accessibilityIdentifier("build23.sender.anchor.after.\(margin.id)")
-                    }
-                    .padding(.top, 8)
+                DisclosureGroup(ShareReviewCardWords.whereItLands, isExpanded: $showsPositionContext) {
+                    Build23WhereItLandsFields(margin: margin, send: send)
+                        .padding(.top, 8)
                 }
                 .font(.headline)
 
-                AdaptiveStack(spacing: 10) {
-                    Button("Undo", systemImage: "arrow.uturn.backward") {
-                        send(.undo(id: margin.id))
-                    }
-                    .disabled(!margin.canUndo)
-                    .accessibilityIdentifier("build23.sender.editor.undo.\(margin.id)")
+                Build23EditHistoryButtons(margin: margin, send: send)
 
-                    Button("Redo", systemImage: "arrow.uturn.forward") {
-                        send(.redo(id: margin.id))
-                    }
-                    .disabled(!margin.canRedo)
-                    .accessibilityIdentifier("build23.sender.editor.redo.\(margin.id)")
+                Build23PlacementNote(margin: margin)
 
-                    if margin.canUndo || margin.automaticCleanupEnabled || margin.hasCleanedVoice {
-                        AdaptiveSpacer()
-                        Button("Undo all edits") {
-                            send(.restoreOriginal(id: margin.id))
-                        }
-                        .accessibilityIdentifier("build23.sender.editor.restore.\(margin.id)")
-                    }
-                }
-                .buttonStyle(.bordered)
+                Build23PrivateNoteView(margin: margin)
 
-                if let preparationMessage = margin.preparationMessage, !preparationMessage.isEmpty {
-                    Build23StatusLabel(
-                        icon: margin.hasCleanedVoice ? "checkmark.circle.fill" : "info.circle.fill",
-                        title: preparationMessage,
-                        tint: margin.hasCleanedVoice ? AppColors.evergreen : AppColors.secondaryText
-                    )
-                }
-
-                if let warning = margin.warning, !warning.isEmpty {
-                    Build23StatusLabel(icon: "exclamationmark.triangle.fill", title: warning, tint: AppColors.plum)
-                }
-
-                if let privateNote = margin.privateNote,
-                   !privateNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Build23StatusLabel(
-                            icon: "lock.fill",
-                            title: "Private note — not exported",
-                            tint: AppColors.secondaryText
-                        )
-                        Text(privateNote)
-                            .font(.body)
-                            .foregroundStyle(AppColors.text)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("build23.sender.private-note.\(margin.id)")
-                }
+                Build23MarginFailureLines(margin: margin)
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("build23.sender.margin.editor.\(margin.id)")
         }
     }
 }
@@ -745,95 +736,10 @@ struct Build23ReviewTokenButton: View {
     }
 }
 
-struct Build23BatchPreparationCard: View {
-    let isPreparing: Bool
-    let completed: Int
-    let total: Int
-    let failures: Int
-    let canPrepare: Bool
-    let onPrepare: () -> Void
-    let onCancel: () -> Void
-
-    var body: some View {
-        ExperienceSurface {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Voice preparation")
-                    .font(.headline)
-                    .accessibilityIdentifier("build23.sender.preparation.batch")
-                Text("Prepare cleaned voice for included Margins. A failed Margin retains Original voice when available, or reviewed Text otherwise.")
-                    .font(.subheadline)
-                    .foregroundStyle(AppColors.secondaryText)
-
-                if isPreparing {
-                    ProgressView(
-                        value: Double(min(completed, max(total, 1))),
-                        total: Double(max(total, 1))
-                    )
-                    .tint(AppColors.evergreen)
-                    .accessibilityLabel("Voice preparation progress")
-                    .accessibilityValue("\(completed) of \(total) complete")
-
-                    AdaptiveStack {
-                        Build23StatusLabel(
-                            icon: "hourglass",
-                            title: "\(completed) of \(total) prepared",
-                            tint: AppColors.evergreen
-                        )
-                        AdaptiveSpacer()
-                        Button("Cancel preparation", role: .cancel, action: onCancel)
-                            .buttonStyle(.bordered)
-                            .accessibilityIdentifier("build23.sender.preparation.cancel")
-                    }
-                } else {
-                    Button("Prepare all included", systemImage: "waveform.badge.plus", action: onPrepare)
-                        .buttonStyle(.bordered)
-                        .disabled(!canPrepare)
-                        .accessibilityIdentifier("build23.sender.preparation.all")
-                }
-
-                if failures > 0 {
-                    FailureMessageLabel("\(failures) \(failures == 1 ? "Margin" : "Margins") could not be prepared. Each retains Original voice when available, or reviewed Text otherwise.")
-                        .font(.subheadline)
-                }
-            }
-        }
-    }
-}
-
-struct Build23ReviewMarginCard: View {
-    let margin: Build23SharingMarginSnapshot
-
-    var body: some View {
-        ExperienceSurface {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Label(
-                        Build23SenderPresentation.representationTitle(margin.representation),
-                        systemImage: margin.representation == .textOnly ? "text.alignleft" : "waveform"
-                    )
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppColors.evergreen)
-                    Spacer()
-                    Text("Included")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppColors.evergreen)
-                }
-                Text(margin.reviewedText)
-                    .font(.body)
-                    .foregroundStyle(AppColors.text)
-                    .lineLimit(10)
-                Text("Between “\(margin.anchorBefore)” and “\(margin.anchorAfter)”")
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .accessibilityIdentifier("build23.sender.review.margin.\(margin.id)")
-    }
-}
-
 struct Build23VerifiedRecipientPreviewPanel: View {
     let preview: Build23VerifiedRecipientPreview
+    /// Scenes whose model-written title and summary the packet left out (#4635); the map line says so when above zero.
+    var withheldMapSceneCount: Int = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -895,7 +801,7 @@ struct Build23VerifiedRecipientPreviewPanel: View {
                     Build23StatusLabel(
                         icon: "map",
                         title: preview.listeningMapProposalCount > 0
-                            ? "Listening Map included"
+                            ? MapTextDisclosure.withheldMapLine(sceneCount: withheldMapSceneCount) ?? "Listening Map included"
                             : "Listening Map still preparing or unavailable; share remains usable"
                     )
                     Build23StatusLabel(
@@ -927,6 +833,8 @@ struct Build23VerifiedRecipientPreviewPanel: View {
 
 struct Build23InlineTranscriptEditor: View {
     let tokens: [Build23SharingReviewTokenSnapshot]
+    /// The list card's editor shows every token, with no collapse (#4647); the reply sheet's keeps the collapse.
+    var showsAllTokens = false
     let onToggle: (Build23SharingReviewTokenSnapshot) -> Void
 
     @ScaledMetric(relativeTo: .body) private var tokenLineHeight: CGFloat = 36
@@ -952,10 +860,10 @@ struct Build23InlineTranscriptEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Transcript")
+            Text(ShareReviewCardWords.yourWords)
                 .font(.headline)
                 .accessibilityIdentifier("build23.sender.inline-transcript-editor")
-            Text("Read normally. Tap any word or bracketed pause to remove or restore it.")
+            Text(ShareReviewCardWords.wordsEditorCaption)
                 .font(.caption)
                 .foregroundStyle(AppColors.secondaryText)
 
@@ -966,7 +874,7 @@ struct Build23InlineTranscriptEditor: View {
                     .accessibilityIdentifier("build23.sender.cleanup.summary")
             }
 
-            if isExpanded {
+            if isExpanded || showsAllTokens {
                 tokenLayout()
             } else {
                 tokenLayout(maximumRows: 10)
@@ -974,37 +882,11 @@ struct Build23InlineTranscriptEditor: View {
                     .clipped()
             }
 
-            tokenLayout()
-                .fixedSize(horizontal: false, vertical: true)
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: Build23TranscriptHeightPreferenceKey.self,
-                            value: ["tokens-full": proxy.size.height]
-                        )
-                    }
-                }
-                .hidden()
-                .accessibilityHidden(true)
-                .frame(height: 0)
-                .clipped()
+            if !showsAllTokens {
+                measuringLayouts
+            }
 
-            tokenLayout(maximumRows: 10)
-                .fixedSize(horizontal: false, vertical: true)
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: Build23TranscriptHeightPreferenceKey.self,
-                            value: ["tokens-collapsed": proxy.size.height]
-                        )
-                    }
-                }
-                .hidden()
-                .accessibilityHidden(true)
-                .frame(height: 0)
-                .clipped()
-
-            if needsExpansion {
+            if needsExpansion, !showsAllTokens {
                 Button(isExpanded ? "Collapse words and pauses" : "Show all words and pauses") {
                     isExpanded.toggle()
                 }
@@ -1018,6 +900,40 @@ struct Build23InlineTranscriptEditor: View {
             collapsedHeight = heights["tokens-collapsed"] ?? collapsedHeight
             fullHeight = heights["tokens-full"] ?? fullHeight
         }
+    }
+
+    /// Two hidden copies that measure the full and the collapsed height, so the collapse shows only when it hides words.
+    @ViewBuilder
+    private var measuringLayouts: some View {
+        tokenLayout()
+            .fixedSize(horizontal: false, vertical: true)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: Build23TranscriptHeightPreferenceKey.self,
+                        value: ["tokens-full": proxy.size.height]
+                    )
+                }
+            }
+            .hidden()
+            .accessibilityHidden(true)
+            .frame(height: 0)
+            .clipped()
+
+        tokenLayout(maximumRows: 10)
+            .fixedSize(horizontal: false, vertical: true)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: Build23TranscriptHeightPreferenceKey.self,
+                        value: ["tokens-collapsed": proxy.size.height]
+                    )
+                }
+            }
+            .hidden()
+            .accessibilityHidden(true)
+            .frame(height: 0)
+            .clipped()
     }
 
     private func tokenLayout(maximumRows: Int? = nil) -> some View {
@@ -1035,50 +951,124 @@ struct Build23InlineTranscriptEditor: View {
     }
 }
 
+/// "Before your Margin" (#4171, PR 4b of the Design): how much of the episode the friend hears first, and a preview
+/// that plays it the way the friend will. The words and the rules are `SenderLeadInPreview`'s.
+@MainActor
+struct Build23LeadInRow: View {
+    let marginID: String
+    let leadIn: Build23LeadInSnapshot
+    let send: (Build23SenderAction) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(SenderLeadInPreview.rowLabel)
+                .font(.headline)
+
+            Picker(
+                SenderLeadInPreview.rowLabel,
+                selection: Binding(
+                    get: { leadIn.ms },
+                    set: { send(.setLeadIn(id: marginID, ms: $0)) }
+                )
+            ) {
+                ForEach(leadIn.choicesMs, id: \.self) { ms in
+                    Text(SenderLeadInPreview.choiceLabel(ms)).tag(ms)
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("build23.sender.leadIn.\(marginID)")
+
+            Text(SenderLeadInPreview.caption)
+                .font(.footnote)
+                .foregroundStyle(AppColors.secondaryText)
+
+            Button(
+                leadIn.isPlaying ? SenderLeadInPreview.stopButton : SenderLeadInPreview.previewButton,
+                systemImage: leadIn.isPlaying ? "stop.fill" : "play.circle"
+            ) {
+                send(.toggleLeadInPreview(id: marginID))
+            }
+            .buttonStyle(.bordered)
+            .tint(AppColors.evergreen)
+            .disabled(!leadIn.previewIsAvailable && !leadIn.isPlaying)
+            .accessibilityIdentifier("build23.sender.leadIn.preview.\(marginID)")
+
+            if !leadIn.previewIsAvailable {
+                Text(SenderLeadInPreview.momentPendingCaption)
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+            } else if leadIn.previewFailed {
+                FailureMessageLabel(SenderLeadInPreview.failureCaption)
+                    .font(.subheadline)
+            } else if let after = leadIn.afterRunUpCaption {
+                Text(after)
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+            }
+        }
+        .onDisappear { send(.stopLeadInPreview(id: marginID)) }
+    }
+}
+
+/// One button that plays the version the sender has selected (#3839). Switching the picker is how they compare; there
+/// is no button with Words only.
 @MainActor
 struct Build23AudioPreviewControls: View {
+    let representation: ShareMarginRepresentationChoice
     let originalURL: URL?
     let cleanedURL: URL?
+    /// The version without ums is shown while its voice is still being made (#4647): its Listen waits, with a line that
+    /// says so. It is one of only two controls on the list that wait for a voice.
+    var isVoicePending = false
 
     @StateObject private var player = Build23AudioPreviewPlayer()
 
-    var body: some View {
-        if originalURL != nil || cleanedURL != nil {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Voice preview")
-                    .font(.headline)
-                    .accessibilityIdentifier("build23.sender.voice-preview")
-                Text("Preview the exact local voice assets represented in this draft.")
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
+    private var playable: (title: String, url: URL, id: String)? {
+        switch representation {
+        case .original:
+            originalURL.map { (title: ShareReviewCardWords.listenAsRecorded, url: $0, id: "original") }
+        case .cleaned:
+            cleanedURL.map { (title: ShareReviewCardWords.listenWithoutUms, url: $0, id: "cleaned") }
+        case .textOnly:
+            nil
+        }
+    }
 
-                Build23WrappingLayout(spacing: 8) {
-                    if let originalURL {
-                        previewButton(title: ShareCleanupWords.asRecorded, url: originalURL)
-                    }
-                    if let cleanedURL {
-                        previewButton(title: ShareCleanupWords.withoutUms, url: cleanedURL)
-                    }
+    var body: some View {
+        if isVoicePending, representation == .cleaned {
+            VStack(alignment: .leading, spacing: 8) {
+                Button(ShareReviewCardWords.listenWithoutUms, systemImage: "play.fill") {}
+                    .buttonStyle(.bordered)
+                    .tint(AppColors.evergreen)
+                    .disabled(true)
+                    .accessibilityIdentifier("build23.sender.voice-preview.cleaned")
+                Text(ShareReviewCardWords.voicePending)
+                    .font(.footnote)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("build23.sender.voice-preview.pending")
+            }
+            .onAppear { player.stop() }
+        } else if let playable {
+            VStack(alignment: .leading, spacing: 10) {
+                let isActive = player.activeURL == playable.url && player.isPlaying
+                Button(isActive ? ShareReviewCardWords.stopListening : playable.title, systemImage: isActive ? "stop.fill" : "play.fill") {
+                    player.toggle(url: playable.url)
                 }
+                .buttonStyle(.bordered)
+                .tint(AppColors.evergreen)
+                .accessibilityLabel(isActive ? ShareReviewCardWords.stopListening : playable.title)
+                .accessibilityIdentifier("build23.sender.voice-preview.\(playable.id)")
 
                 if let errorMessage = player.errorMessage {
                     FailureMessageLabel(errorMessage)
                         .font(.subheadline)
                 }
             }
+            // Switching version stops whatever was playing, so "Stop" never sits on a button for the other version.
+            .onCompatibleChange(of: representation) { _ in player.stop() }
             .onDisappear { player.stop() }
         }
-    }
-
-    private func previewButton(title: String, url: URL) -> some View {
-        let isActive = player.activeURL == url && player.isPlaying
-        return Button(isActive ? "Stop \(title)" : "Preview \(title)", systemImage: isActive ? "stop.fill" : "play.fill") {
-            player.toggle(url: url)
-        }
-        .buttonStyle(.bordered)
-        .tint(isActive ? AppColors.plum : AppColors.evergreen)
-        .accessibilityLabel(isActive ? "Stop \(title) voice preview" : "Play \(title) voice preview")
-        .accessibilityIdentifier("build23.sender.voice-preview.\(title.lowercased())")
     }
 }
 
@@ -1089,6 +1079,25 @@ private final class Build23AudioPreviewPlayer: NSObject, ObservableObject, AVAud
     @Published private(set) var errorMessage: String?
 
     private var audioPlayer: AVAudioPlayer?
+    nonisolated(unsafe) private var previewToken: NSObjectProtocol?
+
+    override init() {
+        super.init()
+        // "Hear it as your friend will" starting stops this, and the reverse (#4171).
+        previewToken = NotificationCenter.default.addObserver(
+            forName: .shareReviewPreviewDidStart, object: nil, queue: .main
+        ) { [weak self] note in
+            let starter = note.object.map { ObjectIdentifier($0 as AnyObject) }
+            MainActor.assumeIsolated {
+                guard let self, starter != ObjectIdentifier(self) else { return }
+                self.stop()
+            }
+        }
+    }
+
+    deinit {
+        if let previewToken { NotificationCenter.default.removeObserver(previewToken) }
+    }
 
     func toggle(url: URL) {
         if activeURL == url, isPlaying {
@@ -1098,6 +1107,9 @@ private final class Build23AudioPreviewPlayer: NSObject, ObservableObject, AVAud
 
         do {
             audioPlayer?.stop()
+            // The same session setup as "Hear it as your friend will": a cold launch would otherwise play this muted
+            // on Silent (audit on #5108).
+            try LeadInPreviewPlayer.activatePlaybackSession()
             let nextPlayer = try AVAudioPlayer(contentsOf: url)
             nextPlayer.delegate = self
             nextPlayer.prepareToPlay()
@@ -1108,11 +1120,12 @@ private final class Build23AudioPreviewPlayer: NSObject, ObservableObject, AVAud
             activeURL = url
             isPlaying = true
             errorMessage = nil
+            NotificationCenter.default.post(name: .shareReviewPreviewDidStart, object: self)
         } catch {
             audioPlayer = nil
             activeURL = nil
             isPlaying = false
-            errorMessage = "This voice preview could not be played."
+            errorMessage = ShareReviewCardWords.listenError
         }
     }
 
@@ -1138,6 +1151,9 @@ private enum Build23AudioPreviewError: Error {
 
 struct Build23ExpandableTranscript: View {
     let text: String
+    /// How many lines show before "Show all your words": 10 in the editor, 3 on a left-out list card (#4647).
+    var collapsedLines = 10
+    var identifier = "build23.sender.transcript.expansion"
 
     @State private var isExpanded = false
     @State private var limitedHeight: CGFloat = 0
@@ -1152,20 +1168,21 @@ struct Build23ExpandableTranscript: View {
             Text(text)
                 .font(.body)
                 .foregroundStyle(AppColors.text)
-                .lineLimit(isExpanded ? nil : 10)
+                .lineLimit(isExpanded ? nil : collapsedLines)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-            measurementText(lineLimit: 10, key: "limited")
+            measurementText(lineLimit: collapsedLines, key: "limited")
             measurementText(lineLimit: nil, key: "full")
 
             if needsExpansion {
-                Button(isExpanded ? "Show less" : "Show full transcript") {
+                Button(isExpanded ? ShareReviewCardWords.showLess : ShareReviewCardWords.showAllWords) {
                     isExpanded.toggle()
                 }
                 .font(.subheadline.weight(.semibold))
                 .buttonStyle(.plain)
                 .foregroundStyle(AppColors.evergreen)
-                .accessibilityIdentifier("build23.sender.transcript.expansion")
+                .accessibilityIdentifier(identifier)
             }
         }
         .onPreferenceChange(Build23TranscriptHeightPreferenceKey.self) { heights in

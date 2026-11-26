@@ -28,6 +28,7 @@ extension Gate1AppModel {
         let reader = StoreReader(store)
         if let latest = try await reader.latestFeedSubscriptions() {
             feedSubscriptions = latest
+            await reconcileNotForMeHides(with: latest) // a followed source is never hidden (#4285)
             return latest
         }
         return try await reader.feedSubscriptions()
@@ -77,6 +78,7 @@ extension Gate1AppModel {
                     self.reportConfirmation("Choose which feed to follow.")
                     return
                 }
+                await self.loadNotForMe() // a refollow must see the marks (#4285)
                 _ = try await coordinator.follow(candidate: candidate)
                 await self.publishFeedSubscriptionsAfterChange()
                 self.followedSourceCandidates = []
@@ -117,6 +119,7 @@ extension Gate1AppModel {
             do {
                 let store = try self.requireStore()
                 let coordinator = self.requireFollowedSourceCoordinator(store: store)
+                await self.loadNotForMe() // a refollow must see the marks (#4285)
                 _ = try await coordinator.follow(candidate: candidate)
                 await self.publishFeedSubscriptionsAfterChange()
                 self.followedSourceCandidates = []
@@ -158,7 +161,7 @@ extension Gate1AppModel {
 
     /// Built from the same de-duplicated, unfollowed feeds the suggestion card lists, so the
     /// button and the card name the feed the same way.
-    private var selectedFollowOffer: FollowOffer? {
+    var selectedFollowOffer: FollowOffer? {
         guard let found = followOffers[selectedItem.id] else { return nil }
         return ManualFollowPolicy.offer(
             itemId: found.itemId, mediaType: found.mediaType,
@@ -246,6 +249,7 @@ extension Gate1AppModel {
                     self.reportConfirmation("Choose the source feed to follow.")
                     return
                 }
+                await self.loadNotForMe() // a refollow must see the marks (#4285)
                 let subscription = if let existing = try await StoreReader(store).feedSubscription(sourceId: candidate.source.id) {
                     existing
                 } else {
@@ -375,6 +379,7 @@ extension Gate1AppModel {
             do {
                 let store = try self.requireStore()
                 let coordinator = self.requireFollowedSourceCoordinator(store: store)
+                await self.loadNotForMe() // a refollow must see the marks (#4285)
                 let subscription = try await coordinator.follow(candidate: candidate)
                 if let itemId, try await self.recordFollowedSource(subscription.source, onItem: itemId, store: store) {
                     self.refreshLibraryRowsInBackground(mustPublish: true)
@@ -435,6 +440,8 @@ extension Gate1AppModel {
         // `trigger.checksListLinks` before it touches the store, so every other trigger costs nothing here. The check runs on
         // its own task: a slow or dead list host must not keep a pull's spinner turning. **Check now** awaits the runner itself.
         startListLinkCheck(trigger: trigger)
+        // The rule learner reads the new episodes, off the main thread (#4046 PR 12).
+        if covered != nil { Task { [weak self] in await self?.reloadRuleSuggestions() } }
         return covered
     }
 
@@ -443,7 +450,10 @@ extension Gate1AppModel {
         // strongest request (#2136).
         guard followedSourceRefreshGate.request(forced: force) else { return nil }
         isRefreshingFollowedSources = true
-        defer { isRefreshingFollowedSources = false }
+        defer {
+            isRefreshingFollowedSources = false
+            followedSourcePassEnd.passEnded() // a pull the gate refused waits for this (#4955)
+        }
         var nextForce: Bool? = force
         var roundScope = scope
         var covered: FeedRefreshScope?
@@ -462,6 +472,8 @@ extension Gate1AppModel {
         do {
             let store = try requireStore()
             let coordinator = requireFollowedSourceCoordinator(store: store)
+            // The Not for me marks are read before any entry is saved, so a launch refresh can't revive one (#4285).
+            await loadNotForMe()
             for entry in await coordinator.refreshStale(force: force, scope: scope) { importFollowedSourceEntry(entry, startedByListener: false) } // "Add every new item" (#466)
             let subscriptions = try await publishFeedSubscriptions(store: store)
             followedSourceEntries = try await coordinator.entries()
@@ -474,8 +486,18 @@ extension Gate1AppModel {
         }
     }
 
+    /// Every Following entry with a fetch running, whoever started it.
+    var importingFollowedSourceEntryIds: Set<String> { followedEntryImports.importing }
+
     func importFollowedSourceEntry(_ entry: FeedEntry, openWhenFinished: Bool = false, playWhenFinished: Bool = false, startedByListener: Bool = true) {
-        guard importingFollowedSourceEntryIds.insert(entry.id).inserted else { return }
+        guard followedEntryImports.begin(entry.id, play: playWhenFinished) else {
+            // One fetch per entry, so the item lands once. A ▶ tap on an episode a swipe is already adding rides on that
+            // fetch and plays the item when it lands (#5328), unless the listener opens or starts something else first.
+            if playWhenFinished, followedEntryImports.canJoinForPlay(entry.id) {
+                followedEntryImports.joinForPlay(entry.id, token: followedPlayIntent.begin())
+            }
+            return
+        }
         // Opening or playing waits on a fetch; anything the listener opens or starts meanwhile wins (#2124).
         let intent = openWhenFinished || playWhenFinished ? followedPlayIntent.begin() : nil
         Task { [weak self] in
@@ -483,7 +505,7 @@ extension Gate1AppModel {
             // The item this import saved, once it has; a wish to queue it hears it, or that nothing was saved (#4044).
             var landedItemId: String?
             defer {
-                self.importingFollowedSourceEntryIds.remove(entry.id)
+                self.followedEntryImports.end(entry.id)
                 self.settleQueueWish(key: entry.id, itemId: landedItemId)
             }
             do {
@@ -529,7 +551,9 @@ extension Gate1AppModel {
                         // The earlier record's text map is kept and the save runs off the main actor (#2509), as for a shared link.
                         var audio: PublisherAudio?
                         if let found = try PublisherAudioDetector.publisherAudio(for: entry, itemId: itemId) {
-                            audio = try await StoreReader(store).read { try $0.savePublisherAudioIfItemExists(found) }
+                            let result = try await StoreReader(store).read { try $0.savePublisherAudioIfItemExists(found) }
+                            audio = result.saved
+                            if let refusal = result.refusalDiagnostic { self.diagnostics["followedPublisherAudio"] = "\(itemId): \(refusal)" } // #4640
                         }
                         if let audio { PublisherAudioTextMapper.start(audio, store: store, transcriber: self.sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)" } }
                         self.recordFollowedPublisherAudio(lookup?.outcome, itemId: audio?.itemId ?? itemId, saved: audio != nil)
@@ -538,6 +562,9 @@ extension Gate1AppModel {
                         landedItemId = audio?.itemId ?? itemId
                     }
                 }
+                // A ▶ tap that joined this fetch plays the item as soon as it has landed (#5328).
+                if let landedItemId, let joinedPlay = self.followedEntryImports.takeJoinedPlay(entry.id),
+                   self.followedPlayIntent.finish(joinedPlay) { self.startItem(id: landedItemId) }
                 guard imported else { return }
                 try await self.followedSourceCoordinator?.setEntryState(id: entry.id, state: .imported)
                 await self.performFollowedSourceRefresh(force: false, trigger: .localChange)
@@ -549,7 +576,9 @@ extension Gate1AppModel {
         }
     }
 
-    func unfollowSource(id: String) {
+    /// `then` runs after the unfollow has landed and the list is published, and only when it landed (#4285: a hide is
+    /// written there, after the show has left the list the hide reconcile reads).
+    func unfollowSource(id: String, then: (@MainActor () async -> Void)? = nil) {
         guard let coordinator = followedSourceCoordinator else { return }
         // The show leaves its follow lists with it (#4046). The member is read before the subscription goes.
         let member = feedSubscriptions.first { $0.id == id }.map { FollowListEditing.member(for: $0) }
@@ -557,6 +586,7 @@ extension Gate1AppModel {
             let unfollowed: Void? = try? await coordinator.unfollow(subscriptionId: id)
             if unfollowed != nil, let member { await self?.removeFromFollowLists(member) }
             await self?.publishFeedSubscriptionsAfterChange()
+            if unfollowed != nil { await then?() }
             await self?.performFollowedSourceRefresh(force: false, trigger: .localChange)
         }
     }

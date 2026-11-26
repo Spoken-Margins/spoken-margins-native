@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import SessionKit
+import SessionKitAudio
 import SessionKitSupertonic
 import XCTest
 @testable import SpokenMarginsApp
@@ -47,6 +48,8 @@ final class SupertonicClientHarness {
     /// One entry for each time the client asked the audio session to activate (#2101).
     let sessionActivations = HarnessFallbackLog()
     private let players = HarnessPlayerLog()
+    private let rendersHandled = HarnessCounter()
+    private let chunkEndsHandled = HarnessCounter()
     private let root: URL
 
     init(
@@ -60,7 +63,13 @@ final class SupertonicClientHarness {
         applicationIsInBackground: (@Sendable () -> Bool)? = nil,
         notificationCenter: NotificationCenter = .default,
         pressureRenderer: (any BundledVoiceRendering)? = nil,
-        queuedPlayerReader: SupertonicSpeechPlaybackClient.QueuedPlayerReader? = nil
+        queuedPlayerReader: SupertonicSpeechPlaybackClient.QueuedPlayerReader? = nil,
+        postFirstAudio: @escaping FirstAudioPoster = { _ in }, // never the shared hub: other tests' cues listen to it
+        startsPlayers: Bool = true, // false: the starter only records players, so none reaches `.playing` by itself
+        // true: `text` is the target's article, and the app's rule plans it with its notes read where cited (#3777).
+        footnoteAsides: Bool = false,
+        footnoteMode: (@Sendable () -> FootnoteMode)? = nil,
+        footnoteCue: (@Sendable () -> Void)? = nil
     ) throws {
         root = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-harness-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -76,12 +85,20 @@ final class SupertonicClientHarness {
         let fallbackReasons = fallbackReasons
         let stallEvents = stallEvents
         let sessionActivations = sessionActivations
+        var articleLookup: SupertonicSpeechPlaybackClient.ArticleTextLookup?
+        var asidesLookup: SupertonicSpeechPlaybackClient.FootnoteAsidesLookup?
+        if footnoteAsides {
+            let article = text
+            articleLookup = { _ in article }
+            asidesLookup = { _ in true }
+        }
         client = SupertonicSpeechPlaybackClient(
             renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             audioSessionNotificationCenter: notificationCenter,
             audioSessionActivator: { sessionActivations.add("activate") },
             audioPlayerStarter: { player, rate in
                 players.started(player)
+                guard startsPlayers else { return }
                 player.volume = 0
                 player.playImmediately(atRate: rate)
             },
@@ -89,6 +106,11 @@ final class SupertonicClientHarness {
             observesPlayerLifecycle: true,
             pressureRenderer: pressureRenderer,
             fallbackClient: systemVoice,
+            postFirstAudio: postFirstAudio,
+            articleText: articleLookup,
+            footnoteAsides: asidesLookup,
+            footnoteMode: footnoteMode,
+            footnoteCue: footnoteCue,
             onFallback: { reason, _, _ in fallbackReasons.add(reason) },
             // The activation timing is a diagnostic, not a stall; a slow simulator must not add it to the lists tests compare.
             onStall: { kind, _ in if kind != "supertonic.session_activate" { stallEvents.add(kind) } },
@@ -96,6 +118,10 @@ final class SupertonicClientHarness {
             applicationIsActive: applicationIsActive,
             applicationIsInBackground: applicationIsInBackground
         )
+        let rendersHandled = rendersHandled
+        let chunkEndsHandled = chunkEndsHandled
+        client.debugRenderWasHandled = { rendersHandled.bump() }
+        client.debugChunkEndWasHandled = { chunkEndsHandled.bump() }
     }
 
     /// Prepares the text and starts playing from the beginning, then waits until `renders` chunks have
@@ -108,6 +134,17 @@ final class SupertonicClientHarness {
     }
 
     func play(from offset: Int) throws { try client.play(targetId: targetId, from: offset) }
+
+    /// Ends the playing chunk and waits until the client has started the player of the chunk it chose next; true when it
+    /// has. A chunk the client passes over (a note in "Chime where cited") never gets a player of its own.
+    func finishPlayingChunkAndWaitForTheNext() async -> Bool {
+        let before = players.count
+        await finishPlayingChunkAndWaitUntilHandled()
+        return await waitForPlayerStarts(before + 1)
+    }
+
+    /// The player of the newest chunk the client started.
+    var newestPlayer: AVPlayer? { players.newest }
 
     /// How many players the client has started, one per chunk heard (or re-seated).
     var playerStarts: Int { players.count }
@@ -124,6 +161,21 @@ final class SupertonicClientHarness {
     /// Waits until `count` renders have returned to the client.
     func waitForRenders(_ count: Int) async {
         try? await pollUntil { renderer.finishedCount >= count }
+    }
+
+    /// Waits until the client has dealt with `count` renders in all, each one landed, failed or cancelled, and acted on
+    /// it: cached, played or queued the chunk as it called for. A test that says "nothing started" waits here, not
+    /// for a time (#4368).
+    func waitForRendersHandled(_ count: Int) async {
+        try? await pollUntil { rendersHandled.value >= count }
+    }
+
+    /// Releases a held render and waits until the client has dealt with the next outcome. Use it when that render is
+    /// the only one outstanding, as a held render is while the chunk ahead plays.
+    func releaseRenderAndWaitUntilHandled(_ index: Int) async {
+        let before = rendersHandled.value
+        renderer.release(index)
+        try? await pollUntil { rendersHandled.value > before }
     }
 
     /// Waits until `count` renders have started, held ones included.
@@ -149,6 +201,14 @@ final class SupertonicClientHarness {
         await Task.detached {
             NotificationCenter.default.post(name: .AVPlayerItemDidPlayToEndTime, object: box.item)
         }.value
+    }
+
+    /// Ends the playing chunk as `finishPlayingChunk()` does, then waits until the client has finished handling that
+    /// end and whatever it decided at the seam (#4368).
+    func finishPlayingChunkAndWaitUntilHandled() async {
+        let before = chunkEndsHandled.value
+        await finishPlayingChunk()
+        try? await pollUntil { chunkEndsHandled.value > before }
     }
 
     /// The system turns down the newest player's start, as it did for a new player started with the app away
@@ -224,6 +284,13 @@ final class SupertonicClientHarness {
         try file.write(from: buffer)
         return url
     }
+}
+
+final class HarnessCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    func bump() { lock.withLock { count += 1 } }
 }
 
 final class HarnessFallbackLog: @unchecked Sendable {

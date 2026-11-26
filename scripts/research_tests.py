@@ -139,10 +139,13 @@ def python_suite(root, label, folder, arguments):
 
 
 # Deploy test scripts that print "N passed" last: the rollback path, and the host check for kept visitor
-# addresses (#2034), which must stay read-only and print no address.
+# addresses (#2034), which must stay read-only and print no address, and the non-root deploy's sudo wrapper and its
+# two on-box scripts (#2478), and the same wrapper under the Dial gate and bandwidth check deploys (#4848).
 COUNTED_SHELL_SUITES = (
     'research/B4/deploy/test-server-rollback.sh',
     'research/B4/deploy/test-check-visitor-ips.sh',
+    'research/B4/deploy/test-remote-root.sh',
+    'ops/test-remote-root-deploys.sh',
 )
 
 

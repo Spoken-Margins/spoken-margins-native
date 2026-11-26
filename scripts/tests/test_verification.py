@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+import lane_slots
 import test_inventory as inventory
 
 spec = importlib.util.spec_from_file_location('verification', SCRIPTS / 'verify-tests.py')
@@ -122,6 +123,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', return_value='toolchain'), \
                     patch.object(verification.Run, 'simulator', return_value=(device, False)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.Run, 'command',
                                  side_effect=lambda name, args, **kw: commands.append((name, args))):
@@ -152,6 +154,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', return_value='toolchain'), \
                     patch.object(verification.Run, 'simulator', return_value=(device, False)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.Run, 'command',
                                  side_effect=lambda name, args, **kw: commands.append((name, args))):
@@ -165,13 +168,52 @@ class VerificationTests(unittest.TestCase):
                 self.assertIn(setting, build)
                 self.assertNotIn(setting, tests)
 
+    def test_package_cache_folder_applies_to_the_build_and_the_test_step(self):
+        # #4664: main-t3's hosted Mac restores the packages it fetched before, so a bad certificate on a binary-target
+        # host (download.onnxruntime.ai, 2026-11-21) cannot stop the build. Unset, the command is what it was.
+        self.assertEqual(verification.package_cache_settings({}), [])
+        self.assertEqual(verification.package_cache_settings({'SM_SPM_DIR': '  '}), [])
+        self.assertEqual(verification.package_cache_settings({'SM_SPM_DIR': '/w/.build/spm'}),
+                         ['-clonedSourcePackagesDirPath', '/w/.build/spm'])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            self.app_test_root(root)
+            commands = []
+            device = {'udid': 'U', 'state': 'Booted', 'runtime': 'iOS-26', 'name': 'Other'}
+            with patch.object(verification, 'ROOT', root), \
+                    patch.object(verification, 'input_identity', return_value='inputs'), \
+                    patch.object(verification, 'capture', return_value='toolchain'), \
+                    patch.object(verification.Run, 'simulator', return_value=(device, False)), \
+                    patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
+                    patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                    patch.dict(os.environ, {'SM_SPM_DIR': '/w/.build/spm'}), \
+                    patch.object(verification.Run, 'command',
+                                 side_effect=lambda name, args, **kw: commands.append((name, args))):
+                run = verification.Run(Path(temporary) / 'run', 'app')
+                run.xcode('app', 'U', rebuild=False)
+            build = dict(commands)['build-for-testing']
+            tests = dict(commands)['xcode-tests']
+            # Both steps name the folder: xcodebuild resolves the package graph again before it tests, and a step
+            # without it would fetch the binary targets into an empty derived-data folder (audit on 0908501).
+            for command in (build, tests):
+                self.assertEqual(command[command.index('-clonedSourcePackagesDirPath') + 1], '/w/.build/spm')
+
     def setUp(self):
         # The host steps look up and write SessionKit pass records in the lane's state folder (#1328): keep a
         # developer's or the lane Mac's real records out of these tests (tests/test_sessionkit_steps.py covers them).
         state = tempfile.TemporaryDirectory()
         self.addCleanup(state.cleanup)
+        # Nor may the machine's own settings change what they assert (#4643): the hosted Mac's lane sets
+        # SM_LANE_IOS_MAJOR to the iOS its image ships when it has no iOS 26, and its checkout has no node_modules.
         for patcher in (patch.object(verification, 'state_dir', return_value=Path(state.name)),
                         patch.object(verification.sessionkit_pass, 'toolchain', return_value=None),
+                        patch.object(verification, 'node_modules_installed', return_value=True),
+                        # A run without --device takes a simulator slot and the Test Runner lock (#4736): in this
+                        # folder too, never on the Mac's real lane.
+                        patch.dict(os.environ, {'SM_LANE_IOS_MAJOR': '26', 'SM_LANE_STATE_DIR': state.name,
+                                                'SM_LANE_MEMORY_PRESSURE': '1'}),
+                        patch.object(verification.lane_sim, 'IOS_MAJOR', 26),
                         # #705's settle sleeps for real (up to 20 s) whenever a test runs run.xcode twice on one
                         # device: the first call marks it quiet in this shared state folder. Tests of the settle
                         # itself patch it again or inject sleep= (SimulatorSettleTests).
@@ -350,7 +392,7 @@ class VerificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             state = Path(temporary) / 'state'
             state.mkdir()
-            (state / 'desk-simulator-pool.json').write_text(json.dumps({'devices': {'pool-device': {'name': 'SM Lane Desk pool 1'}}}))
+            (state / 'desk-simulator-pool.json').write_text(json.dumps({'devices': {'POOL-0001': {'name': 'SM Lane Desk pool 1'}}}))
             seen = {}
 
             def shutdown(command, **kwargs):
@@ -359,7 +401,7 @@ class VerificationTests(unittest.TestCase):
                 return mock.Mock(returncode=0)
 
             run = verification.Run(Path(temporary) / 'run', 'test')
-            run.manifest['destination'] = {'udid': 'pool-device'}
+            run.manifest['destination'] = {'udid': 'POOL-0001'}
             run.crash_baseline = {}
             crashes = [f'WidgetRenderer_Default-2026-09-24-10000{i}.ips' for i in range(3)]
             with patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}), \
@@ -367,7 +409,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification.subprocess, 'run', side_effect=shutdown):
                 with self.assertRaises(RuntimeError):
                     run.command('crash-check', [sys.executable, '-c', 'import time; time.sleep(60)'])
-            self.assertIn('crash flood', seen['unsafe_at_shutdown']['pool-device']['reason'])
+            self.assertIn('crash flood', seen['unsafe_at_shutdown']['POOL-0001']['reason'])
 
     def test_a_crash_report_renamed_while_it_is_read_is_skipped(self):
         # integration-4ca9d9c (#767): macOS wrote `.SpokenMarginsApp-….ips`, then renamed it between
@@ -654,10 +696,9 @@ class VerificationTests(unittest.TestCase):
                 self.assertEqual(scope, 'readers')
         self.assertIn('test_research_tests', verification.RUNNER_TEST_READERS)
         self.assertIn('test_hot_file_ratchet', verification.RUNNER_TEST_READERS)
-        # The lane runner's T3 tests plan against the real TestPlans/ and app test sources: renaming an app test
+        # The T3 tests plan against the real TestPlans/ and app test sources: renaming an app test
         # or editing a plan must still reach them (found in review of #898).
-        for name in ('test_lane_runner.ScopeClassTests', 'test_lane_runner.T3Tests',
-                     'test_lane_runner.OnlyTestingTests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit'):
+        for name in ('test_lane_t3.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit'):
             self.assertIn(name, verification.RUNNER_TEST_READERS)
         for path in ('TestPlans/AudioAdapters.xctestplan', 'App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift'):
             self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
@@ -675,6 +716,10 @@ class VerificationTests(unittest.TestCase):
         # must run it before the merge, not leave the red to the next PR that touches scripts/.
         self.assertIn('test_task_cost_map', verification.RUNNER_TEST_READERS)
         self.assertEqual(verification.runner_test_scope(['docs/task-cost-map.json'])[0], 'readers')
+        # The quiz page's tests (#4707) run its Node tests on Site/quiz/: a PR that edits only the page runs them (#5048).
+        self.assertIn('test_quiz_page', verification.RUNNER_TEST_READERS)
+        for path in ('Site/quiz/page.js', 'Site/quiz/quiz.js', 'Contracts/quiz/find-something.v1.json'):
+            self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         # A manifest, model or font file added anywhere must run the check in the PR that adds it, not in the
         # next PR that touches scripts/.
         for path in ('ops/x/requirements.txt', 'Design/New/fonts/a.ttf', 'docs/y/package.json', 'ops/m/voice.onnx',
@@ -700,6 +745,16 @@ class VerificationTests(unittest.TestCase):
                 self.assertEqual([name for name, _ in calls][0], 'runner-tests')
                 self.assertTrue(self.ops_ran)
                 self.assertFalse(self.skipped_steps(manifest))
+
+    def test_every_test_that_runs_the_host_steps_copes_with_a_checkout_that_has_no_node_modules(self):
+        # #4643: run.host_steps() stops before any step when node_modules is missing, as on a hosted Mac. A test
+        # that runs it for real must make a folder or patch node_modules_installed, or it passes in a developer's
+        # worktree and fails on the lane. The audit of #4646 found test_sessionkit_steps this way.
+        for source in sorted(SCRIPTS.glob('tests/test_*.py')):
+            text = source.read_text()
+            if re.search(r'\.host_steps\(\)', text) and 'patch.object(run' + ", 'host_steps'" not in text:
+                with self.subTest(module=source.name):
+                    self.assertIn('node_modules', text, f'{source.name} runs host_steps() with the real check')
 
     def test_the_readers_run_names_modules_that_exist_and_would_catch_an_app_change(self):
         for name in verification.RUNNER_TEST_READERS:
@@ -1333,6 +1388,16 @@ class VerificationTests(unittest.TestCase):
             verification.refuse_unsafe(chosen, {'31A5C797': {'reason': 'iOS 27 flood'}})
         verification.refuse_unsafe(chosen, {'OTHER': {'reason': 'x'}})  # not listed: fine
 
+    def test_a_booted_test_runner_is_refused_without_a_slot(self):
+        # 2026-11-20: a fixer's --plan app found the Test Runner booted by the journeys run, took it without a slot and
+        # installed over it; every journey launch crashed.
+        booted = {'udid': 'CDB9C646', 'name': verification.TEST_RUNNER_NAME, 'state': 'Booted'}
+        with self.assertRaisesRegex(RuntimeError, 'already booted.*holds no simulator slot.*--device'):
+            verification.refuse_borrowed(booted, None, None)
+        verification.refuse_borrowed(booted, 'CDB9C646', None)  # named on purpose with --device
+        verification.refuse_borrowed(booted, None, 8)  # a lane job passed its slot down
+        verification.refuse_borrowed(dict(booted, state='Shutdown'), None, None)  # this run boots it and takes a slot
+
     def test_simulator_minimum_matches_shipping_targets(self):
         import re
         project = (inventory.ROOT / 'project.yml').read_text()
@@ -1538,6 +1603,7 @@ class VerificationTests(unittest.TestCase):
                             patch.object(verification, 'capture', side_effect=capture), \
                             patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
                             patch.object(verification, 'refuse_unsafe'), \
+                            patch.object(verification, 'refuse_borrowed'), \
                             patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                             patch.object(verification.subprocess, 'run'), \
                             patch.dict(os.environ, {'SM_PLAN_TIMEOUT_SECONDS': '3600'}), \
@@ -1591,6 +1657,7 @@ class VerificationTests(unittest.TestCase):
                             patch.object(verification, 'capture', side_effect=capture), \
                             patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
                             patch.object(verification, 'refuse_unsafe'), \
+                            patch.object(verification, 'refuse_borrowed'), \
                             patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                             patch.object(verification.subprocess, 'run'), \
                             patch.dict(os.environ, {'SM_PLAN_TIMEOUT_SECONDS': '3600'}), \
@@ -1634,6 +1701,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', side_effect=capture), \
                     patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.subprocess, 'run'), \
                     patch.object(run, 'command', side_effect=command):
@@ -2073,6 +2141,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', side_effect=capture), \
                     patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.subprocess, 'run'), \
                     patch.object(run, 'command', side_effect=command):
@@ -2122,6 +2191,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', side_effect=capture), \
                     patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.subprocess, 'run'), \
                     patch.object(run, 'command', side_effect=command):
@@ -2303,6 +2373,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', side_effect=capture), \
                     patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.subprocess, 'run'), \
                     patch.object(run, 'command', side_effect=command):
@@ -2597,6 +2668,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', return_value='stub'), \
                     patch.object(run, 'simulator', return_value=(fresh, True)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.lane_sim, 'boot',
                                  side_effect=lambda udid, label, **kw: boots.append(kw) or 1.0), \
@@ -2632,12 +2704,14 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', return_value='stub'), \
                     patch.object(run, 'simulator', side_effect=lambda *a: (next(runners), True)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.lane_sim, 'boot', side_effect=boot), \
                     patch.object(verification.lane_sim, 'post_stall') as posted, \
                     patch.object(verification.lane_sim, 'LATE_REPORT_WAIT', 0), \
                     patch.object(verification.lane_sim, 'late_report', return_value=None), \
                     patch.object(verification, 'acquire_simulator_slot', return_value=None), \
+                    patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(Path(temporary) / 'lane')}), \
                     patch.object(verification.subprocess, 'run'), \
                     patch.object(run, 'command', side_effect=lambda name, args, **_: commands.append((name, args)) or ''), \
                     contextlib.redirect_stdout(io.StringIO()):
@@ -2666,6 +2740,86 @@ class VerificationTests(unittest.TestCase):
         self.assertFalse(any(name == 'simulator-retire' for name, _ in commands))
         posted.assert_not_called()
 
+    def test_a_second_run_on_the_test_runner_waits_with_a_note_until_the_first_lets_it_go(self):
+        # #4736: the integration job used to hold the simulator decision lock for its whole run, only to keep other
+        # checkouts' runs off this device, and every Test Desk boot waited out the run. The device has its own lock now.
+        import threading
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            self.app_test_root(root)
+            (root / '.build/verification/SpokenMarginsAppBehavior').mkdir(parents=True)
+            app = root / '.build/verification/SpokenMarginsAppBehavior/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'
+            app.mkdir(parents=True)
+            (app / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'test.app'}))
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            run.manifest['input_sha256'] = 'inputs'
+            runner = {'udid': 'runner', 'state': 'Shutdown', 'runtime': 'iOS-26', 'name': verification.TEST_RUNNER_NAME}
+            state = Path(temporary) / 'lane'
+            order, out, errors = [], io.StringIO(), []
+
+            def slot(label, **kw):
+                order.append('slot')
+                return None
+
+            def boot(udid, label, **kw):
+                order.append('boot')
+                return 30.0
+
+            def runner_lock(*args, **kwargs):
+                order.append('runner-lock')
+                return lane_slots.acquire_test_runner(*args, **kwargs)
+
+            with patch.object(verification, 'ROOT', root), \
+                    patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}), \
+                    patch.object(verification, 'acquire_test_runner', side_effect=runner_lock), \
+                    patch.object(lane_slots, 'POLL_SECONDS', 0.05), \
+                    patch.object(verification, 'input_identity', return_value='inputs'), \
+                    patch.object(verification, 'capture', return_value='stub'), \
+                    patch.object(run, 'simulator', side_effect=lambda *a: order.append('choose') or (runner, False)), \
+                    patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                    patch.object(verification.lane_sim, 'boot', side_effect=boot), \
+                    patch.object(verification, 'acquire_simulator_slot', side_effect=slot), \
+                    patch.object(verification, 'shut_down_without_hiding_the_error',
+                                 side_effect=lambda udid: order.append('shutdown')), \
+                    patch.object(verification.subprocess, 'run'), \
+                    patch.object(run, 'command', side_effect=lambda name, args, **_: order.append(name) or ''), \
+                    contextlib.redirect_stdout(out):
+                first = lane_slots.acquire_test_runner('first run', out=io.StringIO(), max_wait=0)
+
+                def second():
+                    try:
+                        run.xcode('adapters', None, rebuild=True, only=['SpeechTests'])
+                    except Exception as error:  # surfaced below, in the test's own thread
+                        errors.append(error)
+
+                thread = threading.Thread(target=second)
+                thread.start()
+                deadline = time.monotonic() + 30  # a ceiling only: the loop ends on the note
+                while 'waiting for a Test Runner lock' not in out.getvalue() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertIn('waiting for a Test Runner lock', out.getvalue())
+                self.assertIn('first run', out.getvalue(), 'the note names the run holding the device')
+                self.assertEqual([step for step in order if step in ('choose', 'boot')], [],
+                                 'nothing chooses, replaces or boots the device while another run holds it')
+                verification.release_handle(first)
+                thread.join(30)
+                self.assertFalse(thread.is_alive())
+            self.assertEqual(errors, [])
+            self.assertLess(order.index('slot'), order.index('runner-lock'),
+                            'the simulator slot comes before the Test Runner lock, so the two cannot deadlock')
+            self.assertLess(order.index('boot'), order.index('shutdown'))
+            # The run let the device go when it finished: a third run takes it at once.
+            with patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}):
+                verification.release_handle(
+                    lane_slots.acquire_test_runner('third run', out=io.StringIO(), max_wait=0))
+
+    def test_a_run_given_a_device_never_takes_the_test_runner_lock(self):
+        # A device named with --device is the caller's own (a T3, a desk device): it never waits on the Test Runner.
+        with patch.object(verification, 'acquire_test_runner', side_effect=AssertionError('took the Test Runner lock')):
+            boots, commands, manifest, posted = self.stalled_test_runner(device='old')
+        self.assertEqual(boots, ['old'])
+
     def run_xcode_plan(self, plan, order, fail_tests=False):
         """run.xcode(plan) with every boundary stubbed; `order` collects settle, tests and marker calls in sequence."""
         with tempfile.TemporaryDirectory() as temporary:
@@ -2687,6 +2841,7 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification, 'capture', return_value='stub'), \
                     patch.object(run, 'simulator', return_value=(booted, False)), \
                     patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification, 'refuse_borrowed'), \
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification, 'acquire_simulator_slot', return_value=None), \
                     patch.object(verification, 'settle_before_tests',

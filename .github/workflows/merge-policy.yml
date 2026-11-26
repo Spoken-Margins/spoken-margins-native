@@ -1,0 +1,128 @@
+# The "merge policy" check for GitHub's merge queue (#4693, step 2 of the merge queue move).
+#
+# The rules GitHub has no setting for, in one check that runs on the PR and again in the queue
+# (scripts/merge_policy.py says which): a clean audit for audio, persistence, packet and lane changes, inherited audit
+# holds, the owner's tap (`owner-tap` label) for `.github/` and `scripts/lane-runner.py`, and an outside contributor's
+# sign-off. Advisory until the "protect main" ruleset lists it as a required check.
+#
+# Safety: the script is checked out from main, never from the PR or the merge group. The PR's commits are fetched as
+# git data and only read with git; nothing from them is built or run. The token is read-only. The PR number and SHAs
+# reach the shell through env, not interpolation. Same-repo PRs only (a fork's PR is skipped, as in every workflow).
+# A limit stated plainly: on pull_request and merge_group GitHub runs this file as the PR or group has it, so a PR
+# that edits this file changes its own check. Such a PR touches `.github/`, which this check holds for the owner's
+# tap, but the edited copy is what decides that. The owner's review of `.github/` diffs is the guard.
+#
+# The audit turns the check green by re-running the PR's own pull_request run of this workflow after it posts
+# (ops/codex/sm_codex_audit.py rerun_merge_policy): a check from a workflow_dispatch run does not satisfy a required
+# check. A label change re-runs it through the labeled/unlabeled events.
+#
+# A held PR that is only waiting shows pending, not red (2026-11-22, Cole: "threads that are pending can show pending
+# as long as they're not using the runner for that"). The job is named `merge policy run`; the check named `merge policy`
+# (the one the ruleset requires) is a commit status with that context, which the script posts as `pending` when it
+# starts and posts again with the verdict when it is done, on the PR's head or, in the queue, on the merge group's head.
+# When the only blockers are a missing audit or a missing owner tap, on a pull_request event, the script leaves that
+# status pending and exits 0, so no runner waits and the PR reads as pending. The audit or the tap re-runs this workflow
+# (see above) and the next run posts success or failure. Every other hold, an unreadable audit and every merge_group
+# entry end as failure. A run that is cancelled posts error; one that is killed leaves it pending. Either blocks the
+# merge, never passes it.
+#
+# A status, not a check run (#5162). It was a check run made through the Checks API, and GitHub files such a check run
+# into whichever GitHub Actions check suite exists first on the commit. When that was the merge-queue label bridge's
+# suite, the merge queue refused the PR with "Required status check 'merge policy' is expected" while the check showed
+# success (#5147, #5155, #5176, #5178). A commit status belongs to no check suite, so there is nothing to race.
+#
+# Cost and catch: one Linux job of about 30 seconds per PR event and per queue entry, plus two Statuses API calls, no Mac
+# minutes, no tokens. It carries the rules lane-runner.py enforced before merging (it held 10 owner-tap PRs and every audited PR in the
+# 400 merges to 2026-11-19). Waste signal: a month in which it never blocks a PR that would otherwise have merged.
+name: merge-policy
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Check this PR at its current head (a dispatched check does not satisfy a required check)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  # `statuses: write` is for the one commit status this job posts under the required name (see "A held PR that is only
+  # waiting shows pending" above). It is made with the job's own GITHUB_TOKEN, so its creator is github-actions[bot],
+  # the GitHub Actions app the ruleset names as the check's source. No `checks: write`: the job writes no check run.
+  statuses: write
+
+# No `concurrency` group on purpose (#4905). A re-arm (remove `needs-fix`, add `automerge`) fires two label events in the
+# same second. With `cancel-in-progress` one of the two runs was cancelled, and when the cancelled run was the newer
+# one GitHub read the required check as cancelled and never queued the PR: green checks, auto-merge on, no queue entry,
+# for hours (#4898 for 2 hours, #4871 and #4830 for 5). Both runs read the labels and the audit comments live, so two
+# runs at once are harmless, and each is about 30 seconds on a Linux runner.
+
+jobs:
+  policy:
+    name: merge policy run
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    # 75, not 15 (#4990): a read refused because the hour's API budget is spent waits for the reset, up to an hour away
+    # (RATE_LIMIT_WAIT below), instead of failing and holding the PR until someone re-runs the check.
+    timeout-minutes: 75
+    env:
+      # The check this job reports is named by the script, not by the job (scripts/ci_model.py reads this).
+      SM_REPORTS_CHECK: merge policy
+    steps:
+      # main's copy of the rules, with history so merge bases and the PR's commits can be read.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          lfs: false
+          persist-credentials: false
+      - name: Check the merge rules
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GROUP_HEAD: ${{ github.event.merge_group.head_sha }}
+          SM_LANE_INHERITED_CACHE: ${{ runner.temp }}/inherited-holds.json
+          RATE_LIMIT_WAIT: '3700'  # seconds; the budget's window is an hour
+          DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # The PR heads are fetched with a token-less remote: the repository is public.
+          if [ "$EVENT" = merge_group ]; then SHA="$GROUP_HEAD"; else SHA="$HEAD_SHA"; fi
+          if [ "$EVENT" = merge_group ]; then
+            set -- --repo "$GH_REPO" --group-head "$GROUP_HEAD"
+          else
+            set -- --repo "$GH_REPO" --pr "$PR" --head "$HEAD_SHA"
+          fi
+          if [ "$EVENT" = workflow_dispatch ]; then
+            python3 scripts/merge_policy.py "$@" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit "${PIPESTATUS[0]}"
+          fi
+          if grep -q 'statuses/' scripts/merge_policy.py; then
+            # The script writes the `merge policy` commit status itself, and may leave it pending (#4986, #5162).
+            python3 scripts/merge_policy.py "$@" --report-sha "$SHA" --details-url "$DETAILS_URL" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit "${PIPESTATUS[0]}"
+          fi
+          # Bootstrap, until main's script writes a status (#5162): the script is main's, the workflow file is the PR's
+          # or the group's, so the PR that moves the check to a status runs with a script that still writes a check run,
+          # which this file's token no longer may. Write the status here, pass or fail only. Remove this branch once
+          # #5162's script is on main.
+          set +e
+          python3 scripts/merge_policy.py "$@" | tee -a "$GITHUB_STEP_SUMMARY"
+          code="${PIPESTATUS[0]}"
+          set -e
+          if [ "$code" = 0 ]; then state=success; title='May merge'; else state=failure; title='May not merge'; fi
+          gh api -X POST "repos/$GH_REPO/statuses/$SHA" -f state="$state" -f context='merge policy' \
+            -f description="$title (bootstrap: written by the workflow, #5162)" -f target_url="$DETAILS_URL"
+          # Exit 0 either way: the failure is in the status above. The job is named `merge policy run`, which main's
+          # audit and owner-tap alert do not know to ignore as they ignore `merge policy` (owner_tap_alert.GATE_CHECKS),
+          # so a red job here would keep the PR from ever being audited or alerted: each waiting on the other.
+          exit 0

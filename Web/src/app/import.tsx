@@ -31,10 +31,12 @@ function useLandPacket(onLanded: (landing: Landing) => void): (bytes: Uint8Array
     async (bytes, fileName, arrival) => {
       const read = await services.packets.readPacket(bytes, fileName);
       const current = dataRef.current;
-      const placed = placeImport(read, current.shows, current.episodes, undefined, current.margins, { unnamedAuthor: unnamedAuthorFor(arrival) });
+      const placed = placeImport(read, current.shows, current.episodes, undefined, current.margins, { unnamedAuthor: unnamedAuthorFor(arrival), backup: arrival === 'backup' });
       if (placed.show) await current.follow(placed.show, [placed.episode]);
       else if (placed.newEpisode) await current.updateEpisode(placed.episode);
       for (const margin of placed.margins) await current.addMargin(margin);
+      // A friend's item is the listener's to keep, even a copy that was moved out or removed. Quiet: never drops the landing.
+      await current.addToLibrary(placed.episode.id, { quiet: true });
       toast(importSummary(placed, read.sender));
       if (placed.landAt === undefined) return;
       await player.open(placed.episode.id, { at: placed.landAt, episode: placed.episode });

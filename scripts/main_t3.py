@@ -9,7 +9,7 @@ longer runs on a push.
 The contract other tools read (#4575's release gate):
 - After each run, a commit status on the tested SHA with context `main-t3`: `success` (every test passed), `failure`
   (a real test or build failure) or `error` (a runner fault, nothing proven: no simulator, XCTest never connected, a
-  crash flood). `target_url` is the Actions run; the description is "1870 passed" or "3 failed: Class/testA, ...",
+  crash flood, a build that could not download its packages). `target_url` is the Actions run; the description is "1870 passed" or "3 failed: Class/testA, ...",
   cut to GitHub's 140 characters. A run in progress leaves `pending`.
 - "Main has changed" means main's head SHA has no `main-t3` status yet. Two additions, which only decide when this
   workflow runs: a `pending` older than STALE_PENDING (a job killed too hard to clean up) counts as none, and one
@@ -17,16 +17,25 @@ The contract other tools read (#4575's release gate):
   run again on the same commit (owner, 2026-11-18): verify-tests.py's in-run retries already tell a flake from a real
   failure. A manual dispatch with `force` always runs.
 
+- A push to main also starts a run (#4839), through .github/workflows/main-t3-push.yml: `kick` dispatches main-t3.yml
+  unless a main-t3 run did simulator work in the last FLOOR_MINUTES (3 hours), so a busy day costs one run in 3
+  hours, as the schedule did. A skipped push is not queued: the next tick finds the head with no status. Every Mac run
+  stays in main-t3.yml's one concurrency group, so runs are one at a time and in order, and a dispatched run decides
+  like a tick, so it never loses a tick or a release cut it replaces in the queue.
+
 Subcommands:
 - decide --sha SHA: print and write `run=true|false` to $GITHUB_OUTPUT.
+- kick [--floor-minutes N] [--ref REF]: dispatch main-t3.yml unless a run did simulator work inside the floor. Reads
+  this workflow's recent runs and jobs; reads and writes no commit status.
 - run --sha SHA --run-url URL: set `pending`, run both app plans (AppBehavior and AudioAdapters, every test in them)
-  through lane-runner.py's T3 machinery on a fresh simulator clone, set the final status, and on `failure` open or
+  through scripts/lane_t3.py's T3 machinery (moved out of lane-runner.py, #4769) on a fresh simulator clone, set the final status, and on `failure` open or
   update the one open "Main T3 failed on <sha7>" issue (label `regression`, marker MARKER). On `success` it closes
   that issue with a note. Tests that failed and passed on a retry are logged on the flake tally (#2176) as the lane
   does. Exits 0 only on `success`.
 - lost --sha SHA --run-url URL: the job died after `pending`; set `error` so the next tick retries.
 
-Bisecting a red main is #4574's: the issue names the failing tests, the previous green SHA and the merges between.
+Bisecting a red main is #4574's, in scripts/main_t3_bisect.py: this issue names the failing tests, the previous green
+SHA and the merges between; the bisection narrows them to one merge and opens a `ready` + `regression` issue for it.
 Environment: GH_TOKEN and GH_REPO (the workflow's). Stdlib only, Python 3.9-compatible.
 """
 from __future__ import annotations
@@ -46,10 +55,14 @@ CONTEXT = 'main-t3'
 DESCRIPTION_LIMIT = 140  # GitHub's limit on a commit status description
 STALE_PENDING = datetime.timedelta(hours=5)  # main-t3.yml's job limit is 3 h; a pending older than this was lost
 ERROR_RETRIES = 1
+FLOOR_MINUTES = 180  # #4839: the least time between two push-started runs
+RUN_JOB_PREFIX = 'main-t3:'  # the simulator job's name in main-t3.yml; the decide job is not work
+RUNS_LOOKED_AT = 40
 MARKER = '<!-- main-t3-failure -->'
 STATE_MARKER = re.compile(r'<!-- main-t3-state: (\{.*?\}) -->')
 ISSUE_LABEL = 'regression'
 BOT = 'github-actions[bot]'
+TRUSTED_APP_SLUGS = ('spoken-margins-agent',)  # the agents' GitHub App (#4915); kept equal to comment_trust.py's
 TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
 TARGET_PREFIX = 'SpokenMarginsAppTests/'
 PLANS = ('app', 'adapters')  # lane-runner.py's PLANS keys: AppBehavior and AudioAdapters, in that order
@@ -61,6 +74,14 @@ HISTORY_PAGES = 3  # 300 commits back for the last green
 # lane-runner.py's budget for each verify-tests.py run (build, then each plan), replacing its per-PR T3_TIMEOUT.
 RUN_TIMEOUT = 100 * 60
 VERDICT_STATE = {'PASS': 'success', 'FAIL': 'failure', 'INCONCLUSIVE': 'error'}
+# #4664: xcodebuild could not fetch a package or its binary target (a TLS certificate error on
+# download.onnxruntime.ai, a dropped connection, a clone that timed out). That is the hosted Mac's network, not main.
+PACKAGE_RESOLVE_ERROR = 'Could not resolve package dependencies'
+PACKAGE_FETCH_FAULT = re.compile(
+    r'failed downloading|downloadError|certificate for this server|Could not resolve host|'
+    r'network connection was lost|connection (?:was )?(?:reset|refused|timed out)|operation timed out|'
+    r'Failed to clone|could not read from remote repository|unable to access', re.IGNORECASE)
+BUILD_LOG_LIMIT = 4_000_000
 
 
 # ---- Pure logic (scripts/tests/test_main_t3.py) ---------------------------------------------------
@@ -90,6 +111,51 @@ def should_run(statuses: list, now: datetime.datetime, force: bool = False) -> t
             return True, f'its {CONTEXT} run hit a runner fault; one retry'
         return False, f'{errors} {CONTEXT} runner faults on this commit already; waiting for main to move'
     return False, f'already tested: {CONTEXT} {state}'
+
+
+def recent_work_start(runs: list, now: datetime.datetime, floor: datetime.timedelta, current: str = ''):
+    """When a main-t3 run other than `current` last started its simulator job within `floor`, or None.
+
+    `runs` is [{'id', 'created_at', 'jobs': [{'name', 'status', 'conclusion', 'started_at'}]}] as GitHub lists them.
+    A run whose simulator job was skipped (the decide job said no) did no work and does not count; one still queued or
+    running does, so two pushes in a row cannot start two runs.
+    """
+    newest = None
+    for run in runs:
+        if str(run.get('id')) == str(current):
+            continue
+        for job in run.get('jobs') or []:
+            if not (job.get('name') or '').startswith(RUN_JOB_PREFIX) or job.get('conclusion') in ('skipped', 'cancelled'):
+                continue
+            started = parse_time(job.get('started_at') or run['created_at'])
+            if now - started < floor and (newest is None or started > newest):
+                newest = started
+    return newest
+
+
+def package_fetch_fault(log_text: str) -> bool:
+    """True when a build log says package resolution failed because a download or clone failed. A resolution error
+    with no such cause (a bad Package.resolved, a missing version) is main's own and stays a failure."""
+    return PACKAGE_RESOLVE_ERROR in log_text and bool(PACKAGE_FETCH_FAULT.search(log_text))
+
+
+def fetch_fault_in_builds(evidence: Path) -> bool:
+    for log in sorted(evidence.glob('verify-*/build-for-testing.log')):
+        try:
+            with open(log, errors='replace') as handle:
+                if package_fetch_fault(handle.read(BUILD_LOG_LIMIT)):
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def state_after_build_fault(state: str, results: dict, fetch_fault: bool) -> str:
+    """A failure with no test run or failed, whose build could not fetch its packages, is a runner fault: `error`,
+    so the next tick retries once (should_run) instead of leaving the commit red until main moves."""
+    if state == 'failure' and fetch_fault and not results.get('failed') and not results.get('passed'):
+        return 'error'
+    return state
 
 
 def short_test(name: str) -> str:
@@ -137,6 +203,20 @@ def truncate(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit - 3].rstrip() + '...'
 
 
+# Detail lines that report how long a step took or what was retried, not what went wrong. The lane writes them for every
+# run (a passing build says "took 7m44s"), so the status line skips them to name the line that says what failed.
+NEUTRAL_DETAIL = re.compile(
+    r'^(shared build before simulator boot took |boot of the cloned simulator took |'
+    r'template preparation and simulator clone took |test-scope |\w+: passed on retry|'
+    r'boot stall on the first clone |tolerated one SpringBoard change |\w+: recovered after 1 startup stall)')
+
+
+def first_problem(details: list, default: str) -> str:
+    """The first detail that names a fault; failing that the first detail at all; failing that `default`."""
+    named = [d for d in details if d]
+    return next((d for d in named if not NEUTRAL_DETAIL.match(d)), named[0] if named else default)
+
+
 def description(state: str, results: dict, details: list) -> str:
     """The status line: '1870 passed', '3 failed: A/testB, ...', or the runner fault, within 140 characters."""
     passed, failed = results.get('passed', 0), results.get('failed', [])
@@ -148,9 +228,9 @@ def description(state: str, results: dict, details: list) -> str:
     if state == 'failure':
         if failed:
             return truncate(f'{len(failed)} failed: ' + ', '.join(short_test(t) for t, _ in failed), DESCRIPTION_LIMIT)
-        first = next((d for d in details if d), 'the build or a plan failed')
+        first = first_problem(details, 'the build or a plan failed')
         return truncate(f'failed, no test result: {first}', DESCRIPTION_LIMIT)
-    first = next((d for d in details if d), 'no test result')
+    first = first_problem(details, 'no test result')
     return truncate(f'runner fault: {first}', DESCRIPTION_LIMIT)
 
 
@@ -170,7 +250,8 @@ def last_green(nodes: list, exclude: str = '') -> str | None:
 
 
 def trusted(item: dict) -> bool:
-    return (item.get('user') or {}).get('login') == BOT or item.get('author_association') in TRUSTED_ASSOCIATIONS
+    bots = (BOT,) + tuple(f'{slug}[bot]' for slug in TRUSTED_APP_SLUGS)
+    return (item.get('user') or {}).get('login') in bots or item.get('author_association') in TRUSTED_ASSOCIATIONS
 
 
 def find_open_issue(issues: list) -> dict | None:
@@ -261,6 +342,19 @@ def statuses(sha: str) -> list:
     return json.loads(gh('api', f'repos/{repo()}/commits/{sha}/statuses?per_page=100'))
 
 
+def recent_runs(now: datetime.datetime, floor: datetime.timedelta) -> list:
+    """The workflow's runs created inside the floor (plus the one just before it, which may still be running), each
+    with its jobs. A few API calls: the floor holds at most a day's worth of pushes."""
+    listing = json.loads(gh('api', f'repos/{repo()}/actions/workflows/main-t3.yml/runs?per_page={RUNS_LOOKED_AT}'))
+    found = []
+    for run in listing.get('workflow_runs', []):
+        if now - parse_time(run['created_at']) > floor + datetime.timedelta(hours=1):
+            continue
+        jobs = json.loads(gh('api', f'repos/{repo()}/actions/runs/{run["id"]}/jobs?per_page=10'))
+        found.append({'id': run['id'], 'created_at': run['created_at'], 'jobs': jobs.get('jobs', [])})
+    return found
+
+
 def set_status(sha: str, payload: dict) -> None:
     gh('api', '-X', 'POST', f'repos/{repo()}/statuses/{sha}', '--input', '-', stdin=json.dumps(payload))
     print(f'{CONTEXT} on {sha[:7]}: {payload["state"]} ({payload["description"]})', flush=True)
@@ -332,8 +426,8 @@ def close_on_green(sha: str, run_url: str, results: dict) -> None:
 
 # ---- The run --------------------------------------------------------------------------------------
 
-def load_lane_runner():
-    spec = importlib.util.spec_from_file_location('lane_runner', ROOT / 'scripts/lane-runner.py')
+def load_lane_t3():
+    spec = importlib.util.spec_from_file_location('lane_t3', ROOT / 'scripts/lane_t3.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -349,18 +443,22 @@ def read_manifests(evidence: Path) -> dict:
     return found
 
 
-def run_suite(sha: str, run_id: str, evidence: Path):
-    """lane-runner.py's T3 on a fresh clone with every test of both plans (no --only-testing). Returns
-    (verdict, ran, details, crashes, results)."""
-    lane = load_lane_runner()
+def run_suite(sha: str, run_id: str, evidence: Path, grouped: dict | None = None, label: str = 'main',
+              log_retries: bool = True):
+    """lane_t3.py's T3 on a fresh clone with every test of both plans (no --only-testing), or the `grouped`
+    selectors (branch_t3.py, #4839). Returns (verdict, ran, details, crashes, results). `log_retries` False makes no
+    GitHub call, for a run that holds no token."""
+    lane = load_lane_t3()
     lane.T3_TIMEOUT = RUN_TIMEOUT
-    grouped = {plan: [] for plan in PLANS}  # an empty selector list runs the whole plan
-    verdict, where, ran, details, crashes, _ = lane._run_t3_grouped(grouped, f'main-{sha[:7]}-{run_id}', evidence)
+    if grouped is None:
+        grouped = {plan: [] for plan in PLANS}  # an empty selector list runs the whole plan
+    verdict, where, ran, details, crashes, _ = lane._run_t3_grouped(grouped, f'{label}-{sha[:7]}-{run_id}', evidence)
     results = collect_results(pick_manifests(read_manifests(evidence)))
-    try:
-        lane.log_retry_passes(evidence, repo(), sha, run_id, lane.RepoTally(repo()))
-    except Exception as error:  # noqa: BLE001 - the verdict is already decided
-        print(f'Could not log the retry-passes: {error!r}', flush=True)
+    if log_retries:
+        try:
+            lane.log_retry_passes(evidence, repo(), sha, run_id, lane.RepoTally(repo()))
+        except Exception as error:  # noqa: BLE001 - the verdict is already decided
+            print(f'Could not log the retry-passes: {error!r}', flush=True)
     return verdict, f'{where}; {ran}', details, crashes, results
 
 
@@ -388,6 +486,23 @@ def command_decide(args) -> int:
     return 0
 
 
+def command_kick(args) -> int:
+    """A push to main (main-t3-push.yml): dispatch main-t3.yml unless a run did simulator work inside the floor. The
+    dispatched run decides like a tick, from the head's own status. Never reads or writes a commit status."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    floor = datetime.timedelta(minutes=args.floor_minutes)
+    started = recent_work_start(recent_runs(now, floor), now, floor)
+    if started:
+        why = f'a {CONTEXT} run started at {started:%H:%M}Z, inside the {args.floor_minutes}-minute floor; the next tick tests the head'
+        print(f'{CONTEXT} push: skip ({why})')
+        write_summary(f'{CONTEXT} push: skip, {why}.')
+        return 0
+    gh('workflow', 'run', 'main-t3.yml', '-R', repo(), '--ref', args.ref)
+    print(f'{CONTEXT} push: dispatched main-t3.yml on {args.ref}')
+    write_summary(f'{CONTEXT} push: dispatched main-t3.yml on `{args.ref}`; no run in the last {args.floor_minutes} minutes.')
+    return 0
+
+
 def command_run(args) -> int:
     os.chdir(ROOT)
     evidence = Path(args.evidence)
@@ -399,6 +514,7 @@ def command_run(args) -> int:
         verdict, ran, details, crashes, results = ('INCONCLUSIVE', 'nothing', [f'main_t3.py stopped: {error!r}'],
                                                    'unknown', {'passed': 0, 'failed': [], 'retried': []})
     state = VERDICT_STATE.get(verdict, 'error')  # a crash flood with no failed test is INCONCLUSIVE there: `error`
+    state = state_after_build_fault(state, results, fetch_fault_in_builds(evidence))
     text = description(state, results, details)
     set_status(args.sha, status_payload(state, args.run_url, text))
     write_outputs(state=state)
@@ -431,6 +547,9 @@ def main(argv=None) -> int:
     decide = sub.add_parser('decide')
     decide.add_argument('--sha', required=True)
     decide.add_argument('--force', action='store_true')
+    kick = sub.add_parser('kick')
+    kick.add_argument('--floor-minutes', type=int, default=FLOOR_MINUTES)
+    kick.add_argument('--ref', default='main')
     run = sub.add_parser('run')
     run.add_argument('--sha', required=True)
     run.add_argument('--run-url', required=True)
@@ -440,9 +559,9 @@ def main(argv=None) -> int:
     lost.add_argument('--sha', required=True)
     lost.add_argument('--run-url', required=True)
     args = parser.parse_args(argv)
-    if not re.fullmatch(r'[0-9a-f]{40}', args.sha):
+    if args.command != 'kick' and not re.fullmatch(r'[0-9a-f]{40}', args.sha):
         parser.error('--sha must be a full 40-character commit SHA')
-    return {'decide': command_decide, 'run': command_run, 'lost': command_lost}[args.command](args)
+    return {'decide': command_decide, 'kick': command_kick, 'run': command_run, 'lost': command_lost}[args.command](args)
 
 
 if __name__ == '__main__':

@@ -41,10 +41,12 @@ extension Gate1AppModel {
     }
 
     func skimForward() {
+        noteCatchUp(.scrub) // Skim puts the caught-up card away (#4785)
         skimBridge.perform(direction: .forward)
     }
 
     func skimBackward() {
+        noteCatchUp(.scrub)
         skimBridge.perform(direction: .backward)
     }
 
@@ -138,7 +140,7 @@ extension Gate1AppModel: SkimBridgeHost {
     /// controller then pauses or resumes it, as it does a media player (#1471).
     func skimSeekOrStage(toMediaTimeMs mediaTimeMs: Int) throws {
         guard let engine else { return }
-        marginMomentConductor?.sourceMoved() // the skim lands somewhere new; Margins it passed don't play (#1656)
+        listenerMovedSource() // the skim lands somewhere new; Margins it passed don't play (#1656)
         if isTextReadingSnapshot {
             snapshot = try engine.seekText(toCharOffset: mediaTimeMs)
             streamingSpeechQueue.relinquishToCanonicalPlayback()

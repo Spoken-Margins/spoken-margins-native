@@ -17,8 +17,9 @@ extension SharedMarginReview {
         asking: Bool
     ) -> [Entry] {
         let contexts = replyContexts(layers: layers, records: records, ownMargins: ownMargins)
+        let ownIdentities = OwnMarginEchoes.identities(of: ownMargins) // #4697: the same rule as `entriesInMemory`
         return layers.flatMap { layer -> [Entry] in
-            let layerRecords = records[layer.id] ?? []
+            let layerRecords = OwnMarginEchoes.withoutEchoes(records[layer.id] ?? [], in: layer, ownIdentities: ownIdentities)
             guard asking || layer.revealMode == .guided,
                   SharedMarginPrompts.isLayerPlaybackEligible(layer, records: layerRecords) else { return [] }
             return layerRecords.compactMap { record -> Entry? in

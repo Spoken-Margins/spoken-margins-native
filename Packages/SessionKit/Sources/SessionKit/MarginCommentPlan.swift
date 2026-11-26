@@ -41,6 +41,9 @@ public struct MarginCommentPlan: Equatable, Sendable {
         /// Empty unless `status` is `.included`.
         public var commentText: String
         public var status: Status
+        /// A spoken Margin whose author has not answered its tidy version yet (#4339): the export sheet says "Tidy
+        /// version to review". The comment still carries `commentText`, the author's own words, until they approve one.
+        public var tidyToReview: Bool = false
     }
 
     /// How much text before the sentence an entry carries in `precedingText`.
@@ -49,11 +52,29 @@ public struct MarginCommentPlan: Equatable, Sendable {
     /// One entry per own Margin of the item, in document order (then the order they were made).
     public var entries: [Entry]
 
+    /// The app's export sheet starts from an empty plan before the Margins are read (#4690), so the initializer is
+    /// public; Swift keeps a public struct's memberwise one internal to the package.
+    public init(entries: [Entry]) { self.entries = entries }
+
     public var included: [Entry] { entries.filter { $0.status == .included } }
 
     /// Plans the comments for `margins` on the item `itemId` whose text is `document`.
     public static func make(itemId: String, document: StructuredDocument, margins: [Interjection]) -> MarginCommentPlan {
-        let characters = Array(document.text)
+        make(itemId: itemId, text: document.text, margins: margins) { index in
+            page(of: index, in: document.segments, pageCount: document.extraction.pageCount)
+        }
+    }
+
+    /// Plans the comments for an item that has text and no pages: a Word document, whose item is its plain text (#4595).
+    /// Every entry's `pageIndex` is nil, because a Word file has no page the app can name.
+    public static func make(itemId: String, text: String, margins: [Interjection]) -> MarginCommentPlan {
+        make(itemId: itemId, text: text, margins: margins) { _ in nil }
+    }
+
+    private static func make(
+        itemId: String, text: String, margins: [Interjection], pageOf: (Int) -> Int?
+    ) -> MarginCommentPlan {
+        let characters = Array(text)
         let sentences = SentenceBounds.ranges(in: characters)
         let own = margins
             .filter { $0.itemId == itemId && $0.targetType == .item && $0.status == "active" && $0.anchor.anchorType == .text }
@@ -66,8 +87,7 @@ public struct MarginCommentPlan: Equatable, Sendable {
         let entries = own.map { margin -> Entry in
             let position = anchorPosition(margin.anchor.startChar, in: characters)
             let sentence = position.flatMap { sentenceRange(containing: $0, in: sentences) }
-            let words = (margin.displayText ?? margin.cleanedTranscript ?? margin.transcript ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let words = commentWords(of: margin)
             let status: Entry.Status
             if !words.isEmpty {
                 status = .included
@@ -81,12 +101,35 @@ public struct MarginCommentPlan: Equatable, Sendable {
                 sentence: sentence,
                 sentenceText: sentence.map { String(characters[$0]) } ?? "",
                 precedingText: sentence.map { String(characters[max(0, $0.lowerBound - precedingLength)..<$0.lowerBound]) } ?? "",
-                pageIndex: position.flatMap { page(of: $0, in: document.segments, pageCount: document.extraction.pageCount) },
+                pageIndex: position.flatMap(pageOf),
                 commentText: status == .included ? words : "",
-                status: status
+                status: status,
+                tidyToReview: status == .included && MarginTidyCardState.hasTidyToReview(margin)
             )
         }
         return MarginCommentPlan(entries: entries)
+    }
+
+    /// The words a Margin's comment carries: what the app shows for it, the approved tidy text when there is one.
+    static func commentWords(of margin: Interjection) -> String {
+        (margin.displayText ?? margin.cleanedTranscript ?? margin.transcript ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The same plan with each included comment's words and its "Tidy version to review" read again from `margins`, as
+    /// stored now: the author answered a tidy version from the export sheet (#4339). Where each comment lands does not
+    /// change, because the Margin's anchor did not. A Margin not in `margins`, or one left with no words, keeps its entry.
+    public func updatingWords(from margins: [Interjection]) -> MarginCommentPlan {
+        let byId = Dictionary(margins.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return MarginCommentPlan(entries: entries.map { entry in
+            guard entry.status == .included, let margin = byId[entry.marginId] else { return entry }
+            let words = Self.commentWords(of: margin)
+            guard !words.isEmpty else { return entry }
+            var updated = entry
+            updated.commentText = words
+            updated.tidyToReview = MarginTidyCardState.hasTidyToReview(margin)
+            return updated
+        })
     }
 
     /// The character an anchor starts on, moved onto text: a start before the text or past its end is clamped, and a

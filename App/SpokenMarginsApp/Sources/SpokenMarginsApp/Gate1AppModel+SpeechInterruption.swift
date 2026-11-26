@@ -31,6 +31,15 @@ extension Gate1AppModel {
     }
 
     func handleMediaPlaybackInterruption(_ event: AudioPlaybackInterruptionEvent) {
+        // A podcast's interruption left no line in the export, so a pause by Siri or dictation looked like the app's own
+        // (#4926). One line each way; an end that iOS does not ask to resume reaches no handler, so a `began` with no
+        // `ended` after it is that case.
+        defer {
+            recordDeveloperDiagnostic(
+                event == .began ? "media.interruption_began" : "media.interruption_ended",
+                ["outcome": diagnostics["mediaPlaybackInterruption"] ?? "none"]
+            )
+        }
         switch event {
         case .began:
             Self.mediaInterruptionResumeRetrier.cancel()
@@ -51,6 +60,11 @@ extension Gate1AppModel {
                 diagnostics["mediaPlaybackInterruption"] = "resume_skipped"
                 return
             }
+            // A written Margin is open: Save or Cancel plays the item, so this is neither a failure nor a retry (#4831).
+            if engine.deferResumeToWrittenCapture() {
+                diagnostics["mediaPlaybackInterruption"] = "resume_deferred_to_written_margin"
+                return
+            }
             do {
                 snapshot = try engine.resumePlaybackAfterInterruption()
                 refreshSelectedItemInBackground()
@@ -66,16 +80,19 @@ extension Gate1AppModel {
     /// background or in Low Power Mode. Tries again a few times while the item is still paused where it was, then
     /// leaves it paused and says why (#2183).
     private func retryMediaResumeAfterInterruption(after error: Error, engine: SessionEngine) {
-        let sessionId = snapshot.sessionId
-        let targetId = snapshot.targetId
-        // Where it paused. A seek, skip, or a Play and Pause by the listener moves this, and then the item is theirs.
-        let pausedAtMs = snapshot.currentMediaTimeMs
+        // Where it paused, and where the refused resume stepped it back to. A seek or skip, or a Play and Pause by the
+        // listener, moves it, and then the item is theirs.
+        let place = InterruptionRetryPlace(snapshot: snapshot, engine: engine)
         Self.mediaInterruptionResumeRetrier.begin(
             after: error,
             stillWaiting: { [weak self] in
                 guard let self else { return false }
-                return snapshot.status == .paused && snapshot.sessionId == sessionId && snapshot.targetId == targetId
-                    && snapshot.currentMediaTimeMs == pausedAtMs && !snapshot.isRecording
+                return place.stillWaiting(snapshot)
+            },
+            // A written Margin opened while the retries ran: Save or Cancel plays the item, so the retries stop (#4846).
+            handOver: { [weak self] in
+                guard let self, place.mayHandOverToWrittenCapture(snapshot) else { return false }
+                return engine.deferResumeToWrittenCapture()
             },
             attempt: { [weak self] in
                 guard let self else { return }
@@ -94,6 +111,8 @@ extension Gate1AppModel {
                     reportWarning("Playback paused after the interruption. Tap Play to resume.")
                 case .abandoned(let attempts):
                     diagnostics["mediaPlaybackInterruption"] = "resume_retry_abandoned_after_\(attempts)"
+                case .deferred(let attempts):
+                    diagnostics["mediaPlaybackInterruption"] = "resume_deferred_to_written_margin_after_\(attempts)_retries"
                 }
                 recordDeveloperDiagnostic("media.interruption_resume", ["outcome": diagnostics["mediaPlaybackInterruption"] ?? "none"])
             }
@@ -121,6 +140,11 @@ extension Gate1AppModel {
         case .endedResumeRequested:
             guard snapshot.status == .paused, let engine else {
                 noteSpeechInterruptionResume(.skipped)
+                return
+            }
+            // A written Margin is open: Save or Cancel plays the item, so this is neither a failure nor a warning (#4831).
+            if engine.deferResumeToWrittenCapture() {
+                diagnostics["speechPlaybackInterruption"] = "resume_deferred_to_written_margin"
                 return
             }
             do {

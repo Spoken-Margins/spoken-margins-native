@@ -265,6 +265,48 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertNil(model.snapshot.sessionId, "adding from Following starts nothing")
     }
 
+    /// #5328: while a swipe Add fetches, the row says "Adding…" and ▶ stays as it was. A ▶ tap then rides on that fetch:
+    /// ▶ shows its spinner instead, the episode is fetched once, and it plays when it lands.
+    func testPlayDuringASwipeAddJoinsTheFetchAndPlaysTheEpisodeOnce() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        temporaryDirectories.append(root)
+        let database = root.appendingPathComponent("swipe-add-then-play.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: database)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: database.path)
+        let subscription = FeedSubscription(id: "s", source: SourceIdentity(id: "publication", kind: .articleFeed,
+            canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Publisher"), lastRefreshAt: Date())
+        let newest = FeedEntry(id: "newest-entry", subscriptionId: subscription.id,
+            canonicalURL: "https://publisher.example/newest-post", title: "The newest post", publishedAt: Date(timeIntervalSinceNow: -3_600))
+        try store.saveFeedSubscription(subscription)
+        try store.saveFeedEntry(newest)
+        let extractor = GatedFeedArticleExtractor(capture: BrowserTextHandoff(captureMode: .readablePage,
+            source: BrowserTextSource(url: newest.canonicalURL, title: newest.title),
+            text: "The newest post's body."))
+        model.readablePageExtractor = extractor
+        model.followingShowEntries = [newest]
+        let row = try XCTUnwrap(FollowingShowRows.build(subscriptions: [subscription], entries: [newest]).rows.first)
+        XCTAssertEqual(row.playEntryID, row.newestEntryID, "▶ plays the episode the swipe adds")
+
+        model.addPreviewedEpisode(of: row)
+        try await waitFor("the swipe's fetch to start") { extractor.callCount > 0 }
+        XCTAssertTrue(model.followedEntryImports.isAdding(row.newestEntryID), "a swipe Add says Adding…")
+        XCTAssertFalse(model.followedEntryImports.isPlayStarting(row.playEntryID), "and leaves ▶ as it was")
+
+        model.playNewestEpisode(of: row)
+        XCTAssertTrue(model.followedEntryImports.isPlayStarting(row.playEntryID), "▶ shows its own spinner")
+        XCTAssertFalse(model.followedEntryImports.isAdding(row.newestEntryID), "and Adding… gives way to it")
+        extractor.open()
+        try await waitFor("the fetch to finish") { !model.importingFollowedSourceEntryIds.contains(newest.id) }
+        try await waitFor("the episode to start") { model.snapshot.sessionId != nil }
+
+        XCTAssertEqual(extractor.callCount, 1, "▶ rode on the swipe's fetch")
+        XCTAssertEqual(model.libraryItems.filter { $0.title == newest.title }.count, 1, "the episode lands in the Library once")
+        XCTAssertEqual(model.libraryItems.first { $0.id == model.selectedItem.id }?.title, newest.title, "the added episode is the one playing")
+        model.endSession()
+    }
+
     func testRedirectedFollowedArticleAddAndOpenKeepTheirSignalEntry() async throws {
         for openWhenFinished in [false, true] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1652,8 +1694,12 @@ final class SourceLinkImportTests: XCTestCase {
             audio.currentMediaTimeValue = 123_000
             model.dispatchGate2CompactCommand(.beginInterjection)
             XCTAssertTrue(model.snapshot.isRecording, "\(status.rawValue): recording starts as usual")
-            // Give a wrongly started peek time to read and transcribe before checking that it didn't.
-            try await Task.sleep(nanoseconds: 300_000_000)
+            // A wrongly started peek writes "started" and then, once it has read and transcribed, its outcome. Wait for a
+            // settled value, so the reads and requests below are counted after a peek would have made them.
+            try await pollUntil {
+                let peek = model.diagnostics["justHeardPeek"]
+                return peek != nil && peek != "started"
+            }
             XCTAssertEqual(model.diagnostics["justHeardPeek"], "speech_not_authorized", "\(status.rawValue)")
             XCTAssertTrue(reads.lastMs.isEmpty, "\(status.rawValue): the heard audio is not even read")
             let requests = await transcriber.windowRequestCount()
@@ -3007,7 +3053,7 @@ private final class CountingAppLinkResolver: LinkResolutionClient {
 }
 
 private struct ThrowingSourceTranscriptionClient: SourceTranscriptionClient {
-    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription) async throws -> TranscriptTimeline {
         throw SessionKitError.persistenceFailed("source_transcription_disabled_for_test")
     }
 }
@@ -3119,7 +3165,7 @@ private actor RecordingSourceWindowTranscriptionClient: SourceTranscriptionClien
         self.timeline = timeline
     }
 
-    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription) async throws -> TranscriptTimeline {
         throw SessionKitError.persistenceFailed("source_transcription_disabled_for_test")
     }
 
@@ -3129,7 +3175,8 @@ private actor RecordingSourceWindowTranscriptionClient: SourceTranscriptionClien
         anchorMediaTimeMs: Int,
         durationMs: Int?,
         windowBeforeMs: Int,
-        windowAfterMs: Int
+        windowAfterMs: Int,
+        for purpose: HeldTranscription
     ) async throws -> TranscriptTimeline {
         let request = WindowRequest(
             url: url,
@@ -3170,18 +3217,20 @@ private final class GatedSourceWindowTranscriptionClient: SourceTranscriptionCli
     private(set) var startedAnchors: [Int] = []
     private var waiting: [CheckedContinuation<Void, Never>] = []
 
-    nonisolated func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    nonisolated func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription) async throws -> TranscriptTimeline {
         throw SessionKitError.persistenceFailed("source_transcription_disabled_for_test")
     }
 
     nonisolated func transcribeSourceAudioWindow(
-        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?, windowBeforeMs: Int, windowAfterMs: Int
+        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?, windowBeforeMs: Int, windowAfterMs: Int,
+        for purpose: HeldTranscription
     ) async throws -> TranscriptTimeline {
         throw SessionKitError.persistenceFailed("source_window_without_evidence_disabled_for_test")
     }
 
     func transcribeSourceAudioWindowWithEvidence(
-        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?, windowBeforeMs: Int, windowAfterMs: Int
+        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?, windowBeforeMs: Int, windowAfterMs: Int,
+        for purpose: HeldTranscription
     ) async throws -> SourceAudioWindowTranscription {
         runningNow += 1
         peakRunning = max(peakRunning, runningNow)
@@ -3220,7 +3269,7 @@ private actor RecordingFullSourceTranscriptionClient: SourceTranscriptionClient 
     private var requests: [FullRequest] = []
     private var continuations: [CheckedContinuation<FullRequest, Never>] = []
 
-    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription) async throws -> TranscriptTimeline {
         let request = FullRequest(url: url, itemId: itemId, durationMs: durationMs)
         requests.append(request)
         for continuation in continuations {

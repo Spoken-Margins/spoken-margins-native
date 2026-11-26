@@ -36,16 +36,18 @@ final class KeptPackageHandoffTests: XCTestCase {
         let h = try makeHarness()
         let newer = try h.store.savePackage(from: try writePacket(manifestSchema: "spoken-margins.package.v99"))
 
+        // The archive's refusal is told in the failure sheet, not the banner (#3801, #4904).
         try await h.model.consumePendingSpokenMarginsPackageHandoffs(from: h.store, keptNotices: h.notices, appVersion: "v1", now: launch)
-        XCTAssertEqual(h.model.feedbackEvent?.message, "Your friend made this with a newer Spoken Margins. Update the app to hear it.")
+        XCTAssertEqual(h.model.packetOpenFailures.presented?.content.row, .fileNeedsNewerApp)
+        XCTAssertNil(h.model.feedbackEvent, "the sheet tells it, not a banner as well")
 
-        h.model.dismissFeedback()
+        h.model.packetOpenFailures.close()
         try await h.model.consumePendingSpokenMarginsPackageHandoffs(from: h.store, keptNotices: h.notices, appVersion: "v1", now: launch.addingTimeInterval(3_600))
-        XCTAssertNil(h.model.feedbackEvent, "the same build doesn't repeat the banner")
+        XCTAssertNil(h.model.packetOpenFailures.presented, "the same build doesn't repeat the sheet")
         XCTAssertEqual(try h.store.pendingPayloadIDs(), [newer], "and the file is still there")
 
         try await h.model.consumePendingSpokenMarginsPackageHandoffs(from: h.store, keptNotices: h.notices, appVersion: "v2", now: launch.addingTimeInterval(7_200))
-        XCTAssertNotNil(h.model.feedbackEvent, "a new build tells again")
+        XCTAssertEqual(h.model.packetOpenFailures.presented?.content.row, .fileNeedsNewerApp, "a new build tells again")
     }
 
     func testAKeptFileIsRemovedAfterThirtyDays() async throws {

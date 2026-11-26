@@ -35,7 +35,8 @@ extension Gate1AppModel {
             return true
         }
         let submittedURL = sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let parsedURL = URL(string: submittedURL),
+        // The link comes out of what was typed or pasted, as it does for Paste & go: "Check this out https://…" is that link (#4809).
+        guard let parsedURL = PasteIntake.webLink(in: submittedURL) ?? URL(string: submittedURL),
               let scheme = parsedURL.scheme?.lowercased(),
               ["http", "https"].contains(scheme),
               parsedURL.host != nil else {
@@ -49,7 +50,8 @@ extension Gate1AppModel {
         sourceLinkGate.begin()
         sourceLinkSafariOffer = nil
         sourceLinkImportState = "resolving"
-        sourceLinkImportMessage = "Resolving source link…"
+        // The listener's words while it resolves; `SourceLinkImportStatusView` moves to the long-wait line (#5049).
+        sourceLinkImportMessage = SourceLinkProgressMessage.looking
         statusMessage = "Resolving source link..."
         lastError = nil
         diagnostics["lastSourceLinkButtonTap"] = "registered"
@@ -115,6 +117,8 @@ extension Gate1AppModel {
         sourceLinkSafariOffer = nil
     }
 
+    static let collectionImportNeedsChoiceMessage = "Several episodes match this link. Add it on its own to choose one."
+
     func presentSourceLinkCandidateReviewIfAvailable(
         request: LinkResolutionRequest,
         result: LinkResolutionResult,
@@ -126,6 +130,12 @@ extension Gate1AppModel {
             return url.scheme?.lowercased() == "https"
         }
         guard result.status == .needsReview, playableCandidates.count > 1 else { return false }
+        // During a collection import nobody is there to choose: the link counts as not added, with the reason, instead
+        // of a review sheet left open after the import ends (#3769).
+        guard libraryCollections.importCapture == nil else {
+            reportWarning(Self.collectionImportNeedsChoiceMessage)
+            return true
+        }
         var reviewResult = result
         reviewResult.candidates = playableCandidates
         sourceLinkCandidateReview = SourceLinkCandidateReviewState(

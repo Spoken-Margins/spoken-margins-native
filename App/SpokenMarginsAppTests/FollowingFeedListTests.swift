@@ -37,8 +37,13 @@ final class FollowingFeedListTests: XCTestCase {
                 anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "\(name)'s note"
             ))
         }
+        // The Library row reads "N min" for both the time left and the whole length (#4698, #4701), so the started
+        // item has to be minutes long: with every item under a minute both rows would say "under 1 min" and the
+        // progress-versus-length check below could not tell them apart. About 12 minutes at the default 1x speech
+        // rate; 40% heard leaves about 7, while the unstarted items stay under one minute.
+        let longPassage = String(repeating: "A passage to listen to. ", count: 420)
         for itemId in ["ada-new", "ada-old", "blair", "cole", "shanti", "professor"] {
-            try store.saveItem(Item(id: itemId, title: "On \(itemId)", mediaType: "text", text: "A passage to listen to.", externalReference: "local", status: "ready"))
+            try store.saveItem(Item(id: itemId, title: "On \(itemId)", mediaType: "text", text: itemId == "ada-old" ? longPassage : "A passage to listen to.", externalReference: "local", status: "ready"))
         }
         try store.saveSession(Session(id: "ada-old-session", itemId: "ada-old", status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "ada-old", position: Position(charOffset: 8), completionPercent: 40, playbackRate: 1))
         try shareMargin(from: "Ada", on: "ada-new", recorded: hours(1), received: hours(1))
@@ -115,6 +120,7 @@ final class FollowingFeedListTests: XCTestCase {
             XCTAssertNotNil(started, "the started item is in the Library")
             let libraryProgress = started.flatMap { LibraryRowLines(row: $0, playbackSpeed: model.speechPlaybackRateMultiplier).progress }
             XCTAssertNotNil(libraryProgress)
+            XCTAssertNotEqual(libraryProgress, "under 1 min", "the started item is minutes long, so its time left is not the short-item fallback")
             XCTAssertEqual(details.last??.length, libraryProgress, "progress reads as on the Library row")
             XCTAssertNotEqual(details.last??.length, details.first??.length, "the started item shows its progress, not the length the unstarted one shows")
         }

@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SessionKit
 import Security
@@ -221,6 +222,7 @@ extension Gate1AppModel {
             return
         }
         guard !recordingNavigationIsLocked, handOffPlayingMarginToRecording() else { return }
+        noteCatchUp(.recordingStarted) // "Your Margin is saved" takes the caught-up card's slot (#4785)
         suggestSharedMarginReply()
         let voiceCaptureRequestID = marginCapture.beginVoiceRequest()
         AppHaptics.play(.started)
@@ -386,12 +388,23 @@ extension Gate1AppModel {
     /// The save and the draw of the listening screen that follows can outlast any timer started when the save
     /// returns, and the queued second tap arrives after the draw, so the shield waits for `listeningScreenAppeared`.
     func requestFinishInterjection() {
+        requestFinish(endedByPhrase: false)
+    }
+
+    /// The spoken "stop margin" ended this Margin (#3940). It finishes the way a tap on Save does, and the save marks
+    /// the Margin so its transcription cuts the phrase out (PR 4). A tap, the Lock Screen and a headset press use
+    /// `requestFinishInterjection()`, which never marks a Margin.
+    func requestFinishInterjectionFromPhrase() {
+        requestFinish(endedByPhrase: true)
+    }
+
+    private func requestFinish(endedByPhrase: Bool) {
         guard snapshot.isRecording, marginCapture.requestFinish() else { return }
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 50_000_000)
             guard let self else { return }
             self.hangTelemetry.labels.scoped("marginSaveFinish") {
-                self.finishInterjection()
+                self.finishInterjection(endedByPhrase: endedByPhrase)
                 self.marginCapture.finalizeFinish(at: Date(), stillRecording: self.snapshot.isRecording)
             }
         }
@@ -402,27 +415,40 @@ extension Gate1AppModel {
         marginCapture.screenAppeared(at: Date())
     }
 
+    /// The tap on Save and every other route that hands this method over by name (`action: model.finishInterjection`).
     func finishInterjection() {
+        finishInterjection(endedByPhrase: false)
+    }
+
+    /// `endedByPhrase` is true only on the spoken phrase's own finish (#3940). It has no default so that no route can
+    /// mark a Margin by leaving it out.
+    func finishInterjection(endedByPhrase: Bool) {
         guard snapshot.isRecording, let verdict = verdictForSavingRecording() else { return }
         let held = heldMarginVoice // a Margin recorded over a voice leaves the source paused for it to play on (#1672)
+        let keptPlace = catchUpPlaceToKeepThroughASave() // a catch-up run's place: the source stays paused and Play gives it back (#5238)
         let labels = hangTelemetry.labels
+        let hadSavedBefore = isOnboardingStepComplete(.firstInterjection) // read before this save marks it (#4713)
+        var savedId: String?, willPlayBack = false
         run { engine in
             defer { labels.scoped("marginSave.signal") { recordSpokenMarginSavedBeforeFailure(engine.lastScheduledTranscriptionInterjectionId) } }
-            snapshot = try engine.finishInterjection(audioRef: nil, resumesSource: held == nil)
+            snapshot = try engine.finishInterjection(audioRef: nil, resumesSource: held == nil && keptPlace == nil)
+            savedId = engine.lastScheduledTranscriptionInterjectionId; willPlayBack = hearItLandWillPlayBack(hadSavedMarginBefore: hadSavedBefore, heldVoice: held != nil)
             if held?.kind == .own { noteMarginRecordedOverHeldOwnMargin(engine.lastScheduledTranscriptionInterjectionId) }
             // The item detail is read off the main thread, as Pause does (#2102): the read costs most of a second on
             // a long item, and every Margin save waited for it (#2967). The new Margin shows when the read lands.
             refreshSelectedItemInBackground()
             labels.scoped("marginSave.onboarding") { recordSavedInterjectionForOnboarding() }
-            labels.scoped("marginSave.transcription") { transcribeAndRecordSavedSpokenMargin() }
+            labels.scoped("marginSave.transcription") { transcribeAndRecordSavedSpokenMargin(endedByPhrase: endedByPhrase, hearItLandWillRun: willPlayBack) }
             labels.scoped("marginSave.report") { reportMarginSaved(verdict) }
         }
         if !snapshot.isRecording {
             clearRecordingPresentation()
             refreshMarginRowsInBackground(forItem: snapshot.itemId)
             resumeHeldMarginVoice(held)
+            keepCatchUpPlaceAfterASave(keptPlace)
         }
         streamingSpeechQueue.resumeAfterInterjection()
+        hearItLandAfterSpokenSave(willPlayBack: willPlayBack, savedId: savedId) // after every resume (#4713)
     }
 
     func recordSavedInterjectionForOnboarding() {
@@ -443,7 +469,7 @@ extension Gate1AppModel {
         }
         recordFinalCaptureDiagnostics("cancelled")
         run { engine in
-            snapshot = try engine.cancelInterjection(resumesSource: held == nil)
+            snapshot = try engine.cancelInterjection(resumesSource: held == nil && !catchUpPlaceIsWaiting)
             refreshSelectedItemInBackground()
             AppHaptics.play(feeling)
             reportSuccess("Cancelled Margin.")
@@ -476,6 +502,7 @@ extension Gate1AppModel {
             marginCapture.clearPermissionDenied()
             snapshot = engine.snapshot
             marginCapture.openDraft(makeWrittenMarginDraft(for: capture, store: store, replyChoice: MarginReplyChoice(suggested: reply)))
+            noteCatchUp(.recordingStarted) // a written Margin puts the caught-up card away, as a spoken one does (#4785)
             clearRecordingPresentation()
         } catch {
             streamingSpeechQueue.resumeAfterInterjection()
@@ -506,7 +533,7 @@ extension Gate1AppModel {
         recordFinalCaptureDiagnostics("switched_to_written")
         do {
             let store = try requireStore()
-            let capture = try engine.switchRecordingToWrittenInterjection(resumesSource: held == nil)
+            let capture = try engine.switchRecordingToWrittenInterjection(resumesSource: held == nil && !catchUpPlaceIsWaiting)
             snapshot = engine.snapshot // the screen leaves the recording, and the capture watch ends with it
             lastError = nil
             marginCapture.clearPermissionDenied()
@@ -547,6 +574,7 @@ extension Gate1AppModel {
             if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
             refreshSelectedItemInBackground()
             refreshMarginRowsInBackground(forItem: draft.capture.itemId)
+            hearItLandAfterWrittenSave(itemId: draft.capture.itemId, atMs: draft.capture.anchor.mediaTimeMs) // card + "first Margin heard" (#4713, #4711)
             if draft.priorWasPlaying && snapshot.status == .paused {
                 AppHaptics.play(.warning)
                 reportWarning("Margin saved. Playback is paused; tap Play to continue.", savesMargin: true)
@@ -585,54 +613,123 @@ extension MarginCaptureSupervisor.Health {
     }
 }
 
-#if SM_MARGIN_END_PHRASE_SPIKE
-/// Spike #3940 (PR 0 of the Design), phone builds only: while a spoken Margin records, an `AVAudioEngine` input tap runs
-/// beside the recorder and feeds the on-device recogniser, and what it hears goes to Diagnostics. Nothing ends a Margin
-/// and nothing reaches the Margin, the transcript or a packet. The owner's three device checks (phone microphone
-/// unlocked, AirPods locked, a headset started by double press) read the `margin.endPhrase.spike.*` events.
-///
-/// The holder is not a stored property of `Gate1AppModel` (a hot file at its ceiling). It keeps one tap at a time and
-/// lets the last one go before the next starts.
+/// What the recording screen's hint line says about listening for the end phrase (#3940). A holder of its own, not a
+/// stored property of `Gate1AppModel` (a hot file at its ceiling); the recording screen watches it directly.
 @MainActor
-final class MarginEndPhraseSpike {
-    static let shared = MarginEndPhraseSpike()
+final class MarginEndPhraseStatus: ObservableObject {
+    static let shared = MarginEndPhraseStatus()
+    @Published private(set) var hint: MarginEndPhraseHint = .none
 
-    private var tap: LiveInputTap?
-    /// Which Margin's tap an event belongs to: the stop of a tap still finishing (it waits up to 3 s for the
-    /// recogniser) reports after the next Margin began, and its summary is its own.
+    func set(_ hint: MarginEndPhraseHint) {
+        if self.hint != hint { self.hint = hint }
+    }
+}
+
+/// Listens for "stop margin" while a spoken Margin records (#3940, PR 3 of the Design), and ends the Margin when it is
+/// said: an `AVAudioEngine` input tap runs beside the recorder and feeds the on-device recogniser, on this iPhone only.
+///
+/// Nothing here ends a Margin but the phrase (`MarginEndPhraseDecider`): not quiet, not a timer. Listening that is off
+/// or fails leaves the recording exactly as it was. It never asks for Speech Recognition permission: that question is
+/// asked where it is asked today, at the first transcription after a save, and the next Margin listens (a prompt while
+/// the microphone is live is the #2966 trap). It keeps one listener at a time and lets the last one go before the next.
+@MainActor
+final class MarginEndPhraseCoordinator {
+    static let shared = MarginEndPhraseCoordinator()
+
+    private var listener: MarginEndPhraseListener?
+    /// Which Margin a signal belongs to: a listener still finishing (it waits up to 3 s for the recogniser) signals
+    /// after the next Margin began, and that is nobody's now.
     private var run = 0
-    private var record: (@MainActor (String, [String: String]) -> Void)?
 
-    func begin(record: @escaping @MainActor (String, [String: String]) -> Void) {
+    func begin(
+        finish: @escaping @MainActor () -> Void,
+        record: @escaping @MainActor (String, [String: String]) -> Void
+    ) {
         end()
         run += 1
         let thisRun = run
-        self.record = record
-        let tap = LiveInputTap(
+        let availability = MarginEndPhraseAvailability.decide(
+            isSwitchedOn: MarginEndPhraseAvailability.isSwitchedOn(
+                stored: UserDefaults.standard.object(forKey: MarginEndPhraseAvailability.storageKey) as? Bool
+            ),
+            speech: SpeechRecognitionAccess.state,
+            languageCode: Locale.current.language.languageCode?.identifier,
+            thermalIsSeriousOrWorse: ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue
+        )
+        guard case .available = availability else {
+            if case .off(let reason) = availability {
+                record("margin.endPhrase.off", ["reason": reason.rawValue, "run": String(thisRun)])
+            }
+            return
+        }
+        let listener = MarginEndPhraseListener(
             makeSession: { SpeechLiveInputSession(isAuthorized: { SpeechRecognitionAccess.isAuthorized }) },
+            onSignal: { signal in
+                Task { @MainActor in
+                    MarginEndPhraseCoordinator.shared.handle(signal, run: thisRun, finish: finish, record: record)
+                }
+            },
             onEvent: { kind, fields in
-                Task { @MainActor in MarginEndPhraseSpike.shared.record?(kind, fields.merging(["run": String(thisRun)]) { $1 }) }
+                Task { @MainActor in
+                    guard MarginEndPhraseCoordinator.shared.run == thisRun else { return }
+                    record(kind, fields.merging(["run": String(thisRun)]) { $1 })
+                }
             }
         )
-        self.tap = tap
-        Task.detached { await tap.start() } // the tap is its own actor: nothing of it runs on main
+        self.listener = listener
+        Task.detached { await listener.start() } // the listener runs off the main thread
     }
 
-    /// Safe on a recording that never started and when called twice: the tap is single use and stops once.
+    /// Safe on a recording that never started and when called twice: the listener is single use and stops once.
     func end() {
-        guard let tap else { return }
-        self.tap = nil
-        Task.detached { await tap.stop() } // a stop that beats its start is fine: the tap then never starts
+        MarginEndPhraseStatus.shared.set(.none)
+        guard let listener else { return }
+        self.listener = nil
+        Task.detached { await listener.stop() } // a stop that beats its start is fine: it then never starts
+    }
+
+    private func handle(
+        _ signal: MarginEndPhraseListener.Signal,
+        run signalRun: Int,
+        finish: @MainActor () -> Void,
+        record: @MainActor (String, [String: String]) -> Void
+    ) {
+        guard signalRun == run, listener != nil else { return } // an older Margin's listener, or one already let go
+        switch signal {
+        case .hint(let hint):
+            MarginEndPhraseStatus.shared.set(hint)
+        case .end:
+            // "Finishing…" is over: the screen's own "Saving Margin…" takes its place, and the phrase is spent for this Margin.
+            MarginEndPhraseStatus.shared.set(.none)
+            finish() // the way a tap on Save finishes: the save guard turns a second ask into nothing
+        case .couldNotStart(let reason):
+            MarginEndPhraseStatus.shared.set(.none)
+            record("margin.endPhrase.unavailable", ["reason": reason, "run": String(signalRun)])
+            // A missing permission or model is "off", as before the feature; a failure the listener can't see needs a sound.
+            if !Self.isQuietReason(reason) { MarginOutcomeCuePlayer.shared.play(.couldNotStart) { _ in } }
+        case .stoppedMidMargin:
+            MarginEndPhraseStatus.shared.set(.none)
+            record("margin.endPhrase.unavailable", ["reason": "stopped_mid_margin", "run": String(signalRun)])
+            MarginOutcomeCuePlayer.shared.play(.couldNotStart) { _ in } // the Design's one signal; it never waits on the main actor
+        }
+    }
+
+    /// Why listening could not start for a reason the listener already knows or can't act on now.
+    nonisolated static func isQuietReason(_ reason: String) -> Bool {
+        ["speech_not_authorized", "model_not_installed", "locale_unsupported", "transcriber_unavailable"]
+            .contains { reason == $0 || reason.hasPrefix($0 + ":") }
     }
 }
 
 extension Gate1AppModel {
-    func beginMarginEndPhraseSpike() {
-        MarginEndPhraseSpike.shared.begin { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) }
+    func beginMarginEndPhraseListening() {
+        MarginEndPhraseCoordinator.shared.begin(
+            finish: { [weak self] in self?.requestFinishInterjectionFromPhrase() },
+            record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) }
+        )
     }
 
-    func endMarginEndPhraseSpike() {
-        MarginEndPhraseSpike.shared.end()
+    func endMarginEndPhraseListening() {
+        MarginEndPhraseCoordinator.shared.end()
     }
 }
-#endif

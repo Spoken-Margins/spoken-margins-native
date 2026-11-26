@@ -9,6 +9,10 @@ public struct TimelineSourceContent: Equatable, Sendable {
         public let role: StructuredDocument.Role
         public let label: String?
         public let pageIndex: Int?
+        /// The table or figure this passage is the printed text of, when the PDF's import located it (#3895).
+        /// Its picture, if one was cut, is the clip saved under this id.
+        public let floatId: String?
+        public let floatKind: StructuredDocument.Float.Kind?
     }
 
     public let entries: [Entry]
@@ -16,6 +20,11 @@ public struct TimelineSourceContent: Equatable, Sendable {
     /// The pictures, embeds and links the import kept, in text order (#2032). They are not entries: the text
     /// they sit in is already one, and Timeline draws a row of their own for each.
     public let elements: [SourceElement]
+    /// The figures of a PDF that have no printed text of their own: a photo, a micrograph, a chart without labels. Each
+    /// is the caption "Figure 3" names, in text order (#4587). They are not entries, for the same reason pictures
+    /// aren't: the caption's words already sit in a body entry, and Now's overlap check reads `entries` as a partition
+    /// of the text. Set by `ItemDetailState.includingTimelineSource`, empty otherwise.
+    public internal(set) var figures: [Entry] = []
 
     public func entry(atCharacter offset: Int) -> Entry? {
         guard offset >= 0, offset <= characterCount else { return nil }
@@ -34,11 +43,12 @@ public struct TimelineSourceContent: Equatable, Sendable {
         self.elements = elements.filter { $0.start >= 0 && $0.start <= characters.count }
         var result: [Entry] = []
         func append(_ range: Range<Int>, role: StructuredDocument.Role = .body,
-                    label: String? = nil, pageIndex: Int? = nil) {
+                    label: String? = nil, pageIndex: Int? = nil, float: StructuredDocument.Float? = nil) {
             let value = String(characters[range])
             guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             result.append(Entry(id: String(format: "source.text.%020ld.%020ld", range.lowerBound, result.count),
-                                start: range.lowerBound, text: value, role: role, label: label, pageIndex: pageIndex))
+                                start: range.lowerBound, text: value, role: role, label: label, pageIndex: pageIndex,
+                                floatId: float?.id, floatKind: float?.kind))
         }
 
         if let document, document.text == text, !document.segments.isEmpty,
@@ -57,13 +67,19 @@ public struct TimelineSourceContent: Equatable, Sendable {
                 let end = start + segment.range.length
                 // Incomplete structure must never hide retained source text.
                 if coveredEnd < start { append(coveredEnd..<start) }
+                // A float lends its label to the segment of its own text, or to its caption's segment when that is a
+                // caption. A picture-only figure names the body segment its caption sits in (#4587), and that must
+                // not be labelled "Figure 3".
                 let label = document.floats.first {
-                    (segment.floatId != nil && $0.id == segment.floatId) || $0.captionSegmentId == segment.id
+                    (segment.floatId != nil && $0.id == segment.floatId)
+                        || ($0.captionSegmentId == segment.id && segment.role == .caption)
                 }?.label
                 let page = segment.pageIndex.flatMap {
                     $0 >= 0 && $0 < document.extraction.pageCount ? $0 : nil
                 }
-                append(start..<end, role: segment.role, label: label, pageIndex: page)
+                // Only the segment that holds the table's or figure's own text carries its picture; its caption doesn't.
+                let ownFloat = segment.floatId.flatMap { id in document.floats.first { $0.id == id } }
+                append(start..<end, role: segment.role, label: label, pageIndex: page, float: ownFloat)
                 coveredEnd = max(coveredEnd, end)
             }
             if coveredEnd < characters.count { append(coveredEnd..<characters.count) }

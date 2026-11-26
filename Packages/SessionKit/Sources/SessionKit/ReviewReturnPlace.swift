@@ -20,6 +20,10 @@ public struct ReviewReturnPlace: Codable, Equatable, Sendable {
     /// it, as `placeToReturnToWhenStopped` treats Stop. Optional so a note saved by an earlier build still decodes; nil
     /// means no Margin has been reached yet.
     public private(set) var passedAMargin: Bool?
+    /// Where a catch-up run that ended paused left the source while this place stays owed (#5238, `CatchUpPlace`). The
+    /// place comes back on the next Play or leave only while the source is still there. Optional so a note saved by an
+    /// earlier build still decodes, and an earlier build ignores the key; nil means the note is an ordinary review's.
+    public private(set) var heldAtMediaTimeMs: Int?
 
     /// The place a review about to start owes. Nil for a moment that isn't a review, or one that has no place to go back to.
     public init?(sequence: MarginMomentSequence) {
@@ -44,6 +48,13 @@ public struct ReviewReturnPlace: Codable, Equatable, Sendable {
 }
 
 extension ReviewReturnPlace {
+    /// The same note, held where a catch-up run left the source (`CatchUpPlace.hold`). Nothing else changes.
+    public func held(at mediaTimeMs: Int) -> ReviewReturnPlace {
+        var held = self
+        held.heldAtMediaTimeMs = mediaTimeMs
+        return held
+    }
+
     /// Whether the place is still owed once the Margin at `marginMediaTimeMs` has the floor: only when the place is ahead
     /// of that Margin (the review pulled the listener back to catch up). The episode plays on after a Margin (#3596), so
     /// for any other listener the source is from then on where their own listening has it, and a relaunch must not send

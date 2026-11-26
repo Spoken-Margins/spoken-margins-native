@@ -20,7 +20,7 @@ import PDFKit
 /// Margin identity, retry, delete, star and private notes (#990), moved unchanged out of the central model.
 extension Gate1AppModel {
     static func marginIdentity(_ interjection: Interjection) -> String {
-        "\(interjection.sessionId)::\(interjection.id)"
+        MarginIdentity.make(sessionId: interjection.sessionId, interjectionId: interjection.id)
     }
 
     /// Names a failed transcription's Retry offer, so retrying or transcribing the Margin another way withdraws it.
@@ -89,8 +89,9 @@ extension Gate1AppModel {
     /// A transcription failure is about the Margin's own listen, so on the Now screen it is the tag under the
     /// title, with Retry, and the full message stays on the item (#430). A Margin deleted while it was
     /// transcribing gets no notice at all: there is nothing left to retry or to tell the listener about.
-    func presentTranscriptionFailure(_ notice: TranscriptionFailureWording.Notice, for interjection: Interjection) {
-        guard currentMargin(matching: interjection).verdict != .gone else { return }
+    func presentTranscriptionFailure(_ notice: TranscriptionFailureWording.Notice?, for interjection: Interjection) {
+        // No notice: the Margin only waits for the listener's answer to the Speech Recognition card (#4715).
+        guard let notice, currentMargin(matching: interjection).verdict != .gone else { return }
         let origin = FeedbackOrigin(itemId: interjection.itemId, sessionId: interjection.sessionId, work: .marginTranscription)
         notice.present(
             warning: { reportWarning($0, origin: origin) },
@@ -142,8 +143,12 @@ extension Gate1AppModel {
     private func writeStar(_ interjection: Interjection, place: ShareStarPlace, _ edit: (inout Interjection) -> Void) {
         do {
             let store = try requireStore()
+            var wasStarred = false
             guard let updated = try store.updateInterjection(
-                id: interjection.id, sessionId: interjection.sessionId, itemId: interjection.itemId, edit
+                id: interjection.id, sessionId: interjection.sessionId, itemId: interjection.itemId, { margin in
+                    wasStarred = margin.isStarredForSharing == true
+                    edit(&margin)
+                }
             ) else {
                 throw SessionKitError.persistenceFailed("share_curation_interjection_missing")
             }
@@ -157,7 +162,9 @@ extension Gate1AppModel {
             refreshMarginRow(sessionId: updated.sessionId, interjectionId: updated.id)
             refreshSelectedItemInBackground()
             diagnostics["shareCuration:\(updated.id)"] = updated.isStarredForSharing == true ? "starred" : "unstarred"
-            _ = place // counted by ShareStarTally in the next slice (#4173 PR 2)
+            // Counted on a change only, so a menu item that sets what is already set adds nothing (#4173).
+            let isStarred = updated.isStarredForSharing == true
+            if isStarred != wasStarred { shareStarTally.record(place, turnedOn: isStarred) }
         } catch {
             reportFailure(error, context: "Margin sharing star could not be saved")
         }

@@ -19,10 +19,6 @@ import PDFKit
 #endif
 
 extension Gate1AppModel {
-    func shareAnchorWarning(for interjection: Interjection) -> String? {
-        SharedMarginExport.anchorWarning(for: interjection, isNativeAudio: selectedItem.isNativeAudio)
-    }
-
     /// Builds the packet for the included drafts. The Margin voice files' durations are read, and the whole archive
     /// is written, off the main thread (#2510, #2256); everything else stays on it, and the result lands on the
     /// model exactly as before. A second call while one is running does nothing. Returns the packet's file, or nil
@@ -30,11 +26,15 @@ extension Gate1AppModel {
     @discardableResult
     func exportSharedInterjections(presentsReadySheet: Bool = true) async -> URL? {
         guard !sharingState.isExporting else { return nil }
-        guard !sharingState.isBulkPreparing else {
-            sharingState.errorMessage = "Finish or cancel bulk preparation before sharing."
+        // A packet never carries a voice that is still being made (#4647): the sheet waits for it before it asks. Voices
+        // the packet doesn't need (a left-out Margin, one set to As recorded or Words only) don't hold it.
+        if case .waiting(let count) = shareSendReadiness {
+            sharingState.errorMessage = ShareReviewCardWords.waiting(count: count)
             return nil
         }
-        let (drafts, omission) = SharedMarginTextRequirement.shareable(sharingState.drafts.filter(\.isIncluded), text: \.approvedTranscript)
+        // A Margin with no place never goes in a packet, whatever its switch says (#4233).
+        let (drafts, omission) = SharedMarginTextRequirement.shareable(
+            ShareableMargins.filter(sharingState.drafts.filter(\.isIncluded), margin: \.interjection), text: \.approvedTranscript)
         guard !drafts.isEmpty else {
             sharingState.errorMessage = omission ?? "Select at least one Margin with reviewed text."
             return nil
@@ -100,7 +100,9 @@ extension Gate1AppModel {
                     anchorAfter: draft.anchorAfter,
                     status: .senderApproved,
                     // Remembered so the next share of this Margin starts from it (#3472); a recording has no choice.
-                    sentReadAloud: draft.representationChoice == .textOnly ? draft.readAloud : nil
+                    sentReadAloud: draft.representationChoice == .textOnly ? draft.readAloud : nil,
+                    // Likewise the run-up length the packet writes (#4171), so a later 20 s choice knows to say so.
+                    sentLeadInMs: draft.leadInToWrite
                 )
                 revisions.append(revision)
 
@@ -146,14 +148,10 @@ extension Gate1AppModel {
                     anchor: anchor,
                     representation: representation, replyTo: draft.interjection.replyTo,
                     readAloud: draft.readAloud,
-                    turnsReadAloudBackOn: draft.readAloud && draft.previousReadAloud == false
+                    turnsReadAloudBackOn: draft.readAloud && draft.previousReadAloud == false,
+                    leadInMs: draft.leadInMs,
+                    previousLeadInMs: draft.previousLeadInMs
                 ))
-            }
-
-            // The revisions are saved in one background step, before the packet is built, as they were one by one (#2509).
-            let revisionsToSave = revisions
-            try await StoreReader(store).read { store in
-                for revision in revisionsToSave { try store.saveInterjectionShareRevision(revision) }
             }
 
             let mapProposals = SharedMarginExport.mapProposals(
@@ -216,6 +214,21 @@ extension Gate1AppModel {
                 throw error
             }
             await Self.removeOffMain(audioStaging)
+            // The revisions are saved in one background step (#2509), only once the packet is written: they are what the
+            // next share of each Margin starts from (`sentLeadInMs`, `sentReadAloud`), so a failed write must not leave
+            // one behind saying a length or a reading choice went out when it never did (#4171, the 4a audit).
+            let revisionsToSave = revisions
+            do {
+                // One transaction, so a save that fails part way leaves none behind for the deleted packet.
+                try await StoreReader(store).read { store in
+                    try store.withSessionTransaction {
+                        for revision in revisionsToSave { try store.saveInterjectionShareRevision(revision) }
+                    }
+                }
+            } catch {
+                await Self.removeOffMain(destination) // a packet with no saved revisions would be a share with no record
+                throw error
+            }
             diagnostics["lastSharedPackageAudio"] = "reencoded=\(audioReport.compressedCount);as_recorded=\(audioReport.keptOriginalCount);failed=\(audioReport.failedCount);bytes=\(audioReport.originalBytes)->\(audioReport.sentBytes)"
             let exportedSelections = selections
             // The export is recorded in one background transaction (#2509).
@@ -252,11 +265,13 @@ extension Gate1AppModel {
         )
     }
 
-    /// Mirrors the link the packet builder keeps, so the share screen never promises a private feed link (#168).
+    /// Mirrors the link the packet builder keeps, so the share screen never promises a private feed link (#168) or a
+    /// restricted episode's audio or feed link (#5340).
     func secureSharedItemURL<Fields: LibraryItemFields>(for item: Fields) -> String? {
-        ShareableLinkPolicy.shareableLink(
+        AutomaticSourceAccess.sendableLink(
             item.externalReference.flatMap(SharedItemIdentityBuilder.normalizedSharingURL)
-                ?? item.media?.url.flatMap(SharedItemIdentityBuilder.normalizedSharingURL)
+                ?? item.media?.url.flatMap(SharedItemIdentityBuilder.normalizedSharingURL),
+            of: item
         )
     }
 

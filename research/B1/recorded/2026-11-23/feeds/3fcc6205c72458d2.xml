@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet type="text/xsl" href="/global/feed/rss.xslt" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podaccess="https://access.acast.com/schema/1.0/" xmlns:acast="https://schema.acast.com/1.0/">
+   <script src="https://feeds.acast.com/global/feed/xslt-polyfill.min.js" xmlns="http://www.w3.org/1999/xhtml"></script>
+    <channel>
+		<ttl>60</ttl>
+		<generator>acast.com</generator>
+		<title>The Economics Show with Soumaya Keynes</title>
+		<link>https://shows.acast.com/the-economics-show-with-soumaya-keynes</link>
+		<atom:link href="https://feeds.acast.com/public/shows/664394a442f6710013618119" rel="self" type="application/rss+xml"/>
+		<language>en</language>
+		<copyright>Financial Times</copyright>
+		<itunes:keywords>economics,economist,keynes,trade,central banks,tarriffs,employment</itunes:keywords>
+		<itunes:author>Financial Times</itunes:author>
+		<itunes:subtitle/>
+		<itunes:summary><![CDATA[<p>The Economics Show with Soumaya Keynes is a new weekly podcast from the Financial Times packed full of smart, digestible analysis and incisive conversation. Soumaya Keynes digs deep into the hottest topics in economics along with a cast of FT colleagues and special guests. Come for the big ideas, stay for the nerdery.</p><br><p>Soumaya Keynes is an economics columnist for the Financial Times. Prior to joining the FT she worked at The Economist for eight years as a staff writer, where as well as covering trade, the US economy and the UK economy she co-hosted the Money Talks podcast. She also co-founded the Trade Talks podcast.</p><hr><p style='color:grey; font-size:0.75em;'> Hosted on Acast. See <a style='color:grey;' target='_blank' rel='noopener noreferrer' href='https://acast.com/privacy'>acast.com/privacy</a> for more information.</p>]]></itunes:summary>
+		<description><![CDATA[<p>The Economics Show with Soumaya Keynes is a new weekly podcast from the Financial Times packed full of smart, digestible analysis and incisive conversation. Soumaya Keynes digs deep into the hottest topics in economics along with a cast of FT colleagues and special guests. Come for the big ideas, stay for the nerdery.</p><br><p>Soumaya Keynes is an economics columnist for the Financial Times. Prior to joining the FT she worked at The Economist for eight years as a staff writer, where as well as covering trade, the US economy and the UK economy she co-hosted the Money Talks podcast. She also co-founded the Trade Talks podcast.</p><hr><p style='color:grey; font-size:0.75em;'> Hosted on Acast. See <a style='color:grey;' target='_blank' rel='noopener noreferrer' href='https://acast.com/privacy'>acast.com/privacy</a> for more information.</p>]]></description>
+		<itunes:explicit>false</itunes:explicit>
+		<itunes:owner>
+			<itunes:name>Financial Times</itunes:name>
+			<itunes:email>info+664394a442f6710013618119@mg-eu.acast.com</itunes:email>
+		</itunes:owner>
+		<acast:showId>664394a442f6710013618119</acast:showId>
+		<acast:showUrl>the-economics-show-with-soumaya-keynes</acast:showUrl>
+		<acast:signature key="EXAMPLE" algorithm="aes-256-cbc"><![CDATA[wbG1Z7+6h9QOi+CR1Dv0uQ==]]></acast:signature>
+		<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmU13c0otUap75NIyVufnZVBoBcFwz3Y0zGA/pFjpP70+3oZt3+5O3uX8mfQZWzV35Kby8OfdHfDJlQAYxij1gc0J63rxgoMm4loq58gBzd9i]]></acast:settings>
+        <acast:network id="d6af8ecd-e285-4ca7-adb2-d4af4c42e079" slug="ft"><![CDATA[The Financial Times Limited]]></acast:network>
+		<itunes:type>episodic</itunes:type>
+			<itunes:image href="https://assets.pippa.io/shows/664394a442f6710013618119/1769764604173-577f36d4-d96a-42ee-96b9-7aaee7724352.jpeg"/>
+			<image>
+				<url>https://assets.pippa.io/shows/664394a442f6710013618119/1769764604173-577f36d4-d96a-42ee-96b9-7aaee7724352.jpeg</url>
+				<link>https://shows.acast.com/the-economics-show-with-soumaya-keynes</link>
+				<title>The Economics Show with Soumaya Keynes</title>
+			</image>
+		

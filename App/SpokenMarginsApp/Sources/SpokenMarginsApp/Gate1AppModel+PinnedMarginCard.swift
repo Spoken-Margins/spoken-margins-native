@@ -44,7 +44,7 @@ extension Gate1AppModel {
             return PinnedMarginCard(
                 subject: .friend(SharedPacketArrival.senderName(playing.senderLabel)), stage: stage,
                 position: PinnedMarginCard.position(playing.index, of: playing.count), voiceTime: playingVoiceTime,
-                noun: sourceNoun, nextPress: nextMarginPress)
+                noun: sourceNoun, nextPress: nextMarginPress, canStartEarlier: stage == .speaking && startEarlierPlanForPlayingSharedMargin != nil)
         }
         if let pending = pendingImportedCommentary {
             return PinnedMarginCard(
@@ -53,7 +53,7 @@ extension Gate1AppModel {
         }
         if let moment = marginMoment {
             let current = moment.playing ?? moment.target
-            let run: PinnedMarginCard.Run = moment.isReview ? .review : .moment
+            let run: PinnedMarginCard.Run = moment.isReview ? .review : hearItLandRun(forMomentTarget: moment.target.marginId)
             let subject: PinnedMarginCard.Subject = current.isYours || !moment.isReview && current.label == nil
                 ? .yours : .friend(current.label) // `Subject` drops every stand-in, "a friend" included
             let position = CantPlayListening.cardPosition(in: moment) // a review counts its Margins; one Margin is never "1 of 1"
@@ -63,7 +63,7 @@ extension Gate1AppModel {
                 return PinnedMarginCard(
                     subject: subject, stage: marginMomentVoiceIsPaused ? .voicePaused : sounding, position: position,
                     voiceTime: playingVoiceTime, noun: sourceNoun, nextPress: nextMarginPress, run: run,
-                    chainsWithoutLeadIn: CantPlayListening.isCantPlayListening(moment))
+                    chainsWithoutLeadIn: CantPlayListening.isCantPlayListening(moment), canStartEarlier: marginMomentStartEarlierPlan != nil)
             }
             // A plain moment that has played its Margin keeps listening for the others: the slot stays, saying so.
             if !moment.isReview, moment.phase == .listening {
@@ -71,9 +71,14 @@ extension Gate1AppModel {
             }
             let remaining = moment.msUntilTarget(currentMediaTimeMs: moment.review == nil ? (marginMomentPositionMs ?? moment.startMediaTimeMs) : snapshot.currentMediaTimeMs)
             return PinnedMarginCard(subject: subject, stage: .comingUp(msRemaining: remaining), position: position, noun: sourceNoun,
-                nextPress: nextMarginPress, run: run, targetLeadInMs: moment.target.leadInMs)
+                nextPress: nextMarginPress, run: run, targetLeadInMs: moment.target.leadInMs,
+                canStartEarlier: marginMomentStartEarlierPlan != nil)
         }
-        if let saved = friendAnswerSavedCard { return saved }
+        // A friend's Margin the listener went to that is never read aloud: its words, while the source is still near it (#4934).
+        if let landing = shownSilentMarginLanding { return landing.card(noun: sourceNoun) }
+        if let saved = friendAnswerSavedCard ?? hearItLandWrittenCard { return saved }
+        // After a catch-up run, the card that says no answer is owed, ahead of any heard Margin still ahead (#4785).
+        if let caughtUp = caughtUpCard { return caughtUp }
         // Auto-play off still holds the slot: Next Margin is reachable between Margins and the title never moves.
         guard let next = nextSharedMargin else { return friendLastMarginCard }
         let remaining = next.mediaTimeMs.flatMap { ms in snapshot.currentMediaTimeMs.map { max(0, ms - $0) } }
@@ -84,9 +89,15 @@ extension Gate1AppModel {
             targetLeadInMs: next.prompt.interjection.senderLeadInMs)
     }
 
+    /// The friend's Margin an ordinary countdown card is about (no Margin moment), so the card's line can say how its
+    /// place may be off (#4175). Nil while a moment holds the card.
+    var pinnedCardUpNextPrompt: ImportedCommentaryPrompt? {
+        marginMoment == nil ? nextSharedMargin?.prompt : nil
+    }
+
     /// What the open source is called on the card: from the open item's own stored facts (the Library row's), else from
     /// whether it plays as media. Never hard-coded to "episode" (#3597).
-    private var sourceNoun: SourceNoun {
+    var sourceNoun: SourceNoun {
         if let row = libraryItems.first(where: { $0.id == snapshot.itemId }) {
             return SourceNoun(mediaType: row.mediaType, sourceReference: row.sourceReference, sourceReferenceType: row.sourceReferenceType)
         }
@@ -125,7 +136,7 @@ extension Gate1AppModel {
                 ? .momentVoice(isReview: moment.isReview, isLastMargin: moment.unplayed.isEmpty)
                 : .momentLeadIn(
                     isReview: moment.isReview, positionMs: snapshot.currentMediaTimeMs, targetMs: moment.target.mediaTimeMs,
-                    targetLeadInMs: moment.target.leadInMs)
+                    targetLeadInMs: moment.target.leadInMs, runUpStartMs: moment.targetRunUpStartMediaTimeMs)
         }
         guard let next = nextSharedMargin else { return nil }
         guard let ms = next.mediaTimeMs else { return nil }
@@ -153,7 +164,7 @@ extension Gate1AppModel {
         case .seekToLeadIn(let ms) where marginMoment != nil:
             // A review's episode plays on between Margins and nothing hops ahead by itself: this tap is the hop. The
             // review's own Margin plays when the episode reaches it, so nothing is marked or dismissed here.
-            marginMomentConductor?.sourceMoved()
+            listenerMovedSource()
             seekMedia(toMediaTimeMs: ms)
         case .seekToLeadIn(let ms):
             // An announced Margin is not offered when the episode crosses it again, so give it back first: the lead-in
@@ -165,11 +176,57 @@ extension Gate1AppModel {
         }
     }
 
+    // MARK: Start a minute earlier (#4171)
+
+    /// The plan for "Start a minute earlier" in a running moment or review: the Margin playing, or the target while the
+    /// playhead is inside its run-up (`MarginMomentSequence.startEarlierPlan`). Media only: an article read aloud counts its
+    /// moment in characters, where "a minute" means nothing.
+    private var marginMomentStartEarlierPlan: StartEarlier.Plan? {
+        guard let moment = marginMoment, !marginMomentClock.isNarratedText, isMediaPlaybackSnapshot else { return nil }
+        return moment.startEarlierPlan(currentMediaTimeMs: snapshot.currentMediaTimeMs)
+    }
+
+    /// A friend's Margin playing by itself as the episode reached it, as a review entry: where it plays, and whether that
+    /// place is a best guess. Nil on a text item or for a Margin with no place in the episode.
+    private var playingSharedMarginEntry: SharedMarginReview.Entry? {
+        guard marginMoment == nil, isMediaPlaybackSnapshot, let playing = playingImportedCommentary else { return nil }
+        return StartEarlier.entries(playing: playing, waiting: [], among: []).first
+    }
+
+    /// Ordinary playback had no run-up before that Margin, so the press gives it one minute (`StartEarlier.plan`, `R = 0`).
+    private var startEarlierPlanForPlayingSharedMargin: StartEarlier.Plan? {
+        playingSharedMarginEntry.flatMap { StartEarlier.plan(for: $0.anchor, runUpMs: 0) }
+    }
+
+    /// The card's "Start a minute earlier": in a running moment or review, the conductor plays the Margin again after a
+    /// run-up one minute longer, keeping the review's count and its return place. For a friend's Margin playing by itself,
+    /// a review of that one Margin starts with a one-minute run-up, and the episode plays on after it. The rule is
+    /// `StartEarlier` in SessionKit; this only routes the press.
+    func startMarginEarlier() {
+        guard !recordingNavigationIsLocked else { return }
+        if let conductor = marginMomentConductor {
+            guard let plan = marginMomentStartEarlierPlan else { return }
+            conductor.restartLonger(plan)
+            diagnostics["marginMoment.startEarlier"] = "lead_in_ms=\(plan.leadInMs)"
+            return
+        }
+        guard let playing = playingImportedCommentary, let entry = playingSharedMarginEntry, let itemId = snapshot.itemId,
+              let plan = StartEarlier.plan(for: entry.anchor, runUpMs: 0) else { return }
+        // The friend's Margins crossed with this one and still waiting their turn play after it (audit on #5093).
+        let entries = StartEarlier.entries(
+            playing: playing, waiting: sharedMarginOffers.waitingIDs, among: importedCommentaryPrompts(includeAnnounced: true))
+        reviewNewMargins(itemId: itemId, thenContinue: true, entries: entries, startingEarlier: plan)
+        diagnostics["marginMoment.startEarlier"] = "lead_in_ms=\(plan.leadInMs);from=auto_play"
+    }
+
     /// Goes to a friend's Margin and plays it, whether the listener asked from the card or the episode got there.
-    func playSharedMarginNow(_ prompt: ImportedCommentaryPrompt) {
+    /// False when the jump failed; it has told the listener why.
+    @discardableResult
+    func playSharedMarginNow(_ prompt: ImportedCommentaryPrompt) -> Bool {
         if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: true) } // the episode comes back, so the jump reads it as playing
         dismissPendingImportedCommentary()
-        guard jumpToImportedCommentary(interjectionID: prompt.interjection.id) else { return }
+        guard jumpToImportedCommentary(interjectionID: prompt.interjection.id) else { return false }
         listenToPendingImportedCommentary()
+        return true
     }
 }

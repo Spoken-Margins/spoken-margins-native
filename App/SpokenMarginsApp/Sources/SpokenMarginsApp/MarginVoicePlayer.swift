@@ -221,7 +221,7 @@ final class MarginVoicePlayer: ObservableObject {
         if paused {
             player.pause()
             #if os(iOS)
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            try? AudioSessionOperationLabel.scoped(AudioSessionOperationLabel.marginVoiceRelease) { try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
             #endif
         } else {
             #if os(iOS)

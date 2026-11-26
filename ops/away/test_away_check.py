@@ -119,7 +119,7 @@ class OwnerItemTests(unittest.TestCase):
         self.assertFalse(a.asks_owner_to_run('`xcodebuild` failed in actool; owner step is none.\n```\n```'))
 
     def test_owner_merge_paths(self):
-        self.assertTrue(a.touches_owner_paths([{'path': 'scripts/lane-runner.py'}]))
+        self.assertTrue(a.touches_owner_paths([{'path': 'scripts/lane_merge_rules.py'}]))
         self.assertTrue(a.touches_owner_paths([{'path': '.github/workflows/ci.yml'}]))
         self.assertFalse(a.touches_owner_paths([{'path': 'scripts/lane-runner-tests.py'}]))
         self.assertFalse(a.touches_owner_paths([{'path': 'docs/.github-notes.md'}]))
@@ -147,6 +147,15 @@ class PaceTests(unittest.TestCase):
                         a.pace(now, old, self.DIAL))
         self.assertIn('5 hours old', text)
         self.assertIn('HALT for claude', text)
+
+    def test_a_halt_under_cloud_max_is_reported_as_ignored(self):
+        now = dt.datetime(2026, 11, 21, 19, 40, tzinfo=UTC)
+        cloud = dict(self.DIAL, mode='cloud max')
+        usage = {'usage': {'percent': 15, 'at': now}, 'halted': True, 'halted_by': ['claude']}
+        self.assertTrue(a.pace(now, usage, cloud)['breaker_ignored'])
+        self.assertFalse(a.pace(now, usage, self.DIAL)['breaker_ignored'])
+        text = a.report(now, 8, cloud, a.queue_verdict([], [], 5, 8), [], [], [], [], a.pace(now, usage, cloud))
+        self.assertIn('HALT for claude (the Claude one is ignored: the Dial is Cloud max)', text)
 
 
 class GuideTextTests(unittest.TestCase):

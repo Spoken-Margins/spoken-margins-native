@@ -127,6 +127,8 @@ final class EpisodeLengthBackfillTests: XCTestCase {
         let started = Date()
         let result = EpisodeLengthBackfill.statedFills(items: items, entries: entries, excludingItemId: nil)
         XCTAssertEqual(result.count, 2_000)
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.007 s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards a scan of the 5,000 feed entries per item in place of a dictionary lookup.
         XCTAssertLessThan(Date().timeIntervalSince(started), 1.0)
     }
 

@@ -49,8 +49,13 @@ public enum ImportedMarginResends {
         let packetIdentity: MarginPacketIdentity?
     }
 
-    public static func copyKey(packageDigest: String, sender: String?, margin: ImportedCommentaryInterjection) -> CopyKey {
-        let sender = sender?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    /// `sender` is the packet's display label. A packet whose sender set no name is still from one phone when it
+    /// carries that phone's random sender id (#2846), so the id stands in for the missing name (#5337).
+    public static func copyKey(
+        packageDigest: String, sender: String?, senderId: String? = nil, margin: ImportedCommentaryInterjection
+    ) -> CopyKey {
+        let label = sender?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let sender = label.isEmpty ? SenderID.valid(senderId).map { "sender-id:" + $0 } ?? "" : label
         let eligible = !sender.isEmpty && margin.shareProvenance.map(MarginShareProvenance.isValidToken) == true
         return CopyKey(sender: sender, fingerprint: Fingerprint(margin), packetIdentity: eligible ? nil :
             MarginPacketIdentity(packageDigest: packageDigest, packageScopedId: margin.packageScopedId))
@@ -147,16 +152,22 @@ public enum ImportedMarginResends {
         repository: ListeningSessionRepository
     ) throws -> ImportedCommentaryImportDisposition {
         let sender = layer.displayLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        // Without a sender, or without the item they landed on, there is nobody to compare against.
-        guard !sender.isEmpty, let itemId = layer.itemId,
+        let incomingSenderId = SenderID.valid(layer.senderId)
+        // Without a sender, or without the item they landed on, there is nobody to compare against. A sender is a
+        // display label or the phone's random sender id (#2846): a friend who never set a name sends no label, and
+        // without the id every replies packet they sent again added all their earlier replies a second time (#5337).
+        guard !sender.isEmpty || incomingSenderId != nil, let itemId = layer.itemId,
               try repository.loadImportedCommentaryLayer(packageDigest: layer.packageDigest) == nil else {
             return try repository.importCommentaryLayer(layer, interjections: interjections)
         }
         // A layer the listener deleted doesn't absorb a re-share, and neither does one whose source
-        // didn't match: its Margins never play.
+        // didn't match: its Margins never play. The rest are this sender's when the label or the sender id is the
+        // same. Neither alone merges a Margin: `plan` still needs the same share token, words and place.
         let layers = try repository.loadImportedCommentaryLayers(itemId: itemId).filter {
-            $0.deletedAt == nil && $0.sourceResolutionStatus != .wrongSource
-                && $0.displayLabel?.trimmingCharacters(in: .whitespacesAndNewlines) == sender
+            guard $0.deletedAt == nil, $0.sourceResolutionStatus != .wrongSource else { return false }
+            let sameLabel = !sender.isEmpty && $0.displayLabel?.trimmingCharacters(in: .whitespacesAndNewlines) == sender
+            let sameSenderId = incomingSenderId != nil && SenderID.valid($0.senderId) == incomingSenderId
+            return sameLabel || sameSenderId
         }
         var held: [(layerId: String, margin: ImportedCommentaryInterjection)] = []
         for heldLayer in layers {
@@ -172,7 +183,7 @@ public enum ImportedMarginResends {
         // the Margins this packet repeats, so hiding that sender hides those too, and still works when the packet
         // brings nothing new (#2846). A Margin is "repeated" only when its share token matches too (`Fingerprint`
         // holds it, and a Margin without a valid token never matches), so a label and words alone never tie an id to
-        // a layer (owner's call 2026-11-09). Keep it that way: take the layers from `plan`, never from the label. The same goes for the share link this packet came through: a layer first
+        // a layer (owner's call 2026-11-09). Keep it that way: take the layers from `plan`, never from the label or the sender id alone (#5337). The same goes for the share link this packet came through: a layer first
         // imported from a file, or through an older link, gets a Report this link action too (#2846). One loop and
         // one save per layer, so neither back-fill saves a stale copy over the other.
         let matchedLayerIds = Set(held.filter { plan.identitiesByHeldMargin[$0.margin.id] != nil }.map(\.layerId))

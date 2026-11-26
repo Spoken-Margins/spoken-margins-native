@@ -1,0 +1,434 @@
+[
+    {
+        "key": "ECHCPXZN",
+        "version": 14836,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/collections/ECHCPXZN",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/collections/ECHCPXZN",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "numCollections": 0,
+            "numItems": 5
+        },
+        "data": {
+            "key": "ECHCPXZN",
+            "version": 14836,
+            "name": "Zotero repository proposed",
+            "parentCollection": false,
+            "relations": {}
+        }
+    },
+    {
+        "key": "QW4JGG9G",
+        "version": 13345,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/collections/QW4JGG9G",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/collections/QW4JGG9G",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "numCollections": 0,
+            "numItems": 71
+        },
+        "data": {
+            "key": "QW4JGG9G",
+            "version": 13345,
+            "name": "AMA, 11th edition",
+            "parentCollection": false,
+            "relations": {}
+        }
+    },
+    {
+        "key": "424HZVK3",
+        "version": 13137,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/collections/424HZVK3",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/collections/424HZVK3",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "numCollections": 0,
+            "numItems": 4
+        },
+        "data": {
+            "key": "424HZVK3",
+            "version": 13137,
+            "name": "Zotero style repository items",
+            "parentCollection": false,
+            "relations": {}
+        }
+    },
+    {
+        "key": "AC7ETLN4",
+        "version": 12033,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/collections/AC7ETLN4",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/collections/AC7ETLN4",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "numCollections": 0,
+            "numItems": 29
+        },
+        "data": {
+            "key": "AC7ETLN4",
+            "version": 12033,
+            "name": "OSCOLA, 4th edition",
+            "parentCollection": false,
+            "relations": {}
+        }
+    },
+    {
+        "key": "EJ39UBC4",
+        "version": 7492,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/collections/EJ39UBC4",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/collections/EJ39UBC4",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "numCollections": 0,
+            "numItems": 5
+        },
+        "data": {
+            "key": "EJ39UBC4",
+            "version": 7492,
+            "name": "CSL repository test items",
+            "parentCollection": false,
+            "relations": {}
+        }
+    },
+    {
+        "key": "499SCKUW",
+        "version": 12032,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/collections/499SCKUW",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/collections/499SCKUW",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "numCollections": 0,
+            "numItems": 142
+        },
+        "data": {
+            "key": "499SCKUW",
+            "version": 12032,
+            "name": "New Hart's Rules, 2nd edition",
+            "parentCollection": false,
+            "relations": {}
+        }
+    },
+    {
+        "key": "L96HMJXY",
+        "version": 12031,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/collections/L96HMJXY",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/collections/L96HMJXY",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "numCollections": 0,
+            "numItems": 27
+        },
+        "data": {
+            "key": "L96HMJXY",
+            "version": 12031,
+            "name": "MLA, 9th edition",
+            "parentCollection": false,
+            "relations": {}
+        }
+    },
+    {
+        "key": "D9MVMAFF",
+        "version": 12030,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/collections/D9MVMAFF",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/collections/D9MVMAFF",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "numCollections": 0,
+            "numItems": 117
+        },
+        "data": {
+            "key": "D9MVMAFF",
+            "version": 12030,
+            "name": "MHRA, 4th edition",
+            "parentCollection": false,
+            "relations": {}
+        }
+    },
+    {
+        "key": "5V67EPX3",
+        "version": 12029,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/collections/5V67EPX3",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/collections/5V67EPX3",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "numCollections": 0,
+            "numItems": 374
+        },
+        "data": {
+            "key": "5V67EPX3",
+            "version": 12029,
+            "name": "Chicago, 18th edition",
+            "parentCollection": false,
+            "relations": {}
+        }
+    },
+    {
+        "key": "MR2N872S",
+        "version": 5253,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/collections/MR2N872S",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/collections/MR2N872S",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "numCollections": 0,
+            "numItems": 265
+        },
+        "data": {
+            "key": "MR2N872S",
+            "version": 5253,
+            "name": "APA, 7th edition",
+            "parentCollection": false,
+            "relations": {}
+        }
+    },
+    {
+        "key": "DMKBHP6P",
+        "version": 5254,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/collections/DMKBHP6P",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/collections/DMKBHP6P",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "numCollections": 0,
+            "numItems": 170
+        },
+        "data": {
+            "key": "DMKBHP6P",
+            "version": 5254,
+            "name": "APA, 6th edition",
+            "parentCollection": false,
+            "relations": {}
+        }
+    },
+    {
+        "key": "9RTDRMPL",
+        "version": 115,
+        "library": {
+            "type": "group",
+            "id": 2205533,
+            "name": "Test Items Library",
+            "links": {
+                "alternate": {
+                    "href": "https://www.zotero.org/groups/test_items_library",
+                    "type": "text/html"
+                }
+            }
+        },
+        "links": {
+            "self": {
+                "href": "https://api.zotero.org/groups/2205533/collections/9RTDRMPL",
+                "type": "application/json"
+            },
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library/collections/9RTDRMPL",
+                "type": "text/html"
+            }
+        },
+        "meta": {
+            "numCollections": 0,
+            "numItems": 74
+        },
+        "data": {
+            "key": "9RTDRMPL",
+            "version": 115,
+            "name": "APA test items",
+            "parentCollection": false,
+            "relations": {}
+        }
+    }
+]

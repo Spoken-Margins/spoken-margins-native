@@ -82,7 +82,7 @@ F1 club membership is linked by nature; a member of a club is known to that club
 | Install records | Public key, counter, environment, two day-precision dates. Written hourly, file times set to midnight | Until 90 days idle |
 | Rate limiter | Client network HMAC'd (`clientKey`, `server/internal/api/api.go`) with a secret that is random per process and never written. Hourly windows, in memory only. The per-day hold quota for abuse-material reports (`holdQuota`, `server/internal/api/links.go`, `tokens.go`) uses the same key and lives until the UTC day ends | 1 hour; the hold quota up to 1 day (UTC); never on disk |
 
-To check the box itself for kept addresses (journals, firewall, fail2ban, sshd; counts only, changes nothing), run `ssh root@<vps> 'bash -s' < research/B4/deploy/check-visitor-ips.sh` (#2034). The provider's own logs need its console.
+To check the box itself for kept addresses (journals, firewall, fail2ban, sshd; counts only, changes nothing), run `ssh <user>@<vps> 'bash -s' < research/B4/deploy/check-visitor-ips.sh` (#2034; counts that need root print "needs sudo", and README.md "Server access" has the way to run it through sudo). The provider's own logs need its console.
 
 Why this can't reconstruct a listener's follows or reading:
 - **Follows never reach the server.** Every install downloads the same manifest bytes. Caddy's ETag is built from the file's modification time and size, so every install gets the same one and it can't act as a per-install cookie. Whether a shared link is bridgeable is matched *on the phone* against each source's `match.hosts`/`pathPrefixes`. Nothing is fetched from our server per source: no icons, no per-source feeds. The manifest gate refuses any such field.

@@ -52,4 +52,23 @@ final class LiveSessionWritesTests: XCTestCase {
         }
         XCTAssertNoThrow(try store.loadItem(id: "item-live-1"))
     }
+
+    /// #4715: a spoken Margin saved with no words (the session ended before Allow) is handed to the ordinary Margin
+    /// transcription; one with words, and a written Margin, are not.
+    func testSavedSpokenMarginsWithoutWordsAreTheOnesLeftToTranscribe() throws {
+        let store = try makeStore()
+        var unheard = LiveSessionAlignment.Placed(id: "s1", text: "Spoken Margin", offsetMs: 0, charOffset: 0)
+        unheard.audioPath = "Margins/live-s1.m4a"
+        var heard = LiveSessionAlignment.Placed(id: "s2", text: "Spoken Margin", offsetMs: 0, charOffset: 5)
+        heard.audioPath = "Margins/live-s2.m4a"
+        heard.transcript = "Already heard"
+        let written = LiveSessionAlignment.Placed(id: "w", text: "Written", offsetMs: 0, charOffset: 13)
+
+        let linked = try LiveSessionWrites.saveTextItem(textItem(), placed: [unheard, heard, written], in: store)
+
+        XCTAssertEqual(linked.count, 3)
+        let waiting = LiveSessionWrites.spokenAwaitingWords(linked)
+        XCTAssertEqual(waiting.map(\.audioPath), ["Margins/live-s1.m4a"])
+        XCTAssertEqual(waiting.first?.transcriptionStatus, "pending")
+    }
 }

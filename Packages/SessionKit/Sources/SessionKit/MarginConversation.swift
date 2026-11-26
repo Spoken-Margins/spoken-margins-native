@@ -129,8 +129,19 @@ public struct MarginConversationArtifact: Codable, Equatable, Sendable, Identifi
 
 /// A Margin in this listener's Library.
 public enum MarginReference: Hashable, Sendable {
+    /// The listener's own Margin, by `Interjection.sessionScopedId` (#5133): each listening pass numbers its Margins
+    /// from "ij-001", so the id alone can name a Margin of another pass.
     case local(String)
     case imported(String)
+}
+
+extension MarginReference {
+    /// Whether this reference names `margin`, one of the listener's own (#5133): by session and id, so the same id in
+    /// another pass is not a match.
+    public func isOwnMargin(_ margin: Interjection) -> Bool {
+        if case .local(let key) = self { return key == margin.sessionScopedId }
+        return false
+    }
 }
 
 public struct MarginReplyParent: Equatable, Sendable {
@@ -196,7 +207,7 @@ public struct MarginReplyGraph: Equatable, Sendable {
         }
         // A listener's own Margin wins over a copy of it they imported back.
         for margin in localMargins {
-            for identity in margin.sharedAs ?? [] { nodesByIdentity[identity] = .local(margin.id) }
+            for identity in margin.sharedAs ?? [] { nodesByIdentity[identity] = .local(margin.sessionScopedId) }
         }
 
         var states: [MarginReference: MarginReplyState] = [:]
@@ -226,7 +237,7 @@ public struct MarginReplyGraph: Equatable, Sendable {
             resolve(.imported(margin.id), links: margin.replyLinks ?? [], identities: identities)
         }
         for margin in localMargins {
-            resolve(.local(margin.id), links: margin.replyTo.map { [$0] } ?? [], identities: margin.sharedAs ?? [])
+            resolve(.local(margin.sessionScopedId), links: margin.replyTo.map { [$0] } ?? [], identities: margin.sharedAs ?? [])
         }
         return MarginReplyGraph(states: states, threads: threads)
     }

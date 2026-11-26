@@ -69,6 +69,62 @@ final class FriendArrivalWordsTests: XCTestCase {
         }
     }
 
+    // MARK: each fact once above Play (#3855)
+
+    func testASingleLayerCardHidesItsSenderLineOnlyWhileTheIntroShows() {
+        let table: [(introShowing: Bool, layers: Int, hides: Bool)] = [
+            (true, 1, true),    // the intro names the sender; the one card need not
+            (true, 2, false),   // two senders (or two packets): each card's name tells them apart
+            (true, 3, false),
+            (true, 0, false),   // no card, nothing to hide
+            (false, 1, false),  // intro gone (all heard): the card says "From Sam" again
+            (false, 2, false),
+            (false, 0, false)
+        ]
+        for row in table {
+            XCTAssertEqual(
+                FriendArrivalWords.hidesLayerSenderLine(introShowing: row.introShowing, layerCount: row.layers), row.hides,
+                "intro \(row.introShowing), \(row.layers) layers")
+        }
+    }
+
+    func testTheSpokenLabelDropsOnlyTheLeadingFromSentenceWhenTheLineIsHidden() {
+        let args = (isEnabled: true, isMuted: false, mode: ImportedCommentaryRevealMode.companion)
+        let full = FriendArrivalWords.layerAccessibilityLabel(
+            senderLabel: "Cole", isEnabled: args.isEnabled, isMuted: args.isMuted, mode: args.mode, placementProblem: nil)
+        let hidden = FriendArrivalWords.layerAccessibilityLabel(
+            senderLabel: "Cole", isEnabled: args.isEnabled, isMuted: args.isMuted, mode: args.mode, placementProblem: nil,
+            includesSender: false)
+        XCTAssertEqual(full, "From Cole. Cole's Margins are on. Not muted. When Margins play: A tone marks each one")
+        XCTAssertEqual(hidden, "Cole's Margins are on. Not muted. When Margins play: A tone marks each one")
+        XCTAssertFalse(hidden.hasPrefix("From "), "the sender sentence is said once, by the intro")
+        // A placement problem and an unnamed sender still read the same way.
+        let problem = FriendArrivalWords.layerAccessibilityLabel(
+            senderLabel: "", isEnabled: false, isMuted: true, mode: .guided, placementProblem: "Not the same episode.",
+            includesSender: false)
+        XCTAssertEqual(problem, "Your friend's Margins are off. Muted. When Margins play: Play as you reach them. Not the same episode.")
+    }
+
+    func testATitleLeadsTheHiddenSenderLabelWithoutADoubledFullStop() {
+        func label(_ title: String?) -> String {
+            FriendArrivalWords.layerAccessibilityLabel(
+                senderLabel: "Cole", isEnabled: true, isMuted: false, mode: .guided, placementProblem: nil,
+                includesSender: false, leadingTitle: title)
+        }
+        let rest = "Cole's Margins are on. Not muted. When Margins play: Play as you reach them"
+        let table: [(title: String?, expected: String)] = [
+            ("Episode 4", "Episode 4. \(rest)"),
+            ("Why?", "Why? \(rest)"),
+            ("Stop!", "Stop! \(rest)"),
+            ("Ends with a stop.", "Ends with a stop. \(rest)"),
+            ("  Padded  ", "Padded. \(rest)"),
+            ("", rest),
+            ("   ", rest),
+            (nil, rest)
+        ]
+        for row in table { XCTAssertEqual(label(row.title), row.expected, row.title ?? "nil") }
+    }
+
     // MARK: a stand-in is never a name (#3247)
 
     private func layer(label: String?) -> ImportedCommentaryLayer {

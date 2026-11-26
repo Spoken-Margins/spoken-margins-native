@@ -45,10 +45,24 @@ public enum SharedMarginPrompts {
         _ layer: ImportedCommentaryLayer,
         records: [ImportedCommentaryInterjection]
     ) -> Bool {
-        guard layer.deletedAt == nil,
-              layer.isEnabled,
-              layer.sourceResolutionStatus != .wrongSource else { return false }
+        guard isLayerOn(layer) else { return false }
         return records.contains { isPlayable($0, in: layer) }
+    }
+
+    /// Whether the listener can go to a Margin's place in this layer, whatever it would sound like (#4934): the layer is
+    /// on, and the Margin has somewhere to be. `isLayerPlaybackEligible` with the voice left out, so a friend's Margin that is
+    /// never spoken (`!SharedMarginAudio.canOffer`) is still a place Skim and the lists can take the listener to.
+    public static func isLayerPlaceEligible(
+        _ layer: ImportedCommentaryLayer,
+        records: [ImportedCommentaryInterjection]
+    ) -> Bool {
+        guard isLayerOn(layer) else { return false }
+        return records.contains { plan($0, in: layer, durationMs: nil) != .notPlayable }
+    }
+
+    /// Not deleted, not turned off, not matched to the wrong source.
+    private static func isLayerOn(_ layer: ImportedCommentaryLayer) -> Bool {
+        layer.deletedAt == nil && layer.isEnabled && layer.sourceResolutionStatus != .wrongSource
     }
 
     public static func position(

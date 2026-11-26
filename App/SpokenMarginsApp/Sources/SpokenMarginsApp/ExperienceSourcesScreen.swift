@@ -1,9 +1,10 @@
 import SessionKit
+import SessionKitFeeds
 import SwiftUI
 
 /// Following (#1865): one row per followed show, newest episode first, with "N new", a play button for the
 /// newest unplayed episode and a chevron into the show's own screen. Quiet shows sit in a collapsed group
-/// at the bottom. The plus opens the Follow sheet (#3205): Paste, Browse and Import from another app.
+/// at the bottom. The plus opens the Follow sheet (#3205): Paste, Browse and Import from another app. Pull down to refresh.
 ///
 /// It does not watch `Gate1AppModel`: it reads what it shows through a `ScreenInputsFeed`, so a model publish that
 /// leaves the list as it was does not rebuild it while the listener scrolls (#4028). The tab bar redraws on every publish
@@ -17,6 +18,8 @@ struct ExperienceSourcesScreen: View, Equatable {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     /// A show row's queue button reads the queue as it is now (#4044).
     @ObservedObject private var playQueue = PlayQueueState.shared
+    /// The shows the listener's own AI suggested (#4683): its own object, so a new suggestion redraws the row.
+    @ObservedObject private var aiSuggestions: AIFollowSuggestionsModel
 
     /// Following's follow flow lives on its own sheet so this tab stays a list of shows (#141, #3205).
     @State private var isShowingFollowSheet = false
@@ -30,18 +33,29 @@ struct ExperienceSourcesScreen: View, Equatable {
     /// The chip that is selected: a list's id, or nil for All. It lives here, not in `Gate1AppModel`, lasts while the
     /// app runs, and returns to All at launch and when its list is deleted (Default 15 of #4046).
     @State private var selectedListID: String?
+    /// List links and rule suggestions (#4046 PR 7, 12): the chips' link mark and the cards above the rows.
+    @ObservedObject private var linksState = ListLinksState.shared
+    @ObservedObject private var suggestionsState = RuleSuggestionsState.shared
+    /// The list a chip's **Share list** is sharing, when it has rules to offer first (PR 5, 13).
+    @State private var sharingList: FollowList?
+    /// A list's address pasted from the empty state: the Follow sheet opens on its preview (#4046 PR 7a).
+    @State private var followSheetListURL: URL?
     /// The show whose "Lists for <show>" sheet is open.
     @State private var listsSheetShow: FeedSubscription?
-    @State private var renamingList: FollowList?
-    @State private var renameText = ""
-    @State private var deletingList: FollowList?
-    /// Why the last rename was refused; shown in an alert of its own.
-    @State private var listProblem: String?
+    /// The Lists screen is pushed from the toolbar's Lists button, and a list's own screen from a chip's Edit list (PR 3).
+    @State private var isShowingLists = false
+    @State private var editingList: FollowListEditTarget?
+    /// The empty list whose "Add shows to <list>" sheet is open.
+    @State private var addingShowsToList: FollowList?
     /// Each followed show's artwork (#773), read from the coordinator's side file.
     @State private var artwork = FollowingArtworkCache()
 
     /// A friend with Margins on more than one item, whose items are open.
     @State private var openFriend: FollowingFriends.Friend?
+    /// Followed reading lists (#4341): their own object, so a refresh redraws their rows and nothing else.
+    @ObservedObject private var papers = PaperSourcesState.shared
+    /// The reading list whose screen is open.
+    @State private var openPapers: String?
 
     /// The shows are pushed inside this stack, so the list is not destroyed when one opens and keeps its own place
     /// (#2395). It takes no scroll binding from the root: the tab bar redraws on every model publish, and a fresh binding
@@ -49,6 +63,7 @@ struct ExperienceSourcesScreen: View, Equatable {
     init(model: Gate1AppModel) {
         self.model = model
         _feed = StateObject(wrappedValue: ScreenInputsFeed(model: model, read: Inputs.init))
+        _aiSuggestions = ObservedObject(wrappedValue: model.aiFollowSuggestionsModel)
     }
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
@@ -63,27 +78,41 @@ struct ExperienceSourcesScreen: View, Equatable {
         var list: FollowingShowList
         var feedRows: [FollowingFeed.Row]
         var showsEmptyState: Bool
+        /// The show list has loaded once; reading lists are drawn only after, like friends (#3753).
+        var showsLoaded: Bool
         var hasFollowCandidates: Bool
         var isOfflineSnapshot: Bool
         var quickFolderFileCount: Int
-        var isRefreshingQuickAddFeed: Bool
-        var importingEntryIds: Set<String>
+        /// The folder's name, location and problem (#3770), so the row redraws when it is renamed, moved or can't be opened.
+        var quickFolderName: String?
+        var quickFolderPath: String?
+        var quickFolderProblem: QuickFolderStatus.Problem?
+        var entryImports: FollowedEntryImports
         var subscriptionIDs: [String]
         /// What `FollowingByList` needs to tell which rows are in a list.
         var subscriptions: [FeedSubscription]
         var isRefreshingFollowedSources: Bool
+
+        /// The words for the Quick Folder row. It shows no check time, so the clock doesn't matter here.
+        var quickFolderStatus: QuickFolderStatus {
+            QuickFolderStatus(name: quickFolderName, path: quickFolderPath, problem: quickFolderProblem, newCount: quickFolderFileCount)
+        }
 
         @MainActor init(_ model: Gate1AppModel) {
             let friends = model.followingFriends
             list = model.followingShowListCache
             feedRows = model.followingFeedRows(friends: friends)
             showsEmptyState = model.followingShowsEmptyState(friends: friends)
+            showsLoaded = model.followingShowListLoaded
             hasFollowCandidates = !model.followedSourceCandidates.isEmpty
             isOfflineSnapshot = model.selectedProfileId.contains("offline")
             // New files in the Quick Folder. They used to arrive in Following's stream; the folder is a place to open now.
-            quickFolderFileCount = model.quickAddCandidates.filter { if case .localFile = $0 { true } else { false } }.count
-            isRefreshingQuickAddFeed = model.isRefreshingQuickAddFeed
-            importingEntryIds = model.importingFollowedSourceEntryIds
+            quickFolderFileCount = model.quickFolderNewFiles.count
+            let folder = model.quickAccess.status()
+            quickFolderName = folder.name
+            quickFolderPath = folder.path
+            quickFolderProblem = folder.problem
+            entryImports = model.followedEntryImports
             subscriptionIDs = model.feedSubscriptions.map(\.id)
             subscriptions = model.feedSubscriptions
             isRefreshingFollowedSources = model.isRefreshingFollowedSources
@@ -95,16 +124,27 @@ struct ExperienceSourcesScreen: View, Equatable {
         let _ = ScreenRedrawProbe.record("following")
         #endif
         let inputs = feed.inputs
-        // Under a list chip only that list's shows are drawn; under All nothing changes (J13).
+        // A followed reading list is following something (#4341), so the empty state waits for none.
+        let showsEmptyState = FollowingFeed.showsEmptyState(showsEmpty: inputs.showsEmptyState, papersLoaded: papers.loaded, followsPapers: !papers.records.isEmpty)
+        let selectedList = showsEmptyState ? nil : FollowingByList.resolvedSelection(selectedListID, in: listsState.lists)
+        // Under a list chip only that list's shows are drawn; under All nothing changes (J13). Reading lists sit among
+        // friends and shows under All, by the newest date a paper joined them, and are hidden under a chip like friends.
         let byList = FollowingByList.screen(
-            selected: inputs.showsEmptyState ? nil : selectedListID, lists: listsState.lists, feedRows: inputs.feedRows, shows: inputs.list,
+            selected: selectedList, lists: listsState.lists,
+            feedRows: FollowingFeed.rows(inputs.feedRows, splicingPapers: papers.visibleRows, showsLoaded: inputs.showsLoaded && papers.loaded), shows: inputs.list,
             subscriptions: inputs.subscriptions
         )
+        let quietPapers = selectedList == nil ? papers.quietRows : []
         NavigationStack(path: $path) {
             let list = FollowingShowList(rows: inputs.list.rows, quiet: byList.quiet)
             List {
-                if !listsState.lists.isEmpty, !inputs.showsEmptyState {
+                if !listsState.lists.isEmpty, !showsEmptyState {
                     listChipRow(lists: listsState.lists)
+                }
+                // The change card and the strongest suggestion, under the chips (#4046 PR 7b, 12).
+                if !inputs.showsEmptyState, FollowingListCards.hasCards {
+                    FollowingListCards(model: model, subscriptions: inputs.subscriptions)
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
                 // An item's Follow can find several feeds; the choice shows here too, not only on the follow screen.
                 if inputs.hasFollowCandidates {
@@ -117,11 +157,19 @@ struct ExperienceSourcesScreen: View, Equatable {
                         .foregroundStyle(AppColors.secondaryText)
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
-                if inputs.quickFolderFileCount > 0 {
-                    quickFolderRow(count: inputs.quickFolderFileCount)
+                // Above the Quick Folder, in the same pinned spot, under any list chip and above the empty state (#4683).
+                if let suggestionsRow = AIFollowSuggestionsRow.make(pending: aiSuggestions.pending(
+                    excluding: Set(inputs.subscriptions.compactMap { FeedURLKey.make($0.source.canonicalURL) }))) {
+                    aiSuggestionsRow(suggestionsRow)
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 }
-                if inputs.showsEmptyState {
+                // Listed with new files, and also when the folder can't be opened: a silent broken folder is what #3770 answers.
+                let quickFolder = inputs.quickFolderStatus
+                if quickFolder.isListedOnFollowing {
+                    quickFolderRow(quickFolder)
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                }
+                if showsEmptyState {
                     SMExperienceEmptyState(
                         systemImage: "dot.radiowaves.left.and.right",
                         title: "You’re not following anything yet",
@@ -131,8 +179,14 @@ struct ExperienceSourcesScreen: View, Equatable {
                         // A copied link is followed at once; otherwise the sheet opens ready for a link.
                         if case .follow = model.clipboardFollowDecision {
                             Task {
-                                // Several feeds behind one link: the choice is on the sheet.
-                                if case .needsChoice = await model.followFromClipboard() { isShowingFollowSheet = true }
+                                // Several feeds behind one link: the choice is on the sheet. A list opens its preview there.
+                                switch await model.followFromClipboard() {
+                                case .needsChoice: isShowingFollowSheet = true
+                                case .list(let url):
+                                    followSheetListURL = url
+                                    isShowingFollowSheet = true
+                                case .followed, .stopped: break
+                                }
                             }
                         } else {
                             isShowingFollowSheet = true
@@ -141,11 +195,17 @@ struct ExperienceSourcesScreen: View, Equatable {
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
                 if let emptyListText = byList.emptyListText {
-                    Text(emptyListText)
-                        .font(.subheadline)
-                        .foregroundStyle(AppColors.secondaryText)
-                        .accessibilityIdentifier("sources.list.empty")
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(emptyListText)
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("sources.list.empty")
+                        if let emptyList = listsState.lists.first(where: { $0.id == selectedListID }) {
+                            Button("Add shows") { addingShowsToList = emptyList }
+                                .accessibilityIdentifier("sources.list.addShows")
+                        }
+                    }
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
                 if let allQuietNote = byList.allQuietNote {
                     Text(allQuietNote)
@@ -159,22 +219,27 @@ struct ExperienceSourcesScreen: View, Equatable {
                     switch row {
                     case .friend(let friend): friendRow(friend)
                     case .show(let show): showRow(show)
+                    case .papers(let row): paperSourceRow(row)
                     }
                 }
-                if !list.quiet.isEmpty {
+                if !list.quiet.isEmpty || !quietPapers.isEmpty {
                     Section {
                         if isQuietExpanded {
                             ForEach(list.quiet) { row in showRow(row) }
+                            ForEach(quietPapers) { row in paperSourceRow(row) }
                         }
                     } header: {
-                        quietHeader(list)
+                        quietHeader(title: "Quiet (\(list.quiet.count + quietPapers.count))")
                     }
                 }
             }
             .background(AppColors.bone)
             .scrollContentBackground(.hidden)
             .listStyle(.plain)
-            .refreshable { await model.pullToRefreshFollowing() }
+            .refreshable {
+                await model.pullToRefreshFollowing()
+                await papers.refresh(model: model, pulled: true)
+            }
             .motionAnimation(.smooth(duration: 0.24), value: byList.rows.map(\.id))
             // A list of only Quiet shows opens its Quiet group, since that is all it has.
             .onChange(of: byList.opensQuietGroup) { _, opens in if opens { isQuietExpanded = true } }
@@ -184,23 +249,35 @@ struct ExperienceSourcesScreen: View, Equatable {
             .onChange(of: listsState.lists) { _, lists in
                 selectedListID = FollowingByList.resolvedSelection(selectedListID, in: lists)
             }
-            .task { if !isEdgeSwipePreview { await model.reloadFollowLists() } }
+            .task {
+                guard !isEdgeSwipePreview else { return }
+                await model.reloadFollowLists()
+                await model.reloadListLinks()
+                await model.reloadRuleSuggestions()
+            }
+            .trackedSheet(item: $sharingList) { list in
+                ShareFollowListSheet(model: model, list: list, subscriptions: feed.inputs.subscriptions)
+            }
             .accessibilityIdentifier("sources.screen")
             .navigationTitle("Following")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button(action: { model.refreshQuickAddFeed(trigger: .refreshButton) }) {
-                        Group {
-                            if inputs.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                // One `ToolbarItem` per button, as Library and Margins do, never a `ToolbarItemGroup`: with the group, "Following"
+                // sat at the leading edge while the other tabs centre their titles, even with only Lists and plus (#4955).
+                // Refresh is the pull-down.
+                // Hidden while the listener follows nothing, so the empty Following tab is unchanged.
+                if !showsEmptyState {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: { isShowingLists = true }) {
+                            Label(FollowListWords.listsTitle, systemImage: "list.bullet").labelStyle(.iconOnly)
                         }
-                        .minimumTapTarget()
+                        .accessibilityLabel(FollowListWords.listsTitle)
+                        .accessibilityIdentifier("sources.lists.button")
                     }
-                    .disabled(inputs.isRefreshingQuickAddFeed)
-                    .accessibilityLabel("Refresh Following")
-                    .accessibilityIdentifier("quickAdd.refresh.button")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button(action: { isShowingFollowSheet = true }) {
-                        Image(systemName: "plus").minimumTapTarget()
+                        Label("Follow a show", systemImage: "plus").labelStyle(.iconOnly)
                     }
                     .accessibilityLabel("Follow a show")
                     .accessibilityHint("Follow a feed, browse podcasts and writers, or import from another app.")
@@ -216,6 +293,7 @@ struct ExperienceSourcesScreen: View, Equatable {
                 .miniPlayerKeepOut()
             }
             .trackedSheet(isPresented: $isShowingFollowSheet, onDismiss: {
+                followSheetListURL = nil
                 guard opensCatalogAfterFollowSheet else { return }
                 opensCatalogAfterFollowSheet = false
                 catalogDrawer.present()
@@ -223,7 +301,7 @@ struct ExperienceSourcesScreen: View, Equatable {
                 FollowSheet(browse: {
                     opensCatalogAfterFollowSheet = true
                     isShowingFollowSheet = false
-                })
+                }, initialListURL: followSheetListURL)
                 .environmentObject(model)
                 .environmentObject(catalogDrawer)
             }
@@ -231,29 +309,23 @@ struct ExperienceSourcesScreen: View, Equatable {
                 FollowListPickerSheet(subscription: subscription)
                     .environmentObject(model)
             }
-            // `presenting:` hands the buttons the list itself, so they never depend on the order in which the
-            // binding is reset and the action runs.
-            .alert(
-                "Rename list",
-                isPresented: Binding(get: { renamingList != nil }, set: { if !$0 { renamingList = nil } }),
-                presenting: renamingList
-            ) { list in
-                TextField("Name", text: $renameText)
-                Button("Cancel", role: .cancel) {}
-                Button("Rename") { commitRename(list) }
+            .trackedSheet(item: $addingShowsToList) { list in
+                FollowListAddShowsSheet(model: model, subscriptions: feed.inputs.subscriptions, listID: list.id)
             }
-            .confirmationDialog(
-                FollowListWords.deleteQuestion(listName: deletingList?.name ?? "this list"),
-                isPresented: Binding(get: { deletingList != nil }, set: { if !$0 { deletingList = nil } }),
-                titleVisibility: .visible,
-                presenting: deletingList
-            ) { list in
-                Button("Delete list", role: .destructive) { commitDelete(list) }
-            } message: { _ in
-                Text(FollowListWords.deleteMessage)
+            .navigationDestination(isPresented: $isShowingLists) {
+                FollowListsScreen(model: model, subscriptions: inputs.subscriptions, artwork: artwork)
+                    .miniPlayerKeepOut()
+            }
+            .navigationDestination(item: $editingList) { target in
+                FollowListScreen(model: model, subscriptions: inputs.subscriptions, artwork: artwork, listID: target.id)
+                    .miniPlayerKeepOut()
             }
             .navigationDestination(item: $openFriend) { friend in
                 FollowingFriendItemsScreen(friend: friend)
+                    .miniPlayerKeepOut()
+            }
+            .navigationDestination(item: $openPapers) { sourceID in
+                FollowedPapersScreen(sourceID: sourceID)
                     .miniPlayerKeepOut()
             }
             .navigationDestination(isPresented: $isShowingQuickFolder) {
@@ -261,6 +333,8 @@ struct ExperienceSourcesScreen: View, Equatable {
                     .miniPlayerKeepOut()
             }
             .task { if !isEdgeSwipePreview { model.refreshQuickAddFeed(force: false, trigger: .tabAppear) } } // the swipe's preview fetches nothing (#106)
+            // Reading lists are read on the same open as the shows, at most every 30 minutes unless pulled (#4341).
+            .task { if !isEdgeSwipePreview { await papers.refresh(model: model, pulled: false) } }
             // The catalog gives followed shows their artwork (#773).
             .task { if !isEdgeSwipePreview { await catalogDrawer.loadSnapshot() } }
             .background { FollowingShowRowsReload(model: model) }
@@ -274,12 +348,6 @@ struct ExperienceSourcesScreen: View, Equatable {
                 artwork = await coordinator.followingArtwork(catalog: catalogDrawer.catalog)
             }
             .miniPlayerKeepOut()
-        }
-        // Its own alert, on the stack rather than the list, so it can follow the rename alert's dismissal.
-        .alert("Can’t save that name", isPresented: Binding(get: { listProblem != nil }, set: { if !$0 { listProblem = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(listProblem ?? "")
         }
     }
 
@@ -332,8 +400,9 @@ struct ExperienceSourcesScreen: View, Equatable {
             open: { path.append(row.id) },
             play: { model.playNewestEpisode(of: row) },
             add: { model.addPreviewedEpisode(of: row) },
-            isPlayStarting: row.playEntryID.map { feed.inputs.importingEntryIds.contains($0) } ?? false,
-            isAdding: row.newestEntryID.map { feed.inputs.importingEntryIds.contains($0) } ?? false,
+            // A swipe Add shows "Adding…"; only a ▶ tap shows the ▶ spinner (#5328).
+            isPlayStarting: feed.inputs.entryImports.isPlayStarting(row.playEntryID),
+            isAdding: feed.inputs.entryImports.isAdding(row.newestEntryID),
             queueAction: showRowQueueAction(row),
             queue: { model.queueNewestEpisode(of: row) }
         )
@@ -381,6 +450,54 @@ struct ExperienceSourcesScreen: View, Equatable {
         .listRowBackground(AppColors.bone)
     }
 
+    /// A followed reading list (#4341): its name over "Zotero · 4 new papers", and a chevron into its papers. No ▶:
+    /// nothing plays until a paper is added.
+    private func paperSourceRow(_ row: PaperSourceRow) -> some View {
+        Button { openPapers = row.id } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.title2)
+                    .foregroundStyle(AppColors.evergreen)
+                    .frame(width: 56, height: 56)
+                    .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(row.title)
+                        .font(.headline)
+                        .foregroundStyle(AppColors.text)
+                        .multilineTextAlignment(.leading)
+                    Text(row.detail)
+                        .font(.subheadline)
+                        .foregroundStyle(AppColors.secondaryText)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.secondaryText)
+                    .frame(width: 44, height: 44)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(AppColors.panel)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(row.accessibilityLabel)
+        .accessibilityHint("Opens the list's papers.")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("sources.papers.\(row.id)")
+        .listRowInsets(EdgeInsets(
+            top: 0,
+            leading: horizontalSizeClass == .regular ? 28 : 16,
+            bottom: 0,
+            trailing: horizontalSizeClass == .regular ? 28 : 16
+        ))
+        .listRowSeparator(.hidden)
+        .listRowBackground(AppColors.bone)
+    }
+
     private func followedSubscription(for row: FollowingShowRow) -> FeedSubscription? {
         feed.inputs.subscriptions.first { $0.id == row.id }
     }
@@ -388,8 +505,8 @@ struct ExperienceSourcesScreen: View, Equatable {
     // MARK: List chips (#4046)
 
     /// **All**, then the lists in alphabetical order, in the catalog drawer's chip style. The selected chip carries a
-    /// checkmark, so colour is never the only signal. A long press on a list's chip offers Rename and Delete list; PR 3
-    /// replaces them with Edit list.
+    /// checkmark, so colour is never the only signal. A long press on a list's chip offers Edit list, which opens the
+    /// list's own screen: rename, delete and the rest live there (PR 3).
     private func listChipRow(lists: [FollowList]) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
@@ -401,20 +518,21 @@ struct ExperienceSourcesScreen: View, Equatable {
                 .accessibilityIdentifier("sources.list.chip.all")
                 ForEach(FollowListName.chipOrder(lists)) { list in
                     let isSelected = selectedListID == list.id
+                    let updates = ListLinkScreens.updatingListIDs(linksState.links).contains(list.id)
                     Button { selectedListID = list.id } label: {
-                        CatalogSubjectChipLabel(title: list.name, isSelected: isSelected)
+                        CatalogSubjectChipLabel(title: list.name, isSelected: isSelected, trailingSymbol: updates ? "link" : nil)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(list.name)
+                    .accessibilityLabel(updates ? ListLinkWords.chipAccessibilityLabel(listName: list.name) : list.name)
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
                     .accessibilityIdentifier("sources.list.chip.\(list.id)")
                     .contextMenu {
-                        Button("Rename", systemImage: "pencil") { beginRename(list) }
-                        Button("Delete list", systemImage: "trash", role: .destructive) { deletingList = list }
+                        Button(ListLinkWords.shareList, systemImage: "square.and.arrow.up") { shareList(list) }
+                        Button("Edit list", systemImage: "pencil") { editingList = FollowListEditTarget(id: list.id) }
                     }
                     .accessibilityActions {
-                        Button("Rename") { beginRename(list) }
-                        Button("Delete list") { deletingList = list }
+                        Button(ListLinkWords.shareList) { shareList(list) }
+                        Button("Edit list") { editingList = FollowListEditTarget(id: list.id) }
                     }
                 }
             }
@@ -423,31 +541,23 @@ struct ExperienceSourcesScreen: View, Equatable {
         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
     }
 
-    private func beginRename(_ list: FollowList) {
-        renameText = list.name
-        renamingList = list
-    }
-
-    private func commitRename(_ list: FollowList) {
-        renamingList = nil
-        let name = renameText
-        Task {
-            if let problem = await model.renameFollowList(id: list.id, to: name) { listProblem = problem.message }
+    /// **Share list** from a chip: straight to the share sheet, or the rules switch first when the list has rules to offer.
+    private func shareList(_ list: FollowList) {
+        let rules = ListeningRulesState.shared
+        if rules.loaded, OPMLExporter.shareableRuleCount(list, subscriptions: feed.inputs.subscriptions, rules: rules.rules) == 0 {
+            Task { await model.shareFollowList(list, includeRules: false) }
+        } else {
+            sharingList = list
         }
     }
 
-    private func commitDelete(_ list: FollowList) {
-        deletingList = nil
-        Task { await model.deleteFollowList(id: list.id) }
-    }
-
     /// "Quiet (2)", a button that opens and closes the group. The count and the chevron say what it holds.
-    private func quietHeader(_ list: FollowingShowList) -> some View {
+    private func quietHeader(title: String) -> some View {
         Button {
             isQuietExpanded.toggle()
         } label: {
             HStack {
-                Text(list.quietTitle)
+                Text(title)
                     .font(.headline)
                     .foregroundStyle(AppColors.text)
                 Spacer()
@@ -462,21 +572,29 @@ struct ExperienceSourcesScreen: View, Equatable {
         .buttonStyle(.plain)
         .textCase(nil)
         .accessibilityIdentifier("sources.quietGroup")
-        .accessibilityLabel(list.quietTitle)
+        .accessibilityLabel(title)
         .accessibilityValue(isQuietExpanded ? "Expanded" : "Collapsed")
-        .accessibilityHint("Shows you have set to Quiet.")
+        .accessibilityHint("Shows and reading lists you have set to Quiet.")
         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
     }
 
-    private func quickFolderRow(count: Int) -> some View {
-        Button { isShowingQuickFolder = true } label: {
+    /// "Suggested by your AI" (#4683, Design 2h): the Quick Folder row's look, two lines. A tap opens the follow preview
+    /// titled for the AI; a swipe's Dismiss drops them all, with Undo.
+    private func aiSuggestionsRow(_ row: AIFollowSuggestionsRow) -> some View {
+        Button { model.openAIFollowSuggestions(row, in: catalogDrawer) } label: {
             HStack(spacing: 10) {
-                Image(systemName: "folder")
+                Image(systemName: "text.bubble")
                     .foregroundStyle(AppColors.evergreen)
                     .accessibilityHidden(true)
-                Text("Quick Folder · \(count) new")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppColors.text)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(AIFollowSuggestionsRow.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppColors.text)
+                    Text(row.detail)
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .lineLimit(2)
+                }
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.subheadline.weight(.semibold))
@@ -487,6 +605,54 @@ struct ExperienceSourcesScreen: View, Equatable {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(row.accessibilityLabel)
+        .accessibilityHint(AIFollowSuggestionsRow.accessibilityHint)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(named: "Dismiss") { model.dismissAIFollowSuggestionsWithUndo() }
+        .accessibilityIdentifier("sources.aiSuggestions")
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button { model.dismissAIFollowSuggestionsWithUndo() } label: {
+                Label("Dismiss", systemImage: "xmark")
+            }
+            .tint(AppColors.swipePlum)
+        }
+    }
+
+    /// The folder's name, with "Quick Folder · 3 new" (or "· can't open this folder", with its icon) under it (#3770).
+    private func quickFolderRow(_ status: QuickFolderStatus) -> some View {
+        Button { isShowingQuickFolder = true } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "folder")
+                    .foregroundStyle(AppColors.evergreen)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(status.followingTitle)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppColors.text)
+                    if let symbol = status.followingSymbol {
+                        Label(status.followingSubtitle, systemImage: symbol)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.text)
+                    } else {
+                        Text(status.followingSubtitle)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(status.followingAccessibilityLabel)
+        .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("sources.quickFolder")
     }
 
@@ -536,8 +702,10 @@ private struct FollowingShowRowsReload: View {
     }
 }
 
-/// One show on Following: artwork, name, the newest episode, "N new", ▶ and ›.
-private struct FollowingShowRowView: View {
+/// One show on Following: artwork with its "N new" tag, name, the newest episode, date, status, ▶ and › (#4723).
+/// At accessibility text sizes the row stacks: the picture, ▶ and › on a top line, and the text at the row's full width
+/// below, so a title never breaks inside a word. The picture stays 56 pt at every size.
+struct FollowingShowRowView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let row: FollowingShowRow
     let artworkURL: URL?
@@ -552,96 +720,210 @@ private struct FollowingShowRowView: View {
     var queue: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 0) {
-            Button(action: open) {
-                HStack(alignment: .center, spacing: 12) {
-                    ShowArtworkView(url: artworkURL, title: row.title, size: 56)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(row.title)
-                            .font(.headline)
-                            .foregroundStyle(AppColors.text)
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                        if let episode = row.newestEpisodeTitle {
-                            Text(episode)
-                                .font(.subheadline)
-                                .foregroundStyle(AppColors.secondaryText)
-                                .multilineTextAlignment(.leading)
-                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-                        }
-                        HStack(spacing: 8) {
-                            if let label = row.newLabel {
-                                Text(label)
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(AppColors.onEvergreen)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 2)
-                                    .background(AppColors.evergreen, in: Capsule())
-                            }
-                            if let date = row.dateLabel {
-                                Text(date)
-                                    .font(.caption)
-                                    .foregroundStyle(AppColors.secondaryText)
-                            }
-                            if isAdding && !isPlayStarting { // ▶ on the same episode shows its own spinner
-                                HStack(spacing: 4) {
-                                    ProgressView().controlSize(.mini)
-                                    Text("Adding…")
-                                        .font(.caption)
-                                        .foregroundStyle(AppColors.secondaryText)
-                                }
-                                .accessibilityElement(children: .combine)
-                                .accessibilityIdentifier("sources.show.\(row.id).adding")
-                            } else if row.isNewestInLibrary {
-                                Label("In Library", systemImage: "checkmark.circle")
-                                    .font(.caption)
-                                    .foregroundStyle(AppColors.secondaryText)
-                            }
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 12) {
+                        pictureWithTag
+                        Spacer(minLength: 0)
+                        playButton
+                        chevronButton
+                    }
+                    openButton { textColumn }
+                }
+            } else {
+                HStack(spacing: 0) {
+                    openButton {
+                        HStack(alignment: .center, spacing: 12) {
+                            pictureWithTag
+                            textColumn
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    playButton
+                    chevronButton
                 }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(row.accessibilityLabel)
-            .accessibilityHint("Opens the show.")
-            .accessibilityAction(named: "Add newest episode to Library") { if row.addEntryID != nil { add() } }
-            .accessibilityActions {
-                if let queueAction { Button(queueAction.newestEpisodeTitle, action: queue) }
-            }
-            .accessibilityIdentifier("sources.show.\(row.id)")
-            if row.playEntryID != nil {
-                Button(action: play) {
-                    Group {
-                        if isPlayStarting {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "play.circle.fill").font(.title2)
-                        }
-                    }
-                    .foregroundStyle(AppColors.evergreen)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(isPlayStarting)
-                .accessibilityLabel("Play \(row.newestEpisodeTitle ?? "next episode") from \(row.title)")
-                .accessibilityIdentifier("sources.show.\(row.id).play")
-            }
-            Button(action: open) {
-                Image(systemName: "chevron.right")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppColors.secondaryText)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHidden(true)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(AppColors.panel)
+    }
+
+    private var pictureWithTag: some View {
+        ShowArtworkView(url: artworkURL, title: row.title, size: 56)
+            .followingNewBadge(row.newBadgeText)
+    }
+
+    private func openButton<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        Button(action: open) {
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(row.accessibilityLabel)
+        .accessibilityHint("Opens the show.")
+        .accessibilityAction(named: "Add newest episode to Library") { if row.addEntryID != nil { add() } }
+        .accessibilityActions {
+            if let queueAction { Button(queueAction.newestEpisodeTitle, action: queue) }
+        }
+        .accessibilityIdentifier("sources.show.\(row.id)")
+    }
+
+    private var textColumn: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(row.title)
+                .font(.headline)
+                .foregroundStyle(AppColors.text)
+                .multilineTextAlignment(.leading)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+            if let episode = row.newestEpisodeTitle {
+                Text(episode)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+            }
+            if row.dateLabel != nil || row.pickLabel != nil || status != nil {
+                AdaptiveStack(alignment: .firstTextBaseline, spacing: 8) {
+                    if let date = row.dateLabel {
+                        Text(date)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                    // The new count moved onto the picture (#4723); the picks a rule matched (#4046) keep a place here,
+                    // a symbol and the word, never colour alone.
+                    if let picks = row.pickLabel {
+                        Label(picks, systemImage: "star.fill")
+                            .labelStyle(.titleAndIcon)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("sources.show.\(row.id).picks")
+                    }
+                    if let status {
+                        FollowingShowStatusView(status: status, showID: row.id)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var status: FollowingRowStatus? {
+        FollowingRowStatus.resolve(isAdding: isAdding, isPlayStarting: isPlayStarting, isNewestInLibrary: row.isNewestInLibrary)
+    }
+
+    @ViewBuilder private var playButton: some View {
+        if row.playEntryID != nil {
+            Button(action: play) {
+                Group {
+                    if isPlayStarting {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "play.circle.fill").font(.title2)
+                    }
+                }
+                .foregroundStyle(AppColors.evergreen)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isPlayStarting)
+            .accessibilityLabel("Play \(row.newestEpisodeTitle ?? "next episode") from \(row.title)")
+            .accessibilityIdentifier("sources.show.\(row.id).play")
+        }
+    }
+
+    private var chevronButton: some View {
+        Button(action: open) {
+            Image(systemName: "chevron.right")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(AppColors.secondaryText)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The status on a show row's last line: "Adding…" or "In Library". "In Library" is one `Text` with the glyph inline, so a
+/// narrow column can only break it at the space, never inside "Library" (#4723). Both states are exactly one caption line
+/// tall, so neither changes the row's height (#5295).
+struct FollowingShowStatusView: View {
+    let status: FollowingRowStatus
+    let showID: String
+    /// The room left for the mini spinner beside "Adding…".
+    private static let spinnerWidth: CGFloat = 16
+
+    var body: some View {
+        switch status {
+        case .adding:
+            // The mini spinner is an overlay on the text's leading padding, not a stack item, so the view's height and
+            // first-text baseline are exactly the caption Text's, the same as In Library. As a stack item the spinner
+            // grew the row by about 11 pt while the episode was added (#5295).
+            Text("Adding…")
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
+                .padding(.leading, Self.spinnerWidth + 4)
+                .overlay(alignment: .leading) {
+                    ProgressView().controlSize(.mini).fixedSize()
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("sources.show.\(showID).adding")
+        case .inLibrary:
+            Text("\(Image(systemName: "checkmark.circle")) In Library")
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
+        }
+    }
+}
+
+/// The "N new" tag on the bottom edge of a Following row's picture (#4723): the evergreen capsule the rows used to carry
+/// in their text. Both the show and the friend row use it, so "new" looks the same on every row. It sits inside the
+/// picture and is an overlay, so it takes no layout space: a row is as tall with it as without it.
+struct FollowingArtworkNewBadge: View {
+    let text: String
+    let fontSize: CGFloat
+    let maxWidth: CGFloat
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: fontSize, weight: .bold))
+            .monospacedDigit()
+            .foregroundStyle(AppColors.onEvergreen)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            .padding(.horizontal, 5)
+            .frame(maxWidth: maxWidth, minHeight: fontSize * 1.45)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(AppColors.evergreen, in: Capsule())
+            .overlay(Capsule().strokeBorder(AppColors.panel, lineWidth: 1.5))
+            .accessibilityHidden(true)
+    }
+}
+
+/// Overlays the tag on the picture's bottom edge. The text grows with Dynamic Type from 11 to 14 pt and shrinks to fit
+/// the picture's width (`minimumScaleFactor`), so "99+ new" stays within the picture at every size.
+private struct FollowingNewBadgeModifier: ViewModifier {
+    @ScaledMetric(relativeTo: .caption) private var tagFontSize: CGFloat = 11
+    let text: String?
+    let width: CGFloat
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .bottom) {
+            if let text {
+                FollowingArtworkNewBadge(text: text, fontSize: min(max(tagFontSize, 11), 14), maxWidth: width - 4)
+                    .padding(.bottom, 2)
+            }
+        }
+    }
+}
+
+extension View {
+    /// Puts the "N new" tag on the bottom edge of a Following row's picture; it reserves no layout space.
+    func followingNewBadge(_ text: String?, pictureWidth: CGFloat = 56) -> some View {
+        modifier(FollowingNewBadgeModifier(text: text, width: pictureWidth))
     }
 }
 
@@ -673,15 +955,28 @@ struct ShowArtworkView: View {
     }
 }
 
-/// New files in the Quick Folder, which used to arrive in Following's stream. Each keeps its row actions.
+/// New files in the Quick Folder, which used to arrive in Following's stream. Each keeps its row actions. Titled with the
+/// folder's name, with where it is under it; when the folder can't be opened, the same section and buttons as Settings (#3770).
 private struct QuickFolderFilesScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let artwork: FollowingArtworkCache
 
     var body: some View {
+        let files = model.quickFolderNewFiles
+        let status = model.quickAccess.status(newCount: files.count)
         List {
-            ForEach(model.quickAddCandidates.filter { if case .localFile = $0 { true } else { false } }) { candidate in
+            Text(status.followingScreenFirstLine)
+                .font(.subheadline)
+                .foregroundStyle(AppColors.secondaryText)
+                .listRowSeparator(.hidden)
+                .listRowBackground(AppColors.bone)
+                .accessibilityIdentifier("sources.quickFolder.location")
+            if status.cantOpen {
+                QuickFolderCantOpenSection(model: model, isChecking: model.quickAccess.isRefreshing)
+                    .listRowBackground(AppColors.bone)
+            }
+            ForEach(files) { candidate in
                 SourceInboxRow(candidate: candidate, artwork: artwork)
                     .listRowInsets(EdgeInsets(top: 0, leading: horizontalSizeClass == .regular ? 28 : 16, bottom: 0, trailing: horizontalSizeClass == .regular ? 28 : 16))
                     .listRowSeparator(.hidden)
@@ -691,7 +986,7 @@ private struct QuickFolderFilesScreen: View {
         .background(AppColors.bone)
         .scrollContentBackground(.hidden)
         .listStyle(.plain)
-        .navigationTitle("Quick Folder")
+        .navigationTitle(status.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("sources.quickFolder.screen")
     }
@@ -731,6 +1026,14 @@ struct SourceInboxRow: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let candidate: QuickAddCandidate
     let artwork: FollowingArtworkCache
+    /// The rule word that skipped this episode, on the Show screen's "Skipped by your rules" group (#4046 PR 10b): the row
+    /// says so and its menu offers **Hear it anyway**. Nil everywhere else.
+    var skippedWord: String? = nil
+    /// A pick rule matched it: the star and the word "Pick" sit after the date.
+    var isPick = false
+    /// The Show screen's rows offer **Show less like this** (#4046 PR 12); a marked episode stays listed with a "Show less"
+    /// label and its menu offers **Undo Show less**.
+    var offersShowLess = false
     @State private var confirmsUnfollow = false
 
     /// A Quick Folder link list adds many links, so there is no one item to queue (#4044).
@@ -764,7 +1067,7 @@ struct SourceInboxRow: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(action: dismiss) {
-                Label("Dismiss", systemImage: "xmark")
+                Label(dismissTitle, systemImage: dismissSystemImage)
             }
             .tint(AppColors.swipePlum)
             // Second and not a full swipe: the first button above is the one a long swipe takes.
@@ -821,7 +1124,7 @@ struct SourceInboxRow: View {
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint("Adds this entry to Library and opens it.")
         .accessibilityAction(named: "Add to Library", addAndOpen)
-        .accessibilityAction(named: "Dismiss", dismiss)
+        .accessibilityAction(named: Text(dismissTitle), dismiss)
         .accessibilityActions {
             if canQueue { Button(QueueRowAction.add.title, action: addToQueue) }
             // A Quick Folder file has no show to play from, mute or unfollow.
@@ -836,6 +1139,10 @@ struct SourceInboxRow: View {
     /// Every action the swipes and the long press offer, so the More menu and the context menu stay the same list.
     @ViewBuilder
     private var rowActions: some View {
+        // Does what tapping the row does; the rule stays as it is.
+        if skippedWord != nil {
+            Button(action: addAndOpen) { Label("Hear it anyway", systemImage: "headphones") }
+        }
         Button(action: addInPlace) { Label("Add to Library", systemImage: "plus.circle") }
         if canQueue {
             Button(action: addToQueue) { Label(QueueRowAction.add.title, systemImage: QueueRowAction.add.systemImage) }
@@ -843,7 +1150,21 @@ struct SourceInboxRow: View {
         if isFeedEntry {
             Button(action: playNow) { Label("Play now", systemImage: "play.fill") }
         }
-        Button(action: dismiss) { Label("Dismiss", systemImage: "xmark") }
+        Button(action: dismiss) { Label(dismissTitle, systemImage: dismissSystemImage) }
+        if offersShowLess, case .followedSource(let entry) = candidate, let subscription {
+            let marked = isShowLess
+            Button {
+                Task {
+                    if marked {
+                        await model.unmarkShowLess(entryId: entry.id, itemId: nil)
+                    } else {
+                        await model.markShowLess(ShowLessMarking.mark(entry: entry, subscription: subscription))
+                    }
+                }
+            } label: {
+                Label(ShowLessWords.menuTitle(isMarked: marked), systemImage: ShowLessWords.symbol)
+            }
+        }
         if let subscription {
             Button { model.toggleMuteSource(id: subscription.id) } label: {
                 Label(FollowingRowActions.muteTitle(showTitle: subscriptionTitle), systemImage: "speaker.slash")
@@ -869,6 +1190,12 @@ struct SourceInboxRow: View {
         .accessibilityIdentifier("\(identifier).more")
     }
 
+    /// Marked Show less, from this screen or the episode's Item screen.
+    private var isShowLess: Bool {
+        guard offersShowLess, case .followedSource(let entry) = candidate else { return false }
+        return model.showLessMark(entryId: entry.id, itemId: nil) != nil
+    }
+
     /// The followed show this entry came from; nil for a Quick Folder file.
     private var subscription: FeedSubscription? {
         guard case .followedSource(let entry) = candidate else { return nil }
@@ -892,7 +1219,7 @@ struct SourceInboxRow: View {
 
     private var provenanceLead: String {
         switch candidate {
-        case .localFile(let file): "Quick Folder · \(file.modifiedAtDescription)"
+        case .localFile(let file): model.quickAccess.status().fileCaption(dateText: file.modifiedAtDescription)
         case .followedSource(let entry): showTitle(of: entry) ?? "Followed feed"
         }
     }
@@ -921,8 +1248,12 @@ struct SourceInboxRow: View {
     }
 
     private var accessibilityLabel: String {
-        if let row { return row.accessibilityLabel }
-        return "\(title). \(provenance)"
+        let base = row?.accessibilityLabel ?? "\(title). \(provenance)"
+        let extras = [
+            isPick ? "Pick." : nil, isShowLess ? ShowLessWords.label + "." : nil,
+            skippedWord.map { ListeningRuleScreens.skippedLine(word: $0) + "." },
+        ].compactMap { $0 }
+        return ([base] + extras).joined(separator: " ")
     }
 
     /// The row's text. At accessibility sizes the title and the show name wrap fully; the row grows with them (#1936).
@@ -950,9 +1281,33 @@ struct SourceInboxRow: View {
                         .lineLimit(1)
                         .layoutPriority(1)
                 }
+                // A symbol and the word, never colour alone (#4046 PR 10b).
+                if isPick {
+                    Label("Pick", systemImage: "star.fill")
+                        .labelStyle(.titleAndIcon)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                        .padding(.leading, dynamicTypeSize.isAccessibilitySize ? 0 : 6)
+                        .accessibilityIdentifier("\(identifier).pick")
+                }
+                if isShowLess {
+                    Label(ShowLessWords.label, systemImage: ShowLessWords.symbol)
+                        .labelStyle(.titleAndIcon)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                        .padding(.leading, dynamicTypeSize.isAccessibilitySize ? 0 : 6)
+                        .accessibilityIdentifier("\(identifier).showLess")
+                }
             }
             .font(.caption)
             .foregroundStyle(AppColors.secondaryText)
+            if let skippedWord {
+                Text(ListeningRuleScreens.skippedLine(word: skippedWord))
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .accessibilityIdentifier("\(identifier).skipped")
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1053,10 +1408,14 @@ struct SourceInboxRow: View {
         }
     }
 
+    /// "Not for me" on a followed show's episode, "Dismiss" on a Quick Folder file (#4285).
+    private var dismissTitle: String { FollowingDismissMessages.actionTitle(isFollowedEntry: isFeedEntry) }
+    private var dismissSystemImage: String { FollowingDismissMessages.actionSystemImage(isFollowedEntry: isFeedEntry) }
+
     private func dismiss() {
         switch candidate {
         case .localFile(let file): model.dismissQuickAccessFileWithUndo(file)
-        case .followedSource(let entry): model.dismissFollowedSourceEntry(id: entry.id)
+        case .followedSource(let entry): model.dismissFollowedSourceEntry(entry)
         }
     }
 }

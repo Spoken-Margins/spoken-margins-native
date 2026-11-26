@@ -59,6 +59,17 @@ final class WebPacketImportTests: XCTestCase {
         XCTAssertTrue(margins.allSatisfy { $0.audioPath == nil })
     }
 
+    /// #4689: a reply from a web friend who does not follow the show, as the web writes it now (the show Ana's packet
+    /// named) and as earlier web builds wrote it ("Shared by Ana"). Both open in this build and in Build 29's reader.
+    func testRepliesFromAWebFriendWhoDoesNotFollowTheShowImport() throws {
+        for (name, showTitle) in [("web-reply-from-shared.spokenmargins", "Example Show"), ("web-reply-holder-titled.spokenmargins", "Shared by Ana")] {
+            let (contents, margins) = try importFixture(name)
+            XCTAssertEqual(contents.manifest.item.showTitle, showTitle, name)
+            XCTAssertEqual(contents.manifest.item.episodeGUID, "example-episode-guid-1", name)
+            XCTAssertEqual(margins.map(\.approvedTranscript), ["A reply from a friend who does not follow the show."], name)
+        }
+    }
+
     func testVoiceMarginImportsWithReadableAudioOfItsLength() throws {
         let (contents, margins) = try importFixture("web-voice.spokenmargins")
         XCTAssertEqual(margins.map(\.anchorEvidence.mediaTimeMs), [30_000, 125_250])

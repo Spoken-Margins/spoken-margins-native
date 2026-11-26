@@ -105,6 +105,41 @@ final class PlayQueueTests: XCTestCase {
         XCTAssertFalse(PlayQueueAdvance.shouldAdvance(from: finished, to: finished))
     }
 
+    /// #5358: every end gets one decision, for the advance and for Diagnostics; an ordinary change gets none.
+    func testEachEndGetsOneDecisionWithItsReason() {
+        var playing = snapshot(session: "s1", item: "a", phase: .itemPlayback)
+        playing.status = .playing
+        playing.targetId = "a"
+        var finished = playing
+        finished.phase = .finished
+        finished.status = .paused
+        finished.currentPlaybackProgressPercent = 100
+        XCTAssertEqual(PlayQueueAdvance.decision(from: playing, to: finished, sleepTimerActive: false, queueHasNext: true), .advance)
+        XCTAssertEqual(PlayQueueAdvance.decision(from: playing, to: finished, sleepTimerActive: true, queueHasNext: true),
+                       .skipped(.sleepTimer))
+        XCTAssertEqual(PlayQueueAdvance.decision(from: playing, to: finished, sleepTimerActive: false, queueHasNext: false),
+                       .skipped(.queueEmpty))
+        XCTAssertNil(PlayQueueAdvance.decision(from: finished, to: finished, sleepTimerActive: false, queueHasNext: true))
+
+        // Stopped at its end without the finish edge: what a skip to the end of an article used to do.
+        var stoppedAtEnd = finished
+        stoppedAtEnd.phase = .itemPlayback
+        XCTAssertEqual(PlayQueueAdvance.decision(from: playing, to: stoppedAtEnd, sleepTimerActive: false, queueHasNext: true),
+                       .skipped(.noFinishEdge))
+        // A pause in the middle is no end.
+        var pausedMidway = stoppedAtEnd
+        pausedMidway.currentPlaybackProgressPercent = 40
+        XCTAssertNil(PlayQueueAdvance.decision(from: playing, to: pausedMidway, sleepTimerActive: false, queueHasNext: true))
+        // Nor is a change of session or of target (a Margin's playback ending, a new item starting).
+        var otherTarget = stoppedAtEnd
+        otherTarget.targetId = "turn-1"
+        XCTAssertNil(PlayQueueAdvance.decision(from: playing, to: otherTarget, sleepTimerActive: false, queueHasNext: true))
+
+        XCTAssertEqual(PlayQueueAdvance.Decision.advance.diagnosticFields, ["outcome": "advanced"])
+        XCTAssertEqual(PlayQueueAdvance.Decision.skipped(.noFinishEdge).diagnosticFields,
+                       ["outcome": "skipped", "reason": "no_finish_edge"])
+    }
+
     func testARestoredFinishedSessionOrAnotherSessionNeverAdvancesTheQueue() {
         let finished = snapshot(session: "s1", item: "a", phase: .finished)
         XCTAssertFalse(PlayQueueAdvance.shouldAdvance(from: SessionSnapshot(), to: finished))

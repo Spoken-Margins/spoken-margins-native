@@ -414,7 +414,12 @@ final class SkimBridgeController {
         if case .stop(let target) = host.skimStopChoice(
             direction: direction, at: effectiveTime, summaryDestination: resolution.destinationMediaTimeMs
         ) {
-            record(target.stop.kind == .margin ? .startedMarginLeadIn : .wentToChapter, direction, detail: target.stop.id)
+            let outcome: SkimPressOutcome = switch (target.stop.kind, target.stop.isSilent) {
+            case (.chapter, _): .wentToChapter
+            case (.margin, true): .wentToSilentMargin
+            case (.margin, false): .startedMarginLeadIn
+            }
+            record(outcome, direction, detail: target.stop.id)
             host.skimGo(to: target)
             return
         }

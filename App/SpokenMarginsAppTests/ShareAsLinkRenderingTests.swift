@@ -59,7 +59,7 @@ final class ShareAsLinkRenderingTests: XCTestCase {
         for size in [DynamicTypeSize.large, .accessibility5] {
             let idle = try render(ShareLinkStatusLines(state: .idle, companionNote: nil), name: "status-idle", size: size)
             let failed = try render(
-                ShareLinkStatusLines(state: .useFile(ShareLinkFallback.unavailable.message), companionNote: nil),
+                ShareLinkStatusLines(state: .useFile(.unavailable), companionNote: nil),
                 name: "status-failed", size: size
             )
             let companion = try render(
@@ -71,6 +71,27 @@ final class ShareAsLinkRenderingTests: XCTestCase {
             XCTAssertGreaterThan(failed.height, 15, "\(size): a failed upload did not say to send the file")
             XCTAssertGreaterThan(companion.height, 15, "\(size): the companion-file note did not appear")
         }
+    }
+
+    /// #4134: each new line draws in the pinned bar and wraps on the narrowest phone. From AX1 it keeps to two lines with
+    /// "More", so the longest (the clock line) is no taller there than at the default size plus the button.
+    func testTheSenderCheckLinesDrawAndWrapAtEveryTextSize() throws {
+        let cases: [ShareLinkFallback] = [.clockWrong, .notVerified, .cantVerify, .phoneCantMakeLinks, .updateNeeded]
+        for size in [DynamicTypeSize.large, .accessibility5] {
+            for fallback in cases {
+                let lines = ShareLinkStatusLines(state: .useFile(fallback), companionNote: nil)
+                XCTAssertTrue(lines.hasLines, "\(fallback)")
+                let rendered = try render(lines, name: "status-\(fallback)", size: size)
+                XCTAssertLessThanOrEqual(rendered.width, Self.narrowestWidth + 1, "\(size): \(fallback) ran off the screen")
+                XCTAssertGreaterThan(rendered.height, 15, "\(size): \(fallback) drew no line")
+            }
+        }
+        let clockAtLarge = try render(ShareLinkStatusLines(state: .useFile(.clockWrong), companionNote: nil), name: "clock-large", size: .large)
+        let clockAtAX5 = try render(ShareLinkStatusLines(state: .useFile(.clockWrong), companionNote: nil), name: "clock-ax5", size: .accessibility5)
+        let twoLinesAtAX5 = try render(
+            ShareLinkStatusLines(state: .useFile(.phoneCantMakeLinks), companionNote: nil), name: "short-ax5", size: .accessibility5)
+        XCTAssertLessThanOrEqual(clockAtAX5.height, twoLinesAtAX5.height + 1, "from AX1 the long line keeps to two lines and More")
+        XCTAssertGreaterThan(clockAtLarge.height, 15)
     }
 
     /// #4454: the play check's line goes under Share link, wraps at every text size, and a problem is taller than a pass
@@ -99,24 +120,30 @@ final class ShareAsLinkRenderingTests: XCTestCase {
         }
     }
 
-    /// #4454: the hidden web view may load only the link's own host, and the rule list that says so must be valid JSON
-    /// with the host escaped, or WebKit refuses it and no check can run.
-    func testThePlayCheckWebViewBlocksEverythingButTheLinksHost() throws {
-        let rules = ShareLinkPlayCheckRunner.contentRules(host: "spokenmargins.com")
+    /// #4454, #4783: the hidden web view may load only the hosts it names (the link's, the web listener's, the link
+    /// servers'), and the rule list that says so must be valid JSON with each host escaped, or WebKit refuses it and no
+    /// check can run.
+    func testThePlayCheckWebViewBlocksEverythingButItsOwnHosts() throws {
+        let rules = ShareLinkPlayCheckRunner.contentRules(hosts: ["spokenmargins.com", "app.spokenmargins.com"])
         let parsed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(rules.utf8)) as? [[String: Any]])
-        XCTAssertEqual(parsed.count, 2)
+        XCTAssertEqual(parsed.count, 3)
         let block = try XCTUnwrap(parsed.first)
         XCTAssertEqual((block["action"] as? [String: Any])?["type"] as? String, "block")
         XCTAssertEqual((block["trigger"] as? [String: Any])?["url-filter"] as? String, ".*")
-        let allow = try XCTUnwrap(parsed.last)
-        XCTAssertEqual((allow["action"] as? [String: Any])?["type"] as? String, "ignore-previous-rules")
-        let filter = try XCTUnwrap((allow["trigger"] as? [String: Any])?["url-filter"] as? String)
-        XCTAssertEqual(filter, "^https://spokenmargins\\.com/")
-        let expression = try NSRegularExpression(pattern: filter)
-        func matches(_ url: String) -> Bool { expression.firstMatch(in: url, range: NSRange(url.startIndex..., in: url)) != nil }
+        let filters = try parsed.dropFirst().map { allow -> String in
+            XCTAssertEqual((allow["action"] as? [String: Any])?["type"] as? String, "ignore-previous-rules")
+            return try XCTUnwrap((allow["trigger"] as? [String: Any])?["url-filter"] as? String)
+        }
+        XCTAssertEqual(filters, ["^https://spokenmargins\\.com/", "^https://app\\.spokenmargins\\.com/"])
+        let expressions = try filters.map { try NSRegularExpression(pattern: $0) }
+        func matches(_ url: String) -> Bool {
+            expressions.contains { $0.firstMatch(in: url, range: NSRange(url.startIndex..., in: url)) != nil }
+        }
         XCTAssertTrue(matches("https://spokenmargins.com/l/abc/packet"))
+        XCTAssertTrue(matches("https://app.spokenmargins.com/assets/index.js"))
         XCTAssertFalse(matches("https://spokenmarginsXcom/"), "the dot is escaped")
         XCTAssertFalse(matches("https://spokenmargins.com.evil.example/"), "the host ends at its slash")
+        XCTAssertFalse(matches("https://itunes.apple.com/lookup"), "the page reads Apple only through the app")
         XCTAssertFalse(matches("http://spokenmargins.com/"))
     }
 

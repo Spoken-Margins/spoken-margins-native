@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet type="text/xsl" href="/global/feed/rss.xslt" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podaccess="https://access.acast.com/schema/1.0/" xmlns:acast="https://schema.acast.com/1.0/">
+   <script src="https://feeds.acast.com/global/feed/xslt-polyfill.min.js" xmlns="http://www.w3.org/1999/xhtml"></script>
+    <channel>
+		<ttl>60</ttl>
+		<generator>acast.com</generator>
+		<title>Hi-Phi Nation</title>
+		<link>https://slate.com/podcasts/hi-phi-nation</link>
+		<atom:link href="https://feeds.acast.com/public/shows/69a1aa8467ae12eb0a8b58a7" rel="self" type="application/rss+xml"/>
+		<language>en</language>
+		<copyright>Slate Magazine</copyright>
+		<itunes:keywords/>
+		<itunes:author>Slate Podcasts</itunes:author>
+		<itunes:subtitle>A philosophy podcast that turns stories into ideas.</itunes:subtitle>
+		<itunes:summary><![CDATA[Hi-Phi Nation is philosophy in story-form, integrating narrative journalism with big ideas. We look at stories from everyday life, law, science, popular culture, and strange corners of human experiences that raise thought-provoking questions about things like justice, knowledge, the self, morality, and existence. We then seek answers with the help of academics and philosophers. The show is produced and hosted by Barry Lam of UC Riverside.<hr><p style='color:grey; font-size:0.75em;'> Hosted on Acast. See <a style='color:grey;' target='_blank' rel='noopener noreferrer' href='https://acast.com/privacy'>acast.com/privacy</a> for more information.</p>]]></itunes:summary>
+		<description><![CDATA[Hi-Phi Nation is philosophy in story-form, integrating narrative journalism with big ideas. We look at stories from everyday life, law, science, popular culture, and strange corners of human experiences that raise thought-provoking questions about things like justice, knowledge, the self, morality, and existence. We then seek answers with the help of academics and philosophers. The show is produced and hosted by Barry Lam of UC Riverside.<hr><p style='color:grey; font-size:0.75em;'> Hosted on Acast. See <a style='color:grey;' target='_blank' rel='noopener noreferrer' href='https://acast.com/privacy'>acast.com/privacy</a> for more information.</p>]]></description>
+		<itunes:explicit>false</itunes:explicit>
+		<itunes:owner>
+			<itunes:name>Slate Podcasts</itunes:name>
+			<itunes:email>topcasts@slate.com</itunes:email>
+		</itunes:owner>
+		<acast:showId>69a1aa8467ae12eb0a8b58a7</acast:showId>
+		<acast:showUrl>hi-phi-nation</acast:showUrl>
+		<acast:signature key="EXAMPLE" algorithm="aes-256-cbc"><![CDATA[wbG1Z7+6h9QOi+CR1Dv0uQ==]]></acast:signature>
+		<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmU13c0otUap75NIyVufnZVBoBcFwz3Y0zGA/pFjpP70+3oZt3+5O3uX8mfQZWzV35Kby8OfdHfDJlQAYxij1gc0J63rxgoMm4loq58gBzd9i]]></acast:settings>
+        <acast:network id="6942eaee1443762d1fb20af1" slug="slate-6942eaee1443762d1fb20af1"><![CDATA[Slate Magazine]]></acast:network>
+		<acast:importedFeed>https://feeds.megaphone.fm/SLT8919411171</acast:importedFeed>
+		<itunes:type>episodic</itunes:type>
+			<itunes:image href="https://assets.pippa.io/shows/69a1aa8467ae12eb0a8b58a7/show-cover.jpg"/>
+			<image>
+				<url>https://assets.pippa.io/shows/69a1aa8467ae12eb0a8b58a7/show-cover.jpg</url>
+				<link>https://slate.com/podcasts/hi-phi-nation</link>
+				<title>Hi-Phi Nation</title>
+			</image>
+			<itunes:new-feed-url>https://feeds.acast.com/public/shows/69a1aa8467ae12eb0a8b58a7</itunes:new-feed-url>
+		

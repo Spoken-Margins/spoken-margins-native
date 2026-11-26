@@ -18,11 +18,13 @@
 		296D3E3B2A4A4E4370DB534A /* SourceLinkPreprocessor.js in Resources */ = {isa = PBXBuildFile; fileRef = C52D1CADC5773F67C398A2B2 /* SourceLinkPreprocessor.js */; };
 		309D59859027C681BDB1EFBA /* ShippedPacketReader in Frameworks */ = {isa = PBXBuildFile; productRef = 19206F23939FE21D139570B5 /* ShippedPacketReader */; };
 		33700D595D54E56882A7C502 /* substack-shared-text-feed.xml in Resources */ = {isa = PBXBuildFile; fileRef = 50026D96CAC3D753625277E0 /* substack-shared-text-feed.xml */; };
+		344D0C91A3B1ECFB2EE6A882 /* WatchPlatePalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBFD987B0AAF2917B912987E /* WatchPlatePalette.swift */; };
 		3A296D8977ECA7A0803C5ADC /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = FE54D8343C9F4C1377709595 /* SessionKit */; };
 		3EB7A4EE3350ECA1902F69A8 /* SessionKitSupertonic in Frameworks */ = {isa = PBXBuildFile; productRef = BE679FFC0BC2A00A74297525 /* SessionKitSupertonic */; };
 		4CF539FBC54D635647751674 /* emoji-article-crash-regression.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */; };
 		4EB9C4988DDEA400406B44F5 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 9AC0CEE299A474FCA1DE58BE /* popup.js */; };
 		50CB2702E8C858DA64B35EBB /* WatchContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = 319720F5D1C48499C77B9EE3 /* WatchContract.swift */; };
+		545D2DA552D87F91ECB94A97 /* TranscriptHandoffFolder.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4496EC29B7D27207827F29D /* TranscriptHandoffFolder.swift */; };
 		5582E774F89977B1BEA8AD66 /* BundledJavaScript-NOTICES.txt in Resources */ = {isa = PBXBuildFile; fileRef = 9DCA8BA796D0A4F2D17C342F /* BundledJavaScript-NOTICES.txt */; };
 		5CB55322C5E78BE68FC70E90 /* WatchContractState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C35CC3A6D5622D241C4A34DB /* WatchContractState.swift */; };
 		5CDAE601AA8B28F47829D3C6 /* substack-shared-text-feed.xml in Resources */ = {isa = PBXBuildFile; fileRef = 50026D96CAC3D753625277E0 /* substack-shared-text-feed.xml */; };
@@ -32,7 +34,6 @@
 		60CCBE5FA9DA3D41F34CEE77 /* capabilities in Resources */ = {isa = PBXBuildFile; fileRef = 24A38466A3585C2A50A7F79A /* capabilities */; };
 		619015F5E8AF963DD2866EE3 /* licenses in Resources */ = {isa = PBXBuildFile; fileRef = 1FB65F7C5B34151CFB025D14 /* licenses */; };
 		6304A6370B93105D89F1B52B /* WatchDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DFB70895F5471D1B12C9AFC /* WatchDiagnostics.swift */; };
-		7A3C91E2D40B58F61C2E9A07 /* WatchPlatePalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D14F6B3A8E05C7241B6D3F8 /* WatchPlatePalette.swift */; };
 		65126FD4AD9AE90D96C36EC7 /* icon-256.png in Resources */ = {isa = PBXBuildFile; fileRef = 742BEE6988765C9B1F078C8B /* icon-256.png */; };
 		684EA2C33191BCFF763905E3 /* catalog.json in Resources */ = {isa = PBXBuildFile; fileRef = 454A82B2CAACCCAED5C33E03 /* catalog.json */; };
 		6868081D16F070053E862F47 /* browserTextCapture.js in Resources */ = {isa = PBXBuildFile; fileRef = 98C26CB68BDFFFA8A1B7578B /* browserTextCapture.js */; };
@@ -45,7 +46,8 @@
 		7F0A333F40F542B3E4C42E1A /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 8C1BFB86196C5C1BE2E52BEF /* Defuddle-LICENSE.txt */; };
 		813ECE74F243D82C1C573696 /* Kokoro in Resources */ = {isa = PBXBuildFile; fileRef = 8F3CB8553EF550E6A50DC56F /* Kokoro */; };
 		81B60CCA76A6F0E91712933E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = EE29274792FFFC88EA74C157 /* PrivacyInfo.xcprivacy */; };
-		8307E9C688A9F07FD4DD86F9 /* ptts in Frameworks */ = {isa = PBXBuildFile; productRef = 893FEBD7410AEC3A77FCF5FA /* ptts */; };
+		826EF23535DB6538A03405DF /* TranscriptImportMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5AD04B5CEC7D78CB0C182A5 /* TranscriptImportMessage.swift */; };
+		8307E9C688A9F07FD4DD86F9 /* SessionKitPDF in Frameworks */ = {isa = PBXBuildFile; productRef = 67B4301A88B27544F41251C1 /* SessionKitPDF */; };
 		87FAE6509C5B1511C6555EA9 /* SpokenMarginsWatchApp.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = F4D18E57D6973BBFE094E993 /* SpokenMarginsWatchApp.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		884F1A4A2578E9E530380726 /* sharing-loop-sam-reply.spokenmargins in Resources */ = {isa = PBXBuildFile; fileRef = 8F367ACB3F416E7998733B56 /* sharing-loop-sam-reply.spokenmargins */; };
 		8B40FCEFB4AFABF3E3B52486 /* SessionKitEPUB in Frameworks */ = {isa = PBXBuildFile; productRef = DAEA68EE26E46DA752778D6D /* SessionKitEPUB */; };
@@ -54,9 +56,7 @@
 		907083EA86D05BC58D2D3A79 /* SessionKitAI in Frameworks */ = {isa = PBXBuildFile; productRef = E7C7184F382A54BFB372015B /* SessionKitAI */; };
 		93BDBE3759E50512647FCCB2 /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 3D2052181FEAFB56EB0856FA /* Defuddle-LICENSE.txt */; };
 		A2D0366161FA302E7139746D /* SharedTextIntake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45170E0354730F22BB2E258A /* SharedTextIntake.swift */; };
-		DE10276319BC2315FDDC9F11 /* TranscriptImportMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040F14FA5C0B613C39949353 /* TranscriptImportMessage.swift */; };
-		3E908C9EBFDFF8134FFDC297 /* TranscriptHandoffFolder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F4BFF846A501862EAD141F /* TranscriptHandoffFolder.swift */; };
-		A391E3C44188F2FE5A49C93B /* KokoroPipeline in Frameworks */ = {isa = PBXBuildFile; productRef = 54900B4C14FBCE4EEBA05420 /* KokoroPipeline */; };
+		A391E3C44188F2FE5A49C93B /* ptts in Frameworks */ = {isa = PBXBuildFile; productRef = 893FEBD7410AEC3A77FCF5FA /* ptts */; };
 		A5242E161454F038B466BAE4 /* Gate2LiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7145068260B70B5F88F4D76 /* Gate2LiveActivityWidget.swift */; };
 		A978B4713391C8A80029DD08 /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = 857D6087011D0775305B56B7 /* SessionKit */; };
 		AB149D16A2A0482B581B0847 /* SessionKitSharing in Frameworks */ = {isa = PBXBuildFile; productRef = 03B12E07A60683D31E17A8FC /* SessionKitSharing */; };
@@ -64,7 +64,6 @@
 		BF4CD875E4DFA95B3AB14636 /* SourceLinkHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69050C3D4931DF4FF8E80364 /* SourceLinkHandoff.swift */; };
 		BFAB396D17668E220C6104D8 /* Supertonic in Resources */ = {isa = PBXBuildFile; fileRef = 0B8C44619E7FAF16175EC2D7 /* Supertonic */; };
 		C2A4BB4A4E23CFE6CE076AC6 /* SessionKitFeeds in Frameworks */ = {isa = PBXBuildFile; productRef = BE649F52B4257A8BB5ED3717 /* SessionKitFeeds */; };
-		5A7D1E0C4B3F9A2E6D8C1B70 /* SessionKitPDF in Frameworks */ = {isa = PBXBuildFile; productRef = 6B8E2F1D5C4A0B3F7E9D2C81 /* SessionKitPDF */; };
 		C53A80476E4513D666A228D3 /* SpokenMarginsBrowserTextExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F2A6CC7522887307C67D46AE /* SpokenMarginsBrowserTextExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		CC0AD39630C14AEC9A9A8573 /* SessionKitEPUB in Frameworks */ = {isa = PBXBuildFile; productRef = 62C6DAFDEEEE7BC12B1CDE55 /* SessionKitEPUB */; };
 		CC6A33EA5ED33F43E7A818A4 /* emoji-article-crash-regression.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */; };
@@ -78,12 +77,13 @@
 		DCF2AB420A460F475B45C6AF /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D8F75089EB72A10C4E2E79E1 /* PrivacyInfo.xcprivacy */; };
 		E1A30C458CE0DA8DB0031D9C /* Legal in Resources */ = {isa = PBXBuildFile; fileRef = E253416A15B5108380F819E8 /* Legal */; };
 		E3274F151D1933E8743EA4CE /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 968283859946C995CD8FA20C /* popup.html */; };
-		E7CEE322949FF588F91ED916 /* SessionKitSpeechFrontEnd in Frameworks */ = {isa = PBXBuildFile; productRef = 958A66714D007E32A7B05F00 /* SessionKitSpeechFrontEnd */; };
+		E7CEE322949FF588F91ED916 /* KokoroPipeline in Frameworks */ = {isa = PBXBuildFile; productRef = 54900B4C14FBCE4EEBA05420 /* KokoroPipeline */; };
 		EA3D13B4259566F793F4E0F9 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = BF9501739D9C1D8AAED60132 /* manifest.json */; };
 		EA749D1E3C580CCE4713612F /* pdf-outline-collected-stories.pdf in Resources */ = {isa = PBXBuildFile; fileRef = FB45D701E0D00156BD56A177 /* pdf-outline-collected-stories.pdf */; };
 		EDDCF26F9D6C48C4A0082CFC /* ListenerErrorText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 554AB90C8F67E25771B27AE9 /* ListenerErrorText.swift */; };
 		EEE29B9A790A870683EE19ED /* SpokenMarginsShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BE41691E3B902A5C377AC70D /* SpokenMarginsShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		F719B3F555F883823A6AEED5 /* SessionKitPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 16898C6F40FB4FDCA4DE8C38 /* SessionKitPersistence */; };
+		F861A465ECCB103945B1C134 /* SessionKitSpeechFrontEnd in Frameworks */ = {isa = PBXBuildFile; productRef = 958A66714D007E32A7B05F00 /* SessionKitSpeechFrontEnd */; };
 		FC312F1C0C4954CC4A846A2C /* LiveSessionMarkInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */; };
 		FEC26EFC1F60516C297C7F9C /* ListenerErrorText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 554AB90C8F67E25771B27AE9 /* ListenerErrorText.swift */; };
 /* End PBXBuildFile section */
@@ -172,10 +172,7 @@
 		36E0E49E13407DED3533C291 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 		3D2052181FEAFB56EB0856FA /* Defuddle-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Defuddle-LICENSE.txt"; sourceTree = "<group>"; };
 		3DFB70895F5471D1B12C9AFC /* WatchDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchDiagnostics.swift; sourceTree = "<group>"; };
-		9D14F6B3A8E05C7241B6D3F8 /* WatchPlatePalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchPlatePalette.swift; sourceTree = "<group>"; };
 		45170E0354730F22BB2E258A /* SharedTextIntake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedTextIntake.swift; sourceTree = "<group>"; };
-		040F14FA5C0B613C39949353 /* TranscriptImportMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptImportMessage.swift; sourceTree = "<group>"; };
-		60F4BFF846A501862EAD141F /* TranscriptHandoffFolder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptHandoffFolder.swift; sourceTree = "<group>"; };
 		454A82B2CAACCCAED5C33E03 /* catalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = catalog.json; sourceTree = "<group>"; };
 		466DDA96AB529FEFB23D4BEE /* BundledJavaScript-NOTICES.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "BundledJavaScript-NOTICES.txt"; sourceTree = "<group>"; };
 		4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveSessionMarkInbox.swift; sourceTree = "<group>"; };
@@ -199,18 +196,21 @@
 		9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SpokenMarginsApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA3E54540069285190E19D1B /* substack-shared-text-post.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "substack-shared-text-post.html"; sourceTree = "<group>"; };
 		B0E665415E1CA9540B3692BC /* icon-96.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-96.png"; sourceTree = "<group>"; };
+		BBFD987B0AAF2917B912987E /* WatchPlatePalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchPlatePalette.swift; sourceTree = "<group>"; };
 		BE41691E3B902A5C377AC70D /* SpokenMarginsShareExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		BF9501739D9C1D8AAED60132 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
 		C271766FC941B68CA12F2DAC /* SessionKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SessionKit; path = Packages/SessionKit; sourceTree = SOURCE_ROOT; };
 		C35CC3A6D5622D241C4A34DB /* WatchContractState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchContractState.swift; sourceTree = "<group>"; };
 		C52D1CADC5773F67C398A2B2 /* SourceLinkPreprocessor.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = SourceLinkPreprocessor.js; sourceTree = "<group>"; };
 		C715B5A788ED6FA76A27C38E /* items */ = {isa = PBXFileReference; lastKnownFileType = folder; name = items; path = Contracts/fixtures/items; sourceTree = SOURCE_ROOT; };
+		D4496EC29B7D27207827F29D /* TranscriptHandoffFolder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptHandoffFolder.swift; sourceTree = "<group>"; };
 		D8F75089EB72A10C4E2E79E1 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		DCF082C6D01456C6743B188A /* ClipboardIntakeClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardIntakeClassifier.swift; sourceTree = "<group>"; };
 		E0ABF1D829406CA5F06567CD /* maps */ = {isa = PBXFileReference; lastKnownFileType = folder; name = maps; path = Contracts/fixtures/maps; sourceTree = SOURCE_ROOT; };
 		E253416A15B5108380F819E8 /* Legal */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Legal; path = App/SpokenMarginsApp/Resources/Legal; sourceTree = SOURCE_ROOT; };
 		E27FC6FB39AAC1CB4DA4C07C /* LiveSessionActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveSessionActivityWidget.swift; sourceTree = "<group>"; };
 		E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsGate2Widget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		E5AD04B5CEC7D78CB0C182A5 /* TranscriptImportMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptImportMessage.swift; sourceTree = "<group>"; };
 		E7145068260B70B5F88F4D76 /* Gate2LiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate2LiveActivityWidget.swift; sourceTree = "<group>"; };
 		EE29274792FFFC88EA74C157 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		F2A6CC7522887307C67D46AE /* SpokenMarginsBrowserTextExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsBrowserTextExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -365,10 +365,10 @@
 				3EB7A4EE3350ECA1902F69A8 /* SessionKitSupertonic in Frameworks */,
 				CC0AD39630C14AEC9A9A8573 /* SessionKitEPUB in Frameworks */,
 				C2A4BB4A4E23CFE6CE076AC6 /* SessionKitFeeds in Frameworks */,
-				5A7D1E0C4B3F9A2E6D8C1B70 /* SessionKitPDF in Frameworks */,
-				8307E9C688A9F07FD4DD86F9 /* ptts in Frameworks */,
-				A391E3C44188F2FE5A49C93B /* KokoroPipeline in Frameworks */,
-				E7CEE322949FF588F91ED916 /* SessionKitSpeechFrontEnd in Frameworks */,
+				8307E9C688A9F07FD4DD86F9 /* SessionKitPDF in Frameworks */,
+				A391E3C44188F2FE5A49C93B /* ptts in Frameworks */,
+				E7CEE322949FF588F91ED916 /* KokoroPipeline in Frameworks */,
+				F861A465ECCB103945B1C134 /* SessionKitSpeechFrontEnd in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -467,12 +467,12 @@
 				554AB90C8F67E25771B27AE9 /* ListenerErrorText.swift */,
 				4862005D70FCAAD37CE521AA /* LiveSessionMarkInbox.swift */,
 				45170E0354730F22BB2E258A /* SharedTextIntake.swift */,
-				040F14FA5C0B613C39949353 /* TranscriptImportMessage.swift */,
-				60F4BFF846A501862EAD141F /* TranscriptHandoffFolder.swift */,
+				D4496EC29B7D27207827F29D /* TranscriptHandoffFolder.swift */,
+				E5AD04B5CEC7D78CB0C182A5 /* TranscriptImportMessage.swift */,
 				319720F5D1C48499C77B9EE3 /* WatchContract.swift */,
 				C35CC3A6D5622D241C4A34DB /* WatchContractState.swift */,
 				3DFB70895F5471D1B12C9AFC /* WatchDiagnostics.swift */,
-				9D14F6B3A8E05C7241B6D3F8 /* WatchPlatePalette.swift */,
+				BBFD987B0AAF2917B912987E /* WatchPlatePalette.swift */,
 			);
 			name = SessionKit;
 			path = Packages/SessionKit/Sources/SessionKit;
@@ -738,7 +738,7 @@
 				BE679FFC0BC2A00A74297525 /* SessionKitSupertonic */,
 				62C6DAFDEEEE7BC12B1CDE55 /* SessionKitEPUB */,
 				BE649F52B4257A8BB5ED3717 /* SessionKitFeeds */,
-				6B8E2F1D5C4A0B3F7E9D2C81 /* SessionKitPDF */,
+				67B4301A88B27544F41251C1 /* SessionKitPDF */,
 				893FEBD7410AEC3A77FCF5FA /* ptts */,
 				54900B4C14FBCE4EEBA05420 /* KokoroPipeline */,
 				958A66714D007E32A7B05F00 /* SessionKitSpeechFrontEnd */,
@@ -941,7 +941,7 @@
 				50CB2702E8C858DA64B35EBB /* WatchContract.swift in Sources */,
 				5CB55322C5E78BE68FC70E90 /* WatchContractState.swift in Sources */,
 				6304A6370B93105D89F1B52B /* WatchDiagnostics.swift in Sources */,
-				7A3C91E2D40B58F61C2E9A07 /* WatchPlatePalette.swift in Sources */,
+				344D0C91A3B1ECFB2EE6A882 /* WatchPlatePalette.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -983,8 +983,8 @@
 				76005D25F3CFA0070E96DA24 /* ClipboardIntakeClassifier.swift in Sources */,
 				EDDCF26F9D6C48C4A0082CFC /* ListenerErrorText.swift in Sources */,
 				A2D0366161FA302E7139746D /* SharedTextIntake.swift in Sources */,
-				DE10276319BC2315FDDC9F11 /* TranscriptImportMessage.swift in Sources */,
-				3E908C9EBFDFF8134FFDC297 /* TranscriptHandoffFolder.swift in Sources */,
+				545D2DA552D87F91ECB94A97 /* TranscriptHandoffFolder.swift in Sources */,
+				826EF23535DB6538A03405DF /* TranscriptImportMessage.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1270,7 +1270,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SM_PHONE_BUILD = YES;
 				SM_PHONE_BUILD_CONDITIONS_NO = "";
-				SM_PHONE_BUILD_CONDITIONS_YES = "SM_LOCKED_MARGIN_SPIKE SM_MARGIN_END_PHRASE_SPIKE";
+				SM_PHONE_BUILD_CONDITIONS_YES = SM_LOCKED_MARGIN_SPIKE;
 				SM_SHARE_LINK_CREATION = YES;
 				SM_SHARE_LINK_CREATION_CONDITIONS_NO = "";
 				SM_SHARE_LINK_CREATION_CONDITIONS_YES = SM_SHARE_LINK_CREATION;
@@ -1371,7 +1371,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SM_PHONE_BUILD = NO;
 				SM_PHONE_BUILD_CONDITIONS_NO = "";
-				SM_PHONE_BUILD_CONDITIONS_YES = "SM_LOCKED_MARGIN_SPIKE SM_MARGIN_END_PHRASE_SPIKE";
+				SM_PHONE_BUILD_CONDITIONS_YES = SM_LOCKED_MARGIN_SPIKE;
 				SM_SHARE_LINK_CREATION = NO;
 				SM_SHARE_LINK_CREATION_CONDITIONS_NO = "";
 				SM_SHARE_LINK_CREATION_CONDITIONS_YES = SM_SHARE_LINK_CREATION;
@@ -1576,6 +1576,10 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = SessionKitEPUB;
 		};
+		67B4301A88B27544F41251C1 /* SessionKitPDF */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SessionKitPDF;
+		};
 		857D6087011D0775305B56B7 /* SessionKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SessionKit;
@@ -1596,10 +1600,6 @@
 		BE649F52B4257A8BB5ED3717 /* SessionKitFeeds */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SessionKitFeeds;
-		};
-		6B8E2F1D5C4A0B3F7E9D2C81 /* SessionKitPDF */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = SessionKitPDF;
 		};
 		BE679FFC0BC2A00A74297525 /* SessionKitSupertonic */ = {
 			isa = XCSwiftPackageProductDependency;

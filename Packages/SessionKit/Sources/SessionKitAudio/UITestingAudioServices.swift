@@ -72,7 +72,9 @@ public final class UITestingToneRecordingClient: RecordingClient {
 public struct UITestingSourceTranscriptionClient: SourceTranscriptionClient {
     public init() {}
 
-    public func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    public func transcribeSourceAudio(
+        url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription
+    ) async throws -> TranscriptTimeline {
         throw SessionKitError.persistenceFailed(TranscriptionFailureWording.speechRecognitionOffError)
     }
 }

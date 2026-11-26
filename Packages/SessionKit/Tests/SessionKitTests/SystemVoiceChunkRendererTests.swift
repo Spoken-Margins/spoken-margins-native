@@ -87,25 +87,26 @@ final class SystemVoiceChunkRendererTests: XCTestCase {
         let output = root.appending(path: "blocked.wav")
         let release = DispatchSemaphore(value: 0)
         let woke = expectation(description: "the blocked write returned")
+        let writeReturned = LockedFlag()
         let renderer = SystemVoiceChunkRenderer(usesApplicationAudioSession: false, releaseDelay: 0.05) { [speechFormat] _, _, callback in
-            _ = release.wait(timeout: .now() + 5)
+            // Held until the render has given up; the 30 s only keeps a render that waits for it from hanging the run.
+            _ = release.wait(timeout: .now() + 30)
+            writeReturned.set()
             let buffer = AVAudioPCMBuffer(pcmFormat: speechFormat, frameCapacity: 22_050)!
             buffer.frameLength = 22_050
             callback(buffer)
             callback(AVAudioPCMBuffer(pcmFormat: speechFormat, frameCapacity: 1)!)
             woke.fulfill()
         }
-        let started = Date()
         do {
             _ = try await renderer.render(text: text, voiceIdentifier: nil, matching: try reference(), to: output, timeout: 0.3)
             XCTFail("a blocked write timed out")
         } catch let failure as SystemVoiceChunkRenderer.Failure {
             XCTAssertEqual(failure, .timedOut)
         }
-        let waited = Date().timeIntervalSince(started)
+        XCTAssertFalse(writeReturned.value, "the timeout fired while the write was still blocked, not when it returned")
         release.signal()
-        XCTAssertLessThan(waited, 2, "the timeout fired after \(waited) s, not when the write returned")
-        await fulfillment(of: [woke], timeout: 5)
+        await fulfillment(of: [woke], timeout: 30)
         XCTAssertEqual(try AVAudioFile(forReading: output).length, 0, "nothing was written after the timeout")
     }
 
@@ -117,16 +118,18 @@ final class SystemVoiceChunkRendererTests: XCTestCase {
         let release = DispatchSemaphore(value: 0)
         let looked = expectation(description: "the blocked lookup returned")
         let wrote = LockedFlag()
+        let lookupReturned = LockedFlag()
         let renderer = SystemVoiceChunkRenderer(
             usesApplicationAudioSession: false, releaseDelay: 0.05,
             voiceLookup: { _ in
-                _ = release.wait(timeout: .now() + 5)
+                // Held until the render has given up; the 30 s only keeps a render that waits for it from hanging the run.
+                _ = release.wait(timeout: .now() + 30)
+                lookupReturned.set()
                 looked.fulfill()
                 return nil
             },
             speechWrite: { _, _, _ in wrote.set() }
         )
-        let started = Date()
         do {
             _ = try await renderer.render(
                 text: text, voiceIdentifier: "com.apple.voice.compact.en-US.Samantha",
@@ -136,10 +139,9 @@ final class SystemVoiceChunkRendererTests: XCTestCase {
         } catch let failure as SystemVoiceChunkRenderer.Failure {
             XCTAssertEqual(failure, .timedOut)
         }
-        let waited = Date().timeIntervalSince(started)
+        XCTAssertFalse(lookupReturned.value, "the timeout fired while the lookup was still blocked, not when it returned")
         release.signal()
-        XCTAssertLessThan(waited, 2, "the timeout fired after \(waited) s, not when the lookup returned")
-        await fulfillment(of: [looked], timeout: 5)
+        await fulfillment(of: [looked], timeout: 30)
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertFalse(wrote.value, "no write starts after the render timed out")
     }

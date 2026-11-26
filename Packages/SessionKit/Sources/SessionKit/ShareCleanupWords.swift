@@ -14,11 +14,11 @@ public enum ShareCleanupWords {
     public static func switchCaption(isOn: Bool) -> String {
         isOn
             ? "On for this share and later ones. Removes filler words like um and uh, and shortens long pauses, in the Margins you pick. Turn it off to put them all back."
-            : "Off. Your Margins go as you recorded them. You can still do this for one Margin in the next step."
+            : "Off. Your Margins go as you recorded them. You can still do this for one Margin below."
     }
 
     public static let alertTitle = "Remove ums and long pauses?"
-    public static let alertMessage = "Spoken Margins can remove filler words like um and uh, and shorten long pauses, in the Margins you share. Your recording on this iPhone stays as it is. You can hear and undo every change. To stop this later, use Back to selection and turn it off."
+    public static let alertMessage = "Spoken Margins can remove filler words like um and uh, and shorten long pauses, in the Margins you share. Your recording on this iPhone stays as it is. You can hear and undo every change. To stop this later, turn off Remove ums and long pauses at the top of this screen."
     public static let alertAccept = "Remove them"
     public static let alertDecline = "Not now"
 

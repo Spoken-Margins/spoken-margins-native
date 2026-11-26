@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spokenmargins.local/schemas/margins-control-center-cases.schema.json",
+  "title": "Margins control center cases",
+  "description": "Language-neutral test cases for the Margins tab and arrival preview (part of #3216): from an item's Margins, the playhead and the Autoplay setting, the list rows, Next Margin, the countdown and the arrival decisions. Times are source milliseconds in the listener's copy. Margins are listed oldest first; that order breaks ties between Margins at the same time.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "description", "constants", "labels", "cases"],
+  "$defs": {
+    "ms": { "type": "integer", "minimum": 0 },
+    "msOrNull": { "type": ["integer", "null"], "minimum": 0 },
+    "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "autoplay": { "enum": ["unheard", "all", "none"] },
+    "margin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sender", "parentId", "timeMs", "listenedMs", "words", "starred", "sourceTextBefore"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "sender": { "description": "\"you\" for the listener's own Margin, otherwise the friend's name. Each friend is one shared packet.", "type": "string", "minLength": 1, "maxLength": 80 },
+        "parentId": { "description": "The Margin this one replies to, or null. An id not in the case is a parent missing from this Library.", "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "timeMs": { "description": "Where it is placed in the listener's copy; null when it could not be placed.", "$ref": "#/$defs/msOrNull" },
+        "listenedMs": { "description": "How much of a friend's Margin the listener has listened to. Ignored for your own.", "$ref": "#/$defs/ms" },
+        "words": { "description": "The words as stored: real words, placeholder words, blank, or null.", "type": ["string", "null"], "maxLength": 2000 },
+        "starred": { "description": "Starred for sharing. Only your own Margins can be; ignored for a friend's.", "type": "boolean" },
+        "sourceTextBefore": { "description": "Source text just before the Margin, for the row's lead-in quote.", "type": ["string", "null"], "maxLength": 2000 }
+      }
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "depth", "sender", "hearing", "words", "wordsComing", "leadIn", "timeMs", "startHereMs", "starred", "note", "arrival"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "depth": { "description": "0 for a thread's first Margin, 1 for a reply to it, and so on.", "type": "integer", "minimum": 0 },
+        "sender": { "type": "string", "minLength": 1 },
+        "hearing": { "enum": ["yours", "heard", "unheard"] },
+        "words": { "description": "The words to show; null when wordsComing.", "type": ["string", "null"] },
+        "wordsComing": { "type": "boolean" },
+        "leadIn": { "type": ["string", "null"] },
+        "timeMs": { "$ref": "#/$defs/msOrNull" },
+        "startHereMs": { "description": "Where the row's start control goes: 20 s before the Margin, never before 0.", "$ref": "#/$defs/msOrNull" },
+        "starred": { "type": "boolean" },
+        "note": { "type": ["string", "null"] },
+        "arrival": { "description": "What reaching this Margin does under the case's Autoplay setting.", "enum": ["plays", "tone"] }
+      }
+    },
+    "nextMargin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["marginTimeMs", "leadInStartMs", "msUntilMargin", "action", "destinationMs", "countdown", "firstToPlayId"],
+      "properties": {
+        "marginTimeMs": { "$ref": "#/$defs/ms" },
+        "leadInStartMs": { "$ref": "#/$defs/ms" },
+        "msUntilMargin": { "type": "integer", "minimum": 1 },
+        "action": { "description": "seekToLeadIn before the lead-in; playMargin inside it.", "enum": ["seekToLeadIn", "playMargin"] },
+        "destinationMs": { "$ref": "#/$defs/ms" },
+        "countdown": { "description": "m:ss, rounded up.", "type": "string", "pattern": "^[0-9]+:[0-5][0-9]$" },
+        "firstToPlayId": { "description": "The Margin that plays first in the thread Next Margin lands on: its first unheard friend's Margin unless Autoplay is All, otherwise the thread's first Margin.", "$ref": "#/$defs/id" }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "rule", "note", "input", "expected"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "rule": { "enum": ["order", "hearing", "words", "leadIn", "starred", "autoplay", "nextMargin", "countdown", "opensOnMarginsTab", "startWithUnheard"] },
+        "note": { "type": "string", "minLength": 1 },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["autoplay", "playheadMs", "margins"],
+          "properties": {
+            "autoplay": { "$ref": "#/$defs/autoplay" },
+            "playheadMs": { "$ref": "#/$defs/ms" },
+            "margins": { "type": "array", "items": { "$ref": "#/$defs/margin" } }
+          }
+        },
+        "expected": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rows", "nextMargin", "unheardCount", "opensOnMarginsTab", "startWithUnheardMs"],
+          "properties": {
+            "rows": { "type": "array", "items": { "$ref": "#/$defs/row" } },
+            "nextMargin": { "anyOf": [{ "$ref": "#/$defs/nextMargin" }, { "type": "null" }] },
+            "unheardCount": { "type": "integer", "minimum": 0 },
+            "opensOnMarginsTab": { "type": "boolean" },
+            "startWithUnheardMs": { "$ref": "#/$defs/msOrNull" }
+          }
+        }
+      }
+    }
+  },
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "description": { "type": "string" },
+    "constants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leadInMs", "startFromBeginningMs", "leadInExcerptCharacters", "missingParentNote", "ownSender"],
+      "properties": {
+        "leadInMs": { "$ref": "#/$defs/ms" },
+        "startFromBeginningMs": { "$ref": "#/$defs/ms" },
+        "leadInExcerptCharacters": { "type": "integer", "minimum": 1 },
+        "missingParentNote": { "type": "string" },
+        "ownSender": { "type": "string" }
+      }
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rowStart", "startWithUnheard", "startFromBeginning", "autoplayMenuTitle", "autoplay"],
+      "properties": {
+        "rowStart": {
+          "type": "object", "additionalProperties": false, "required": ["arrival", "playback"],
+          "properties": { "arrival": { "type": "string" }, "playback": { "type": "string" } }
+        },
+        "startWithUnheard": { "type": "string" },
+        "startFromBeginning": { "type": "string" },
+        "autoplayMenuTitle": { "type": "string" },
+        "autoplay": {
+          "type": "object", "additionalProperties": false, "required": ["unheard", "all", "none"],
+          "properties": { "unheard": { "type": "string" }, "all": { "type": "string" }, "none": { "type": "string" } }
+        }
+      }
+    },
+    "cases": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/case" } }
+  }
+}

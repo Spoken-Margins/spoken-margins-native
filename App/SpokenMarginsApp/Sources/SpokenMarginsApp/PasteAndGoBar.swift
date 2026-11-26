@@ -1,5 +1,6 @@
 import SwiftUI
 import SessionKit
+import SessionKitFeeds
 
 /// The Add sheet's bottom bar (#145): one Paste & go tap adds a copied link or copied text.
 /// `PasteButton` reads the clipboard without the iOS "Allow Paste" prompt because the tap is the
@@ -9,6 +10,8 @@ struct PasteAndGoBar: View {
     let onAdded: () -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var notAddedMessage: String?
+    /// True from a Paste that holds a link list until the list has arrived or been refused (#4683).
+    @State private var isReadingLinkList = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -37,9 +40,12 @@ struct PasteAndGoBar: View {
                 }
                 .accessibilityHidden(true)
                 if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 8) }
-                if model.isResolvingSourceLink {
+                if model.isResolvingSourceLink || isReadingLinkList {
                     ProgressView()
                         .frame(minWidth: 44, minHeight: 44)
+                        // The row's words are hidden from VoiceOver, so the spinner names itself (#5036); the same words
+                        // as the clipboard offer's busy line.
+                        .accessibilityLabel("Adding the link")
                 } else {
                     PasteButton(supportedContentTypes: PastedClipboardContent.supportedTypes) { providers in
                         Task { @MainActor in
@@ -62,6 +68,20 @@ struct PasteAndGoBar: View {
         .frame(maxWidth: 720)
         .frame(maxWidth: .infinity)
         .background(AppColors.bone)
+        .background {
+            LinkListArrivalWatcher(
+                arrival: model.linkListArrival,
+                onAdded: {
+                    isReadingLinkList = false
+                    notAddedMessage = nil
+                    onAdded()
+                },
+                onRefused: { message in
+                    isReadingLinkList = false
+                    notAddedMessage = message
+                },
+                onIdle: { isReadingLinkList = false })
+        }
     }
 
     private func paste(_ content: String?) {
@@ -69,6 +89,10 @@ struct PasteAndGoBar: View {
         case .resolvingLink:
             // The sheet closes itself when the link import reports success.
             notAddedMessage = nil
+        case .readingLinkList:
+            // The sheet closes when the list has arrived (`LinkListArrivalWatcher`); a refusal shows under the bar.
+            notAddedMessage = nil
+            isReadingLinkList = true
         case .addedText, .openingShareLink:
             // A friend's link opens its own import review, as a tapped link does; the sheet is done.
             notAddedMessage = nil
@@ -79,14 +103,71 @@ struct PasteAndGoBar: View {
     }
 }
 
+/// Turns the arrival's phase into the bar's two moves: close the sheet, or show why nothing was added. A view of its
+/// own because `LinkListArrivalState` is a separate object the bar doesn't observe (#4683).
+private struct LinkListArrivalWatcher: View {
+    @ObservedObject var arrival: LinkListArrivalState
+    let onAdded: () -> Void
+    let onRefused: (String) -> Void
+    /// The text turned out not to hold a list and went the old way (a link import shows its own progress).
+    let onIdle: () -> Void
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onChange(of: arrival.phase) { _, phase in
+                switch phase {
+                case .added: onAdded()
+                case .refused(let message): onRefused(message)
+                case .idle: onIdle()
+                case .reading: break
+                }
+            }
+    }
+}
+
 /// The link import's progress or failure, with Open in Safari when the app couldn't read the page itself.
+/// While a link resolves it says what the app is doing, and moves to a second line on a long wait, and VoiceOver reads
+/// both (#5049): an arXiv abstract page once sat behind a bare spinner for about 41 seconds.
 struct SourceLinkImportStatusView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.openURL) private var openURL
+    /// False where the surface announces its own start (the Library's copied-link card), so VoiceOver hears one line.
+    var announcesStart = true
+    /// Set once this resolve has run `SourceLinkProgressMessage.stillLookingAfter` seconds; reset by each new resolve.
+    @State private var waitedLong = false
+
+    private var isResolving: Bool { model.sourceLinkImportState == "resolving" }
+
+    /// The model's message, except while resolving, when the line follows the wait.
+    private var shownMessage: String? {
+        guard isResolving, SourceLinkProgressMessage.isProgress(model.sourceLinkImportMessage) else {
+            return model.sourceLinkImportMessage
+        }
+        return waitedLong ? SourceLinkProgressMessage.stillLooking : SourceLinkProgressMessage.looking
+    }
 
     var body: some View {
+        content
+            // Keyed on the state, so a result, a failure or a new paste cancels the wait and the next resolve starts fresh.
+            .task(id: model.sourceLinkImportState) {
+                waitedLong = false
+                guard isResolving else { return }
+                if announcesStart { announce(SourceLinkProgressMessage.looking) }
+                try? await Task.sleep(nanoseconds: UInt64(SourceLinkProgressMessage.stillLookingAfter * 1_000_000_000))
+                guard !Task.isCancelled, isResolving else { return }
+                waitedLong = true
+                announce(SourceLinkProgressMessage.stillLooking)
+            }
+    }
+
+    private func announce(_ text: String) {
+        AccessibilityNotification.Announcement(text).post()
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let message = model.sourceLinkImportMessage {
+            if let message = shownMessage {
                 Group {
                     if model.sourceLinkImportState == "failure" {
                         FailureMessageLabel(message)

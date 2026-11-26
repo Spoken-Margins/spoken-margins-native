@@ -312,6 +312,16 @@ class FreeSlots(unittest.TestCase):
                 self.assertIn(held, slot['held'])
                 self.assertNotIn('free-slots', rules(actions))
 
+    def test_cloud_max_ignores_a_halt(self):
+        # 2026-11-21: the owner had Cloud max set for the week; the tick's HALT must not hold slots or lead the list.
+        cloud = DIAL_BODY.replace('- [x] Paced', '- [ ] Paced').replace('- [ ] Cloud max', '- [x] Cloud max')
+        tick = TICK_BODY.replace('**14:15 CDT (Mac tick)**', '**14:15 CDT (Mac tick)** HALT (usage breaker: Claude)')
+        actions, slot = sweep.decide(facts_of(world(dial=cloud, tick=tick, ready=[issue(10, ['ready'])])))
+        self.assertNotIn('halt', rules(actions))
+        self.assertIsNone(slot['held'])
+        self.assertGreater(slot['claude_free'], 0)
+        self.assertIn('free-slots', rules(actions))
+
     def test_halt_is_the_first_thing_said(self):
         tick = TICK_BODY.replace('**14:15 CDT (Mac tick)**', '**14:15 CDT (Mac tick)** HALT (usage breaker: Claude)')
         actions, _ = sweep.decide(facts_of(world(tick=tick)))
@@ -756,6 +766,120 @@ class Output(unittest.TestCase):
             code = sweep.main([], api=router, now=NOW)
         self.assertEqual((code, out.getvalue()), (2, ''))
         self.assertIn('ERROR', err.getvalue())
+
+
+class ScheduleGapTests(unittest.TestCase):
+    """Rule 15 (#4937): a backstopped workflow that neither GitHub's schedule nor the VPS backstop started."""
+
+    def router(self, runs):
+        router = world()
+        router.on(r'^actions/workflows/([\w.-]+)/runs',
+                  lambda path: {'workflow_runs': runs.get(re.search(r'workflows/([\w.-]+)/', path).group(1), [])})
+        return router
+
+    def fresh(self, minutes=5, event='schedule'):
+        return {name: [{'created_at': at(minutes=minutes), 'event': event, 'conclusion': 'success'}]
+                for name in sweep.backstop.watched()}
+
+    def test_all_running_on_time_is_quiet(self):
+        actions, _ = sweep.decide(facts_of(self.router(self.fresh())))
+        self.assertNotIn('schedule-gap', rules(actions))
+
+    def test_a_dropped_workflow_is_reported_once_with_each_gap(self):
+        runs = self.fresh()
+        runs['merge-stall.yml'] = [{'created_at': at(minutes=47), 'event': 'schedule', 'conclusion': 'success'}]
+        runs['main-t3.yml'] = []
+        actions, _ = sweep.decide(facts_of(self.router(runs)))
+        gaps = [a for a in actions if a['rule'] == 'schedule-gap']
+        self.assertEqual(len(gaps), 1)
+        self.assertIn('merge-stall.yml last ran 47m ago (schedule), due every 15m', gaps[0]['detail'])
+        self.assertIn('main-t3.yml has no run', gaps[0]['detail'])
+        self.assertIn('journalctl -u sm-dispatch-backstop', gaps[0]['detail'])
+        self.assertNotIn('claude-audit.yml', gaps[0]['detail'])
+
+    def test_it_counts_runs_the_way_the_backstop_does(self):
+        # Skipped runs and the bridge's one-PR runs do not count as runs (sm_dispatch_backstop.pick).
+        runs = self.fresh()
+        runs['merge-stall.yml'] = [{'created_at': at(minutes=2), 'event': 'workflow_run', 'conclusion': 'skipped'},
+                                   {'created_at': at(minutes=90), 'event': 'schedule', 'conclusion': 'success'}]
+        runs['merge-queue-label-bridge.yml'] = [
+            {'created_at': at(minutes=3), 'event': 'pull_request_target', 'conclusion': 'success'},
+            {'created_at': at(minutes=50), 'event': 'workflow_dispatch', 'conclusion': 'success'}]
+        detail = next(a['detail'] for a in sweep.decide(facts_of(self.router(runs)))[0] if a['rule'] == 'schedule-gap')
+        self.assertIn('merge-stall.yml last ran 90m ago', detail)
+        self.assertIn('merge-queue-label-bridge.yml last ran 50m ago (workflow_dispatch)', detail)
+
+    def test_a_missed_phone_build_slot_is_reported_after_two_hours(self):
+        # #5154: phone-build has no interval, only its 12:00 and 21:30 UTC slots.
+        slot = sweep.backstop.due_slot(NOW, sweep.backstop.SLOTS['phone-build.yml'], grace=2 * sweep.backstop.SLOT_GRACE)
+        runs = self.fresh()
+        before = slot - sweep.backstop.SLOT_EARLY - dt.timedelta(minutes=10)
+        runs['phone-build.yml'] = [{'created_at': before.strftime('%Y-%m-%dT%H:%M:%SZ'), 'event': 'schedule',
+                                    'conclusion': 'success'}]
+        detail = next(a['detail'] for a in sweep.decide(facts_of(self.router(runs)))[0] if a['rule'] == 'schedule-gap')
+        self.assertIn(f'phone-build.yml last ran', detail)
+        self.assertIn(f'missed its {slot:%H:%M} UTC slot', detail)
+        runs['phone-build.yml'][0]['created_at'] = (slot + dt.timedelta(minutes=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        self.assertNotIn('schedule-gap', rules(sweep.decide(facts_of(self.router(runs)))[0]))
+
+    def test_an_hourly_workflow_gets_two_hours(self):
+        runs = self.fresh()
+        runs['lane-conflicts.yml'] = [{'created_at': at(minutes=100), 'event': 'pull_request', 'conclusion': 'success'}]
+        self.assertNotIn('schedule-gap', rules(sweep.decide(facts_of(self.router(runs)))[0]))
+        runs['lane-conflicts.yml'] = [{'created_at': at(minutes=121), 'event': 'pull_request', 'conclusion': 'success'}]
+        self.assertIn('schedule-gap', rules(sweep.decide(facts_of(self.router(runs)))[0]))
+
+    def test_an_unreadable_runs_list_is_not_reported_as_a_gap(self):
+        facts = facts_of(world())    # no rule for actions/: every read raises
+        self.assertIsNone(facts['schedule_gaps'])
+        self.assertNotIn('schedule-gap', rules(sweep.decide(facts)[0]))
+
+
+def open_pull(number, title='Some change', draft=True, base='main', sha=None):
+    return {'number': number, 'title': title, 'draft': draft, 'base': {'ref': base},
+            'head': {'sha': sha or f'{number:040d}'}}
+
+
+class StaleDrafts(unittest.TestCase):
+    """Rule 16: a draft nobody is finishing. The Margins tab stack (#4466, #4496, #4505) sat 5 days as drafts after the
+    owner session that built it was archived; #4496 was stacked on #4466, so the trunk-only PR snapshot never saw it."""
+
+    def router(self, pulls, dates):
+        router = world(refs={'dates': dates})
+        router.on(r'^pulls\?state=open&per_page', list(pulls))
+        return router
+
+    def drafts(self, pulls, dates):
+        actions, _ = sweep.decide(facts_of(self.router(pulls, dates)))
+        return [a for a in actions if a['rule'] == 'draft-stalled']
+
+    def test_a_quiet_draft_on_a_stacked_base_is_reported(self):
+        found = self.drafts([open_pull(4496, 'Margins tab and arrival preview', base='margins-tab-logic')],
+                            {f'{4496:040d}': at(days=5)})
+        self.assertEqual([a['prs'] for a in found], [[4496]])
+        self.assertIn('into `margins-tab-logic`', found[0]['detail'])
+        self.assertIn('no commit for', found[0]['detail'])
+
+    def test_a_draft_with_a_commit_today_is_quiet(self):
+        self.assertEqual(self.drafts([open_pull(1)], {f'{1:040d}': at(hours=23)}), [])
+
+    def test_ready_prs_and_do_not_merge_drafts_are_left_alone(self):
+        pulls = [open_pull(2, draft=False), open_pull(3, 'DO NOT MERGE: mutation proof for #3713'),
+                 open_pull(4, 'do-not-merge experiment')]
+        dates = {f'{n:040d}': at(days=9) for n in (2, 3, 4)}
+        self.assertEqual(self.drafts(pulls, dates), [])
+
+    def test_an_unreadable_head_commit_still_reports_the_draft(self):
+        found = self.drafts([open_pull(5)], {})     # the commit read gives no date
+        self.assertEqual([a['prs'] for a in found], [[5]])
+        self.assertIn('could not be read', found[0]['detail'])
+
+    def test_an_unreadable_pr_list_says_so(self):
+        router = world()
+        router.on(r'^pulls\?state=open&per_page', sm_status.GitHubError('boom'))
+        actions, _ = sweep.decide(facts_of(router))
+        self.assertIn('drafts-unreadable', rules(actions))
+        self.assertNotIn('draft-stalled', rules(actions))
 
 
 if __name__ == '__main__':

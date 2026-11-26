@@ -135,9 +135,10 @@ class WorkflowsUseTheScriptTests(unittest.TestCase):
     """Every workflow that caches the compilation cache goes through the script, and saves only after a good build (#2619).
 
     lane.yml and phone-build.yml kept actions/cache on the store itself after #2618 fixed the hosted app check, so the
-    same disk-filling restore could still happen there, and the lane saved the store of a failed build too.
+    same disk-filling restore could still happen there, and the lane saved the store of a failed build too. lane.yml
+    was retired with its runner (#4769).
     """
-    FILES = ('hosted-app-macos.yml', 'lane.yml', 'phone-build.yml')
+    FILES = ('hosted-app-macos.yml', 'phone-build.yml')
 
     def cache_steps(self, name):
         steps = [step for job in parse(WORKFLOWS / name)['jobs'].values() for step in job.get('steps', [])]
@@ -163,15 +164,8 @@ class WorkflowsUseTheScriptTests(unittest.TestCase):
             self.assertRegex(text, r'ci-cas-cache\.sh"? unpack', name)
             self.assertRegex(text, r'ci-cas-cache\.sh"? pack', name)
 
-    def test_the_lane_runs_the_base_branchs_copy_of_the_script_not_the_prs(self):
-        # The lane checks out the PR's head; a PR branched before the script existed has no copy (#2619).
-        text = (WORKFLOWS / 'lane.yml').read_text()
-        self.assertIn('git show "origin/$BASE_REF:scripts/ci-cas-cache.sh"', text)
-        self.assertNotIn('bash scripts/ci-cas-cache.sh', text)
-
     def test_a_save_needs_a_successful_pack_and_the_pack_needs_a_good_build(self):
-        wanted = {'lane.yml': "steps.run.outputs.verdict == 'PASS'",
-                  'phone-build.yml': "steps.archive.outcome == 'success'",
+        wanted = {'phone-build.yml': "steps.archive.outcome == 'success'",
                   'hosted-app-macos.yml': "steps.t2-sim.outcome == 'success'"}
         for name, condition in wanted.items():
             steps = [step for job in parse(WORKFLOWS / name)['jobs'].values() for step in job.get('steps', [])]

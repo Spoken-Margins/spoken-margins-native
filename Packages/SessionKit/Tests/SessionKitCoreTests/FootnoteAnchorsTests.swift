@@ -307,6 +307,8 @@ final class FootnoteAnchorsTests: XCTestCase {
 
         XCTAssertEqual(anchors.count, 3000)
         XCTAssertEqual(anchors.map(\.label), (1...3000).map(String.init))
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.06 s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards a rescan of the text per note.
         XCTAssertLessThan(elapsed, 2.0, "3000 notes in a debug build: one pass over the text, a loose ceiling that a per-note rescan would blow past")
     }
 }

@@ -209,6 +209,47 @@ final class NextChapterSummaryTests: XCTestCase {
         XCTAssertEqual(Rule.forwardControl(isAvailable: false, skimRowShown: row, canSkimForward: false), .skimDisabled)
     }
 
+    // MARK: the chapter row counts the chapters the listener sees (#4773)
+
+    private func media(_ id: String, _ startMs: Int) -> MediaTimelineChapter {
+        MediaTimelineChapter(id: id, title: id, startMs: startMs, transcriptSegmentId: "segment-\(id)")
+    }
+
+    /// A podcast whose media chapters are only the transcript's own sections, with a Listening Map: its title, bar and
+    /// Timeline name the scenes, so the row must count them. Counting the sections first made this zero.
+    func testScenesCountWhenTheOnlyMediaChaptersAreTranscriptSections() {
+        let sections = [media("ch-transcript-0", 0), media("ch-transcript-1", 60_000), media("item-ch-transcript-2", 120_000)]
+        let scenes = [media("scene-0", 0), media("scene-1", 90_000)]
+        XCTAssertEqual(Rule.chapterRowChapterCount(isTextReading: false, textChapterCount: 0, mediaChapters: sections, scenes: scenes), 2)
+        XCTAssertTrue(Rule.showsChapterRow(
+            isSkimSource: true, hasSkimAffordance: false,
+            chapterCount: Rule.chapterRowChapterCount(isTextReading: false, textChapterCount: 0, mediaChapters: sections, scenes: scenes)))
+        // Only sections, no map: still no chapters, as before (#3865).
+        XCTAssertEqual(Rule.chapterRowChapterCount(isTextReading: false, textChapterCount: 0, mediaChapters: sections, scenes: []), 0)
+    }
+
+    func testChapterRowCountTable() {
+        let authored = [media("ch-publisher-substack-001", 0), media("ch-publisher-substack-002", 60_000)]
+        let sections = [media("ch-transcript-0", 0)]
+        let scenes = [media("scene-0", 0), media("scene-1", 30_000), media("scene-2", 90_000)]
+        typealias Row = (text: Int, reading: Bool, media: [MediaTimelineChapter], scenes: [MediaTimelineChapter], expected: Int, note: String)
+        let rows: [Row] = [
+            (0, false, [], [], 0, "nothing"),
+            (0, false, authored, scenes, 2, "authored chapters win over scenes, as on the bar"),
+            (0, false, authored + sections, [], 2, "sections are left out"),
+            (0, false, [], scenes, 3, "scenes stand in when there are no media chapters"),
+            (5, false, [], [], 0, "a podcast's text chapters don't count"),
+            (4, true, [], [], 4, "a text item counts its own chapters"),
+            (1, true, authored, scenes, 1, "a text item counts its text chapters only: Skim's stops on text are those"),
+            (-1, true, [], [], 0, "a negative count never goes below zero"),
+        ]
+        for row in rows {
+            XCTAssertEqual(
+                Rule.chapterRowChapterCount(isTextReading: row.reading, textChapterCount: row.text, mediaChapters: row.media, scenes: row.scenes),
+                row.expected, row.note)
+        }
+    }
+
     // MARK: text chapters count characters (#1471)
 
     func testTextChapterSummaryLandsOnTheChapterStartWithinACharacterTolerance() {

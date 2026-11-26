@@ -96,7 +96,7 @@ def routes_for(*bundles, tip=HEAD):
         n, sha = b['pull']['number'], b['pull']['head']['sha']
         routes.update({f'pulls/{n}': b['pull'], f'issues/{n}/comments': b['comments'],
                        f'issues/{n}/events': b['events'], f'pulls/{n}/files': b['files'],
-                       f'commits/{sha}/check-runs': b['check_runs']})
+                       f'commits/{sha}/check-runs': b['check_runs'], f'commits/{sha}/statuses': b.get('statuses', [])})
     return routes
 
 
@@ -201,6 +201,16 @@ class RedOnHead(unittest.TestCase):
         row = status.analyse(bundle(checks=[{'id': 5, 'name': 'automerge', 'status': 'in_progress', 'conclusion': None}]))
         self.assertEqual(row['checks']['running'], ['automerge'])
         self.assertEqual(row['flags'], [])
+
+    def test_the_merge_policy_commit_status_counts_as_a_check(self):
+        # #5162: `merge policy` is a commit status, newest first from the API.
+        def with_statuses(*states):
+            b = bundle()
+            b['statuses'] = [{'id': 10 - n, 'context': 'merge policy', 'state': s} for n, s in enumerate(states)]
+            return status.analyse(b)['checks']
+        self.assertEqual(with_statuses('failure', 'pending')['failing'], ['merge policy'])
+        self.assertEqual(with_statuses('pending')['running'], ['merge policy'])
+        self.assertEqual(with_statuses('success', 'failure')['failing'], [])
 
     def test_an_inconclusive_report_is_not_a_pass_and_is_flagged(self):
         row = status.analyse(bundle([report('INCONCLUSIVE')]))
@@ -584,29 +594,26 @@ class Paging(unittest.TestCase):
 
 
 class LaneFormatsStayInStep(unittest.TestCase):
-    """sm_status mirrors a few lane-runner.py constants. If the runner changes them, these fail first."""
+    """sm_status mirrors a few constants of lane_merge_rules.py. If those change, these fail first."""
 
     @classmethod
     def setUpClass(cls):
-        cls.runner = (SCRIPTS / 'lane-runner.py').read_text()
+        cls.rules = (SCRIPTS / 'lane_merge_rules.py').read_text()  # moved out of the runner (#4769)
 
     def test_the_owner_tap_paths_match_the_runners(self):
-        self.assertIn("OWNER_TAP_FILES = {'scripts/lane-runner.py'}", self.runner)
-        self.assertIn("OWNER_TAP_PREFIXES = ('.github/',)", self.runner)
-        self.assertEqual(status.OWNER_TAP_FILES, {'scripts/lane-runner.py'})
+        self.assertIn("OWNER_TAP_FILES = {'scripts/lane_merge_rules.py'}", self.rules)
+        self.assertIn("OWNER_TAP_PREFIXES = ('.github/',)", self.rules)
+        self.assertEqual(status.OWNER_TAP_FILES, {'scripts/lane_merge_rules.py'})
         self.assertEqual(status.OWNER_TAP_PREFIXES, ('.github/',))
 
     def test_the_audited_kinds_match_the_runners(self):
-        runner = re.search(r"AUDITED = \{(.*?)\}", self.runner).group(1)
+        runner = re.search(r"AUDITED = \{(.*?)\}", self.rules).group(1)
         self.assertEqual(dict(re.findall(r"'(\w+)': '([^']+)'", runner)),
                          {'audio': 'the audio session', 'persistence': 'persistence', 'packet': 'packets'})
         self.assertEqual(set(status.AUDITED_CATEGORIES), {'audio', 'persistence', 'packet'})
 
-    def test_the_report_request_and_note_formats_match_the_runner(self):
-        self.assertIn("REPORT = re.compile(r'^Lane report \\S+ — (PASS|FAIL|INCONCLUSIVE)', re.M)", self.runner)
-        self.assertIn("REQUEST = re.compile(r'^\\s*/lane\\s+(T\\d)\\b', re.M)", self.runner)
-        self.assertIn("NOTE = '<!-- lane-note -->'", self.runner)
-        self.assertIn("BOT = ('github-actions[bot]'", self.runner)
+    def test_the_bot_matches_the_merge_rules(self):
+        self.assertIn("BOT = ('github-actions[bot]'", self.rules)
 
 
 class RequestHeaders(unittest.TestCase):

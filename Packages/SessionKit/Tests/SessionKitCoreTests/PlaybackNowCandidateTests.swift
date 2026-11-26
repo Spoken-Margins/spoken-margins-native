@@ -14,6 +14,30 @@ final class PlaybackNowCandidateTests: XCTestCase {
         XCTAssertEqual(PlaybackNowMargins.rows(playhead: 70, margins: [first, second]).count, 2)
     }
 
+    /// #5288: a spoken note playing its Shorter pauses version. One 4 s take; the version keeps 0–1 s and 2.5–4 s, so
+    /// 3 s on the recording is 1.5 s on the file playing.
+    func testOwnMarginOnShorterPausesCountsDownOnTheFilePlaying() throws {
+        let take = SpokenNoteWholeAudioLayout.Requested(id: "a", audioFileName: "take-a.m4a", durationMs: 4_000)
+        let map = SpokenNoteCleanMap(
+            placements: [
+                .init(takeId: "a", takeStartMs: 0, takeEndMs: 1_000, outputStartMs: 0),
+                .init(takeId: "a", takeStartMs: 2_500, takeEndMs: 4_000, outputStartMs: 1_000),
+            ],
+            recorded: SpokenNoteWholeAudioLayout(requested: [take], placed: [.init(takeId: "a", startMs: 0, durationMs: 4_000)], durationMs: 4_000),
+            cleanDurationMs: 2_500
+        )
+        var note = own()
+        note.anchor.mediaTimeMs = 3_000
+        let onVersion = try XCTUnwrap(PlaybackNowMargins.Margin(own: note, itemID: "episode", clock: map))
+        XCTAssertEqual(onVersion.position, 1.5)
+        XCTAssertNil(PlaybackNowMargins.rows(playhead: 2, margins: [onVersion]).first?.countdown, "passed on the file playing")
+        XCTAssertEqual(PlaybackNowMargins.rows(playhead: 1, margins: [onVersion]).first?.countdown, "in 0:01")
+
+        let asRecorded = try XCTUnwrap(PlaybackNowMargins.Margin(own: note, itemID: "episode"))
+        XCTAssertEqual(asRecorded.position, 3, "As recorded: the saved time, unchanged")
+        XCTAssertEqual(PlaybackNowMargins.rows(playhead: 2, margins: [asRecorded]).first?.countdown, "in 0:01")
+    }
+
     func testOwnCandidatesExcludeOtherItemsDeletedAndResponseMargins() {
         var note = own()
         XCTAssertNil(PlaybackNowMargins.Margin(own: note, itemID: "other"))

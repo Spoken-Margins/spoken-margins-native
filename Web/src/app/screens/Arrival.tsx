@@ -4,10 +4,14 @@
 // the sender's first Margin and a Skip. Every failure says what happened and one thing to do.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PlayIcon } from '../icons.tsx';
+import { LABELS, marginRows, playQueue, startFor, startWithUnheardMs, threads, firstToPlay, type Row } from '../logic/margins-control-center.ts';
+import type { MarginStart } from '../player.tsx';
+import { MarginsControlList } from './MarginsTab.tsx';
 import { arrivalResumeAt, playHint, playableArticleMargins, ARRIVAL_WORDS, GET_APP_LINK, arrivalFacts, possessive, type ArrivalFacts } from '../logic/arrival.ts';
-import { placeImport, unnamedAuthorFor } from '../logic/import.ts';
-import { playability } from '../logic/playability.ts';
-import { messageForFailure, messageForOpenedSettled, reportPlayCheck, type PlayCheckMessage } from '../play-check.ts';
+import { placeImport, previewMargins, unnamedAuthorFor } from '../logic/import.ts';
+import { settleAppleEpisode } from '../logic/apple-arrival.ts';
+import { playability, type VoiceLookup } from '../logic/playability.ts';
+import { messageForFailure, messageForOpenedSettled, playCheckHandler, reportPlayCheck, type PlayCheckMessage } from '../play-check.ts';
 import { placeMarginsOnAudio } from '../place-margins.ts';
 import { plainError } from '../logic/messages.ts';
 import { ShareLinkError, linkFooterText, openSharedPacketWithExpiry, type ParsedLink, type ShareLinkRef } from '../logic/share-link.ts';
@@ -16,13 +20,14 @@ import { useData } from '../data.tsx';
 import type { PacketRead } from '../ports.ts';
 import { usePlayer } from '../player.tsx';
 import { RELAY_ORIGIN, services } from '../services.ts';
+import { linkPacketWords } from '../logic/link-packet-words.ts';
 import { primeSpeech } from '../speech.ts';
 import { useUi } from '../ui.tsx';
 
 type State =
   | { status: 'opening' }
   | { status: 'failed'; message: string }
-  | { status: 'ready'; read: PacketRead; facts: ArrivalFacts; expires?: string };
+  | { status: 'ready'; read: PacketRead; facts: ArrivalFacts; expires?: string; lookup?: VoiceLookup };
 
 /** Words for a link that wouldn't open. A cut-off link and an unopenable key read the same: the friend re-copies it. */
 function failureWords(error: unknown): string {
@@ -40,7 +45,7 @@ function failureWords(error: unknown): string {
         return ARRIVAL_WORDS.server;
     }
   }
-  return ARRIVAL_WORDS.unreadable;
+  return linkPacketWords(error) ?? ARRIVAL_WORDS.unreadable;
 }
 
 /** The first sentence is the heading; what to do is the rest. */
@@ -102,9 +107,22 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
       let opened: PacketRead | undefined;
       try {
         const { bytes, expires } = await openSharedPacketWithExpiry(serverFor(link.link));
-        const read = await services.packets.readPacket(bytes, 'shared.spokenmargins');
-        setState({ status: 'ready', read, facts: arrivalFacts(read.sender, [...read.margins, ...playableArticleMargins(read)]), ...(expires === undefined ? {} : { expires }) });
-        opened = read;
+        const packet = await services.packets.readPacket(bytes, 'shared.spokenmargins');
+        // An Apple Podcasts episode page with no audio address: Apple's lookup finds its audio now, so Play starts at once.
+        // Not inside the sender's hidden check, which reads only through the app (`messageForOpenedSettled`).
+        const { read, lookup } = playCheckHandler()
+          ? { read: packet, lookup: undefined }
+          : await settleAppleEpisode(packet, (pageUrl) =>
+              services.sources.findAppleEpisodeAudio(pageUrl, { relayAllowed: data.settings.relayAllowed, title: packet.episode.title }),
+            );
+        setState({
+          status: 'ready',
+          read,
+          facts: arrivalFacts(read.sender, [...read.margins, ...playableArticleMargins(read)]),
+          ...(expires === undefined ? {} : { expires }),
+          ...(lookup && { lookup }),
+        });
+        opened = packet;
         message = undefined;
       } catch (error) {
         setState({ status: 'failed', message: failureWords(error) });
@@ -138,6 +156,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
       if (placed.show) await current.follow(placed.show, [placed.episode]);
       else if (placed.newEpisode) await current.updateEpisode(placed.episode);
       for (const margin of placed.margins) await current.addMargin(margin);
+      await current.addToLibrary(placed.episode.id, { quiet: true });
     })();
     return { placed, saved };
   }, []);
@@ -155,7 +174,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
   );
 
   const play = useCallback(
-    (read: PacketRead) => {
+    (read: PacketRead, at?: number, start?: MarginStart) => {
       setBusy(true);
       try {
         primeSpeech();
@@ -166,9 +185,10 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
         // A Margin on the article's words has no time of its own: the player places it on the voice once the audio says how long it is (#4421).
         const placeMargins = placeMarginsOnAudio(placed, saved);
         void player.open(placed.episode.id, {
-          at: arrivalResumeAt(read, current.episodes, current.positions) ?? 0,
+          at: at ?? arrivalResumeAt(read, current.episodes, current.positions) ?? 0,
           episode: placed.episode,
           ...(placeMargins && { placeMargins }),
+          ...(start && { start }),
         });
         void finish(saved, true);
       } catch (error) {
@@ -231,18 +251,98 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
     );
   }
 
-  const { read, facts, expires } = state;
+  const { read, facts, expires, lookup } = state;
   const who = facts.who;
   const episode = read.episode;
   // What the browser can do with this packet is one function's answer, so the sender's check says the same (#4454).
   // A Substack post has no audio address yet: its voice is looked up when the friend taps Play, as for a pasted link.
-  const can = playability(read);
+  const can = playability(read, lookup);
   const article = can.verdict === 'cannot' && can.reason === 'article';
   const unplayable = can.verdict === 'cannot' && can.reason === 'no-episode-audio';
   const articleAddress = webAddress(episode.pageUrl);
   const minutes = episode.durationSeconds ? Math.max(1, Math.round(episode.durationSeconds / 60)) : undefined;
   const subtitle = [episode.showTitle, minutes ? `${minutes} min` : undefined].filter(Boolean).join(' · ');
   const title = episode.title;
+  // The arrival preview (part of #3216): the friend's Margins listed before anything plays, each with its own start, and
+  // two starts pinned at the bottom. A packet with only an article's rough places keeps its one Play.
+  const preview = !article && !unplayable && read.margins.length > 0;
+  const autoplay = data.settings.marginAutoplay;
+  const rows = preview ? marginRows(previewMargins(read, data.shows, data.episodes, data.margins, unnamedAuthorFor('link'))) : [];
+  const unheardAt = preview ? startWithUnheardMs(rows) : null;
+  const startRow = (row: Row) => {
+    const start = startFor(row, rows, autoplay, 0);
+    if (start) play(read, start.seekToMs / 1000, { atSeconds: start.atMs / 1000, queue: start.queue });
+  };
+  const startWithUnheard = () => {
+    if (unheardAt === null) return;
+    const thread = threads(rows).find((t) => t[0].startHereMs === unheardAt && t.some((r) => r.hearing === 'unheard'));
+    const first = thread && firstToPlay(thread, 'unheard');
+    if (!thread || !first || thread[0].timeMs === null) return;
+    play(read, unheardAt / 1000, { atSeconds: thread[0].timeMs / 1000, queue: playQueue(rows, first.id, autoplay === 'none' ? 'none' : 'unheard') });
+  };
+
+  if (preview) {
+    return (
+      <div className="arrival arrival-preview" role="dialog" aria-modal="true" aria-labelledby="arrival-title" data-testid="arrival">
+        <div className="arrival-body">
+          <p className="arrival-from">
+            <span className="arrival-avatar" aria-hidden="true">
+              {facts.initial}
+            </span>
+            <span>From {who}</span>
+          </p>
+          <h1 id="arrival-title" className="arrival-title">
+            {title}
+          </h1>
+          {subtitle && <p className="arrival-sub">{subtitle}</p>}
+          <h2 className="arrival-welcome">Welcome. {who} left these Margins for you.</h2>
+          <p className="arrival-count">{facts.countLine}</p>
+          <p className="arrival-explain">{facts.explanation}</p>
+          <MarginsControlList
+            context="arrival"
+            rows={rows}
+            margins={new Map()}
+            playheadMs={0}
+            autoplay={autoplay}
+            onAutoplay={(choice) => void data.setSetting('marginAutoplay', choice)}
+            onStart={(row) => (busy ? undefined : startRow(row))}
+          />
+          <footer className="arrival-foot">
+            <p>{linkFooterText(expires)}</p>
+            {reportHref && (
+              <p>
+                <a href={reportHref} target="_blank" rel="noopener noreferrer">
+                  Report this link
+                </a>
+              </p>
+            )}
+            <p>
+              <a href={GET_APP_LINK.href} target="_blank" rel="noopener noreferrer">
+                {GET_APP_LINK.text}
+              </a>
+            </p>
+          </footer>
+        </div>
+        <div className="arrival-starts">
+          {unheardAt !== null && (
+            <button ref={playRef} type="button" className="button button-primary arrival-play" disabled={busy} onClick={startWithUnheard}>
+              <PlayIcon size={22} />
+              {LABELS.startWithUnheard}
+            </button>
+          )}
+          <button
+            ref={unheardAt === null ? playRef : undefined}
+            type="button"
+            className={`button arrival-play${unheardAt === null ? ' button-primary' : ''}`}
+            disabled={busy}
+            onClick={() => play(read, 0)}
+          >
+            {LABELS.startFromBeginning}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="arrival" role="dialog" aria-modal="true" aria-labelledby="arrival-title" data-testid="arrival">
@@ -316,3 +416,4 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
     </div>
   );
 }
+

@@ -36,9 +36,17 @@ enum MarginMomentTap {
     }
 
     static func start(_ row: MarginRow, model: Gate1AppModel) {
-        guard !model.rejectNavigationOrSessionMutationWhileRecording("play_margin_moment") else { return }
+        guard !model.rejectNavigationOrSessionMutationWhileRecording("play_margin_moment") else { return model.recordMarginTap(.own, .refused(.recordingInProgress)) }
+        // A Margin with no place has no moment (#4233). The rows route it to its details; any other caller is told why.
+        guard MarginRowTap.action(for: row.interjection) == .playMoment else {
+            model.recordMarginTap(.own, .refused(.noPosition))
+            return model.reportFailure(MarginPlaceError.noPlace, context: "Could not play this Margin's position")
+        }
         let store: SQLiteSessionStore
-        do { store = try model.requireStore() } catch { return model.reportFailure(error, context: "Could not play this Margin's position") }
+        do { store = try model.requireStore() } catch {
+            model.recordMarginTap(.own, .refused(.storeUnavailable))
+            return model.reportFailure(error, context: "Could not play this Margin's position")
+        }
         let generation = model.backgroundRefresh.beginOpen()
         let from = model.screen
         let playing = Playing(model)
@@ -53,10 +61,20 @@ enum MarginMomentTap {
                 guard let found else { throw MarginMomentLoad.unavailable }
                 loaded = .success(MarginMomentLoad(target: found, detail: try await model.loadItemDetailOffMain(id: found.session.itemId, store: store)))
             } catch { loaded = .failure(error) }
-            guard !Task.isCancelled, model.backgroundRefresh.isCurrentOpen(generation), model.screen == from, Playing(model) == playing, !model.recordingNavigationIsLocked else { return }
+            // Each way a late result is thrown away is named, so a tap that did nothing leaves a reason (#4447).
+            if let reason = MarginTapLateResult.dropReason(
+                cancelled: Task.isCancelled, openIsCurrent: model.backgroundRefresh.isCurrentOpen(generation),
+                stillOnTheScreenTheTapCameFrom: model.screen == from, playbackIsWhatTheTapSaw: Playing(model) == playing,
+                recordingLocked: model.recordingNavigationIsLocked) {
+                return model.recordMarginTap(.own, .dropped(reason))
+            }
             switch loaded {
-            case .success(let load): model.hangTelemetry.labels.scoped("playMarginMomentTap") { _ = model.playMarginMoment(row, loaded: load) }
-            case .failure(let error): model.reportFailure(error, context: "Could not play this Margin's position")
+            case .success(let load):
+                let played = model.hangTelemetry.labels.scoped("playMarginMomentTap") { model.playMarginMoment(row, loaded: load) }
+                model.recordMarginTap(.own, played ? .started : .refused(.playFailed)) // playMarginMoment told the listener why
+            case .failure(let error):
+                model.recordMarginTap(.own, .refused(.marginUnavailable))
+                model.reportFailure(error, context: "Could not play this Margin's position")
             }
         })
     }

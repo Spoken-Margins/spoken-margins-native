@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Deploys the web app (Web/, a static Vite PWA, #3020) to the VPS. Run from the Mac:
+# Deploys the web app (Web/, a static Vite PWA, #3020) to the VPS. The normal route is .github/workflows/deploy-web.yml,
+# which runs this after the owner approves (#4982). By hand, from the Mac, as the fallback:
 #
-#   research/B4/deploy/deploy-web.sh --dry-run root@<vps>   # build, then list what would change; change nothing
-#   research/B4/deploy/deploy-web.sh root@<vps>             # copy it (after the owner approves the dry run)
+#   research/B4/deploy/deploy-web.sh --dry-run <user>@<vps>   # build, then list what would change; change nothing
+#   research/B4/deploy/deploy-web.sh <user>@<vps>             # copy it (after the owner approves the dry run)
+#
+# <user> is the normal deploy login (#2478, research/B4/README.md "Server access"); it must own the web folder, and
+# needs no root here. root@<vps> still works.
 #
 # Run deploy.sh first: it adds the Caddy block that serves /srv/www/spokenmargins-web as
 # https://app.spokenmargins.com (caddy-web.caddy) and creates the folder.
@@ -52,9 +56,11 @@ if [[ -n "$(git -C "${repo}" status --porcelain -- Web)" ]]; then
   echo "note: Web/ has uncommitted changes; they are not deployed"
 fi
 echo "== build Web/ at ${commit} (relay ${relay_origin})"
-# Web/ imports the share-link page's opener from the server's tree, so that
-# folder comes along (only its .mjs files are read).
-git -C "${repo}" archive HEAD Web research/B4/server/internal/links | tar -x -C "${stage}"
+# Everything the build reads from outside Web/ comes along: the share-link page's opener from the server's tree (only
+# its .mjs files are read) and the Margins control center cases that vite.config.ts reads. scripts/deploy_check.py and
+# deploy-web.yml list the same folders, and test_deploy_check.py fails if vite.config.ts reads a file not listed here.
+sources=(Web research/B4/server/internal/links Contracts/fixtures/margins-control-center)
+git -C "${repo}" archive HEAD "${sources[@]}" | tar -x -C "${stage}"
 if ! (cd "${stage}/Web" && npm ci --no-audit --no-fund --loglevel=error &&
   VITE_RELAY_ORIGIN="${relay_origin}" npm run build -- --outDir "${stage}/dist" --emptyOutDir) >"${stage}/build.log" 2>&1; then
   tail -30 "${stage}/build.log" >&2
@@ -63,11 +69,19 @@ fi
 dist="${stage}/dist"
 # The page a share link opens (#2168): https://app.spokenmargins.com/l/<id>#<key> serves link.html, which is the app's
 # own page with a <base href="/">, because the build's URLs are relative and /l/<id> is one folder down.
+# link.html also carries the share link's preview card tags (#5271), the same block the link server's own pages carry,
+# because Apple's link preview may follow the hand-over to this page. index.html, the listener's home page, does not.
 if [[ -f "${dist}/index.html" ]]; then
   base_tag='<base href="/" />'
+  preview_tags="${stage}/research/B4/server/internal/links/card/preview-tags.html"
+  [[ -s "${preview_tags}" ]] || die "the preview card tags (${preview_tags#"${stage}/"}) are missing from the archive"
   grep -q '<head>' "${dist}/index.html" || die "index.html has no <head> to put the base tag in"
-  awk -v tag="${base_tag}" '{ print } /<head>/ && !done { print "    " tag; done = 1 }' "${dist}/index.html" >"${dist}/link.html"
+  grep -q '</head>' "${dist}/index.html" || die "index.html has no </head> to put the preview card tags before"
+  # The tags go last in the head, so <meta charset> stays within the first 1024 bytes.
+  awk -v tag="${base_tag}" -v tags="${preview_tags}" '/<\/head>/ && !tagged { while ((getline line < tags) > 0) print "    " line; tagged = 1 } { print } /<head>/ && !done { print "    " tag; done = 1 }' "${dist}/index.html" >"${dist}/link.html"
   grep -qF -- "${base_tag}" "${dist}/link.html" || die "link.html did not get its base tag"
+  grep -qF -- 'property="og:image"' "${dist}/link.html" || die "link.html did not get the preview card tags"
+  ! grep -qF -- 'property="og:image"' "${dist}/index.html" || die "index.html carries the share link's preview card tags"
 fi
 [[ -f "${dist}/index.html" && -f "${dist}/link.html" && -f "${dist}/sw.js" && -f "${dist}/manifest.webmanifest" ]] || die "build is missing index.html, link.html, sw.js or the manifest"
 grep -rqF -- "${relay_origin}" "${dist}/assets" || die "the relay origin is not in the build; VITE_RELAY_ORIGIN was not applied"
@@ -78,6 +92,9 @@ echo "built: $(find "${dist}" -type f | wc -l | tr -d ' ') files, $(du -sk "${di
 
 rsync_opts=(-rlc --delete-delay --delay-updates --chmod=D755,F644 --itemize-changes -e "${rsync_ssh}")
 if "${ssh_cmd[@]}" "${host}" "test -d '${web_root}'"; then
+  # A folder deploy.sh made as root is not writable by the normal deploy login; say so now, not as an rsync error.
+  "${ssh_cmd[@]}" "${host}" "test -w '${web_root}'" ||
+    die "${host} cannot write to ${web_root}. On the server, as root: chown -R <deploy user> ${web_root} (create-deploy-user.sh does it)"
   root_exists=1
 else
   root_exists=0

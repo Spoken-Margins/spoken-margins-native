@@ -1,0 +1,52 @@
+# Daily drift check of hosted-portable's step and job times (2026-11-20).
+#
+# On 2026-11-20 runner-tests' hand-set ceiling was raised three times (600, 1200, 1800 s) because the step drifted
+# toward each limit and PRs went red with no failing test, found only after the fact. scripts/ci_step_budgets.py reads
+# the last four weeks of successful hosted-portable runs and reports a step or job when its p50 rose more than 25% over
+# two weeks, or its p95 passed 75% of its limit (scripts/ci_step_budgets.json, or the job's timeout-minutes). It keeps
+# one open issue, "CI step drift", updates it while anything drifts and closes it when nothing does. It changes no
+# limit: proposing new numbers is a PR that runs `collect` and `table` and states its Cost and catch.
+#
+# Cost and catch: about 5 minutes of free hosted Linux a day (the Actions API, plus each new job's log once; the logs
+# are cached between runs), no tokens, no owner clicks unless something drifts. It would have flagged runner-tests on
+# 2026-11-19, when its p95 first passed 75% of the then 1200 s ceiling, a day before the red PRs. Waste signal: three
+# months of issues that led to no limit change and no investigation, or none ever opened.
+name: ci-step-drift
+
+on:
+  schedule:
+    # Daily 11:41 UTC. A jittered minute, away from the hour.
+    - cron: '41 11 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: ci-step-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: ci-step-drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # Each job's step lines, kept between runs: a job's log never changes once it has finished.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: artifacts/ci-step-durations/logs
+          key: ci-step-durations-${{ github.run_id }}
+          restore-keys: ci-step-durations-
+      - name: Read four weeks of step times and report drift
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          python3 scripts/ci_step_budgets.py collect --days 28
+          python3 scripts/ci_step_budgets.py drift --issue | tee -a "$GITHUB_STEP_SUMMARY"

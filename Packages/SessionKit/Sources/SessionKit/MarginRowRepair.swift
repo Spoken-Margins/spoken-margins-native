@@ -1,6 +1,6 @@
 import Foundation
 
-/// The fix a Margins row offers beside its status (#3856): a Retry button for "Context needs retry" or "Transcription
+/// The fix a Margins row offers beside its status (#3856): a Retry button for the source-words status or "Transcription
 /// needs retry", the same retry the Margin's detail offers, one tap from the row. A row shows the fix for its own fault
 /// (the batch rule with #4018, #4019, #4020, #4183, #4176 and #3863).
 ///
@@ -21,6 +21,7 @@ public enum MarginRowRepair: Equatable, Sendable {
     public static func of(
         isWritten: Bool,
         speechRecognitionOff: Bool,
+        speechRecognitionNotYetAsked: Bool = false,
         transcriptionStatus: String,
         contextStatus: AnchorContextStatus?,
         recordingMissing: Bool,
@@ -33,6 +34,7 @@ public enum MarginRowRepair: Equatable, Sendable {
         let status = TranscriptionFailureWording.marginAttention(
             transcriptionStatus: transcriptionStatus,
             speechRecognitionOff: speechRecognitionOff,
+            speechRecognitionNotYetAsked: speechRecognitionNotYetAsked,
             contextUnavailable: contextStatus == .unavailable,
             recordingMissing: recordingMissing)
         switch status {

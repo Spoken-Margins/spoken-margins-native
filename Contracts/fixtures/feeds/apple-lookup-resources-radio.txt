@@ -1,0 +1,58 @@
+{
+  "_note": "A trimmed copy of Apple's public lookup for Resources Radio (id1445582279, entity=podcastEpisode, limit=200), saved 2026-11-22: the show first, then its newest episodes. The real answer lists 200 episodes back to 2022-10-23 and does not list episode 1000427709574 (2019-01-13); this copy keeps three episodes and, like the real one, leaves that one out (#4783).",
+  "resultCount": 4,
+  "results": [
+    {
+      "wrapperType": "track",
+      "kind": "podcast",
+      "collectionId": 1445582279,
+      "collectionName": "Resources Radio",
+      "artistName": "Resources for the Future",
+      "feedUrl": "https://feeds.soundcloud.com/users/soundcloud:users:549843489/sounds.rss",
+      "trackCount": 403,
+      "primaryGenreName": "Government"
+    },
+    {
+      "wrapperType": "podcastEpisode",
+      "kind": "podcast-episode",
+      "trackId": 1000802518775,
+      "trackName": "Setting Research Priorities for Climate Assessments, with Melissa Kenney",
+      "collectionId": 1445582279,
+      "collectionName": "Resources Radio",
+      "releaseDate": "2026-11-17T17:00:14Z",
+      "trackTimeMillis": 2148000,
+      "episodeUrl": "https://feeds.soundcloud.com/stream/2439980430-resourcesradio-setting-research-priorities-for-climate-assessments-with-melissa-kenney.mp3",
+      "episodeGuid": "tag:soundcloud,2010:tracks/2439980430",
+      "episodeFileExtension": "mp3",
+      "feedUrl": "https://feeds.soundcloud.com/users/soundcloud:users:549843489/sounds.rss"
+    },
+    {
+      "wrapperType": "podcastEpisode",
+      "kind": "podcast-episode",
+      "trackId": 1000801036226,
+      "trackName": "Carbon Pricing Is Spreading Across International Trade, with Catherine Wolfram",
+      "collectionId": 1445582279,
+      "collectionName": "Resources Radio",
+      "releaseDate": "2026-11-10T17:00:44Z",
+      "trackTimeMillis": 1827000,
+      "episodeUrl": "https://feeds.soundcloud.com/stream/2435573028-resourcesradio-carbon-pricing-is-spreading-across-international-trade-with-catherine-wolfram.mp3",
+      "episodeGuid": "tag:soundcloud,2010:tracks/2435573028",
+      "episodeFileExtension": "mp3",
+      "feedUrl": "https://feeds.soundcloud.com/users/soundcloud:users:549843489/sounds.rss"
+    },
+    {
+      "wrapperType": "podcastEpisode",
+      "kind": "podcast-episode",
+      "trackId": 1000799641689,
+      "trackName": "The Road Ahead for Clean Transportation, with Michael Berube",
+      "collectionId": 1445582279,
+      "collectionName": "Resources Radio",
+      "releaseDate": "2026-11-03T17:10:29Z",
+      "trackTimeMillis": 2155000,
+      "episodeUrl": "https://feeds.soundcloud.com/stream/2431565046-resourcesradio-the-road-ahead-for-clean-transportation-with-michael-berube.mp3",
+      "episodeGuid": "tag:soundcloud,2010:tracks/2431565046",
+      "episodeFileExtension": "mp3",
+      "feedUrl": "https://feeds.soundcloud.com/users/soundcloud:users:549843489/sounds.rss"
+    }
+  ]
+}

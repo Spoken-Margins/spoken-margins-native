@@ -91,6 +91,64 @@ class FindingTests(unittest.TestCase):
         self.assertEqual(self.kinds(found), ['advisory-other', 'advisory'])
 
 
+# The binary targets of the copy's tag 1.24.2, as in its Package.swift, behind a path-based target that must not
+# borrow the next url (#4913).
+FORK_1_24_2 = """
+if let pod_archive_path = ProcessInfo.processInfo.environment["ORT_POD_LOCAL_PATH"] {
+    package.targets.append(Target.binaryTarget(name: "onnxruntime", path: pod_archive_path))
+} else {
+    // ORT release
+    package.targets.append(
+       Target.binaryTarget(name: "onnxruntime",
+                           url: "https://download.onnxruntime.ai/pod-archive-onnxruntime-c-1.24.2.zip",
+                           // SHA256 checksum (of the zip)
+                           checksum: "f7100a992d2a8135168c8afd831e6a58b465349101982aa58b3e11d36e600b54")
+    )
+}
+    package.targets.append(
+        Target.binaryTarget(name: "onnxruntime_extensions",
+                            url: "https://download.onnxruntime.ai/pod-archive-onnxruntime-extensions-c-0.13.0.zip",
+                            checksum: "346522d1171d4c99cb0908fa8e4e9330a4a6aad39cd83ce36eb654437b33e6b5")
+    )
+"""
+CERT = "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: Hostname mismatch"
+
+
+class BinaryTests(unittest.TestCase):
+    def test_binary_urls_reads_each_remote_target_once(self):
+        self.assertEqual(pw.binary_urls(FORK_1_24_2), [
+            'https://download.onnxruntime.ai/pod-archive-onnxruntime-c-1.24.2.zip',
+            'https://download.onnxruntime.ai/pod-archive-onnxruntime-extensions-c-0.13.0.zip'])
+        self.assertEqual(pw.binary_urls('.binaryTarget(name: "a", path: "a.xcframework")\n.target(name: "b")'), [])
+        self.assertEqual(pw.binary_urls(''), [])
+
+    def test_a_binary_that_does_not_download_is_flagged(self):
+        """#4913: download.onnxruntime.ai's certificate broke, so every cold resolve of 1.24.2 failed on the runner
+        while every repository still answered."""
+        def binaries(p):
+            return [(url, CERT) for url in pw.binary_urls(FORK_1_24_2)]
+        table = {ONNX: {'tags': ['1.24.2'], 'heads': {}}}
+        found = pw.findings_for(pin(), ONNX, remote_of(table), NONE, SAME, binaries)
+        self.assertEqual([k for k, _ in found], ['binary-gone', 'binary-gone'])
+        self.assertIn('download.onnxruntime.ai', found[0][1])
+        self.assertIn('Hostname mismatch', found[0][1])
+        self.assertTrue(pw.report({'x': (pin(), ONNX, found)})[2])
+        self.assertEqual([k for k, _ in pw.apply_accepted(found, {'binary-gone': 'because'})], ['binary-gone'] * 2)
+
+    def test_a_binary_that_downloads_is_quiet_and_a_gone_source_is_not_probed(self):
+        table = {ONNX: {'tags': ['1.24.3'], 'heads': {}}}
+        ok = lambda p: [('https://github.com/a/b/releases/download/1/x.zip', None)]  # noqa: E731
+        self.assertEqual(pw.findings_for(pin('1.24.3'), ONNX, remote_of(table), NONE, SAME, ok), [])
+
+        def must_not_run(p):
+            raise AssertionError('probed the binaries of a source that does not answer')
+        found = pw.findings_for(pin(), ONNX, remote_of({}), NONE, SAME, must_not_run)
+        self.assertEqual([k for k, _ in found], ['gone'])
+
+    def test_a_url_that_cannot_be_asked_is_a_problem_not_a_crash(self):
+        self.assertIn('unknown url type', pw.url_problem('not a url', pause=0))
+
+
 class AcceptedTests(unittest.TestCase):
     """#4579: a known state is accepted with a reason, so the weekly report stops re-opening it; a change re-flags."""
 
@@ -181,6 +239,83 @@ class ReportTests(unittest.TestCase):
         for identity, entry in copies.items():
             self.assertIn(identity, pins)
             self.assertEqual(pins[identity]['location'].rstrip('/'), entry['copy'].rstrip('/'))
+
+
+    def test_every_resolved_file_pins_a_package_at_the_same_revision(self):
+        """collect_pins keeps the first file's pin, so a bump that misses one Package.resolved would go unchecked
+        here and build different code in Xcode than in SessionKit (#4913 bumped all three)."""
+        seen = {}
+        for name in pw.RESOLVED:
+            for entry in json.loads((pw.ROOT / name).read_text())['pins']:
+                state = (entry['location'].rstrip('/'), entry['state'].get('revision'), entry['state'].get('version'))
+                seen.setdefault(entry['identity'], {})[name] = state
+        for identity, by_file in seen.items():
+            with self.subTest(identity=identity):
+                self.assertEqual(len(set(by_file.values())), 1, by_file)
+
+
+class FileIssueTests(unittest.TestCase):
+    """#4915 step 3: package-watch acts as the GitHub App. Its open issue may have been filed by the workflows' bot
+    (#4969 was) or by the App, and either must be found, or a run would open a second issue every week."""
+
+    SIG = 'abc123'
+    REPO = 'Spoken-Margins/spoken-margins-native'
+
+    def setUp(self):
+        self._api = pw.api
+        self._repo = pw.os.environ.get('GITHUB_REPOSITORY')
+        pw.os.environ['GITHUB_REPOSITORY'] = self.REPO
+        self.calls = []
+
+    def tearDown(self):
+        pw.api = self._api
+        if self._repo is None:
+            pw.os.environ.pop('GITHUB_REPOSITORY', None)
+        else:
+            pw.os.environ['GITHUB_REPOSITORY'] = self._repo
+
+    def serve(self, issues, comments=()):
+        def fake(method, path, body=None):
+            self.calls.append((method, path))
+            if method == 'GET' and '/issues?' in path:
+                creator = pw.urllib.parse.parse_qs(path.split('?', 1)[1]).get('creator', [''])[0]
+                return [i for i in issues if i['user']['login'] == creator]
+            if method == 'GET' and path.endswith('/comments?per_page=100'):
+                return list(comments)
+            return {'number': 999}
+        pw.api = fake
+
+    @staticmethod
+    def issue(number, login, sig='abc123'):
+        return {'number': number, 'title': pw.TITLE, 'user': {'login': login},
+                'body': f'report\n\n<!-- package-watch: {sig} -->'}
+
+    def posts(self):
+        return [path for method, path in self.calls if method == 'POST']
+
+    def test_the_creators_are_the_bot_and_the_agents_app(self):
+        self.assertEqual(pw.issue_creators(), ('github-actions[bot]', 'spoken-margins-agent[bot]'))
+
+    def test_the_bots_issue_is_still_found_when_the_app_runs(self):
+        self.serve([self.issue(4969, 'github-actions[bot]')])
+        self.assertEqual(pw.file_issue('report', self.SIG, True, ''), 'unchanged')
+        self.assertEqual(self.posts(), [])
+
+    def test_the_apps_own_issue_is_found_and_not_filed_again(self):
+        self.serve([self.issue(5100, 'spoken-margins-agent[bot]')])
+        self.assertEqual(pw.file_issue('report', self.SIG, True, ''), 'unchanged')
+        self.assertEqual(self.posts(), [])
+
+    def test_a_changed_report_comments_on_the_newest_of_our_issues(self):
+        self.serve([self.issue(4969, 'github-actions[bot]', sig='old'),
+                    self.issue(5100, 'spoken-margins-agent[bot]', sig='old')])
+        self.assertEqual(pw.file_issue('report', self.SIG, True, ''), 'commented')
+        self.assertEqual(self.posts(), [f'/repos/{self.REPO}/issues/5100/comments'])
+
+    def test_a_look_alike_issue_is_not_ours(self):
+        self.serve([self.issue(5200, 'spoken-margins-agent'), self.issue(5201, 'Spoken-Margins-Agent[bot]')])
+        self.assertEqual(pw.file_issue('report', self.SIG, True, ''), 'opened')
+        self.assertEqual(self.posts(), [f'/repos/{self.REPO}/issues'])
 
 
 if __name__ == '__main__':

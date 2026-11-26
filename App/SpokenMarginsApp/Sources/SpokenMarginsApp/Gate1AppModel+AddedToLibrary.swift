@@ -9,12 +9,16 @@ extension Gate1AppModel {
     }
 
     func reportAddedToLibrary(title: String, itemId: String) {
-        // A new item belongs to no collection yet, so a Library narrowed to one would not list what this confirmation
-        // says was added: show All, the same class of mismatch #4178 closed for the filters (#4343).
-        libraryCollections.select(collectionID: nil)
-        // Says, in Diagnostics, whether the Library lists what this confirmation says was added, and if not, why (#4178).
-        diagnostics["addedToLibraryVisibility"] = LibraryQueryEngine.addedItemVisibility(
-            itemId: itemId, in: libraryItems, query: libraryQuery)
+        if let capture = libraryCollections.importCapture { // a collection import says it once, at the end (#3769)
+            capture.recordAdded(itemId)
+            startPublicSourceCheck(itemId: itemId)
+            return
+        }
+        // Says, in Diagnostics, whether the Library lists what this confirmation says was added, and if not, why (#4178):
+        // in the Collections view an item inside a collection is listed in its collection's row (#3769).
+        diagnostics["addedToLibraryVisibility"] = LibraryCollectionListEngine.addedItemVisibility(
+            itemId: itemId, rows: libraryItems, collections: libraryCollections.collections, query: libraryQuery,
+            mode: libraryCollections.viewMode)
         startPublicSourceCheck(itemId: itemId) // the listener added this item: the one moment to look at its public copy (#3449)
         let confirmation = AddedToLibraryConfirmation(title: title, nowPlayingIsEmpty: nowPlayingIsEmpty)
         let playNow = confirmation.offersPlayNow ? UserFeedbackEvent.Action(
@@ -33,12 +37,15 @@ extension Gate1AppModel {
         var seen = Set<String>()
         let itemIds = itemIds.filter { seen.insert($0).inserted }
         guard let first = itemIds.first else { return }
-        if itemIds.count == 1 {
-            let title = libraryItems.first { $0.id == first }?.title ?? "Shared source"
-            reportAddedToLibrary(title: title, itemId: first)
-        } else {
-            libraryCollections.select(collectionID: nil) // the same reason as `reportAddedToLibrary` (#4343)
-            reportConfirmation(AddedToLibraryConfirmation.message(addedCount: itemIds.count, nowPlayingIsEmpty: nowPlayingIsEmpty))
+        // A share that drains while a folder or link list arrives keeps its own item and its own banner: left to the
+        // import's capture, it would be counted as one of the list's links and its banner held (#4683).
+        reportPastImportCapture {
+            if itemIds.count == 1 {
+                let title = libraryItems.first { $0.id == first }?.title ?? "Shared source"
+                reportAddedToLibrary(title: title, itemId: first)
+            } else {
+                reportConfirmation(AddedToLibraryConfirmation.message(addedCount: itemIds.count, nowPlayingIsEmpty: nowPlayingIsEmpty))
+            }
         }
     }
 

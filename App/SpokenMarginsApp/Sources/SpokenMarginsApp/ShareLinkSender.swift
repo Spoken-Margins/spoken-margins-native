@@ -36,9 +36,21 @@ final class ShareLinkSender: ObservableObject {
         case ready(URL, companionFile: URL?, packet: URL)
         /// The listener hasn't agreed to the upload yet (#2842). The screen asks; nothing has been sealed or sent.
         case needsConsent
-        /// No link was made; the file share is still there. Holds the one line to show.
-        case useFile(String)
+        /// No link was made; the file share is still there. Holds why, which gives the one line to show and what "Share
+        /// link" does afterwards (#4134).
+        case useFile(ShareLinkFallback)
     }
+
+    /// What "Share link" does while this screen shows its state (#4134): a refusal a retry won't pass disables it, and a
+    /// build below the server's minimum hides it.
+    var shareLinkAfterwards: ShareLinkButtonAfterFallback {
+        if case .useFile(let fallback) = state { return fallback.shareLinkAfterwards }
+        return .enabled
+    }
+
+    /// Refuse mode, from this build's Info.plist (#4134). The key is absent today, which is off; it is set in Release only,
+    /// with the App Attest entitlement, so Debug and Simulator builds keep making links.
+    private static let faultPolicy = ShareLinkFaultPolicy.fromInfoPlist(Bundle.main.infoDictionary)
 
     @Published private(set) var state: State = .idle
     /// Shown while the link is made and after, when the share will carry the file too.
@@ -76,18 +88,20 @@ final class ShareLinkSender: ObservableObject {
     /// screen asks the server once (our server, no one else's) so a fresh install can offer the button.
     func isOffered() async -> Bool {
         guard let bridge else { return false }
-        switch await bridge.state(of: ServerService.links) {
-        case .on: return true
-        case .off(.noConfig), .off(.staleConfig):
+        var links = await bridge.state(of: ServerService.links)
+        if links == .off(.noConfig) || links == .off(.staleConfig) {
             await bridge.refreshConfigOnly()
-            return await bridge.state(of: ServerService.links).isOn
-        case .off: return false
+            links = await bridge.state(of: ServerService.links)
         }
+        // Below the server's minimum build the button stays hidden, but the screen says to update instead of nothing
+        // (#4134). Only an idle screen takes the line, so it never replaces a link or a line already on show.
+        if case .off(.buildTooOld) = links, state == .idle { state = .useFile(.updateNeeded) }
+        return links.isOn
     }
 
     /// Seals and uploads the packet at `packageURL`, the file the sender would otherwise share.
     func makeLink(packageURL: URL) {
-        guard state != .making else { return }
+        guard state != .making, shareLinkAfterwards.allowsShareLink else { return }
         // Before anything is read, sealed or sent, and before any key is made: the first link asks (#2842).
         guard ServerSendConsent.hasConsented(to: .shareLinks) else {
             state = .needsConsent
@@ -109,7 +123,7 @@ final class ShareLinkSender: ObservableObject {
                 (packet, preview) = made
                 companionNote = preview.needsCompanionFile ? Self.companionLine : nil
             case .failure(let fallback):
-                state = .useFile(fallback.message)
+                state = .useFile(fallback)
                 return
             }
             var linksState = ServerFeatureState.off(.noConfig)
@@ -132,7 +146,7 @@ final class ShareLinkSender: ObservableObject {
                 },
                 post: ShareLinkTransport.postWithHeaders
             )
-            let result = await client.makeLink(packet: packet, preview: preview, linksState: linksState)
+            let result = await client.makeLink(packet: packet, preview: preview, linksState: linksState, faultPolicy: Self.faultPolicy)
             // The listener went back or changed the selection meanwhile: this link is for a packet the screen no
             // longer shows, so no sheet opens for it.
             guard requests.accepts(ticket) else { return }
@@ -146,7 +160,7 @@ final class ShareLinkSender: ObservableObject {
             case .useFile(let fallback):
                 // No link, so nothing goes with it: the file share beside the button is the way.
                 companionNote = nil
-                state = .useFile(fallback.message)
+                state = .useFile(fallback)
             case .needsConsent:
                 companionNote = nil
                 state = .needsConsent
@@ -172,6 +186,15 @@ final class ShareLinkSender: ObservableObject {
     /// check's line, which is about the link that was made, goes too.
     func reset() {
         requests.cancel()
+        // A line that took "Share link" away stays for as long as this sheet is open: going back to the selection
+        // doesn't make a refusal pass (#4134). A new sheet is a new sender and tries once more.
+        if !shareLinkAfterwards.allowsShareLink {
+            companionNote = nil
+            playCheckLinkID = nil
+            playCheckLine = nil
+            announcementWaitsForSheet = false
+            return
+        }
         state = .idle
         companionNote = nil
         playCheckLinkID = nil
@@ -312,12 +335,8 @@ struct ShareLinkStatusLines: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("build23.sender.share.link.companion")
             }
-            if case .useFile(let message) = state {
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(AppColors.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("build23.sender.share.link.fallback")
+            if case .useFile(let fallback) = state {
+                ShareLinkFallbackLine(message: fallback.message)
             }
             if let playCheckLine {
                 ShareLinkPlayCheckLineView(line: playCheckLine, linkID: playCheckLinkID)
@@ -327,14 +346,54 @@ struct ShareLinkStatusLines: View {
     }
 }
 
+/// Why no link was made, in the pinned bar above "Share link". From AX1 it keeps to two lines with "More", which opens
+/// the whole message (#3839's rule for the pinned bar; #4134 adds lines long enough to need it).
+struct ShareLinkFallbackLine: View {
+    let message: String
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var showsFullText = false
+
+    private var isLimited: Bool { typeSize >= .accessibility1 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(AppColors.secondaryText)
+                .lineLimit(isLimited ? 2 : nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("build23.sender.share.link.fallback")
+            if isLimited {
+                Button(ShareReviewCardWords.more) { showsFullText = true }
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityHint("Shows the whole message")
+                    .accessibilityIdentifier("build23.sender.share.link.fallback.more")
+            }
+        }
+        .trackedSheet(isPresented: $showsFullText) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(message)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Done") { showsFullText = false }
+                    .filledActionButton()
+                Spacer(minLength: 0)
+            }
+            .padding(24)
+            .presentationDetents([.medium, .large])
+        }
+    }
+}
+
 // MARK: - The background play check (#4454)
 //
 // After a link is made, the sender's phone loads that link in a hidden web view, with throwaway storage, and the web
 // app answers "would this play in a browser?" with one message (`ShareLinkPlayCheck`). Nothing plays: the view never
 // makes a media element, and the audio check is a 1 KB range read the app makes itself. The page cannot read a
-// publisher (CORS) and our relay must never see the item's address, so the web app asks this view for the two reads the
-// owner agreed to on 2026-11-17, through `smPlayCheckRead`: one Substack post page and the first 1 KB of the audio,
-// once per link, with no cookies, never through our server.
+// publisher (CORS) and our relay must never see the item's address, so the web app asks this view for the reads the
+// owner agreed to, through `smPlayCheckRead`: one Substack post page and the first 1 KB of the audio (2026-11-17), and for
+// an Apple Podcasts episode Apple's lookup and the one feed it names (2026-11-23, #4783). Once per link, with no cookies,
+// never through our server.
 
 /// The one check's hidden web view. It loads the link once, lets nothing else load, answers the page's reads, and
 /// reports what happens as `ShareLinkPlayCheck.Event`s. `stop()` ends it for good.
@@ -348,16 +407,20 @@ final class ShareLinkPlayCheckRunner: NSObject, WKNavigationDelegate, WKScriptMe
     private var webView: WKWebView?
     /// Asks the checker's per-link budget, so a check run again for the same link has no second page or audio read.
     private let allowRead: @MainActor (ShareLinkPlayCheck.ReadRequest) -> Bool
+    /// Hands Apple's lookup answer to the same budget: the only feeds this link's check may then read are the ones it names.
+    private let noteLookupAnswer: @MainActor (Data) -> Void
     private var isStopped = false
     private let probe = ShareLinkPlayCheckProbeHandler()
 
     init(
         link: URL,
         allowRead: @escaping @MainActor (ShareLinkPlayCheck.ReadRequest) -> Bool,
+        noteLookupAnswer: @escaping @MainActor (Data) -> Void,
         onEvent: @escaping (ShareLinkPlayCheck.Event) -> Void
     ) {
         self.link = link
         self.allowRead = allowRead
+        self.noteLookupAnswer = noteLookupAnswer
         self.onEvent = onEvent
         super.init()
         probe.onMessage = { [weak self] message in self?.probeMessage(message) }
@@ -375,10 +438,12 @@ final class ShareLinkPlayCheckRunner: NSObject, WKNavigationDelegate, WKScriptMe
         configuration.userContentController.add(probe, name: Self.probeHandlerName)
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: Self.readHandlerName)
         do {
-            // Everything but the link's own host is blocked: the page's assets and its packet come from there.
+            // Everything is blocked but the link's host, the web listener's (the page the link's page sends a browser to,
+            // and its files) and the link servers' (the packet): `ShareLinkPlayCheck.pageHosts`.
+            let hosts = ShareLinkPlayCheck.pageHosts(for: link)
             guard let rules = try await WKContentRuleListStore.default().compileContentRuleList(
-                forIdentifier: "spoken-margins-play-check.v1.\(host)",
-                encodedContentRuleList: Self.contentRules(host: host)
+                forIdentifier: "spoken-margins-play-check.v2.\(host.lowercased())",
+                encodedContentRuleList: Self.contentRules(hosts: hosts)
             ) else {
                 send(.message(.couldNotReach(offline: false)))
                 return
@@ -417,13 +482,13 @@ final class ShareLinkPlayCheckRunner: NSObject, WKNavigationDelegate, WKScriptMe
         onEvent(event)
     }
 
-    /// Block everything, then allow the link's own host. The host is escaped as a regular expression.
-    nonisolated static func contentRules(host: String) -> String {
-        let escaped = host.replacingOccurrences(of: ".", with: "\\\\.")
-        return """
-        [{"trigger":{"url-filter":".*"},"action":{"type":"block"}},\
-        {"trigger":{"url-filter":"^https://\(escaped)/"},"action":{"type":"ignore-previous-rules"}}]
-        """
+    /// Block everything, then allow each of `hosts`. A host is escaped as a regular expression.
+    nonisolated static func contentRules(hosts: [String]) -> String {
+        let allowed = hosts.map { host in
+            let escaped = host.replacingOccurrences(of: ".", with: "\\\\.")
+            return #"{"trigger":{"url-filter":"^https://\#(escaped)/"},"action":{"type":"ignore-previous-rules"}}"#
+        }
+        return "[" + ([#"{"trigger":{"url-filter":".*"},"action":{"type":"block"}}"#] + allowed).joined(separator: ",") + "]"
     }
 
     // MARK: Messages from the page
@@ -440,11 +505,19 @@ final class ShareLinkPlayCheckRunner: NSObject, WKNavigationDelegate, WKScriptMe
     ) async -> (Any?, String?) {
         guard !isStopped, message.frameInfo.isMainFrame, isFromLink(message.frameInfo),
               let request = ShareLinkPlayCheck.ReadRequest(body: message.body),
-              allowRead(request) else { return (nil, "This read is not allowed.") }
+              allowRead(request) else { return (nil, ShareLinkPlayCheck.readRefusedMessage) }
         do {
             switch request {
-            case .page(let url): return (try await Self.readPage(url), nil)
-            case .audioStart(let url): return (try await Self.readAudioStart(url), nil)
+            case .page(let url):
+                return (try await Self.readText(url, accept: "text/html, application/xhtml+xml").reply, nil)
+            case .appleLookup(let url):
+                let read = try await Self.readText(url, accept: "application/json, text/javascript;q=0.9")
+                if let body = read.body { noteLookupAnswer(body) }
+                return (read.reply, nil)
+            case .feed(let url):
+                return (try await Self.readText(url, accept: "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8").reply, nil)
+            case .audioStart(let url):
+                return (try await Self.readAudioStart(url), nil)
             }
         } catch {
             // Any failure rejects the page's call: the web app says "couldn't check", never a warning about the link.
@@ -452,8 +525,9 @@ final class ShareLinkPlayCheckRunner: NSObject, WKNavigationDelegate, WKScriptMe
         }
     }
 
+    /// A message from the link's page or from the web listener's page it sends the view on to.
     private func isFromLink(_ frame: WKFrameInfo) -> Bool {
-        frame.securityOrigin.host.lowercased() == link.host?.lowercased()
+        ShareLinkPlayCheck.isCheckPageHost(frame.securityOrigin.host, link: link)
     }
 
     // MARK: The reads: the app's own network stack, no cookies, no cache, a byte cap, https only
@@ -475,19 +549,23 @@ final class ShareLinkPlayCheckRunner: NSObject, WKNavigationDelegate, WKScriptMe
         return request
     }
 
-    /// A post's page, as `{ status, url, body }`. The body is for a 2xx only, and never over `maximumPageBytes`.
-    nonisolated static func readPage(_ url: URL) async throws -> [String: Any] {
+    /// A post's page, Apple's lookup answer or a show's feed, as `{ status, url, body }`, and the body's bytes. The body is
+    /// for a 2xx only, and never over `maximumPageBytes`: a larger one answers `{ status, url, tooLarge: true }` with no body,
+    /// which the page reads as its own size cap (`ReadTooLarge` in `Web/src/sources/read.ts`), so the sender's line says what
+    /// a friend's browser, which stops at the same size, would say.
+    nonisolated static func readText(_ url: URL, accept: String) async throws -> (reply: [String: Any], body: Data?) {
         let session = makeSession()
         defer { session.invalidateAndCancel() }
         let (bytes, response) = try await session.bytes(
-            for: makeRequest(url, accept: "text/html, application/xhtml+xml"), delegate: HTTPSOnlyRedirects()
+            for: makeRequest(url, accept: accept), delegate: HTTPSOnlyRedirects()
         )
         guard let http = response as? HTTPURLResponse, let finalURL = http.url, finalURL.scheme?.lowercased() == "https" else {
             throw URLError(.badServerResponse)
         }
         var reply: [String: Any] = ["status": http.statusCode, "url": finalURL.absoluteString]
-        guard (200..<300).contains(http.statusCode) else { return reply }
-        if http.expectedContentLength > Int64(ShareLinkPlayCheck.maximumPageBytes) { throw URLError(.dataLengthExceedsMaximum) }
+        guard (200..<300).contains(http.statusCode) else { return (reply, nil) }
+        let tooLarge: (reply: [String: Any], body: Data?) = (reply.merging(["tooLarge": true]) { $1 }, nil)
+        if http.expectedContentLength > Int64(ShareLinkPlayCheck.maximumPageBytes) { return tooLarge }
         var data = Data()
         var chunk = [UInt8]()
         for try await byte in bytes {
@@ -495,13 +573,13 @@ final class ShareLinkPlayCheckRunner: NSObject, WKNavigationDelegate, WKScriptMe
             if chunk.count >= 16_384 {
                 data.append(contentsOf: chunk)
                 chunk.removeAll(keepingCapacity: true)
-                if data.count > ShareLinkPlayCheck.maximumPageBytes { throw URLError(.dataLengthExceedsMaximum) }
+                if data.count > ShareLinkPlayCheck.maximumPageBytes { return tooLarge }
             }
         }
         data.append(contentsOf: chunk)
-        guard data.count <= ShareLinkPlayCheck.maximumPageBytes else { throw URLError(.dataLengthExceedsMaximum) }
+        guard data.count <= ShareLinkPlayCheck.maximumPageBytes else { return tooLarge }
         reply["body"] = String(decoding: data, as: UTF8.self)
-        return reply
+        return (reply, data)
     }
 
     /// The start of an episode's audio, as `{ status, contentType }`: a range read of the first bytes, which are read and
@@ -526,12 +604,10 @@ final class ShareLinkPlayCheckRunner: NSObject, WKNavigationDelegate, WKScriptMe
     // MARK: Navigation: the link, once, and nothing else
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
-        // The one load of the link. A later address (a Report link, an outside link, a pop-up) is never followed.
+        // The link, and the one hop its page makes to the same link on the web listener's host (#4783: without the hop the
+        // check never ran on a real link). A later address (a Report link, an outside link, a pop-up) is never followed.
         guard let url = navigationAction.request.url else { return .cancel }
-        let sameAddress = url.scheme?.lowercased() == link.scheme?.lowercased()
-            && url.host?.lowercased() == link.host?.lowercased()
-            && url.path == link.path && url.query == link.query && url.fragment == link.fragment
-        return sameAddress ? .allow : .cancel
+        return ShareLinkPlayCheck.mayNavigate(to: url, from: link) ? .allow : .cancel
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
@@ -694,10 +770,11 @@ final class ShareLinkPlayChecker: ObservableObject {
     private func begin(_ id: String) {
         guard let job = jobs[id] else { return }
         startedAt = .now
-        // One page read and one audio read for each link, however many times its check runs.
+        // One of each read for each link, however many times its check runs.
         let runner = ShareLinkPlayCheckRunner(
             link: job.link,
             allowRead: { [weak self] request in self?.allowRead(request, for: id) ?? false },
+            noteLookupAnswer: { [weak self] body in self?.readBudgets[id, default: ShareLinkPlayCheck.ReadBudget()].noteLookupAnswer(body) },
             onEvent: { [weak self] event in self?.handle(event, for: id) }
         )
         self.runner = runner

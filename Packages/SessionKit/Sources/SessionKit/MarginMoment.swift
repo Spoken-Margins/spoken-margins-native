@@ -80,6 +80,9 @@ public struct MarginMomentSequence: Sendable, Equatable {
         /// Play on from there (the listener tapped Continue) rather than waiting for a Play.
         public let resumesAtEnd: Bool
         public let leadInMs: Int
+        /// A catch-up run (#4785): the last Margin's natural end pauses the source where it is, never takes it back to the
+        /// listener's place and never plays on. The return place then serves only Stop and a relaunch.
+        public var endsPaused: Bool = false
     }
 
     /// What the source does once a Margin's voice is done. It never hops ahead on its own: the listener plays on from
@@ -169,6 +172,14 @@ public struct MarginMomentSequence: Sendable, Equatable {
         return Self.effectiveLeadInMs(of: anchor, momentLeadInMs: momentLeadInMs)
     }
 
+    /// Where this review's run-up before its target starts, counting a run-up the listener lengthened with "Start a minute
+    /// earlier" (#4171), for the Next Margin press (`NextMarginPress.Context.momentLeadIn`). Nil for a plain moment, which has
+    /// no press, and for a listening with no lead-in at all (`CantPlayListening`), which keeps the press's own rule.
+    public var targetRunUpStartMediaTimeMs: Int? {
+        guard review != nil, momentLeadInMs > 0 else { return nil }
+        return max(0, target.mediaTimeMs - leadInMs(for: target))
+    }
+
     /// Where the lead-in before `target` starts, by the single lead-in rule (#807). The target's own length (the
     /// sender's, #4171) wins over `leadInMs`, the moment's.
     public static func leadInStartMediaTimeMs(forTarget target: MarginMomentAnchor, leadInMs: Int = defaultLeadInMs) -> Int {
@@ -193,7 +204,8 @@ public struct MarginMomentSequence: Sendable, Equatable {
         returnToMediaTimeMs: Int? = nil,
         resumesAtEnd: Bool = false,
         leadInMs: Int = MarginMomentSequence.reviewLeadInMs,
-        tickAdvanceLimitMs: Int = MarginMomentSequence.maxTickAdvanceMs
+        tickAdvanceLimitMs: Int = MarginMomentSequence.maxTickAdvanceMs,
+        endsPaused: Bool = false
     ) {
         self.tickAdvanceLimitMs = tickAdvanceLimitMs
         var seen = Set<String>()
@@ -209,7 +221,9 @@ public struct MarginMomentSequence: Sendable, Equatable {
             leadInMs: Self.effectiveLeadInMs(of: first, momentLeadInMs: leadInMs)
         ).sourceStartPosition
         unplayed = ordered
-        review = Review(count: ordered.count, returnToMediaTimeMs: returnToMediaTimeMs, resumesAtEnd: resumesAtEnd, leadInMs: leadInMs)
+        review = Review(
+            count: ordered.count, returnToMediaTimeMs: returnToMediaTimeMs, resumesAtEnd: resumesAtEnd, leadInMs: leadInMs,
+            endsPaused: endsPaused)
     }
 
     public var isReview: Bool { review != nil }
@@ -305,6 +319,8 @@ public struct MarginMomentSequence: Sendable, Equatable {
         let stoppedAt = sourceAt ?? finished?.mediaTimeMs ?? 0
         guard let next = unplayed.first else {
             phase = .listening
+            // A catch-up run stops right after the last reply (#4785): nothing plays on, and the source stays at the reply.
+            if review.endsPaused { return .reviewDone(returnToMediaTimeMs: nil, resumes: false) }
             // Back to the listener's own place only when it lies beyond this Margin. A listener who had not got that far
             // (the episode just opened, the Margin ahead) carries on from the Margin, never back to the start.
             if let place = review.returnToMediaTimeMs, place > stoppedAt {
@@ -389,9 +405,10 @@ extension Interjection {
         status == "active" && captureKind != .written && targetType == .item && audioPath != nil
     }
 
-    /// A spoken Margin on the item with a media time and a saved voice, which a Margin moment plays inline.
+    /// A spoken Margin on the item with a media time and a saved voice, which a Margin moment plays inline. A moved
+    /// Margin with no saved place has no media time of its own, whatever its anchor holds (#4233).
     public var isInlineSpokenMargin: Bool {
-        isSpokenItemMargin && anchor.mediaTimeMs != nil
+        isSpokenItemMargin && hasPlace && anchor.mediaTimeMs != nil
     }
 }
 

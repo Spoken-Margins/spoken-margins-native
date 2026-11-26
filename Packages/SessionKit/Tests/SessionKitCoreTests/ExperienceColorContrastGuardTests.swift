@@ -42,15 +42,6 @@ final class AppColorContrastAuditFindingsTests: XCTestCase {
         return try XCTUnwrap(measurement).ratio
     }
 
-    /// #3734: the audit's hand-computed numbers for the Timeline rows in light mode.
-    func testTheTimelineRowFindingsAreMeasured() throws {
-        XCTAssertEqual(try ratio("row detail on evergreen at 0.12 over bone", "light"), 3.97, accuracy: 0.01)
-        XCTAssertEqual(try ratio("row detail on evergreen at 0.07 over bone", "light"), 4.32, accuracy: 0.01)
-        XCTAssertEqual(try ratio("row detail on coral at 0.08 over bone", "light"), 4.34, accuracy: 0.01)
-        XCTAssertEqual(try ratio("row detail on plum at 0.07 over bone", "light"), 4.35, accuracy: 0.01)
-        XCTAssertEqual(try ratio("my Margin row label on coral at 0.08 over bone", "light"), 4.44, accuracy: 0.01)
-    }
-
     /// #3731: the Watch's plates were white on the system orange (2.06:1) and blue (3.65:1). Now a dark label on the
     /// orange and a deeper blue under white.
     func testTheWatchPlatesAreReadable() throws {
@@ -62,9 +53,8 @@ final class AppColorContrastAuditFindingsTests: XCTestCase {
     /// Each finding is a known failure until its own issue fixes it, so a fix that works has to delete the entry.
     func testEveryNewFindingIsListedAsKnownUntilItsIssueFixesIt() {
         let listed = Set(AppColorContrastAudit.knownFailures.map { "\($0.pair) [\($0.appearance)]" })
-        let measured = AppColorContrastAudit.measurements(for: AppColorContrastAudit.timelineRowPairs + AppColorContrastAudit.watchPlatePairs)
+        let measured = AppColorContrastAudit.measurements(for: AppColorContrastAudit.allPairs)
         let failing = measured.filter(\.fails).map { "\($0.pair) [\($0.appearance)]" }
-        XCTAssertFalse(failing.isEmpty, "the audit must see the findings")
         XCTAssertEqual(Set(failing).subtracting(listed), [], "an unlisted failure is a new bug: fix it or list it with its issue")
         XCTAssertEqual(AppColorContrastAudit.staleKnownFailures(), [])
     }
@@ -302,8 +292,7 @@ final class AppColorUsageGuardTests: XCTestCase {
     private enum TintKind: Equatable { case audited, noText, unaudited }
 
     private static let tints: [String: TintKind] = [
-        "evergreen@0.12": .audited, "evergreen@0.07": .audited, "coral@0.08": .audited, "ochre@0.08": .audited,
-        "plum@0.07": .audited,
+        "evergreen@0.12": .noText,
         // #3739 slice 2: `tintedFillPairs`.
         "ochre@0.12": .audited, "evergreen@0.16": .audited,
         "listeningAccent@0.18": .audited, "softGreen@0.85": .audited, "softGreen@0.55": .audited,
@@ -351,6 +340,126 @@ final class AppColorUsageGuardTests: XCTestCase {
             let alpha = Double(parts[1]).map { "\($0)" } ?? String(parts[1])
             let marker = "on \(parts[0]) at \(alpha) over"
             XCTAssertTrue(names.contains { $0.contains(marker) }, "\(key) is listed as audited but no pair measures text on it")
+        }
+    }
+
+    // MARK: Tint tokens (#4953)
+
+    /// Every `AppColors` token the app passes to `.tint(`, and why it is safe there. A `.bordered` control draws its words
+    /// in its tint, so a token that is only safe as a fill becomes unreadable text: `primaryAction` was 1.9:1 in dark mode
+    /// on the Margins Retry (#4953), and `plum` 4.1:1 on Share's Stop. Neither is listed, on purpose. The key is the token,
+    /// not the call site, as with `tints` above: a listed token reused on a new surface is not seen.
+    private enum TintTokenKind { case borderedLabel, plainText, swipe, alwaysDark, prominentFill, nonText }
+
+    private static let classifiedTintTokens: [String: TintTokenKind] = [
+        // The app accent: `accentPairs` audits it as a bordered button label on bone and the panel.
+        "evergreen": .borderedLabel,
+        // A disclosure tint on bone and the panel: the "reading body on bone" and panel body pairs.
+        "text": .plainText,
+        // White words on a swipe button, audited; `swipeTintsThatAreNotSwipeTokens` owns them.
+        "swipeEvergreen": .swipe, "swipeOchre": .swipe, "swipePlum": .swipe, "swipeSlate": .swipe,
+        // Drawn on the always-dark playback, recording or live surfaces, where the plate pairs measure them.
+        "accent": .alwaysDark, "listeningAccent": .alwaysDark, "ochre": .alwaysDark, "watchControl": .alwaysDark,
+        "watchDanger": .alwaysDark,
+        // A `.borderedProminent` fill under `captureText`: the "capture action" pair.
+        "captureBackground": .prominentFill,
+        // A spinner on an evergreen fill, and a progress bar: no words drawn in them.
+        "onEvergreen": .nonText, "ochreText": .nonText
+    ]
+
+    private static let tintTokenPattern = try! NSRegularExpression(pattern: #"(?<![\w.])AppColors\.(\w+)"#)
+
+    /// The `AppColors` tokens inside each `.tint(…)` argument of a Swift file, in order, duplicates kept. Strings and
+    /// comments are stripped first, as the swipe guard does, so a `//` in a string cannot hide a real use. Block comments
+    /// are not handled, the same as the swipe guard.
+    static func tintTokens(in text: String) -> [String] {
+        let collapsed = text
+            .replacingOccurrences(of: #""(?:\\.|[^"\\\n])*""#, with: "\"\"", options: .regularExpression)
+            .replacingOccurrences(of: #"//[^\n]*"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        var tokens: [String] = []
+        var searchRange = collapsed.startIndex..<collapsed.endIndex
+        while let tint = collapsed.range(of: #"\.tint\("#, options: .regularExpression, range: searchRange) {
+            var depth = 1
+            var end = tint.upperBound
+            while end < collapsed.endIndex, depth > 0 {
+                if collapsed[end] == "(" { depth += 1 } else if collapsed[end] == ")" { depth -= 1 }
+                end = collapsed.index(after: end)
+            }
+            let argument = String(collapsed[tint.upperBound..<end])
+            let range = NSRange(argument.startIndex..., in: argument)
+            for match in tintTokenPattern.matches(in: argument, range: range) {
+                if let token = Range(match.range(at: 1), in: argument) { tokens.append(String(argument[token])) }
+            }
+            searchRange = tint.upperBound..<collapsed.endIndex
+        }
+        return tokens
+    }
+
+    func testTheTintTokenScanSeesEveryToken() {
+        let cases: [(String, [String])] = [
+            (".tint(AppColors.primaryAction)", ["primaryAction"]),
+            (".tint(\n  AppColors.primaryAction\n)", ["primaryAction"]),
+            (".tint(isActive ? AppColors.plum : AppColors.evergreen)", ["plum", "evergreen"]),
+            (".tint(AppColors.swipePlum.opacity(0.5))", ["swipePlum"]),
+            ("// .tint(AppColors.plum)\n.tint(AppColors.evergreen)", ["evergreen"]),
+            ("Text(\"// x\").tint(AppColors.plum)", ["plum"]),
+            (".background(AppColors.primaryAction)", []),
+            (".tint(.white)", []),
+            (".tint(LiveSessionActivityStyle.buttonTint)", []),
+            (".tint(AppColors.evergreen).foregroundStyle(AppColors.plum)", ["evergreen"]),
+            ("", [])
+        ]
+        for (input, expected) in cases {
+            XCTAssertEqual(Self.tintTokens(in: input), expected, input)
+        }
+    }
+
+    func testEveryTintTokenIsClassified() throws {
+        var unlisted: Set<String> = []
+        var seen: Set<String> = []
+        for file in try appSwiftFiles() {
+            let tokens = Self.tintTokens(in: try String(contentsOf: file, encoding: .utf8))
+            seen.formUnion(tokens)
+            for token in tokens where Self.classifiedTintTokens[token] == nil {
+                unlisted.insert("\(file.lastPathComponent): \(token)")
+            }
+        }
+        XCTAssertTrue(seen.contains("evergreen"), "the scan must see the app accent")
+        XCTAssertGreaterThanOrEqual(seen.count, 10, "the scan must see the app's tint tokens")
+        XCTAssertEqual(
+            unlisted.sorted(), [],
+            "a tint token with no decision: a `.bordered` control draws its words in its tint. Use `AppColors.evergreen`, or add the token with the pair that measures it (#4953)"
+        )
+    }
+
+    func testEveryBorderedLabelTokenHasAnAuditedPair() {
+        let colors = Dictionary(AppSemanticColorRGB.all.map { ($0.name, $0.color) }, uniquingKeysWith: { first, _ in first })
+        for token in Self.classifiedTintTokens.keys {
+            XCTAssertNotNil(colors[token], "\(token) is not a token in AppSemanticColorRGB.all")
+        }
+        let borderedLabels = AppColorContrastAudit.accentPairs.filter { $0.name.hasPrefix("bordered button label") }
+        for (token, kind) in Self.classifiedTintTokens where kind == .borderedLabel {
+            let color = colors[token]
+            XCTAssertTrue(
+                borderedLabels.contains { $0.foreground == color },
+                "\(token) is listed as a bordered label but no \"bordered button label\" pair measures it"
+            )
+        }
+    }
+
+    /// The two tints #4953 took out, measured the way the audit measures a bordered label: each fails in dark mode, which
+    /// is why neither is in `classifiedTintTokens`.
+    func testTheTwoUnlistedTintsFailAsBorderedLabelsInDarkMode() {
+        let primaryAction = AppSemanticColorRGB.primaryAction
+        let plum = AppSemanticColorRGB.plum
+        let cases: [(String, AppDynamicRGB, AppDynamicRGB)] = [
+            ("primaryAction over bone", primaryAction, primaryAction.composited(over: AppSemanticColorRGB.bone, alpha: 0.25)),
+            ("plum over panel", plum, plum.composited(over: AppSemanticColorRGB.panel, alpha: 0.25))
+        ]
+        for (name, foreground, background) in cases {
+            let ratio = AppColorContrastAudit.contrastRatio(foreground: foreground.dark, background: background.dark)
+            XCTAssertLessThan(ratio, 4.5, name)
         }
     }
 
@@ -426,13 +535,20 @@ final class AppColorUsageGuardTests: XCTestCase {
     /// The uses that exist today, by file. A file not listed here may not use one; a listed file may not use more.
     /// Lower a number, or delete the line, when a use goes. There is no test for slack, so two PRs that each remove or
     /// add a use never turn each other red.
+    /// MarginRecordingScreen: the divider, and the end-phrase hint (#3940), white at 75% under the timer.
+    /// FootnoteCardView: the note's words (white at 85%) and the card's fill (white at 10%), as `PinnedMarginCardView` draws
+    /// the friend's card above the same passage (#3777).
+    /// PlaybackSpokenNoteAudioVersion: the note's version card in Listening options, white on the control colour as the
+    /// mixed audio card beside it in PlaybackScreen (#4779).
+    /// ListeningOptionsLayout: the Details / Timeline / Export row's black 18% plate, moved out of PlaybackScreen (#5333).
+    /// Gate2LiveActivityWidget: the Margin circle's ring, white at 86% on its 16% fill (#4764), measured by its pair.
     private static let systemColorBaseline: [String: Int] = [
-        "AppTopBanners.swift": 1, "EdgeSwipeBackTransition.swift": 1, "MarginRecordingScreen.swift": 1,
-        "FirstMarginPromptCard.swift": 2, "Gate1RootView.swift": 1, "Gate2LiveActivityWidget.swift": 13,
-        "LiveActivityTourPreview.swift": 1, "LiveSessionActivityWidget.swift": 8, "MiniPlayer.swift": 1,
+        "AppTopBanners.swift": 1, "EdgeSwipeBackTransition.swift": 1, "MarginRecordingScreen.swift": 2,
+        "FirstMarginPromptCard.swift": 2, "FootnoteCardView.swift": 2, "Gate1RootView.swift": 1, "Gate2LiveActivityWidget.swift": 14,
+        "ListeningOptionsLayout.swift": 1, "LiveActivityTourPreview.swift": 1, "LiveSessionActivityWidget.swift": 8, "MiniPlayer.swift": 1,
         "PinnedMarginCardView.swift": 4, "PlaybackFeedbackTagView.swift": 3, "PlaybackLivePassageView.swift": 1,
         "PlaybackMarginRowView.swift": 1, "PlaybackMarginTranscriptionStatusView.swift": 1, "PlaybackPositionSlider.swift": 1,
-        "PlaybackScreen.swift": 6, "WatchUntetheredView.swift": 28
+        "PlaybackScreen.swift": 5, "PlaybackSpokenNoteAudioVersion.swift": 1, "SpeechAskCardView.swift": 3, "WatchUntetheredView.swift": 28
     ]
 
     private func systemColorUses() throws -> [String: Int] {
@@ -481,10 +597,11 @@ final class AppColorUsageGuardTests: XCTestCase {
 
     /// The default placeholder is a system grey, 1.73:1 on the input fill in light mode. `AppTextField` and
     /// `AppSecureField` draw it in `secondaryText`. Only the system alerts keep a plain field: the system draws those.
-    /// The follow lists' New list and Rename alerts (#4046) are two of them.
+    /// The follow lists' alerts (#4046) are four of them: New list in the "Lists for <show>" sheet, New list on the Lists
+    /// screen, and Rename and Include a list by link on a list's screen.
     private static let plainFieldAllowed: [String: Int] = [
         "ExperienceDesignSystem.swift": 3, "ExperienceItemDetailScreen.swift": 1, "ItemCollectionSheet.swift": 1,
-        "SpokenNoteRenameAlert.swift": 1, "ExperienceSourcesScreen.swift": 1, "FollowListPickerSheet.swift": 1
+        "SpokenNoteRenameAlert.swift": 1, "FollowListPickerSheet.swift": 1, "FollowListsScreen.swift": 1, "FollowListScreen.swift": 2
     ]
 
     func testTextFieldsUseTheAppPlaceholderColour() throws {
@@ -507,11 +624,14 @@ final class AppColorUsageGuardTests: XCTestCase {
     /// A token foreground and an opaque token background on one modifier chain, in either order, as `(foreground,
     /// background)` token names: `.foregroundStyle(AppColors.secondaryText) ... .background(AppColors.panel)`. The chain
     /// is the modifiers between the two, up to 300 characters, with no brace, semicolon or other view in between, so two
-    /// neighbouring views are never paired. Only the plain `foregroundStyle(AppColors.x)` form is seen: a colour chosen
-    /// by a ternary or a variable is not, and a tint has its own scan above.
+    /// neighbouring views are never paired. A colour chosen by a ternary is seen too: `isActive ? AppColors.onEvergreen :
+    /// AppColors.text` on `isActive ? AppColors.evergreen : AppColors.panel` is two pairs, the first arm on the first
+    /// arm and the second on the second (a ternary on one side only is paired with each arm of the other). An arm that
+    /// is not a bare token (`.clear`, `Color.white`, a tint with `.opacity(`) is not paired here: a tint has its own scan
+    /// above, and a system colour has its own. A colour chosen by a variable or a function is not seen (#3739).
     static func tokenChains(in text: String) throws -> [(foreground: String, background: String)] {
-        let background = #"(?:\.background|\.fill)\(\s*AppColors\.(\w+)\s*[,)]"#
-        let foreground = #"(?:foregroundStyle|foregroundColor)\(\s*AppColors\.(\w+)\s*\)"#
+        let background = #"(?:\.background|\.fill)\(\s*(?=[^(),]*AppColors\.)([^(),]*?)\s*[,)]"#
+        let foreground = #"(?:foregroundStyle|foregroundColor)\(\s*(?=[^()]*AppColors\.)([^()]*?)\s*\)"#
         let between = #"([^{};]{0,300}?)"#
         let otherView = #"\b(?:Text|Image|Label|Button|HStack|VStack|ZStack|ForEach|Spacer|Section|Toggle|Picker|Link|NavigationLink)\("#
         var chains: [(foreground: String, background: String)] = []
@@ -522,10 +642,38 @@ final class AppColorUsageGuardTests: XCTestCase {
             for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
                 func group(_ index: Int) -> String { Range(match.range(at: index), in: text).map { String(text[$0]) } ?? "" }
                 if group(2).range(of: otherView, options: .regularExpression) != nil { continue }
-                chains.append((group(foregroundGroup), group(backgroundGroup)))
+                chains += pairedArms(foreground: tokenArms(group(foregroundGroup)), background: tokenArms(group(backgroundGroup)))
             }
         }
         return chains
+    }
+
+    /// The arms of a colour argument, each a bare `AppColors` token name or nil: one arm for a plain colour, two for a
+    /// ternary (`condition ? first : second`).
+    private static func tokenArms(_ argument: String) -> [String?] {
+        let arms: [String]
+        // The ternary's own ` ? ` and ` : `, so an optional chain (`item?.state`) in the condition is not the question mark.
+        if let question = argument.range(of: " ? "), let colon = argument.range(of: " : ", range: question.upperBound..<argument.endIndex) {
+            arms = [String(argument[question.upperBound..<colon.lowerBound]), String(argument[colon.upperBound...])]
+        } else {
+            arms = [argument]
+        }
+        return arms.map { arm in
+            let trimmed = arm.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("AppColors."), trimmed.dropFirst("AppColors.".count).allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" })
+            else { return nil }
+            return String(trimmed.dropFirst("AppColors.".count))
+        }
+    }
+
+    private static func pairedArms(foreground: [String?], background: [String?]) -> [(foreground: String, background: String)] {
+        let count = max(foreground.count, background.count)
+        return (0..<count).compactMap { index in
+            let fore = foreground.count == 1 ? foreground[0] : foreground[index]
+            let back = background.count == 1 ? background[0] : background[index]
+            guard let fore, let back else { return nil }
+            return (fore, back)
+        }
     }
 
     /// `AppColors` names that are another token under a second name (`Gate1RootView.swift`), so a chain that uses one is
@@ -555,6 +703,30 @@ final class AppColorUsageGuardTests: XCTestCase {
         XCTAssertEqual(try Self.tokenChains(in: reversed).map { "\($0.foreground)/\($0.background)" }, ["evergreen/softGreen"])
         XCTAssertEqual(try Self.tokenChains(in: neighbours).count, 0)
         XCTAssertEqual(try Self.tokenChains(in: blocks).count, 0)
+    }
+
+    /// A colour chosen by a ternary is two pairs, first arm on first arm, never a cross product, and an arm that is a
+    /// tint or a system colour is left to the scans that own those (#3739).
+    func testTokenChainScanPairsTernaryArmsOneForOne() throws {
+        func chains(_ text: String) throws -> [String] { try Self.tokenChains(in: text).map { "\($0.foreground)/\($0.background)" } }
+        let both = "Text(\"a\").foregroundStyle(isActive ? AppColors.onEvergreen : AppColors.text).background(isActive ? AppColors.evergreen : AppColors.panel, in: Capsule())"
+        let reversed = "Capsule().fill(highlighted ? AppColors.evergreen : AppColors.softGreen).foregroundStyle(highlighted ? AppColors.onEvergreen : AppColors.evergreen)"
+        let oneSide = "Text(\"a\").foregroundStyle(isOn ? AppColors.text : AppColors.secondaryText).background(AppColors.panel)"
+        let arm = "Text(\"a\").foregroundStyle(isLit ? Color.white : AppColors.watchSecondary).background(isLit ? AppColors.softGreen : AppColors.panel)"
+        let tint = "Text(\"a\").foregroundStyle(AppColors.text).background(isLit ? AppColors.softGreen.opacity(0.5) : AppColors.panel)"
+        XCTAssertEqual(try chains(both), ["onEvergreen/evergreen", "text/panel"])
+        XCTAssertEqual(try chains(reversed), ["onEvergreen/evergreen", "evergreen/softGreen"])
+        XCTAssertEqual(try chains(oneSide), ["text/panel", "secondaryText/panel"])
+        XCTAssertEqual(try chains(arm), ["watchSecondary/panel"])
+        XCTAssertEqual(try chains(tint), [])
+        // A system colour or a clear fill earlier in the chain must not swallow the token pair after it.
+        let swallowed = "X.foregroundStyle(.secondary).foregroundStyle(AppColors.text).background(AppColors.panel)"
+        let clear = "X.foregroundStyle(AppColors.text).background(Color.clear).background(AppColors.panel)"
+        XCTAssertEqual(try chains(swallowed), ["text/panel"])
+        XCTAssertEqual(try chains(clear), ["text/panel"])
+        // An optional chain in the condition is not the ternary's question mark.
+        let optional = "X.foregroundStyle(item?.state == nil ? AppColors.text : AppColors.secondaryText).background(AppColors.panel)"
+        XCTAssertEqual(try chains(optional), ["text/panel", "secondaryText/panel"])
     }
 
     /// The case the audit found by hand: a pair nobody listed (`secondaryText` on `dangerBackground` is 4.27:1 in light

@@ -122,6 +122,8 @@ enum WrittenMarginReadings {
         let task = Task { @MainActor [weak model] in
             let rendered = await wait()
             if tapWaits[prompt.id]?.id == id { tapWaits[prompt.id] = nil }
+            // No `margin.tap` line from this wait: it serves the pinned card's Listen, the compact command and the friend's
+            // Margin that plays on its own, none of them a tap on a Margin's play button, and it logs no start to pair with (#4447).
             guard !Task.isCancelled, let model else { return }
             guard model.selectedItem.id == prompt.layer.itemId, !model.recordingNavigationIsLocked else { return } // the listener left
             if wasPending, model.pendingImportedCommentary?.id != prompt.id { return } // the card was dismissed or replaced
@@ -179,10 +181,17 @@ enum WrittenMarginReadings {
             // The row's callers are not all on the item screen (Now Playing, skim stops, reactions), so `leftItemScreen` does not
             // see every way out. Selecting another item, and Trash (which clears the selection), are caught here: the tap is
             // dropped unless the row's item is still the selected one.
-            guard !Task.isCancelled, let model, model.selectedItem.id == row.layer.itemId, !model.recordingNavigationIsLocked else { return }
-            guard rendered else { return model.reportWarning("That Margin couldn't be read aloud, so listening continues.") }
+            guard let model else { return }
+            guard !Task.isCancelled else { return model.recordMarginTap(.shared, .dropped(.cancelled)) } // left the item mid-wait, a review began, or Skip
+            guard model.selectedItem.id == row.layer.itemId else { return model.recordMarginTap(.shared, .dropped(.leftItem)) }
+            guard !model.recordingNavigationIsLocked else { return model.recordMarginTap(.shared, .dropped(.recordingInProgress)) }
+            guard rendered else {
+                model.recordMarginTap(.shared, .dropped(.readingFailed))
+                return model.reportWarning("That Margin couldn't be read aloud, so listening continues.")
+            }
             if model.pendingImportedCommentary != nil || model.playingImportedCommentary != nil || model.marginMoment != nil {
                 // Something else took the sound while the reading was made; the tap is not dropped without a word.
+                model.recordMarginTap(.shared, .dropped(.soundTaken))
                 return model.reportWarning("That Margin is ready now. Tap it again to hear it.")
             }
             replayingAfterWait.insert(key)
@@ -219,7 +228,9 @@ enum WrittenMarginReadings {
     /// most, then starts, unless the listener did anything else meanwhile (checked every quarter second against where
     /// they were when they asked); a reading still missing then gets the ordinary warning. True when this took the call
     /// (the review starts later, from here).
-    static func holdReview(itemId: String, thenContinue: Bool, entries: [SharedMarginReview.Entry], model: Gate1AppModel) -> Bool {
+    static func holdReview(
+        itemId: String, thenContinue: Bool, entries: [SharedMarginReview.Entry], catchUp: Bool = false, model: Gate1AppModel
+    ) -> Bool {
         let key = "review::\(itemId)"
         if releasedReviews.contains(key) { return false } // this is the start after the hold
         if holds[key] != nil { return true } // a second tap while the hold is running
@@ -240,7 +251,7 @@ enum WrittenMarginReadings {
             }
             guard !Task.isCancelled, let model, listenerPlace(model) == from else { return }
             releasedReviews.insert(key)
-            model.hangTelemetry.labels.scoped("writtenMarginReview") { model.reviewNewMargins(itemId: itemId, thenContinue: thenContinue, entries: entries) }
+            model.hangTelemetry.labels.scoped("writtenMarginReview") { model.reviewNewMargins(itemId: itemId, thenContinue: thenContinue, entries: entries, catchUp: catchUp) }
             releasedReviews.remove(key)
         }
         return true

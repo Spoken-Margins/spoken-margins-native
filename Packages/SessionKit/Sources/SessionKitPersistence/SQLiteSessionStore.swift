@@ -24,6 +24,10 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job", MovedMarginOrigin.recordKind]
     var db: OpaquePointer?
     let connectionLock = NSRecursiveLock()
+    /// How long a save waits for another connection or process (an extension, say) that holds SQLite's write lock before
+    /// it gives up. A cache write for a read turns it off (`writeCacheForRead`) and puts this back. A test sets it high to
+    /// tell a read that waits from one that does not, on state and not on a clock (#4761).
+    var writeBusyTimeoutMs: Int32 = 1_000
     /// Test hook (#4308): called on a thread that finds `connectionLock` held, just before it waits, so a test that forces
     /// two writers to overlap can wait for the second to be blocked instead of sleeping. nil, and so a no-op, outside tests.
     var onWaitingForWriteLock: (@Sendable () -> Void)?
@@ -79,7 +83,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         }
         // WAL permits concurrent readers, but only one connection may write.
         // Allow brief independent transactions to finish instead of dropping a save.
-        sqlite3_busy_timeout(db, 1_000)
+        sqlite3_busy_timeout(db, writeBusyTimeoutMs)
         try migrate()
         // WAL lets readers run beside the writer. Without it (a file system that can't, or an in-memory database) a
         // second connection would see a different database or lock the writer out, so reads stay on the one connection.
@@ -318,7 +322,10 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         case "owned_offline_asset": return columns(OwnedOfflineAsset.self, item: { $0.itemId })
         case "feed_subscription": return columns(FeedSubscription.self, item: { _ in nil })
         case "feed_entry": return columns(FeedEntry.self, item: { _ in nil })
+        case "rule_suggestion_state": return columns(RuleSuggestionState.self, item: { _ in nil })
         case "item_collection": return columns(ItemCollection.self, item: { _ in nil })
+        case LibraryFolderRecord.recordKind: return columns(LibraryFolderRecord.self, item: { _ in nil })
+        case PaperSourceRecord.recordKind: return columns(PaperSourceRecord.self, item: { _ in nil })
         case "follow_list": return columns(FollowList.self, item: { _ in nil })
         case "follow_list_link": return columns(ListLink.self, item: { _ in nil })
         case "listening_rule": return columns(ListeningRule.self, item: { _ in nil })
@@ -731,17 +738,18 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return revisions.filter { $0.interjectionId == interjectionId }
     }
 
-    /// For each Margin of an item that was ever shared as text, the read-aloud choice its newest share carried (#3472).
+    /// For each Margin of an item that was ever shared as text, the read-aloud choice its newest share carried (#3472),
+    /// keyed by `Interjection.sessionScopedId` (#4688): each pass numbers its Margins from "ij-001".
     /// One read for the item's shares that pulls only the Margin id and the choice out of each row, so the share sheet
     /// decodes no transcripts and reads no share once per Margin. Shares are saved once and never changed. `updated_at`
     /// counts whole seconds and share ids are random, so two shares saved in the same second are ordered by `rowid`,
     /// which is the order they were inserted in, not by `id`.
     public func loadLastSentReadAloud(itemId: String) throws -> [String: Bool] {
-        struct Row: Decodable { let margin: String; let choice: Int }
+        struct Row: Decodable { let session: String?; let margin: String; let choice: Int }
         var choices: [String: Bool] = [:]
         try readTexts(
             """
-            SELECT json_object('margin', json_extract(payload, '$.interjectionId'), 'choice', json_extract(payload, '$.sentReadAloud'))
+            SELECT json_object('session', json_extract(payload, '$.sessionId'), 'margin', json_extract(payload, '$.interjectionId'), 'choice', json_extract(payload, '$.sentReadAloud'))
             FROM records WHERE kind = 'interjection_share_revision' AND item_id = ?
               AND CASE WHEN json_valid(payload)
                        THEN json_extract(payload, '$.sentReadAloud') IS NOT NULL AND json_extract(payload, '$.interjectionId') IS NOT NULL
@@ -750,9 +758,32 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             """, [itemId], name: "last_sent_read_aloud"
         ) { text in
             guard let row = try? decoder.decode(Row.self, from: Data(text.utf8)) else { return }
-            choices[row.margin] = row.choice != 0
+            choices[Interjection.sessionScopedId(sessionId: row.session ?? "", id: row.margin)] = row.choice != 0
         }
         return choices
+    }
+
+    /// For each Margin of an item whose newest shares wrote a run-up length (#4171), the length its newest such share
+    /// wrote, keyed by `Interjection.sessionScopedId`. Same shape and ordering as `loadLastSentReadAloud`: one read that pulls out only the Margin id and the
+    /// length. A share that wrote none (the Margin was at 20 s and never shared at another length) is skipped, so it
+    /// leaves an earlier length where it was, as a recording leaves the read-aloud choice.
+    public func loadLastSentLeadIns(itemId: String) throws -> [String: Int] {
+        struct Row: Decodable { let session: String?; let margin: String; let leadIn: Int }
+        var lengths: [String: Int] = [:]
+        try readTexts(
+            """
+            SELECT json_object('session', json_extract(payload, '$.sessionId'), 'margin', json_extract(payload, '$.interjectionId'), 'leadIn', json_extract(payload, '$.sentLeadInMs'))
+            FROM records WHERE kind = 'interjection_share_revision' AND item_id = ?
+              AND CASE WHEN json_valid(payload)
+                       THEN json_extract(payload, '$.sentLeadInMs') IS NOT NULL AND json_extract(payload, '$.interjectionId') IS NOT NULL
+                       ELSE 0 END
+            ORDER BY updated_at ASC, rowid ASC;
+            """, [itemId], name: "last_sent_lead_ins"
+        ) { text in
+            guard let row = try? decoder.decode(Row.self, from: Data(text.utf8)) else { return }
+            lengths[Interjection.sessionScopedId(sessionId: row.session ?? "", id: row.margin)] = row.leadIn
+        }
+        return lengths
     }
 
     public func importCommentaryLayer(
@@ -1579,6 +1610,57 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try deleteRecord(kind: "item_collection", id: id)
     }
 
+    /// A followed reading list (#4341). Its own record kind with no item_id: no table or index changes and schema 5 stays,
+    /// an older build never queries the kind, and deleting an item never deletes one.
+    public func savePaperSource(_ record: PaperSourceRecord) throws {
+        try save(kind: PaperSourceRecord.recordKind, id: record.id, sessionId: nil, itemId: nil, value: record)
+    }
+
+    /// In the order they were followed.
+    public func loadPaperSources() throws -> [PaperSourceRecord] {
+        let records: [PaperSourceRecord] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;",
+            [PaperSourceRecord.recordKind]
+        )
+        return records.sorted { ($0.followedAt, $0.id) < ($1.followedAt, $1.id) }
+    }
+
+    public func deletePaperSource(id: String) throws {
+        try deleteRecord(kind: PaperSourceRecord.recordKind, id: id)
+    }
+
+    /// The read and the save in one transaction: a delete waits for it or goes first, never between.
+    @discardableResult
+    public func updatePaperSource(id: String, _ change: (inout PaperSourceRecord) throws -> Void) throws -> PaperSourceRecord? {
+        try withTransaction {
+            guard var record = try loadPaperSources().first(where: { $0.id == id }) else { return nil }
+            try change(&record)
+            try savePaperSource(record)
+            return record
+        }
+    }
+
+    /// A Library folder's own details (#3769), beside its `ItemCollection` under the same ID. A new record kind with no
+    /// item_id: no table or index changes and schema 5 stays, an older build never queries the kind, and deleting an item
+    /// never deletes one.
+    public func saveLibraryFolder(_ folder: LibraryFolderRecord) throws {
+        try save(kind: LibraryFolderRecord.recordKind, id: folder.id, sessionId: nil, itemId: nil, value: folder)
+    }
+
+    /// Oldest import first, so the order is stable.
+    public func loadLibraryFolders() throws -> [LibraryFolderRecord] {
+        let folders: [LibraryFolderRecord] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;",
+            [LibraryFolderRecord.recordKind]
+        )
+        return folders.sorted { ($0.importedAt, $0.id) < ($1.importedAt, $1.id) }
+    }
+
+    /// Removes only the record. The collection and every item and Margin stay.
+    public func deleteLibraryFolder(id: String) throws {
+        try deleteRecord(kind: LibraryFolderRecord.recordKind, id: id)
+    }
+
     /// Follow lists (#4046) are their own record kind with no item_id, so Build 29 and the later shipped builds, which read
     /// every record by an explicit kind, never see them. The record id is the list id, so a rename keeps it.
     public func saveFollowList(_ list: FollowList) throws {
@@ -1684,6 +1766,21 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// "Undo Show less". Takes the mark for the entry or, with none, the item.
     public func deleteShowLessMark(entryId: String?, itemId: String?) throws {
         try deleteRecord(kind: "show_less_mark", id: ShowLessMark.id(entryId: entryId, itemId: itemId))
+    }
+
+    /// Rule suggestion states (#4046): "Not now" and "Don't suggest this". Their own record kind with no item_id, so the shipped
+    /// builds' readers never see them. The record id is the suggestion's key, so putting one off twice keeps one record.
+    public func saveRuleSuggestionState(_ state: RuleSuggestionState) throws {
+        try save(kind: "rule_suggestion_state", id: state.key, sessionId: nil, itemId: nil, value: state)
+    }
+
+    /// In key order, so the order is the same on every read.
+    public func loadRuleSuggestionStates() throws -> [RuleSuggestionState] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;", ["rule_suggestion_state"])
+    }
+
+    public func deleteRuleSuggestionState(key: String) throws {
+        try deleteRecord(kind: "rule_suggestion_state", id: key)
     }
 
     public func loadFeedSubscriptions() throws -> [FeedSubscription] {
@@ -1848,7 +1945,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         'podcast_download', 'owned_offline_asset', 'episode_map_preparation_job', 'audio_preparation_job', \
         'prepared_audio_manifest', 'edition_fingerprint_spine', 'transcript_phrase_sketch', \
         'resolved_listening_map_projection', 'watch_audio_package', 'watch_sync_event', 'watch_package_request', \
-        '\(TranscriptTimes.recordKind)'
+        '\(TranscriptTimes.recordKind)', 'publisher_audio_choice'
         """
 
     private static let quarantinedRowBelongsToItem = """
@@ -2674,6 +2771,34 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         }
     }
 
+    /// A copy of the listener's own Margin that an imported packet carried back (#4697) is not "from a friend": the same
+    /// rows every shared-Margin read below uses leave it out, so the Library row, its New count, the names and the Shared
+    /// Margins filter count only what other people made. It is the rule of `OwnMarginEchoes`, written for SQL: an own
+    /// Margin on the same item went out under the packet identity this Margin arrived as (its layer's digest and its
+    /// `packageScopedId`), or under one it also arrived as (`alsoSharedAs`, #858). Words and labels play no part. Only
+    /// active Margins that were shared at all are parsed (a string search skips the rest first), as the reply graph takes
+    /// only the listener's active Margins, so the row and the review agree. A broken payload matches nothing (`json_each`
+    /// throws on malformed text), a list element that is not an object is skipped by its `type` column (`json_type` on
+    /// the value would throw), and the own-Margin lookup is the `(kind, item_id)` index. There is no `;` in it: `newNotesSQL` adds the
+    /// hidden-list conditions by replacing its trailing one. Read-only: the stored copy is not touched.
+    static let notAnEchoOfOwnMarginSQL = """
+          AND NOT EXISTS (
+              SELECT 1 FROM records AS mine
+              JOIN json_each(CASE WHEN json_valid(mine.payload) THEN mine.payload ELSE '{}' END, '$.sharedAs') AS identity
+              WHERE mine.kind = 'interjection' AND mine.item_id = layer.item_id
+                AND instr(mine.payload, '"sharedAs"') > 0
+                AND CASE WHEN json_valid(mine.payload) THEN json_extract(mine.payload, '$.status') = 'active' ELSE 0 END
+                AND identity.type = 'object'
+                AND (
+                    (json_extract(identity.value, '$.packageDigest') = CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.packageDigest') END
+                     AND json_extract(identity.value, '$.packageScopedId') = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.packageScopedId') END)
+                    OR EXISTS (
+                        SELECT 1 FROM json_each(CASE WHEN json_valid(note.payload) THEN note.payload ELSE '{}' END, '$.alsoSharedAs') AS also
+                        WHERE also.type = 'object'
+                          AND json_extract(also.value, '$.packageDigest') = json_extract(identity.value, '$.packageDigest')
+                          AND json_extract(also.value, '$.packageScopedId') = json_extract(identity.value, '$.packageScopedId'))))
+"""
+
     /// Margins other people shared, counted per item for the Library rows (#1792). One query in SQL:
     /// opening the Library must not decode every imported recording, transcript and anchor. Only a
     /// layer the listener hasn't deleted counts, as on the Margins screens (which ignore the on/off switch).
@@ -2696,6 +2821,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
          AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
         WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
           AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        \(SQLiteSessionStore.notAnEchoOfOwnMarginSQL)
         GROUP BY layer.item_id;
         """
 
@@ -2712,6 +2838,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
          AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
         WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
           AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        \(SQLiteSessionStore.notAnEchoOfOwnMarginSQL)
         GROUP BY layer.item_id, layer.id;
         """
 
@@ -2746,6 +2873,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
                   ELSE 0 END
         WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
           AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        \(SQLiteSessionStore.notAnEchoOfOwnMarginSQL)
         GROUP BY layer.item_id;
         """
 
@@ -2760,7 +2888,9 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
          AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
         WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
           AND CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.firstHeardAt') IS NULL AND json_extract(note.payload, '$.audioPath') IS NULL ELSE 0 END
-          AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END;
+          AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        \(SQLiteSessionStore.notAnEchoOfOwnMarginSQL)
+        ;
         """
 
     /// The same SQL with the listener's hidden senders and hidden Margins left out (#3469): the layers of a hidden
@@ -2874,6 +3004,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
          AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
         WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
           AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        \(SQLiteSessionStore.notAnEchoOfOwnMarginSQL)
         GROUP BY layer.item_id;
         """
 
@@ -2978,6 +3109,22 @@ extension SQLiteSessionStore: PublisherAudioRepository {
     public func loadPublisherAudio(itemId: String) throws -> PublisherAudio? {
         try loadOptional(kind: Self.publisherAudioKind, id: itemId)
     }
+
+    /// The listener's voice choice (#4640), kind "publisher_audio_choice", one row per item, linked by the item id
+    /// like the recording's record. No table, column or schema_version change.
+    static let publisherAudioChoiceKind = "publisher_audio_choice"
+
+    public func loadPublisherAudioChoice(itemId: String) throws -> PublisherAudioChoice? {
+        try loadOptional(kind: Self.publisherAudioChoiceKind, id: itemId)
+    }
+
+    public func savePublisherAudioChoice(_ choice: PublisherAudioChoice) throws {
+        try save(kind: Self.publisherAudioChoiceKind, id: choice.itemId, sessionId: nil, itemId: choice.itemId, value: choice)
+    }
+
+    public func deletePublisherAudioChoice(itemId: String) throws {
+        try deleteRecord(kind: Self.publisherAudioChoiceKind, id: itemId)
+    }
 }
 
 /// Community map uploads (#552) live in the records table as kind "community_map_upload", one
@@ -3003,3 +3150,5 @@ extension SQLiteSessionStore: CommunityMapUploadRepository {
 
 /// SQLite serializes its own connection, so a streamed reply's cursor can be saved off the main thread (#2509).
 extension SQLiteSessionStore: ConcurrentSessionRepository {}
+
+extension SQLiteSessionStore: PaperSourceStoring {}

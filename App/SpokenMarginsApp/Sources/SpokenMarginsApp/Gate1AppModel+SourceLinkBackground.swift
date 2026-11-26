@@ -85,7 +85,7 @@ extension Gate1AppModel {
             await Task.detached(priority: .utility) { handoffStore.deleteManagedPDF(at: fileURL) }.value
             return itemId
         }
-        guard let url = URL(string: trimmed),
+        guard let url = URL(string: trimmed).map(ArxivPaperLink.openingURL), // #5049
               let scheme = url.scheme?.lowercased(),
               ["http", "https"].contains(scheme) else {
             throw SessionKitError.persistenceFailed("This share does not contain a valid podcast, RSS, or audio URL.")
@@ -103,7 +103,7 @@ extension Gate1AppModel {
         let fetched = FetchedPageMemo() // the voiceover lookup reads the post page from here (#810)
         let resolution = try await LinkArticleFallback.resolve(
             request, url: url, resolver: sourceLinkResolver, remembering: fetched, allowsArticle: feedEntry == nil,
-            using: readablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }
+            using: listenerReadablePageExtractor, record: { diagnostics["lastSourceLinkArticleFallback"] = $0 }
         )
         guard case .podcast(let result) = resolution else {
             if case .article(let article) = resolution {
@@ -174,12 +174,45 @@ extension Gate1AppModel {
 
     /// A shared or pasted Substack post keeps its voiceover beside the article (#810). Runs after the import,
     /// so a slow page never holds up the share.
-    func rememberSharedLinkVoiceover(sharedURL: URL, article: BrowserTextHandoff, itemId: String, fetched: FetchedPageMemo) {
+    /// `articleFeed` is true only on the listener's open or play of an article with no provider address (#4640): its own
+    /// feed is asked, through the Follow check's discovery, and nothing else is sent.
+    func rememberSharedLinkVoiceover(sharedURL: URL, article: BrowserTextHandoff, itemId: String, fetched: FetchedPageMemo, articleFeed: Bool = false) {
         let voiceover = sharedLinkVoiceover
-        guard let store = try? requireStore(), voiceover.claim(itemId: itemId) else { return }
+        guard let store = try? requireStore() else { return }
+        // An import whose address has no provider route sends nothing, so it doesn't claim the item for the launch:
+        // the item's first open can still ask its feed (#4640).
+        let hasProviderRoute = [sharedURL, URL(string: article.source.url)].compactMap { $0 }
+            .contains { VoiceoverLookupDecision.providerRoute(for: $0) != nil }
+        if articleFeed || hasProviderRoute {
+            guard voiceover.claim(itemId: itemId) else { return }
+        }
         let transcriber = sourceTranscriptionClient
-        Task { [weak self] in
-            await voiceover.remember(sharedURL: sharedURL, article: article, itemId: itemId, fetched: fetched, store: store, transcriber: transcriber) { result in
+        var articleFeedAudio: SharedPostVoiceoverLookup.ArticleFeedAudio?
+        if articleFeed {
+            let coordinator = requireFollowedSourceCoordinator(store: store)
+            articleFeedAudio = { page in
+                // The word count is the stored article's, read off the main actor. The membership rule is the Follow
+                // check's for the same item, so the two share one discovery of the page.
+                let read = try? await StoreReader(store).read { store -> (words: Int?, hasSourceURL: Bool) in
+                    let item = try store.loadItem(id: itemId)
+                    return (item.text.map(PublisherAudioDetector.wordCount), item.sourceURL != nil)
+                }
+                return await coordinator.articleFeedAudio(pageURL: page, bodyWordCount: read?.words ?? nil,
+                                                          requiringItemMembership: !(read?.hasSourceURL ?? false))
+            }
+        }
+        // Typed apart from the call: inferred inside it, the closure in a conditional left the compiler unable to
+        // type-check the call on Swift 6.4.
+        var status: (@MainActor (String) -> Void)?
+        if articleFeed {
+            status = { [weak self] value in self?.diagnostics["articleFeedAudio"] = "\(itemId): \(value)" }
+        }
+        let feedAudio = articleFeedAudio
+        Task { [weak self, status] in
+            await voiceover.remember(
+                sharedURL: sharedURL, article: article, itemId: itemId, fetched: fetched, store: store, transcriber: transcriber,
+                articleFeedAudio: feedAudio, status: status
+            ) { result in
                 guard let self else { return }
                 self.hangTelemetry.labels.scoped("sharedLinkVoiceover") { self.diagnostics["sharedLinkVoiceover"] = result }
             }

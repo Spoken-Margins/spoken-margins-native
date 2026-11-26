@@ -82,7 +82,7 @@ struct Gate1RootView: View {
             CatalogDrawerView()
                 .environmentObject(catalogDrawer)
         }
-        .modifier(SupertonicDownloadNoticePresentation(notice: supertonicNotice))
+        .modifier(SupertonicDownloadNoticePresentation(notice: supertonicNotice)).modifier(WatchReturnToAppTipPresentation(supertonicNotice: supertonicNotice, keyboardIsPresented: keyboardIsPresented))
         .trackedSheet(isPresented: $model.isHelpPresented) {
             HelpScreen()
                 .environmentObject(model)
@@ -349,7 +349,7 @@ struct InterjectionDetailView: View {
                     Text(anchorContextText(current.anchor.anchorAfter, status: current.captureKind == .written ? .unavailable : current.anchorContextStatus))
                         .textSelection(.enabled)
                     if current.captureKind != .written, current.anchorContextStatus == .unavailable {
-                        Button("Retry Context") {
+                        Button("Retry Finding Source Words") {
                             model.retryAnchorContext(current)
                         }
                         .accessibilityIdentifier("interjection.detail.retryContext")
@@ -523,6 +523,7 @@ enum AppColors {
     static let watchBackground = dynamicColor(AppSemanticColorRGB.watchBackground)
     static let watchControl = dynamicColor(AppSemanticColorRGB.watchControl)
     static let watchSecondary = dynamicColor(AppSemanticColorRGB.listeningSecondary)
+    static let watchStar = dynamicColor(AppSemanticColorRGB.watchStar)
     static let dangerText = dynamicColor(AppSemanticColorRGB.dangerText)
     static let dangerBackground = dynamicColor(AppSemanticColorRGB.dangerBackground)
     static let interjectText = dynamicColor(AppSemanticColorRGB.captureText)

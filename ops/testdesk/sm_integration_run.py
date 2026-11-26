@@ -688,9 +688,13 @@ def default_run(cmd: list, cwd: Optional[Path] = None, timeout: Optional[float] 
 
 @contextlib.contextmanager
 def exclusive_slot():
-    """Reserve the simulator nonblocking under the lane's decision lock, as the Codex Test Desk did.
+    """Reserve the simulator nonblocking under the lane's decision lock, then let the decision lock go (#4736).
 
-    Both descriptors go to verify-tests so a parent exit cannot unlock a running child."""
+    The job starts only when no other simulator job runs, and it takes the first slot. Only the slot's descriptor goes
+    to verify-tests, so a parent exit cannot unlock a running child. The decision lock is released once the slot is
+    taken: a Test Desk boot then gets the second slot under the normal second-slot rule instead of waiting out the
+    whole run (35 minutes on 2026-11-19). The shared "SpokenMargins Test Runner" this job tests on is guarded by its
+    own Mac-wide lock, which verify-tests takes for every run without --device (lane_slots.acquire_test_runner)."""
     folder = lane_slots.state_dir()
     folder.mkdir(parents=True, exist_ok=True)
     with (folder / lane_slots.SIMULATOR_DECISION).open('a+') as decision:
@@ -702,10 +706,10 @@ def exclusive_slot():
             raise TimeoutError('Mac-wide simulator slot is busy')
         handle, _, _ = lane_slots.acquire([lane_slots.SIMULATOR_SLOT], 'simulator slot',
                                          'Integration script', max_wait=0)
-        try:
-            yield (handle.fileno(), decision.fileno())
-        finally:
-            lane_slots.release_handle(handle)
+    try:
+        yield (handle.fileno(),)
+    finally:
+        lane_slots.release_handle(handle)
 
 
 class Ops:

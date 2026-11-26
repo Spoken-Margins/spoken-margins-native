@@ -1,14 +1,11 @@
-"""Every workflow file is valid YAML, and each lane Verdict step really gets its inputs (#2596).
+"""Every workflow file is valid YAML, and no green check hides a failed test (#2596).
 
 PR #2604 deleted the `env:` line above `VERDICT:` and `HELD:` in two Verdict steps. The file was no longer
 valid YAML, GitHub rejected the whole workflow, and no test noticed because the others read lane.yml as text.
 
-Two checks:
-
-1. Parse every .github/workflows/*.yml with a real YAML parser (PyYAML if installed, otherwise Ruby's, which
-   macOS and the hosted Linux images carry). If neither exists the test fails: a skipped parse is a hole.
-2. In lane.yml, every step named Verdict has an `env` map holding every one of VERDICT and HELD that its script reads, and a text check that does
-   not need a parser sees the same thing (the `env:` line sits above its keys, at the step's key indent).
+Parse every .github/workflows/*.yml with a real YAML parser (PyYAML if installed, otherwise Ruby's, which macOS
+and the hosted Linux images carry). If neither exists the test fails: a skipped parse is a hole. The lane's own
+Verdict-step checks went with lane.yml (#4769).
 """
 import json
 import re
@@ -16,6 +13,7 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = sorted((ROOT / '.github/workflows').glob('*.yml'))
@@ -37,43 +35,6 @@ def parse(path):
     if done.returncode != 0:
         raise AssertionError(f'{path.name} is not valid YAML: {done.stderr.strip()[:400]}')
     return json.loads(done.stdout)
-
-
-def used_inputs(script):
-    """The Verdict inputs a script reads as shell variables ($VERDICT, ${HELD})."""
-    return [name for name in ('VERDICT', 'HELD') if re.search(r'\$\{?' + name + r'\b', script)]
-
-
-def verdict_steps_in_text(text):
-    """(line number, step lines) for each `- name: Verdict` step, the step ending at the next line indented no further than its dash."""
-    lines = text.splitlines()
-    found = []
-    for index, line in enumerate(lines):
-        match = re.match(r'^(\s*)- name: Verdict\s*$', line)
-        if not match:
-            continue
-        dash = len(match.group(1))
-        end = index + 1
-        while end < len(lines) and (not lines[end].strip() or len(lines[end]) - len(lines[end].lstrip()) > dash):
-            end += 1
-        found.append((index + 1, lines[index:end]))
-    return found
-
-
-def env_keys_in_step_text(step_lines):
-    """Keys listed under a step-level `env:` line, or None when the step has no such line."""
-    key_indent = len(step_lines[0]) - len(step_lines[0].lstrip()) + 2
-    for position, line in enumerate(step_lines):
-        if re.match(r'^\s*env:\s*$', line) and len(line) - len(line.lstrip()) == key_indent:
-            keys = []
-            for after in step_lines[position + 1:]:
-                if after.strip() and len(after) - len(after.lstrip()) <= key_indent:
-                    break
-                found = re.match(r'^\s+([A-Z_][A-Z0-9_]*):', after)
-                if found:
-                    keys.append(found.group(1))
-            return keys
-    return None
 
 
 class WorkflowFilesParse(unittest.TestCase):
@@ -107,63 +68,29 @@ class AlwaysOnCheck(unittest.TestCase):
         self.assertIn('scripts/tests/test_workflow_files.py', steps)
 
 
-class LaneVerdictSteps(unittest.TestCase):
-    TEXT = (ROOT / '.github/workflows/lane.yml').read_text()
-
-    def test_each_verdict_step_has_env_with_verdict_and_held(self):
-        jobs = parse(ROOT / '.github/workflows/lane.yml')['jobs']
-        seen = 0
-        for job_name, job in jobs.items():
-            for step in job.get('steps', []):
-                if step.get('name') != 'Verdict':
-                    continue
-                seen += 1
-                with self.subTest(job=job_name):
-                    self.assertIsInstance(step.get('env'), dict, f'{job_name}: Verdict step has no env map')
-                    for name in used_inputs(step.get('run', '')):
-                        self.assertIn(name, step['env'], f'{job_name}: Verdict step reads ${name} but env lacks it')
-                    self.assertIn('VERDICT', step['env'])
-        self.assertGreaterEqual(seen, 4, 'lane, automerge, automerge-mac and release each have a Verdict step')
-
-    def test_the_text_check_sees_the_same_thing_without_a_parser(self):
-        steps = verdict_steps_in_text(self.TEXT)
-        self.assertGreaterEqual(len(steps), 4)
-        for number, step_lines in steps:
-            with self.subTest(line=number):
-                keys = env_keys_in_step_text(step_lines)
-                self.assertIsNotNone(keys, f'Verdict step at line {number} has no env: line')
-                self.assertIn('VERDICT', keys)
-                for name in used_inputs('\n'.join(step_lines)):
-                    self.assertIn(name, keys, f'Verdict step at line {number} reads ${name} but env lacks it')
-
-    def test_the_text_check_notices_the_2604_breakage(self):
-        broken = self.TEXT.replace("        if: steps.run.outputs.reported == 'true'\n        env:\n          VERDICT:",
-                                   "        if: steps.run.outputs.reported == 'true'\n          VERDICT:", 1)
-        self.assertNotEqual(broken, self.TEXT, 'the sample no longer matches lane.yml; update this test')
-        missing = [number for number, lines in verdict_steps_in_text(broken) if env_keys_in_step_text(lines) is None]
-        self.assertEqual(len(missing), 1)
-
-
-TEST_COMMAND = re.compile(r'\b(xcodebuild|swift test|verify-tests\.py|sm_integration_run\.py|hosted_t3_check\.py|lane-runner\.py)\b')
+TEST_COMMAND = re.compile(r'\b(xcodebuild|swift test|verify-tests\.py|sm_integration_run\.py|hosted_t3_check\.py)\b')
 IGNORES_FAILURE = re.compile(r'\|\|\s*(true|:)\s*$')
 # check-build29-database.sh runs `swift test` for its fixture writer, so a job that calls it runs a test (shipped-build-compat).
-TEST_RUNNING = re.compile(r'test-without-building|verify-tests|swift test|unittest|sm_integration_run|hosted_t3_check|check-build29-database')
+TEST_RUNNING = re.compile(r'test-without-building|verify-tests|swift test|unittest|sm_integration_run|hosted_t3_check|check-build29-database|(?:main|branch)_t3\.py run')
+# main_t3.py and branch_t3.py `run` drive lane-runner.py's T3 on a simulator clone (#4839), so a job that calls them runs tests.
 
-# Steps allowed to carry continue-on-error: true, by (workflow file, job id). Each one is a ping or a report-of-a-report
-# that is not a test result ("Not a lane result: a failure here must not make the run look red" in lane.yml).
-# A new entry here needs the same kind of reason; a test or build step never belongs on this list.
+# Jobs allowed to carry continue-on-error: true, by (workflow file, job id). Each one must be a ping or a
+# report-of-a-report that is not a test result; lane.yml's three went with it (#4769). A new entry here needs the same
+# kind of reason; a test or build step never belongs on this list.
 # A cache-only step (`uses: actions/cache/...`, no `run:`) may carry it in any job.
-CONTINUE_ON_ERROR_ALLOWED = {
-    ('lane.yml', 'lane-lost'),
-    ('lane.yml', 'lane-open-lane'),
-    ('lane.yml', 'lane-open-automerge'),
-}
+CONTINUE_ON_ERROR_ALLOWED = set()
 
 
 def is_cache_restore_only(step):
     """A step that only restores or saves a cache (`uses: actions/cache/...`, no `run:`). A failed restore must cost a
     cold build, never a red check (hosted-app-macos.yml, #2617); it runs no test, so it can't hide a failed one."""
     return str(step.get('uses', '')).startswith('actions/cache/') and 'run' not in step
+
+
+def is_app_token_mint_only(step):
+    """A step that only mints a GitHub App token (`uses: actions/create-github-app-token`, no `run:`). A failed mint
+    must fall back to the next token, never fail the job (merge-queue-label-bridge.yml, #4915); it runs no test."""
+    return str(step.get('uses', '')).startswith('actions/create-github-app-token') and 'run' not in step
 
 
 def continue_on_error_violations(documents):
@@ -175,7 +102,8 @@ def continue_on_error_violations(documents):
             where = (name, job_id)
             steps = job.get('steps', [])
             flagged = job.get('continue-on-error') is True or any(
-                step.get('continue-on-error') is True and not is_cache_restore_only(step) for step in steps)
+                step.get('continue-on-error') is True and not is_cache_restore_only(step) and not is_app_token_mint_only(step)
+                for step in steps)
             if flagged and where not in CONTINUE_ON_ERROR_ALLOWED:
                 found.append(f'{where}: continue-on-error: true can turn a failed test into a green check')
             if flagged:
@@ -200,20 +128,6 @@ def all_steps():
 class WorkflowHonesty(unittest.TestCase):
     """A check that is green must have tested what its name says (#2596). These rules catch the ways it was not."""
 
-    def test_a_verdict_step_never_exits_zero_and_fails_an_inconclusive_that_is_not_a_hold(self):
-        gating = 0
-        for name, job_id, _, step in all_steps():
-            if step.get('name') != 'Verdict' or 'INCONCLUSIVE' not in step.get('run', ''):
-                continue
-            gating += 1
-            script = step['run']
-            with self.subTest(workflow=name, job=job_id):
-                self.assertNotRegex(script, r'\bexit 0\b', 'a Verdict step must not end the job green early')
-                branch = re.search(r'INCONCLUSIVE\s*\][^\n]*\n?\s*then(.*?)(?:\n\s*elif|\n\s*else|\n\s*fi)', script, re.S)
-                self.assertIsNotNone(branch, 'no branch for INCONCLUSIVE')
-                self.assertIn('exit 1', branch.group(1), 'INCONCLUSIVE (not a hold) must make the check red')
-        self.assertGreaterEqual(gating, 3, 'lane, automerge and automerge-mac Verdict steps gate on INCONCLUSIVE')
-
     def test_continue_on_error_is_only_on_the_listed_ping_and_report_jobs(self):
         documents = {path.name: parse(path) for path in WORKFLOWS}
         self.assertEqual(continue_on_error_violations(documents), [])
@@ -221,24 +135,35 @@ class WorkflowHonesty(unittest.TestCase):
     def test_a_pr_adding_a_forbidden_continue_on_error_is_red(self):
         # #2641 added it to the lane's cache steps, its checks were green, and `main` went red (#2711, #2714). The rule
         # above, applied to the workflows as that PR would have left them, must fail for it.
-        lane = parse(ROOT / '.github/workflows/lane.yml')
-        step = next(step for step in lane['jobs']['lane']['steps'] if step.get('run'))
+        # main-t3.yml stands in for the lane's workflow, retired with it (#4769).
+        workflow = parse(ROOT / '.github/workflows/main-t3.yml')
+        job_id, job = next((job_id, job) for job_id, job in workflow['jobs'].items()
+                           if any(step.get('run') for step in job.get('steps', [])))
+        step = next(step for step in job['steps'] if step.get('run'))
         step['continue-on-error'] = True
-        found = continue_on_error_violations({'lane.yml': lane})
-        self.assertTrue(any("('lane.yml', 'lane')" in message for message in found), found)
+        found = continue_on_error_violations({'main-t3.yml': workflow})
+        self.assertTrue(any(f"('main-t3.yml', '{job_id}')" in message for message in found), found)
         # Job level, on a job that is not listed.
-        lane = parse(ROOT / '.github/workflows/lane.yml')
-        lane['jobs']['lane']['continue-on-error'] = True
-        self.assertTrue(continue_on_error_violations({'lane.yml': lane}))
+        workflow = parse(ROOT / '.github/workflows/main-t3.yml')
+        workflow['jobs'][job_id]['continue-on-error'] = True
+        self.assertTrue(continue_on_error_violations({'main-t3.yml': workflow}))
 
     def test_the_listed_jobs_and_cache_only_steps_are_allowed_but_a_test_step_on_a_listed_job_is_not(self):
-        listed = {'lane.yml': {'jobs': {'lane-lost': {'continue-on-error': True, 'steps': [{'run': 'echo ping'}]}}}}
-        self.assertEqual(continue_on_error_violations(listed), [])
         cache = {'x.yml': {'jobs': {'job': {'steps': [{'uses': 'actions/cache/restore@v4', 'continue-on-error': True}]}}}}
         self.assertEqual(continue_on_error_violations(cache), [])
-        tests = {'lane.yml': {'jobs': {'lane-lost': {'steps': [
-            {'run': 'python3 scripts/verify-tests.py --plan fast', 'continue-on-error': True}]}}}}
-        self.assertTrue(continue_on_error_violations(tests))
+        with mock.patch.dict(globals(), CONTINUE_ON_ERROR_ALLOWED={('x.yml', 'ping')}):
+            listed = {'x.yml': {'jobs': {'ping': {'continue-on-error': True, 'steps': [{'run': 'echo ping'}]}}}}
+            self.assertEqual(continue_on_error_violations(listed), [])
+            tests = {'x.yml': {'jobs': {'ping': {'steps': [
+                {'run': 'python3 scripts/verify-tests.py --plan fast', 'continue-on-error': True}]}}}}
+            self.assertTrue(continue_on_error_violations(tests))
+
+    def test_a_mint_only_step_may_continue_on_error_but_a_run_beside_it_may_not(self):
+        mint = {'x.yml': {'jobs': {'job': {'steps': [
+            {'uses': 'actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc', 'continue-on-error': True}]}}}}
+        self.assertEqual(continue_on_error_violations(mint), [])
+        mint['x.yml']['jobs']['job']['steps'][0]['run'] = 'python3 scripts/verify-tests.py --plan fast'
+        self.assertTrue(continue_on_error_violations(mint))
 
     def test_a_build_or_test_command_that_ignores_its_exit_status_is_checked_after_it(self):
         # `xcodebuild ... | tee | grep ... || true` keeps a build from dying in the pipe, but the step must then
@@ -283,3 +208,200 @@ class WorkflowHonesty(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class QueueActsAsTheApp(unittest.TestCase):
+    """#4915: the queue's PAT (MERGE_QUEUE_TOKEN) had no `workflow` scope, so GitHub refused to queue PRs that edit a
+    workflow file (#5189, #5106, #5151), and its merges showed as the owner. The jobs that set PRs to merge mint the
+    spoken-margins-agent App token first, with `workflows: write`, and fall back to the PAT, then GITHUB_TOKEN."""
+
+    CASES = {
+        'merge-queue-label-bridge.yml': ('bridge', 'Queue or unqueue', 'GH_TOKEN'),
+        'merge-queue-dequeued.yml': ('dequeued', 'Tell the author, cancel dead group runs', 'QUEUE_TOKEN'),
+    }
+
+    def test_each_queueing_job_mints_the_app_token_before_it_queues(self):
+        for name, (job_id, step_name, var) in self.CASES.items():
+            with self.subTest(workflow=name):
+                job = parse(ROOT / '.github/workflows' / name)['jobs'][job_id]
+                self.assertEqual(job['environment'], {'name': 'agent-identity', 'deployment': False})
+                steps = job['steps']
+                mint = next(i for i, s in enumerate(steps) if is_app_token_mint_only(s))
+                queue = next(i for i, s in enumerate(steps) if s.get('name') == step_name)
+                self.assertLess(mint, queue, 'the App token must be minted before the step that queues')
+                self.assertEqual(steps[mint].get('id'), 'app-token')
+                self.assertIs(steps[mint].get('continue-on-error'), True, 'a failed mint must fall back, not fail')
+                self.assertEqual(steps[mint]['with'].get('permission-workflows'), 'write')
+                token = steps[queue]['env'][var].replace(' ', '')
+                self.assertTrue(token.startswith('${{steps.app-token.outputs.token||secrets.MERGE_QUEUE_TOKEN'),
+                                token)
+
+
+class GuardsRunBeforeTheMacs(unittest.TestCase):
+    """2026-11-20 to 11-24: 157 merge groups failed first in `hosted fast: portable` while their Mac jobs ran beside it,
+    1,569 hosted-Mac minutes, mostly on repository rule tests. hosted-portable.yml's `guards` job runs those tests first
+    in each merge group, every Mac job waits for it, and stop-on-guard-red cancels the run when a guard test fails. No
+    result of `guards` skips a Mac job (audit on 089d17c): a skipped required check counts as passed, so a guards red
+    whose cancel failed, or a setup flake in `guards`, would have let a group merge with no Mac check."""
+
+    REQUIRED = ('hosted fast: scope', 'hosted fast: portable', 'hosted fast: Mac rest', 'hosted app: build (no tests)')
+
+    @classmethod
+    def setUpClass(cls):
+        cls.jobs = parse(ROOT / '.github/workflows/hosted-portable.yml')['jobs']
+
+    @staticmethod
+    def needs(job):
+        needs = job.get('needs', [])
+        return [needs] if isinstance(needs, str) else list(needs)
+
+    def test_guards_is_a_linux_job_of_the_merge_group_that_runs_the_guard_list(self):
+        guards = self.jobs['guards']
+        self.assertEqual(guards['runs-on'], 'ubuntu-latest')
+        self.assertEqual(guards['if'].strip(), "github.event_name == 'merge_group'")
+        self.assertEqual(self.needs(guards), [], 'it starts at once, beside scope')
+        self.assertNotIn('permissions', guards, 'it runs the merge group\'s code with the read-only token')
+        self.assertLessEqual(guards['timeout-minutes'], 10)
+        runs = [step.get('run', '') for step in guards['steps']]
+        self.assertIn('.venv/bin/python scripts/queue_guards.py', runs)
+
+    def test_every_mac_job_waits_for_guards_and_no_guards_result_skips_it(self):
+        macs = [name for name, job in self.jobs.items() if not str(job.get('runs-on', '')).startswith('ubuntu')]
+        self.assertEqual(sorted(macs), ['app-compile', 'mac-rest', 'sessionkit'])
+        for name in macs:
+            with self.subTest(job=name):
+                job = self.jobs[name]
+                self.assertIn('guards', self.needs(job))
+                condition = ' '.join(job['if'].split())
+                # !cancelled() lets the job run whatever `guards` ended with (skipped on every PR push, failed in a
+                # setup step or a test); only the run's cancel stops it, and a failed cancel leaves the Macs running.
+                self.assertTrue(condition.startswith('!cancelled() && '), condition)
+                self.assertNotIn('needs.guards', condition)
+
+    def test_only_a_failed_guard_test_step_cancels_the_run(self):
+        guards = self.jobs['guards']
+        tests = [step for step in guards['steps'] if step.get('run') == '.venv/bin/python scripts/queue_guards.py']
+        self.assertEqual(len(tests), 1)
+        # A step that never ran (checkout, setup-python or Python tools failed) has an empty outcome: not red.
+        self.assertEqual(' '.join(str(guards['outputs']['red']).split()),
+                         "${{ steps.%s.outcome == 'failure' }}" % tests[0]['id'])
+        stop = self.jobs['stop-on-guard-red']
+        self.assertEqual(self.needs(stop), ['guards'])
+        self.assertEqual(stop['runs-on'], 'ubuntu-latest')
+        self.assertEqual(stop['permissions'], {'actions': 'write'})
+        self.assertEqual(' '.join(stop['if'].split()), "always() && needs.guards.outputs.red == 'true'")
+        self.assertIn('gh run cancel', stop['steps'][0]['run'])
+
+    def test_rearm_still_waits_for_every_other_job(self):
+        self.assertEqual(sorted(self.needs(self.jobs['rearm'])), sorted(name for name in self.jobs if name != 'rearm'))
+
+    def test_the_required_check_names_are_all_still_here_and_guards_is_not_one(self):
+        names = {job.get('name') for job in self.jobs.values()}
+        for required in self.REQUIRED:
+            self.assertIn(required, names)
+        self.assertEqual(self.jobs['guards']['name'], 'hosted fast: guards')
+
+
+class DeployWaitAlertStep(unittest.TestCase):
+    """#5255: a deploy waiting for the owner's approval gave him no alert (deploy-web sat `waiting` all of 2026-11-23).
+    owner-tap-alert.yml's scheduled run also runs scripts/deploy_wait_alert.py, as github-actions[bot]."""
+
+    def setUp(self):
+        self.document = parse(ROOT / '.github/workflows/owner-tap-alert.yml')
+        self.step = next((s for s in self.document['jobs']['alert']['steps']
+                          if 'deploy_wait_alert.py' in (s.get('run') or '')), None)
+
+    def test_step_exists_on_the_schedule_and_runs_the_script(self):
+        self.assertIsNotNone(self.step, 'owner-tap-alert.yml must run scripts/deploy_wait_alert.py')
+        self.assertIn("github.event_name == 'schedule'", self.step['if'])
+        self.assertNotIn('pull_request', self.step['if'])
+        self.assertTrue((ROOT / 'scripts/deploy_wait_alert.py').is_file())
+
+    def test_script_is_in_the_sparse_checkout(self):
+        checkout = self.document['jobs']['alert']['steps'][0]
+        self.assertIn('scripts/deploy_wait_alert.py', checkout['with']['sparse-checkout'].split())
+
+    def test_permissions_and_token_let_the_bot_read_runs_and_write_comments(self):
+        permissions = self.document['permissions']
+        self.assertEqual(permissions.get('actions'), 'read')
+        self.assertEqual(permissions.get('issues'), 'write')
+        self.assertEqual(self.step['env']['GH_TOKEN'].replace(' ', ''), '${{github.token}}')
+
+
+class ReadersUseTheAppBudget(unittest.TestCase):
+    """#5217: GITHUB_TOKEN's 1,000 requests an hour for the repository ran out on 2026-11-23 and the last three main-t3
+    runs failed on `commits/<sha>/statuses`. The readers that run in main's context mint the App token (its own, larger
+    budget) with read-only permissions and fall back to GITHUB_TOKEN. merge-policy.yml runs on pull_request from PR
+    branches, which can't use the main-only environment, so it stays on GITHUB_TOKEN; claude-audit.yml mints in its
+    own environment (ClaudeAuditReadsAsTheApp)."""
+
+    CASES = {
+        'main-t3.yml': ('decide', 'Decide'),
+        'merge-stall.yml': ('watch', 'Look for a stall'),
+    }
+
+    def test_each_reader_mints_a_read_only_token_first_and_falls_back(self):
+        for name, (job_id, step_name) in self.CASES.items():
+            with self.subTest(workflow=name):
+                job = parse(ROOT / '.github/workflows' / name)['jobs'][job_id]
+                self.assertEqual(job['environment'], {'name': 'agent-identity', 'deployment': False})
+                steps = job['steps']
+                self.assertTrue(is_app_token_mint_only(steps[0]), 'mint before anything that calls the API')
+                self.assertEqual(steps[0].get('id'), 'app-token')
+                self.assertIs(steps[0].get('continue-on-error'), True, 'a failed mint must fall back, not fail')
+                granted = {k: v for k, v in steps[0]['with'].items() if k.startswith('permission-')}
+                self.assertTrue(granted)
+                self.assertEqual(set(granted.values()), {'read'}, granted)
+                env = next(s for s in steps if s.get('name') == step_name)['env']
+                self.assertEqual(env['GH_TOKEN'].replace(' ', ''), '${{steps.app-token.outputs.token||github.token}}')
+
+    def test_the_app_token_never_reaches_a_checkout(self):
+        for name, (job_id, _) in self.CASES.items():
+            with self.subTest(workflow=name):
+                for step in parse(ROOT / '.github/workflows' / name)['jobs'][job_id]['steps']:
+                    if str(step.get('uses', '')).startswith('actions/checkout'):
+                        self.assertNotIn('app-token', str(step))
+
+    def test_the_alarm_issue_is_still_written_with_the_workflow_token(self):
+        steps = parse(ROOT / '.github/workflows/merge-stall.yml')['jobs']['watch']['steps']
+        look = next(s for s in steps if s.get('name') == 'Look for a stall')
+        self.assertEqual(look['env']['SM_WRITE_TOKEN'], '${{ github.token }}')
+        budget = next(s for s in steps if s.get('name') == 'Read the API budget')
+        self.assertEqual(budget['env']['GH_TOKEN'], '${{ github.token }}', "it watches that token's budget")
+
+    def test_the_main_t3_job_that_writes_stays_on_the_workflow_token(self):
+        job = parse(ROOT / '.github/workflows/main-t3.yml')['jobs']['t3']
+        self.assertEqual(job['env']['GH_TOKEN'], '${{ github.token }}')
+        self.assertNotIn('environment', job)
+
+
+class ClaudeAuditReadsAsTheApp(unittest.TestCase):
+    """#5217: claude-audit read the API with GITHUB_TOKEN, whose 1,000 requests an hour for the repository ran out. It
+    mints the App token and reads with it; writes stay on GITHUB_TOKEN (SM_WRITE_TOKEN). Claude never gets either."""
+
+    def steps(self):
+        return parse(ROOT / '.github/workflows/claude-audit.yml')['jobs']['audit']['steps']
+
+    def test_the_audit_step_reads_as_the_app_and_writes_as_the_workflow(self):
+        steps = self.steps()
+        mint = next(i for i, s in enumerate(steps) if is_app_token_mint_only(s))
+        audit = next(i for i, s in enumerate(steps) if s.get('name') == 'Audit')
+        self.assertLess(mint, audit)
+        self.assertEqual(steps[mint].get('id'), 'app-token')
+        self.assertIs(steps[mint].get('continue-on-error'), True, 'a failed mint must fall back, not fail')
+        permissions = {k for k in steps[mint]['with'] if k.startswith('permission-')}
+        self.assertTrue(permissions, 'the App token must be narrowed')
+        for name in permissions:
+            self.assertEqual(steps[mint]['with'][name], 'read', f'{name}: the App token only reads')
+        env = steps[audit]['env']
+        self.assertEqual(env['GH_TOKEN'].replace(' ', ''), '${{steps.app-token.outputs.token||github.token}}')
+        self.assertEqual(env['SM_WRITE_TOKEN'].replace(' ', ''), '${{github.token}}')
+
+    def test_the_app_token_reaches_no_other_step(self):
+        for step in self.steps():
+            if step.get('name') != 'Audit':
+                self.assertNotIn('app-token', json.dumps(step.get('env', {})) + str(step.get('run', '')))
+
+    def test_the_job_keeps_its_environment(self):
+        self.assertEqual(parse(ROOT / '.github/workflows/claude-audit.yml')['jobs']['audit']['environment'],
+                         'claude-audit')

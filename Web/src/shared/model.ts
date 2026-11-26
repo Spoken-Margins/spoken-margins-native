@@ -21,6 +21,11 @@ export interface Show {
   followedAt: string;
   /** When the feed was last read successfully by a refresh (#2977). Unset until the first refresh after following. */
   refreshedAt?: string;
+  /**
+   * When the listener unfollowed the show, as an ISO date (#4426). The record and its episodes stay stored; the show
+   * leaves Following and refresh stops reading it. Absent (never `undefined`) on a followed show.
+   */
+  unfollowedAt?: string;
 }
 
 /** Where an episode's audio comes from. Substack posts play the publisher's or Substack's own voice. */
@@ -40,6 +45,11 @@ export interface Episode {
   audioOrigin?: AudioOrigin;
   durationSeconds?: number;
   publishedAt?: string;
+  /**
+   * The show's own title as a friend's packet named it, kept only on an episode filed under a "Shared by …" holder (#4689).
+   * The holder's title is the web's, not the show's, so a reply packet carries this one instead.
+   */
+  showTitle?: string;
 }
 
 /** A Margin, anchored by time in its episode's audio. */
@@ -74,11 +84,39 @@ export interface Margin {
    */
   readAloud?: false;
   /**
+   * How much of the episode the sender asked their friend to hear before this Margin, in seconds, 0 to 300, from the
+   * packet's `leadInMs` (#4171). Absent means the usual 20 seconds. Never written to a packet by the web.
+   */
+  leadInSeconds?: number;
+  /**
+   * The length of the copy this Margin was made on, in seconds (#4614, #4175): from the packet's `item.durationMs` for a
+   * friend's Margin on a podcast, from the player for the listener's own. A podcast with dynamic ads is a different file
+   * on each request, so the player compares this with the copy it loaded. Absent when the length is unknown.
+   */
+  copyLengthSeconds?: number;
+  /**
    * The listener starred their own Margin to share (#4172): Share starts only the starred ones ticked, as the iPhone app's
    * does. Kept in this browser only. It is never written to a packet or a backup, so a restored Margin comes back unstarred.
    * Only ever `true`; absent means not starred.
    */
   starred?: true;
+  /**
+   * This friend's Margin came in through an introduction link (#4784): the link's sealed preview said answers stay with
+   * each listener, so the Share section never names the sender as a destination. Kept in this browser only, like
+   * `heard`: never written to a packet. Only ever `true`; absent means an ordinary friend's Margin.
+   */
+  fromIntro?: true;
+  /**
+   * The listener has listened to some of this friend's Margin (part of #3216): its clip or its read-aloud words started.
+   * Reading or looking at it never sets this. Kept in this browser only, like `starred`: never written to a packet or a
+   * backup. Only ever `true`; absent means not heard yet.
+   */
+  heard?: true;
+  /**
+   * The source text just before a friend's Margin, from the packet's anchor (`prefix`), for the Margins tab's "After …"
+   * line. Kept in this browser only; the packet writer never reads it.
+   */
+  leadIn?: string;
 }
 
 /**

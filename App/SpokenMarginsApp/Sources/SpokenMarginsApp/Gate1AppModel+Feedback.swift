@@ -46,10 +46,10 @@ extension Gate1AppModel {
         diagnostics["recentFailure"] = [context, rawMessage].compactMap { $0 }.joined(separator: ": ")
     }
 
-    func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil, feedbackMessage: String? = nil, origin: FeedbackOrigin? = nil, fileID: String = #fileID, line: Int = #line) {
+    func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil, action: UserFeedbackEvent.Action? = nil, feedbackMessage: String? = nil, origin: FeedbackOrigin? = nil, fileID: String = #fileID, line: Int = #line) {
         statusMessage = "Error"
         lastError = message
-        presentFeedback(UserFeedbackEvent(kind: .error, message: feedbackMessage ?? message, retry: retry, origin: origin), fileID: fileID, line: line)
+        presentFeedback(UserFeedbackEvent(kind: .error, message: feedbackMessage ?? message, retry: retry, action: action, origin: origin), fileID: fileID, line: line)
         itemFailures.record(message, itemId: itemId, visibleItemId: screen == .item ? selectedItem.id : screen == .playback ? snapshot.itemId ?? "" : "")
         diagnostics["recentFailure"] = message
     }
@@ -58,6 +58,8 @@ extension Gate1AppModel {
     /// `feedback.suppressed` when a banner already showing refuses the replacement), with no text (#3344).
     /// `fileID` and `line` default to the caller's, so a call site names itself without changing.
     func presentFeedback(_ event: UserFeedbackEvent, fileID: String = #fileID, line: Int = #line) {
+        // A collection import's files report to it, and it shows one line when it is done (#3769).
+        if libraryCollections.importCapture?.holds(event) == true { return }
         let replaced = feedbackEvent != nil
         let accepted = feedbackEvent?.mayBeReplaced(by: event) ?? true
         recordDeveloperDiagnostic(

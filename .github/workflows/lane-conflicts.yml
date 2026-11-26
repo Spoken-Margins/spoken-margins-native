@@ -18,16 +18,19 @@
 #
 # The lane runner merges with the workflow token, which starts no workflow, so the runner's own merges to the trunk
 # never trigger the sweep either, and a `pull_request` run is not started at all for a PR GitHub can't build a merge
-# ref for (#4538: #4477 sat armed and silent for hours). An hourly schedule, five past, runs the same sweep ahead of the
-# hourly dispatch at twenty past, so a PR made stale by a runner merge or left without a merge ref is handed off
-# within the hour. Besides git's conflicts the sweep also hands off an armed PR GitHub calls unmergeable (#4538).
+# ref for (#4538: #4477 sat armed and silent for hours). An hourly sweep, ahead of the hourly dispatch at twenty past,
+# hands off a PR made stale by a runner merge or left without a merge ref within the hour. Since #4866 that hourly start
+# is the VPS's (ops/dispatch-backstop/ fires `workflow_dispatch` when no run began in the last 60 minutes): GitHub ran the
+# hourly cron 3 times of 24 in the 24 hours to 2026-11-21. The pull_request and push events above are the usual start; the
+# one daily cron is the last resort if the VPS is down. Besides git's conflicts the sweep also hands off an armed PR
+# GitHub calls unmergeable (#4538).
 #
 # The script is taken from the base branch's live tip (SM_TRUNK, default main, on push and dispatch) with no
 # credentials kept, and reads the PR head as git data only, never running it. GitHub builds a pull_request run's
 # workflow file from the PR's merge ref, so a same-repo PR that edits this file runs its own copy; only
 # collaborators can open those (forks are skipped below), and pull_request_target is no help because main carries no
 # workflows. One check at a time; a newer waiting one replaces an older waiting one, which is safe because every run
-# sweeps all armed PRs.
+# that reaches the group sweeps all armed PRs (the group is on the job, so a skipped run never reaches it).
 name: lane-conflicts
 
 on:
@@ -37,7 +40,7 @@ on:
   push:
     branches: [next, main]
   schedule:
-    - cron: '5 * * * *'
+    - cron: '5 6 * * *'  # last resort only (#4866); the hourly tick is the VPS's (ops/dispatch-backstop/)
   workflow_dispatch:
     inputs:
       pr:
@@ -52,12 +55,13 @@ permissions:
   # write: cancelling the conflicting PR's queued lane runs (scripts/lane_dedupe.py helpers).
   actions: write
 
-concurrency:
-  group: lane-conflicts
-  cancel-in-progress: false
-
 jobs:
   check:
+    # On the job, not the workflow (#4937): a run whose job is skipped (another label, an unarmed PR) never joins
+    # the group, where it would replace a pending run that does the work (a group keeps only its newest pending run).
+    concurrency:
+      group: lane-conflicts
+      cancel-in-progress: false
     # Only same-repo PRs that carry a lane label (and, on a label event, only when it is one of the two).
     if: >-
       (github.event_name != 'push' || github.ref_name == (vars.SM_TRUNK || 'main')) &&

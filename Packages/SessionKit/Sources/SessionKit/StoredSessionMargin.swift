@@ -32,6 +32,12 @@ public enum StoredSessionMargin {
     public struct ItemChoice: Equatable, Sendable {
         public let id: String
         public let title: String
+
+        /// Public so the app's Move to an Item sheet tests can make the choices they offer (#4233).
+        public init(id: String, title: String) {
+            self.id = id
+            self.title = title
+        }
     }
 
     /// The Library items a shortcut offers, the one listened to most recently first and then by title. Items in
@@ -89,6 +95,42 @@ public enum StoredSessionMargin {
         try restoreUpdatedAt(originalUpdatedAt, ofSession: session.id, in: repository)
         let saved = try repository.loadInterjections(sessionId: session.id).first { $0.id == "ij-written-\(capture.id)" }
         guard let saved else { throw SessionKitError.invalidCommandForState("saveWrittenInterjection") }
+        return Saved(interjection: saved, itemTitle: item.title)
+    }
+
+    /// Saves a recording the app already holds (`VoiceMarginImport.prepare`) as a spoken Margin at `itemId`'s saved place,
+    /// the way `addWritten` saves words (#4924). `audioPath` is the stored path of a file that exists under Application
+    /// Support. Throws before writing anything when the item is not in the Library or has no session, and with an empty path
+    /// (`SessionEngine.saveSpokenInterjection` refuses it, and the capture is cancelled). The Margin is `pending` its words: the caller asks for the transcription (`Saved.interjection` is what to
+    /// transcribe), because this engine has no transcriber of its own.
+    public static func addSpoken(
+        audioPath: String,
+        itemId: String,
+        repository: SessionRepository & StructuredDocumentRepository,
+        now: @escaping () -> Date = Date.init
+    ) throws -> Saved {
+        guard let item = try? repository.loadItem(id: itemId), item.deletedAt == nil else { throw Failure.itemNotFound }
+        guard let session = targetSession(in: try repository.loadSessions(itemId: itemId)) else { throw Failure.noSession }
+
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(id: "stored-session-margin", displayName: "Stored session Margin", capabilities: [:]),
+            repository: repository,
+            now: now
+        )
+        try engine.inspectSession(sessionId: session.id)
+        let originalUpdatedAt = session.updatedAt
+        let capture = try engine.beginWrittenInterjection()
+        do {
+            try engine.saveSpokenInterjection(captureId: capture.id, audioRef: audioPath)
+        } catch {
+            _ = try? engine.cancelWrittenInterjection(captureId: capture.id)
+            throw error
+        }
+        // The Margin is durable from here, so nothing after this may throw: the caller removes a recording that no saved
+        // Margin names. Keeping the session's stamp is best effort, and what was saved comes from the engine, not a re-read.
+        try? restoreUpdatedAt(originalUpdatedAt, ofSession: session.id, in: repository)
+        // The engine sets it in the same call that stored the Margin; the throw is only for a state that can't happen.
+        guard let saved = engine.lastSavedSpokenInterjection else { throw SessionKitError.invalidCommandForState("saveSpokenInterjection") }
         return Saved(interjection: saved, itemTitle: item.title)
     }
 

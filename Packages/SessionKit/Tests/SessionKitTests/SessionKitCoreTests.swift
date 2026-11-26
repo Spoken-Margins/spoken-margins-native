@@ -1440,7 +1440,7 @@ final class SessionKitCoreTests: XCTestCase {
         let dispatcher = CompactControlDispatcher(surfaceProfile: surfaceProfile, canonicalRuntime: engine)
         let snapshot = dispatcher.snapshot()
 
-        XCTAssertEqual(snapshot.phase, .itemPlayback)
+        XCTAssertEqual(snapshot.phase, .finished) // a skip past the end finishes the item (#5358); discussion stays available
         XCTAssertEqual(snapshot.status, .paused)
         XCTAssertTrue(snapshot.compactSurfaceReady)
         XCTAssertTrue(snapshot.availableCommands.contains(.submitFollowup))

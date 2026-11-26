@@ -11,7 +11,7 @@ act on what it prints, then reply:
   scripts/sm_sweep.py --json           the same facts for scripts
   scripts/sm_sweep.py --status-json F  use a saved `scripts/sm_status.py --json` output (F or - for stdin)
 
-It looks for fourteen things:
+It looks for sixteen things:
   1. free Claude slots against the Dial (#589): its Threads box less the Claude threads active from their claim
      and stop notes (ops/dial/dial_gate.py's own reading), with the ready issues to start; Codex workers are
      counted against Codex's box and never against Claude's
@@ -42,6 +42,13 @@ It looks for fourteen things:
   14. `needs-design` issues whose label is over 3 days old with no Design comment, while no design pass has posted
      its stop note in 24 hours (#3866: on 2026-11-12, 56 waited and none had ever been designed), and issues that
      have a Design comment but still carry the label
+  15. a workflow the VPS dispatch backstop keeps alive (ops/dispatch-backstop) with no run for twice its interval
+     (#4937): GitHub's schedule dropped it and the backstop did not start it either. The backstop only logs to the
+     VPS's journald, which nobody reads; a missing token, a 403 or a stopped timer showed nowhere else
+  16. a draft PR into any base with no commit on its head for 24 hours, unless its title says "do not merge": no rule
+     above reads drafts, and the PR status snapshot reads only PRs into the trunk. The Margins tab redesign
+     (#4466, #4496, #4505) was built as three drafts in an owner session on 2026-11-17; the session was archived the
+     next day, nothing was armed, and the Test Desk's FAIL report on #4496 went to "the author" and sat for 5 days
   Silent `in-progress` claims (#3247, #1507) are rule 3.
 
 --apply also closes those (rule 8), commenting once and removing only `ready` and `in-progress`. Every other label,
@@ -63,6 +70,7 @@ Exit codes: 0 the sweep ran (actions or none), 2 GitHub unreachable or unreadabl
 About 40 to 85 GitHub calls a run, none of them model tokens. Rules 9 to 14 add about 6: GraphQL pages of the open
 issues with their last three comments (100 a page), one page of PRs merged into `next`, one GraphQL lookup of the PRs
 a hold names, and at most DRIFT_READ_CAP issue-comment reads for reverts; what the cap leaves out is printed.
+Rule 16 adds one page of open PRs and one commit read per draft (5 drafts on 2026-11-22).
 """
 from __future__ import annotations
 
@@ -77,8 +85,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / 'ops' / 'dial'))
+sys.path.insert(0, str(HERE.parent / 'ops' / 'dispatch-backstop'))
 import comment_trust  # noqa: E402  (#1822: only the owner's, collaborators' and the bot's comments are believed)
 import dial_gate  # noqa: E402  (the Dial's own reading of the tick boxes, claim notes and usage breaker)
+import sm_dispatch_backstop as backstop  # noqa: E402  (rule 15: which workflows it keeps alive, and what counts as a run)
 import sm_status  # noqa: E402
 from trunk import trunk_branch  # noqa: E402
 
@@ -114,6 +124,9 @@ DESIGN_WAIT = dt.timedelta(days=3)             # rule 14: a `needs-design` label
 DESIGN_QUIET = dt.timedelta(hours=24)          # rule 14: no design-pass stop note this long while issues wait = stopped
 DESIGN_HELD = {'blocked', 'deferred', 'in-progress', 'needs-owner', 'parked', 'tracker'}   # as design_queue.py
 DESIGN_STOP = re.compile(r'Thread "Claude Mac worker \d+" stopping: design pass, \d+ of \d+ designed')
+SCHEDULE_GAP = 2                               # rule 15: no run for this many intervals = schedule and backstop both missed
+DRAFT_QUIET = dt.timedelta(hours=24)           # rule 16: a draft with no commit this long has nobody finishing it
+KEEP_DRAFT = re.compile(r'\bdo[\s-]*not[\s-]*merge\b', re.I)   # rule 16: drafts meant to stay drafts (mutation proofs)
 DRIFT_READ_CAP = 10                            # REST comment reads for rule 10; past it a revert is listed as unchecked
 LOOKUP_CAP = 100                               # PR numbers one GraphQL lookup may ask about
 REVERT = re.compile(r'\breverts?\s+(?:PR\s+)?(?:[\w.-]+/[\w.-]+)?#(\d+)', re.I)
@@ -562,6 +575,52 @@ def drift(api, now, pulls, skip=(), recent=None):
     return out
 
 
+def schedule_gaps(api, now, workflows=None, slots=None):
+    """Rule 15 (#4937): the backstopped workflows whose newest counted run (the backstop's own `pick`) is older than
+    SCHEDULE_GAP intervals, as rows {workflow, interval, minutes, event}; minutes is None when there is no run at all.
+    Raises GitHubError when a read fails, so a failure is unreadable, never clean.
+    A fixed-slot workflow (backstop.SLOTS, #5154) is a gap when its newest slot is SCHEDULE_GAP hours past with no run
+    since; its row has `slot` ("HH:MM") and interval None. With `workflows` given, slots are off unless `slots` is."""
+    if workflows is None and slots is None:
+        workflows, slots = backstop.WORKFLOWS, backstop.SLOTS
+    workflows, slots = workflows or {}, slots or {}
+    gaps = []
+    for workflow in dict.fromkeys([*workflows, *slots]):
+        runs = (api.get(f'actions/workflows/{workflow}/runs?per_page=30') or {}).get('workflow_runs') or []
+        run = backstop.pick(workflow, runs)
+        minutes = None if run is None else int((now - when(run['created_at'])).total_seconds() // 60)
+        interval = workflows.get(workflow)
+        missed = slots.get(workflow) and backstop.missed_slot(now, slots[workflow], run,
+                                                              grace=SCHEDULE_GAP * backstop.SLOT_GRACE)
+        if (interval and (minutes is None or minutes >= SCHEDULE_GAP * interval)) or missed:
+            gaps.append({'workflow': workflow, 'interval': interval, 'minutes': minutes,
+                         'event': run and run.get('event'), 'slot': missed and f'{missed:%H:%M}'})
+    return gaps
+
+
+def stale_drafts(api, now, quiet=DRAFT_QUIET):
+    """Rule 16: open draft PRs into any base whose head commit is older than `quiet`, as rows {number, title, base,
+    committed_at}; committed_at is None when that commit couldn't be read (still listed: unknown is not fresh).
+    Drafts titled "do not merge" are left out. Raises GitHubError when the PR list can't be read."""
+    rows = []
+    for pull in api.pages('pulls?state=open&per_page=100'):
+        if not pull.get('draft') or KEEP_DRAFT.search(pull.get('title') or ''):
+            continue
+        sha = (pull.get('head') or {}).get('sha') or ''
+        committed = None
+        if sha:
+            try:
+                info = api.get(f'commits/{sha}') or {}
+                committed = ((info.get('commit') or {}).get('committer') or {}).get('date')
+            except sm_status.GitHubError:
+                committed = None
+        if committed and now - when(committed) < quiet:
+            continue
+        rows.append({'number': pull['number'], 'title': pull.get('title') or '',
+                     'base': (pull.get('base') or {}).get('ref') or '?', 'committed_at': committed})
+    return rows
+
+
 def release(api, issue, why, now, window=STALE_AFTER):
     """Release one stale claim. Re-reads the issue's comments first; returns what happened, never raises."""
     number = issue['number']
@@ -652,6 +711,14 @@ def collect(api, now, snapshot=None):
     merged = merged_fixes(trunk_pulls, ready, ctx)
     drifted = drift(api, now, pulls, skip={row['number'] for row in merged or []},
                     recent=comments if comments_complete else None)
+    try:
+        gaps = schedule_gaps(api, now)
+    except (sm_status.GitHubError, KeyError, TypeError, ValueError):
+        gaps = None
+    try:
+        drafts = stale_drafts(api, now)
+    except (sm_status.GitHubError, KeyError, TypeError, ValueError):
+        drafts = None
     claims = []
     for issue in in_progress:
         evidence = gather_claim(api, issue['number'], now, ctx)
@@ -661,7 +728,8 @@ def collect(api, now, snapshot=None):
     return {'now': now, 'snapshot': snapshot, 'dial': dial, 'dial_now': dial_now(status_comments), 'usage': usage,
             'tick': latest_tick(tick_comments), 'ready': ready, 'in_progress': claims, 'untriaged': untriaged, 'outside': outside, 'merged_fixes': merged, 'drift': drifted,
             'claude_active': [t['title'] for t in active], 'codex_active': [t['title'] for t in codex_active],
-            'desk_seen': desk_seen, 'comments_complete': comments_complete}
+            'desk_seen': desk_seen, 'comments_complete': comments_complete, 'schedule_gaps': gaps,
+            'stale_drafts': drafts}
 
 
 # ---- Deciding what to do ----------------------------------------------------------------------------------------
@@ -672,7 +740,7 @@ def slots(facts):
     held = None
     if dial['mode'] == 'off' or allowed == 0:
         held = 'the Dial is Off'
-    elif usage['halted']:
+    elif dial_gate.breaker_holds(dial, usage):   # not under Cloud max, which ignores usage
         held = 'HALT (usage breaker)'
     elif (facts['dial_now'] or '').startswith(('Holding', 'Off', 'Paced, but')):
         held = f'the Dial gate says: {facts["dial_now"]}'
@@ -694,7 +762,7 @@ def decide(facts, window=STALE_AFTER):
     live = [c for c in claims if c['state'] != 'stale']
     ready = startable(facts['ready'], live)
 
-    if facts['usage']['halted']:
+    if dial_gate.breaker_holds(facts['dial'], facts['usage']):
         act('halt', RED, 'HALT (usage breaker): start nothing, and tell running threads to finish their commit, '
             'push, post their stop note and stop.')
 
@@ -819,6 +887,28 @@ def decide(facts, window=STALE_AFTER):
             act('needs-mac-stuck', LOOK, f'#{row["number"]} went to the Mac finisher {ago(now, when(mac["since"]))} ago '
                 'and has no finisher comment or commit since: ask the finisher\'s thread why it hasn\'t taken it '
                 '(a pause explains an idle finisher, not a skipped PR).', prs=[row['number']])
+
+    gaps = facts.get('schedule_gaps')
+    if gaps:
+        each = '; '.join(f'{g["workflow"]} ' + (f'last ran {g["minutes"]}m ago ({g["event"]})' if g['minutes'] is not None
+                                                else 'has no run in its last 30')
+                         + (f', due every {g["interval"]}m' if g.get('interval') else '')
+                         + (f', missed its {g["slot"]} UTC slot' if g.get('slot') else '')
+                         for g in gaps)
+        act('schedule-gap', LOOK, f'{each}. GitHub\'s schedule dropped these and the VPS dispatch backstop did not start '
+            'them: ask the Mac finisher\'s thread to read `journalctl -u sm-dispatch-backstop -n 20` on the VPS (a '
+            'FAILED line names the cause; no lines means the timer is off), and dispatch the workflow by hand meanwhile '
+            '(#4866, #4937).', issues=[4866])
+
+    drafts = facts.get('stale_drafts', [])     # collect always sets it; None means the read failed
+    if drafts is None:
+        act('drafts-unreadable', LOOK, 'rule 16 could not read the open PRs, so a stalled draft would not show.')
+    for row in drafts or []:
+        quiet = (f'no commit for {ago(now, when(row["committed_at"]))}' if row['committed_at']
+                 else 'its head commit could not be read')
+        act('draft-stalled', LOOK, f'#{row["number"]} {row["title"][:60]} (into `{row["base"]}`) is a draft with {quiet}: '
+            'no other rule reads drafts. Give it to a free thread to finish, test and arm, or close it with a line '
+            'saying why; retitle it "DO NOT MERGE" only if it is meant to stay a draft.', prs=[row['number']])
     return actions, slot
 
 

@@ -25,6 +25,10 @@ let package = Package(
         .executable(name: "tour-render", targets: ["TourRender"]),
         // The daily Substack format canary (#2027), run by .github/workflows/substack-canary.yml. The app never links it.
         .executable(name: "substack-canary", targets: ["SubstackCanary"]),
+        // Runs pasted assistant answers through the app's link resolver (#4673, #4674). The app never links it.
+        .executable(name: "episode-link-check", targets: ["EpisodeLinkCheck"]),
+        // Scores the spoken-Margin tidy prompt on Apple's on-device model, on a Mac (#4339). The app never links it.
+        .executable(name: "tidy-eval", targets: ["TidyEval"]),
         // The last shipped build's packet reader, for the app's own test bundle only (#1039): it
         // reads the packet the real app exporter writes. The app target never links it.
         .library(name: "ShippedPacketReader", targets: ["ShippedPacketReader"])
@@ -32,11 +36,11 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/Spoken-Margins/onnxruntime-swift-package-manager.git",
-            exact: "1.24.2"
+            exact: "1.24.3"
         ),
         .package(
             url: "https://github.com/weichsel/ZIPFoundation.git",
-            exact: "0.9.20"
+            exact: "0.9.21"
         )
     ],
     targets: [
@@ -72,6 +76,8 @@ let package = Package(
             name: "SessionKitSupertonic",
             dependencies: [
                 "SessionKit",
+                // `SupertonicOutputGuard`'s default stand-in is the iOS voice's `SystemVoiceChunkRenderer` (#318).
+                "SessionKitAudio",
                 "SessionKitSpeechFrontEnd",
                 .product(
                     name: "onnxruntime",
@@ -117,6 +123,16 @@ let package = Package(
             name: "SubstackCanary",
             dependencies: ["SessionKit", "SessionKitFeeds", "SubstackCanaryCore"]
         ),
+        // Reads an assistant's answer, resolves each link with PublicPodcastLinkResolver and prints what it got
+        // (#4673). The parsing and judging rules are EpisodeLinkPaste in SessionKit, shared with the app.
+        .executableTarget(
+            name: "EpisodeLinkCheck",
+            dependencies: ["SessionKit", "SessionKitFeeds"]
+        ),
+        .executableTarget(
+            name: "TidyEval",
+            dependencies: ["SessionKit"]
+        ),
         // The last shipped build's packet reader, frozen for tests (scripts/freeze-shipped-reader.sh, #317).
         // Only the ShippedPacketReader product exposes them, and only the app's test bundle links it.
         .target(name: "ShippedSessionKit", path: "Tests/ShippedReader/SessionKit"),
@@ -154,10 +170,13 @@ let package = Package(
                 "SessionKitEPUB",
                 "SessionKitFeeds",
                 "SessionKitSpeechFrontEnd",
+                "SessionKitSharing",
                 "SessionKitTestInputs",
                 "SubstackCanaryCore",
                 .product(name: "ZIPFoundation", package: "ZIPFoundation")
-            ]
+            ],
+            // Test fixtures read by path (#filePath), not bundled resources.
+            exclude: ["Fixtures"]
         ),
         // Tests that need Apple frameworks (AVFoundation, ShazamKit, onnxruntime). Mac only.
         .testTarget(
@@ -195,19 +214,20 @@ let package = Package(
 // which Linux XCTest lacks. CryptoKit comes from swift-crypto (same API,
 // module `Crypto`), and SQLite3 from a system-library module over libsqlite3.
 let linuxTargets: Set<String> = [
-    "SessionKit", "SessionKitPersistence", "SessionKitAI", "SessionKitEPUB", "SessionKitFeeds",
+    "SessionKit", "SessionKitPersistence", "SessionKitAI", "SessionKitEPUB", "SessionKitFeeds", "SessionKitSharing",
     "SessionKitSpeechFrontEnd", "SessionKitTestInputs", "SessionKitCoreTests",
     // The Substack canary (#2027) runs on the VPS runner; "substack-canary" is its product's name.
     "SubstackCanaryCore", "SubstackCanary", "substack-canary",
+    "EpisodeLinkCheck", "episode-link-check",
 ]
 package.targets.removeAll { !linuxTargets.contains($0.name) }
 package.products.removeAll { !linuxTargets.contains($0.name) }
 package.dependencies = [
-    .package(url: "https://github.com/weichsel/ZIPFoundation.git", exact: "0.9.20"),
+    .package(url: "https://github.com/weichsel/ZIPFoundation.git", exact: "0.9.21"),
     .package(url: "https://github.com/apple/swift-crypto.git", exact: "3.15.1"),
 ]
 package.targets.append(.systemLibrary(name: "SQLite3", path: "Linux/SQLite3", providers: [.apt(["libsqlite3-dev"])]))
-for target in package.targets where target.name == "SessionKit" || target.name == "SessionKitFeeds" || target.name == "SessionKitCoreTests" {
+for target in package.targets where target.name == "SessionKit" || target.name == "SessionKitFeeds" || target.name == "SessionKitSharing" || target.name == "SessionKitCoreTests" {
     target.dependencies.append(.product(name: "Crypto", package: "swift-crypto"))
 }
 for target in package.targets where target.name == "SessionKit" {

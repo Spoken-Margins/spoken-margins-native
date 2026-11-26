@@ -18,7 +18,7 @@ public enum LibraryFolderWalk {
     public static let defaultMaxEntries = 2_000
     public static let defaultMaxFiles = 200
 
-    public enum Kind: String, Equatable, Sendable {
+    public enum Kind: String, Codable, Equatable, Sendable {
         case pdf, text, markdown, epub, audio
         /// A Listening Edition `.json`.
         case edition
@@ -194,16 +194,7 @@ public enum LibraryFolderWalk {
         }
         switch LinkListFile.recognize(data) {
         case .linkList(let list):
-            for skipped in list.skipped {
-                notAdded.append(NotAdded(
-                    key: linkKey(candidate.key, position: skipped.position), name: skipped.text ?? "Entry \(skipped.position)",
-                    reason: skipped.text == nil ? skipped.reason : "is not added: \(skipped.reason)"))
-            }
-            // Entries keep the list's own order. The numbers count the entries that were kept, from 001.
-            return list.entries.enumerated().map { index, entry in
-                Member(key: linkKey(candidate.key, position: index + 1), kind: .link, size: 0, sha256: nil, url: nil,
-                       address: entry.url, title: entry.title, isNotDownloaded: false)
-            }
+            return linkMembers(of: list, at: candidate.key, notAdded: &notAdded)
         case .rejected(let message):
             notAdded.append(NotAdded(key: candidate.key, name: name, reason: message))
             return []
@@ -214,6 +205,31 @@ public enum LibraryFolderWalk {
             }
             return [fileMember(candidate, kind: .edition)]
         }
+    }
+
+    /// A link list's entries as members, in the list's own order, and its skipped entries as "Couldn't add" rows.
+    private static func linkMembers(of list: LinkListFile, at path: String, notAdded: inout [NotAdded]) -> [Member] {
+        for skipped in list.skipped {
+            notAdded.append(NotAdded(
+                key: linkKey(path, position: skipped.position), name: skipped.text ?? "Entry \(skipped.position)",
+                reason: skipped.text == nil ? skipped.reason : "is not added: \(skipped.reason)"))
+        }
+        // Entries keep the list's own order. The numbers count the entries that were kept, from 001. A follow entry (#4683)
+        // is a show to suggest, not an item, so it is never a member.
+        return list.entries.filter { !$0.follow }.enumerated().map { index, entry in
+            Member(key: linkKey(path, position: index + 1), kind: .link, size: 0, sha256: nil, url: nil,
+                   address: entry.url, title: entry.title, isNotDownloaded: false)
+        }
+    }
+
+    /// One picked link list read as a folder holding only that list (#3769): its entries become link members exactly as
+    /// they would inside a picked folder, so a titled list makes a collection through the same merge, and picking the
+    /// same list again adds only its new links.
+    public static func linkList(_ list: LinkListFile, named fileName: String) -> Result {
+        var notAdded: [NotAdded] = []
+        let members = linkMembers(of: list, at: fileName.precomposedStringWithCanonicalMapping, notAdded: &notAdded)
+        return Result(members: members, notAdded: notAdded, skippedOtherCount: 0,
+                      filesCapped: false, entriesCapped: false, hasDeeperFolders: false)
     }
 
     private static func linkKey(_ path: String, position: Int) -> String {

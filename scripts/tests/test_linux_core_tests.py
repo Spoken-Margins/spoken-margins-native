@@ -404,7 +404,8 @@ class TheWorkflow(unittest.TestCase):
         tests = next(i for i, run in enumerate(runs) if 'scripts/linux_core_tests.py run' in run)
         record = next(i for i, run in enumerate(runs) if 'title=lane-hosted-tested' in run)
         self.assertLess(tests, record)
-        self.assertNotIn('if', self.steps('portable')[tests])
+        # Every PR, merge group and dispatch runs them (#5281: a PR no longer leaves them to the merge group).
+        self.assertIsNone(self.steps('portable')[tests].get('if'))
         self.assertNotIn('continue-on-error', self.steps('portable')[tests])
         self.assertFalse(any('swift build --build-tests' in run for run in runs), 'swift test builds them')
 

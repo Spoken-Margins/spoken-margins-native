@@ -19,40 +19,49 @@ import PDFKit
 #endif
 
 extension Gate1AppModel {
-    func prepareExportShareInterjections() {
-        do {
-            let store = try requireStore()
-            guard let exportSessionId, let session = try store.loadSession(id: exportSessionId) else {
-                throw SessionKitError.persistenceFailed("export_session_missing")
-            }
-            let candidates = try store.loadInterjections(sessionId: session.id)
-            selectedItem = try loadItemDetail(id: session.itemId, store: store)
-            prepareShareInterjections(candidates: candidates)
-            if isSharingInterjectionsPresented { sharingState.draftsPreparedForExport = true }
-        } catch { reportFailure(error, context: "Prepare session sharing failed") }
-    }
-
+    /// The Share Margins sheet for an item, from the item screen, the player and the Margins tab (#147, #4688). It holds
+    /// the listener's own Margins from every listening pass of the item, so "Replay" on a finished episode doesn't leave
+    /// the first listen's Margins out of reach. `exportSessionId` is still the newest pass with a sendable Margin, so the
+    /// Export screen and `recordSessionExported` read what they always did.
     func openMarginItemExport(itemID: String, entry: ShareSheetEntry = .chooseMargins) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_export") else { return }
         do {
-            selectedItem = try loadItemDetail(id: itemID, store: requireStore())
-            guard let sessionId = try ItemShareSessionSelection.sessionId(newestFirst: selectedItem.sessionRows.map(\.id), margins: { try requireStore().loadInterjections(sessionId: $0) }) else { return reportFailure("Record at least one Margin on it before sharing.") }
-            exportSessionId = sessionId; prepareExportShareInterjections() // #147: straight to the Share Margins sheet, not the Share/Export screen.
-            if isSharingInterjectionsPresented { sharingState.entry = entry }
+            let store = try requireStore()
+            selectedItem = try loadItemDetail(id: itemID, store: store)
+            let sessionIds = selectedItem.sessionRows.map(\.id)
+            var marginsBySession: [String: [Interjection]] = [:]
+            for id in sessionIds { marginsBySession[id] = try store.loadInterjections(sessionId: id) }
+            let picked = ItemShareCandidates.make(
+                sessionIdsNewestFirst: sessionIds,
+                marginsBySession: marginsBySession,
+                // A summary row, not the item: its media says how Margins order, and the article text isn't read (#2506).
+                mediaSourceType: try store.loadItemSummary(id: itemID)?.media?.sourceType.rawValue)
+            guard let sessionId = picked.sessionId, !picked.margins.isEmpty else {
+                return reportFailure("Record at least one Margin on it before sharing.")
+            }
+            exportSessionId = sessionId
+            // #147: straight to the Share Margins sheet, not the Share/Export screen.
+            prepareShareInterjections(candidates: picked.margins)
+            if isSharingInterjectionsPresented {
+                sharingState.draftsPreparedForExport = true
+                sharingState.entry = entry
+            }
         } catch { reportFailure(error, context: "Open export failed") }
     }
 
     /// "Share this Margin" on Margin details (#3211): the friend sheet with only that Margin, starting on the review.
     /// Share always means another listener, so this makes a packet and never a Markdown file. Like the Margins tab's
-    /// Share it leaves the playing session and the current screen alone; only `selectedItem` follows the Margin's item.
+    /// Share it keeps the session and the current screen; only `selectedItem` follows the Margin's item, and playback
+    /// pauses as it does for every share (#5050).
     func openMarginShare(_ margin: Interjection) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_margin_share") else { return }
+        guard ShareableMargins.canShare(margin) else { return reportFailure(ShareableMargins.singleMarginRefusal) }
         guard ItemShareSessionSelection.isShareable(margin) else {
             return reportFailure("This Margin can't be shared with a friend yet.")
         }
         do {
             selectedItem = try loadItemDetail(id: margin.itemId, store: requireStore())
-            prepareShareInterjections(candidates: [margin])
+            prepareShareInterjections(candidates: [margin], isSingleMargin: true)
             if isSharingInterjectionsPresented {
                 sharingState.draftsPreparedForExport = true
                 sharingState.entry = .reviewDefaults
@@ -64,9 +73,9 @@ extension Gate1AppModel {
         prepareShareInterjections(candidates: selectedItem.interjections)
     }
 
-    /// `replyBack` turns the sheet into "Send replies to <friend>" (#3221): `source` is the offer's own list, the
+    /// `replyBack` turns the sheet into "Share replies with <friend>" (#3221): `source` is the offer's own list, the
     /// replies start included and the listener's other new Margins start out, and nothing else is listed.
-    func prepareShareInterjections(candidates source: [Interjection], replyBack: ReplyBackOffer? = nil) {
+    func prepareShareInterjections(candidates source: [Interjection], replyBack: ReplyBackOffer? = nil, isSingleMargin: Bool = false) {
         cancelBulkSharePreparation()
         let candidates = source.filter {
             $0.status == "active" && $0.targetType == .item
@@ -78,8 +87,12 @@ extension Gate1AppModel {
         let hasStarredCandidates = replyBack == nil && candidates.contains { $0.isStarredForSharing == true }
         sharingState = InterjectionSharingState(isPreparing: true)
         sharingState.replyBackTitle = replyBack?.title
+        sharingState.replyBackCaption = replyBack?.caption
+        sharingState.openedFrom = ShareSelectionDiagnostics.opened(
+            isReplyBack: replyBack != nil, isSingleMargin: isSingleMargin, hasStarredCandidates: hasStarredCandidates)
         sharingState.draftFilter = hasStarredCandidates ? .starred : .all
         isSharingInterjectionsPresented = true
+        pauseForShareFlow()
         // The summary: the sheet needs the address, the type and whether there is text, not the article (#2506).
         if let item = try? requireStore().loadItemSummary(id: selectedItem.id) {
             let reference = secureSharedItemURL(for: item)
@@ -93,8 +106,10 @@ extension Gate1AppModel {
             sharingState.confirmsPrivateSharingRights = sharingState.isAppAuthoredItem
         }
         // A voice Margin with no words starts with placeholder words instead of being left out (#3027).
-        // The switch starts where the sender last put it for each Margin, so a re-share keeps it (#3472).
+        // The switch starts where the sender last put it for each Margin, so a re-share keeps it (#3472). Both are keyed
+        // by session and id, like the drafts, so a replay's "ij-001" doesn't take the first listen's choice (#4688).
         let lastSentReadAloud = (try? requireStore().loadLastSentReadAloud(itemId: selectedItem.id)) ?? [:]
+        let lastSentLeadIns = (try? requireStore().loadLastSentLeadIns(itemId: selectedItem.id)) ?? [:]
         sharingState.drafts = candidates.map { interjection in
             ShareInterjectionDraft.initial(
                 for: interjection,
@@ -102,262 +117,103 @@ extension Gate1AppModel {
                     ?? (!hasStarredCandidates || interjection.isStarredForSharing == true),
                 hasVoice: interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) != nil,
                 itemTitle: selectedItem.title,
-                anchorWarning: shareAnchorWarning(for: interjection),
-                lastSentReadAloud: lastSentReadAloud[interjection.id]
+                lastSentReadAloud: lastSentReadAloud[interjection.sessionScopedId],
+                lastSentLeadInMs: lastSentLeadIns[interjection.sessionScopedId]
             )
+        }
+        // A Margin whose recording was made and then lost goes as words; the row says why it has no voice (#4688),
+        // in the words bulk preparation uses.
+        for index in sharingState.drafts.indices {
+            let interjection = sharingState.drafts[index].interjection
+            if let path = interjection.audioPath, resolvedInterjectionAudioURL(for: path) == nil {
+                sharingState.drafts[index].preparationMessage = ShareCleanupWords.Failure.recordingMissing.message
+            }
         }
         sharingState.isPreparing = false
     }
 
-    var bulkSharePreparationEligibleCount: Int {
-        sharingState.drafts.filter(isEligibleForBulkSharePreparation).count
+    /// Opening the share sheet pauses whatever is sounding, and closing it leaves it paused (#5050, `ShareFlowPlayback`).
+    /// Every way into Share with a Friend (the playback screen, the Margins tab, Margin details, a reply back) opens the
+    /// sheet here, so this is the one place the rule is applied. `activePlaybackIsPlaying` and `pause()` read the same
+    /// layers in the same order: a Margin voice first, then a Skim bridge, then the source.
+    private func pauseForShareFlow() {
+        guard ShareFlowPlayback.onOpen(isPlaying: activePlaybackIsPlaying) == .pause else { return }
+        pauseKeepingShareSheetItem()
     }
 
-    func prepareAllIncludedShareDrafts() {
-        guard !sharingState.isBulkPreparing else { return }
-        let draftIDs = sharingState.drafts
-            .filter(isEligibleForBulkSharePreparation)
-            .map(\.id)
-        guard !draftIDs.isEmpty else { return }
-
-        bulkSharePreparationGeneration += 1
-        let generation = bulkSharePreparationGeneration
-        sharingState.isBulkPreparing = true
-        sharingState.bulkPreparationCompleted = 0
-        sharingState.bulkPreparationTotal = draftIDs.count
-        sharingState.bulkPreparationFailureCount = 0
-        sharingState.errorMessage = nil
-        diagnostics["bulkSharePreparation"] = "started:total=\(draftIDs.count)"
-
-        bulkSharePreparationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            for draftID in draftIDs {
-                guard !Task.isCancelled,
-                      self.bulkSharePreparationGeneration == generation else { return }
-                let prepared = await self.prepareShareDraftForBulk(
-                    draftID,
-                    generation: generation
-                )
-                guard !Task.isCancelled,
-                      self.bulkSharePreparationGeneration == generation else { return }
-                self.sharingState.bulkPreparationCompleted += 1
-                if !prepared {
-                    self.sharingState.bulkPreparationFailureCount += 1
-                }
-            }
-            guard self.bulkSharePreparationGeneration == generation else { return }
-            self.sharingState.isBulkPreparing = false
-            self.bulkSharePreparationTask = nil
-            self.diagnostics["bulkSharePreparation"] = [
-                "complete",
-                "prepared=\(self.sharingState.bulkPreparationCompleted)",
-                "fallbacks=\(self.sharingState.bulkPreparationFailureCount)"
-            ].joined(separator: ";")
-        }
+    /// A pause from inside the share sheet. Pausing the source reloads the playing item into `selectedItem` in the
+    /// background. When the sheet is for another item (a Margin from the Margins tab, Margin details or a reply back),
+    /// that reload would swap the sheet's item for the playing one before Send, and the packet would name the wrong
+    /// source, so the reload is dropped. The sheet's own pauses (opening it, the sender lead-in preview) come here.
+    func pauseKeepingShareSheetItem() {
+        pause()
+        if selectedItem.id != activeItemId { _ = backgroundRefresh.beginItem() }
     }
 
-    func cancelBulkSharePreparation() {
-        guard sharingState.isBulkPreparing || bulkSharePreparationTask != nil else { return }
-        bulkSharePreparationGeneration += 1
-        bulkSharePreparationTask?.cancel()
-        bulkSharePreparationTask = nil
-        sharingState.isBulkPreparing = false
-        for index in sharingState.drafts.indices {
-            let wasInFlight = sharingState.drafts[index].isAnalyzingPauses
-                || sharingState.drafts[index].isPreparingCleanup
-            sharingState.drafts[index].isAnalyzingPauses = false
-            sharingState.drafts[index].isPreparingCleanup = false
-            if wasInFlight,
-               sharingState.drafts[index].currentEditState.automaticCleanupEnabled,
-               sharingState.drafts[index].canUndoEdit {
-                let hasOriginalAudio = originalAudioURL(forShareDraft: sharingState.drafts[index].id) != nil
-                _ = sharingState.drafts[index].undoEdit(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: false)
-            }
+    /// Where the sharing star's counts are kept (#4173): on this phone, as four numbers.
+    var shareStarTally: ShareStarTallyStore { ShareStarTallyStore() }
+
+    /// One `share.selection` Diagnostics line for a send tap (#4173): how the sheet started, what will be written, and how
+    /// the star was used since the last send. Counts only. A retry logs again, with the same star counts when the first
+    /// send reset them; the last line is the one that counts.
+    func recordShareSelection(now: Date = Date()) {
+        let stored = shareStarTally.load()
+        let counted = stored.isEmpty ? (sharingState.starTallyAtLastSend ?? stored) : stored
+        sharingState.starTallyAtLastSend = counted
+        let included = SharedMarginTextRequirement.shareable(sharingState.drafts.filter(\.isIncluded), text: \.approvedTranscript).0
+        let writtenIDs = Set(included.map(\.id))
+        let margins = sharingState.drafts.map {
+            ShareSelectionDiagnostics.Margin(isStarred: $0.interjection.isStarredForSharing == true, isWritten: writtenIDs.contains($0.id))
         }
-        diagnostics["bulkSharePreparation"] = [
-            "cancelled",
-            "prepared=\(sharingState.bulkPreparationCompleted)",
-            "total=\(sharingState.bulkPreparationTotal)"
-        ].joined(separator: ";")
+        recordDeveloperDiagnostic(ShareSelectionDiagnostics.kind, ShareSelectionDiagnostics.fields(
+            opened: sharingState.openedFrom, margins: margins,
+            secondsInSheet: now.timeIntervalSince(sharingState.openedAt), tally: counted))
     }
 
-    private func isEligibleForBulkSharePreparation(_ draft: ShareInterjectionDraft) -> Bool {
-        draft.isIncluded
-            && draft.interjection.alignedTranscript != nil
-            && !draft.currentEditState.automaticCleanupEnabled
+    /// The system share sheet now shows the packet or the link, so the star counts start again (#4173). A link that
+    /// fails never gets here, so its retry logs the same counts again.
+    func shareSheetPresented() {
+        shareStarTally.reset()
     }
 
-    private func prepareShareDraftForBulk(
-        _ id: String,
-        generation: Int
-    ) async -> Bool {
-        guard let initialIndex = sharingState.drafts.firstIndex(where: { $0.id == id }),
-              let aligned = sharingState.drafts[initialIndex].interjection.alignedTranscript else {
-            return false
-        }
-        sharingState.drafts[initialIndex].preparationMessage = nil
-        recordShareEdit(for: id, renderCleanedAudio: false) {
-            $0.automaticCleanupEnabled = true
-        }
-        sharingState.automaticallyCleanedDraftIDs.insert(id)
-
-        guard let analysisIndex = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
-            return false
-        }
-        let audioPath = sharingState.drafts[analysisIndex].interjection.audioPath
-        let sourceURL = audioPath.flatMap(resolvedInterjectionAudioURL(for:))
-        var analysisFailure: ShareCleanupWords.Failure?
-        if let sourceURL {
-            sharingState.drafts[analysisIndex].isAnalyzingPauses = true
-            let analyzer = shareMarginSilenceAnalysisHandler
-            let analysis = await Task.detached {
-                do {
-                    return (try analyzer(sourceURL, aligned), nil as String?)
-                } catch {
-                    return ([], SafeErrorText.describe(error))
-                }
-            }.value
-            guard !Task.isCancelled,
-                  bulkSharePreparationGeneration == generation,
-                  let current = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
-                return false
-            }
-            sharingState.drafts[current].isAnalyzingPauses = false
-            sharingState.drafts[current].acousticPauseDecisions = analysis.0
-            if let reason = analysis.1 {
-                analysisFailure = .pauseAnalysisUnavailable
-                // The reason is for a support report, not the screen (#3853).
-                diagnostics[Self.marginDiagnosticKey("shareCleanupFailure", sharingState.drafts[current].interjection)] = "pause_analysis:\(reason)"
-            }
-            applyShareEditState(at: current, renderCleanedAudio: false)
-        } else if audioPath != nil {
-            analysisFailure = .recordingMissing
-        }
-
-        guard !Task.isCancelled,
-              bulkSharePreparationGeneration == generation else { return false }
-        let rendered = await renderBulkCleanup(forShareDraft: id, generation: generation)
-        guard bulkSharePreparationGeneration == generation,
-              let finalIndex = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
-            return false
-        }
-        if let analysisFailure {
-            let analysisMessage = analysisFailure.message
-            // A missing recording is said once, never wrapped in the pause line.
-            if analysisFailure != .recordingMissing, let renderMessage = sharingState.drafts[finalIndex].preparationMessage {
-                sharingState.drafts[finalIndex].preparationMessage = "\(renderMessage) \(analysisMessage)"
-            } else {
-                sharingState.drafts[finalIndex].preparationMessage = analysisMessage
-            }
-        }
-        return rendered && analysisFailure == nil
-    }
-
-    private func renderBulkCleanup(
-        forShareDraft id: String,
-        generation bulkGeneration: Int
-    ) async -> Bool {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
-            return false
-        }
-        guard let decisions = sharingState.drafts[index].cleanup?.decisions else {
-            return true
-        }
-        guard let sourcePath = sharingState.drafts[index].interjection.audioPath,
-              let sourceURL = resolvedInterjectionAudioURL(for: sourcePath) else {
-            sharingState.drafts[index].representationChoice = .textOnly
-            sharingState.drafts[index].preparationMessage =
-                ShareCleanupWords.Failure.recordingMissing.message
-            return false
-        }
-        guard let root = try? applicationSupportDirectory()
-            .appending(path: "SpokenMargins/ShareRevisions/\(UUID().uuidString)", directoryHint: .isDirectory) else {
-            sharingState.drafts[index].preparationMessage =
-                ShareCleanupWords.Failure.voiceNotPrepared.message
-            diagnostics[Self.marginDiagnosticKey("shareCleanupFailure", sharingState.drafts[index].interjection)] = "render_storage_unavailable"
-            return false
-        }
-        sharingState.drafts[index].renderGeneration += 1
-        let renderGeneration = sharingState.drafts[index].renderGeneration
-        sharingState.drafts[index].isPreparingCleanup = true
-        let destination = root.appending(path: "cleaned-\(safePodcastEvidenceComponent(id)).m4a")
-        let renderer = shareMarginAudioCleanupHandler
-        let result: (duration: Int?, failure: String?)
-        do {
-            result = (try await renderer(sourceURL, destination, decisions), nil)
-        } catch {
-            result = (nil, SafeErrorText.describe(error))
-        }
-        guard !Task.isCancelled,
-              bulkSharePreparationGeneration == bulkGeneration,
-              let current = sharingState.drafts.firstIndex(where: { $0.id == id }),
-              sharingState.drafts[current].renderGeneration == renderGeneration else {
-            Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: destination) } // off main (#2510)
-            return false
-        }
-        sharingState.drafts[current].isPreparingCleanup = false
-        if let duration = result.duration {
-            sharingState.drafts[current].cleanedAudioURL = destination
-            sharingState.drafts[current].cleanedAudioDurationMs = duration
-            sharingState.drafts[current].representationChoice = .cleaned
-            return true
-        }
-        sharingState.drafts[current].cleanedAudioURL = nil
-        sharingState.drafts[current].cleanedAudioDurationMs = nil
-        sharingState.drafts[current].representationChoice =
-            originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
-        sharingState.drafts[current].preparationMessage = ShareCleanupWords.Failure.voiceNotPrepared.message
-        diagnostics[Self.marginDiagnosticKey("shareCleanupFailure", sharingState.drafts[current].interjection)] = "render:\(result.failure ?? "unknown")"
-        return false
-    }
-
+    /// A Margin switched in or out (#4647). In, with the switch on, only its words are cleaned and only it joins the run;
+    /// out, it leaves the run at once if it is still queued. Only a real change does either: a Margin already in (as
+    /// "Select all shown" passes it again) is not cleaned again, so a sender's "Undo all edits" holds.
     func setShareDraftIncluded(_ id: String, included: Bool) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        let wasIncluded = sharingState.drafts[index].isIncluded
         sharingState.drafts[index].setIncluded(included)
+        guard sharingState.drafts[index].isIncluded != wasIncluded else { return }
+        if sharingState.drafts[index].isIncluded {
+            prepareIncludedShareDraftIfEnabled(id)
+        } else {
+            dropShareVoice(id: id)
+        }
     }
 
     func setShareDraftsIncluded(_ ids: [String], included: Bool) {
         let targetIDs = Set(ids)
         guard !targetIDs.isEmpty else { return }
-        for index in sharingState.drafts.indices where targetIDs.contains(sharingState.drafts[index].id) {
-            sharingState.drafts[index].setIncluded(included)
+        // In list order, so the run takes them as the sender sees them.
+        for id in sharingState.drafts.map(\.id) where targetIDs.contains(id) {
+            setShareDraftIncluded(id, included: included)
         }
     }
 
-    func setShareAutoCleanSelectedEnabled(_ enabled: Bool) {
-        ShareAutoCleanPreference.record(enabled: enabled)
-        sharingState.needsAutoCleanDecision = false
-        sharingState.autoCleanSelectedEnabled = enabled
-        if enabled {
-            prepareAllIncludedShareDrafts()
-        } else {
-            cancelBulkSharePreparation()
-            undoAutomaticallyCleanedShareDrafts()
-        }
-    }
-
-    func prepareAutomaticallyCleanedShareDraftsIfEnabled() {
-        guard sharingState.autoCleanSelectedEnabled else { return }
-        prepareAllIncludedShareDrafts()
-    }
-
-    private func undoAutomaticallyCleanedShareDrafts() {
-        let draftIDs = sharingState.automaticallyCleanedDraftIDs
-        for id in draftIDs {
-            recordShareEdit(for: id, renderCleanedAudio: false) {
-                $0.disableAutomaticCleanup()
-            }
-        }
-        sharingState.automaticallyCleanedDraftIDs.removeAll()
-        sharingState.bulkPreparationCompleted = 0
-        sharingState.bulkPreparationTotal = 0
-        sharingState.bulkPreparationFailureCount = 0
-    }
-
+    /// A version pick holds (#4647). "Without ums" picked before its voice exists is kept, and the voice is made through
+    /// the run (after a failure this is the retry); As recorded and Words only take the Margin out of the run.
     func setShareDraftRepresentation(_ id: String, choice: ShareMarginRepresentationChoice) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
         sharingState.drafts[index].setRepresentation(choice, hasOriginalAudio: hasOriginalAudio)
+        if choice == .cleaned {
+            sharingState.drafts[index].recordPick(.cleaned)
+            if sharingState.drafts[index].cleanedAudioURL == nil {
+                queueShareVoice(id: id)
+            }
+        } else {
+            dropShareVoice(id: id)
+        }
     }
 
     /// The sender asks the friend's phone to read a text Margin aloud, or not to (#3427). It means nothing for a
@@ -365,6 +221,12 @@ extension Gate1AppModel {
     func setShareDraftReadAloud(_ id: String, readAloud: Bool) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         sharingState.drafts[index].readAloud = readAloud
+    }
+
+    /// The sender's "Before your Margin" length (#4171), clamped to what a reader accepts.
+    func setShareDraftLeadIn(_ id: String, ms: Int) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        sharingState.drafts[index].leadInMs = SenderLeadIn.clamped(ms)
     }
 
     func setShareDraftAnchorBefore(_ id: String, value: String) {
@@ -382,20 +244,28 @@ extension Gate1AppModel {
             .interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:))
     }
 
+    /// A card's "Remove ums and pauses" (#4647): the words are cleaned at once and the voice is made through the run, so
+    /// it gets its pause analysis and works during a run too. The switch didn't do it, so turning the switch off leaves it.
     func prepareCleanup(forShareDraft id: String) {
-        guard !sharingState.isBulkPreparing else { return }
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         sharingState.automaticallyCleanedDraftIDs.remove(id)
-        if let index = sharingState.drafts.firstIndex(where: { $0.id == id }) {
-            sharingState.drafts[index].preparationMessage = nil
-        }
-        recordShareEdit(for: id) { $0.automaticCleanupEnabled = true }
-        analyzeAcousticPauses(forShareDraft: id)
+        sharingState.drafts[index].recordPick(.cleaned)
+        BulkShareDraftPreparation.applyTextStep(for: id, host: self)
+        queueShareVoice(id: id)
+    }
+
+    /// A Margin whose voice is queued or being made in the run: a hand edit changes its words and starts no render of its
+    /// own; the run renders the words as they are when its turn comes (#4647).
+    private func voiceIsInRun(_ id: String) -> Bool {
+        sharingState.queuedVoiceIDs.contains(id)
     }
 
     func setCleanupDecision(draftID: String, decisionID: String, accepted: Bool) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == draftID }) else { return }
         let hasOriginalAudio = originalAudioURL(forShareDraft: draftID) != nil
-        if sharingState.drafts[index].setCleanupDecision(decisionID: decisionID, accepted: accepted, hasOriginalAudio: hasOriginalAudio) {
+        if sharingState.drafts[index].setCleanupDecision(
+            decisionID: decisionID, accepted: accepted, hasOriginalAudio: hasOriginalAudio,
+            renderCleanedAudio: !voiceIsInRun(draftID)) {
             renderCleanup(forShareDraft: draftID)
         }
     }
@@ -403,7 +273,8 @@ extension Gate1AppModel {
     func toggleShareDraftWord(draftID: String, segmentID: String) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == draftID }) else { return }
         let hasOriginalAudio = originalAudioURL(forShareDraft: draftID) != nil
-        if sharingState.drafts[index].toggleWord(segmentID: segmentID, hasOriginalAudio: hasOriginalAudio) {
+        if sharingState.drafts[index].toggleWord(
+            segmentID: segmentID, hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: !voiceIsInRun(draftID)) {
             renderCleanup(forShareDraft: draftID)
         }
     }
@@ -415,7 +286,7 @@ extension Gate1AppModel {
     func undoShareDraftEdit(_ id: String) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        if sharingState.drafts[index].undoEdit(hasOriginalAudio: hasOriginalAudio) {
+        if sharingState.drafts[index].undoEdit(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: !voiceIsInRun(id)) {
             renderCleanup(forShareDraft: id)
         }
     }
@@ -423,7 +294,7 @@ extension Gate1AppModel {
     func redoShareDraftEdit(_ id: String) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        if sharingState.drafts[index].redoEdit(hasOriginalAudio: hasOriginalAudio) {
+        if sharingState.drafts[index].redoEdit(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: !voiceIsInRun(id)) {
             renderCleanup(forShareDraft: id)
         }
     }
@@ -432,59 +303,7 @@ extension Gate1AppModel {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         sharingState.automaticallyCleanedDraftIDs.remove(id)
         let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        let anchorWarning = shareAnchorWarning(for: sharingState.drafts[index].interjection)
-        sharingState.drafts[index].restoreOriginal(hasOriginalAudio: hasOriginalAudio, anchorWarning: anchorWarning)
-    }
-
-    private func recordShareEdit(
-        for id: String,
-        renderCleanedAudio: Bool = true,
-        mutate: (inout ShareMarginEditState) -> Void
-    ) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        if sharingState.drafts[index].recordEdit(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: renderCleanedAudio, mutate: mutate) {
-            renderCleanup(forShareDraft: id)
-        }
-    }
-
-    private func applyShareEditState(at index: Int, renderCleanedAudio: Bool = true) {
-        guard sharingState.drafts.indices.contains(index) else { return }
-        let id = sharingState.drafts[index].id
-        let hasOriginalAudio = originalAudioURL(forShareDraft: id) != nil
-        if sharingState.drafts[index].applyEditState(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: renderCleanedAudio) {
-            renderCleanup(forShareDraft: id)
-        }
-    }
-
-    private func analyzeAcousticPauses(forShareDraft id: String) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
-              sharingState.drafts[index].acousticPauseDecisions.isEmpty,
-              !sharingState.drafts[index].isAnalyzingPauses,
-              let aligned = sharingState.drafts[index].interjection.alignedTranscript,
-              let sourcePath = sharingState.drafts[index].interjection.audioPath,
-              let sourceURL = resolvedInterjectionAudioURL(for: sourcePath) else { return }
-        sharingState.drafts[index].isAnalyzingPauses = true
-        let analyzer = shareMarginSilenceAnalysisHandler
-        Task.detached { [weak self] in
-            let result: ([InterjectionCleanupDecision], String?)
-            do {
-                result = (try analyzer(sourceURL, aligned), nil)
-            } catch {
-                result = ([], SafeErrorText.describe(error))
-            }
-            await MainActor.run {
-                guard let self,
-                      let current = self.sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-                self.sharingState.drafts[current].isAnalyzingPauses = false
-                self.sharingState.drafts[current].acousticPauseDecisions = result.0
-                if let reason = result.1 {
-                    self.sharingState.drafts[current].preparationMessage = ShareCleanupWords.Failure.pauseAnalysisUnavailable.message
-                    self.diagnostics[Self.marginDiagnosticKey("shareCleanupFailure", self.sharingState.drafts[current].interjection)] = "pause_analysis:\(reason)"
-                }
-                self.applyShareEditState(at: current)
-            }
-        }
+        sharingState.drafts[index].restoreOriginal(hasOriginalAudio: hasOriginalAudio)
     }
 
     private func renderCleanup(forShareDraft id: String) {
@@ -495,10 +314,7 @@ extension Gate1AppModel {
               let root = try? applicationSupportDirectory()
                 .appending(path: "SpokenMargins/ShareRevisions/\(UUID().uuidString)", directoryHint: .isDirectory) else {
             if let index = sharingState.drafts.firstIndex(where: { $0.id == id }) {
-                sharingState.drafts[index].warning = [
-                    shareAnchorWarning(for: sharingState.drafts[index].interjection),
-                    ShareCleanupWords.Failure.previewNotPrepared.message
-                ].compactMap { $0 }.joined(separator: " ")
+                sharingState.drafts[index].warning = ShareCleanupWords.Failure.previewNotPrepared.message
             }
             return
         }
@@ -516,10 +332,11 @@ extension Gate1AppModel {
                     self?.sharingState.drafts[current].isPreparingCleanup = false
                     self?.sharingState.drafts[current].cleanedAudioURL = destination
                     self?.sharingState.drafts[current].cleanedAudioDurationMs = duration
-                    self?.sharingState.drafts[current].representationChoice = .cleaned
-                    if let interjection = self?.sharingState.drafts[current].interjection {
-                        self?.sharingState.drafts[current].warning = self?.shareAnchorWarning(for: interjection)
+                    // A sender's pick holds (#4647): the new copy goes only when they picked nothing or Without ums.
+                    if self?.sharingState.drafts[current].optedOutOfCleanedVoice == false {
+                        self?.sharingState.drafts[current].representationChoice = .cleaned
                     }
+                    self?.sharingState.drafts[current].warning = nil
                 }
             } catch {
                 await MainActor.run {
@@ -528,15 +345,17 @@ extension Gate1AppModel {
                     self?.sharingState.drafts[current].isPreparingCleanup = false
                     self?.sharingState.drafts[current].cleanedAudioURL = nil
                     self?.sharingState.drafts[current].cleanedAudioDurationMs = nil
+                    let keepsWordsOnly = self?.sharingState.drafts[current].representationChoice == .textOnly
+                        || self?.sharingState.drafts[current].senderPickedVersion == .textOnly
                     self?.sharingState.drafts[current].representationChoice =
-                        self?.originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
+                        keepsWordsOnly || self?.originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
+                    if self?.sharingState.drafts[current].senderPickedVersion == .cleaned {
+                        self?.sharingState.drafts[current].senderPickedVersion = nil
+                    }
                     self?.sharingState.drafts[current].preparationMessage = ShareCleanupWords.Failure.voiceNotPrepared.message
                     if let interjection = self?.sharingState.drafts[current].interjection {
                         self?.diagnostics[Self.marginDiagnosticKey("shareCleanupFailure", interjection)] = "render:\(SafeErrorText.describe(error))"
-                        self?.sharingState.drafts[current].warning = [
-                            self?.shareAnchorWarning(for: interjection),
-                            ShareCleanupWords.Failure.regenerationFailed.message
-                        ].compactMap { $0 }.joined(separator: " ")
+                        self?.sharingState.drafts[current].warning = ShareCleanupWords.Failure.regenerationFailed.message
                     }
                 }
             }
