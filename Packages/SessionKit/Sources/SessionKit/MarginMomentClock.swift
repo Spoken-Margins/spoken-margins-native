@@ -56,8 +56,15 @@ public enum MarginMomentClock: Sendable, Equatable {
     /// between (#1646: the planner and the lead-in both use this, so they agree on which Margins fall in the gap).
     public func leadInStartOffset(forTargetPosition targetPosition: Int, in text: String) -> Int {
         let target = MarginMomentAnchor(marginId: "target", mediaTimeMs: targetPosition)
-        let ruleStart = textOffset(forPosition: MarginMomentSequence.leadInStartMediaTimeMs(forTarget: target))
-        return Self.sentenceStart(atOrAfter: ruleStart, before: textOffset(forPosition: targetPosition), in: text)
+        return leadInStartOffset(
+            fromPosition: MarginMomentSequence.leadInStartMediaTimeMs(forTarget: target), toTargetPosition: targetPosition, in: text)
+    }
+
+    /// The same for a run-up whose start the sequence already decided (`MarginMomentSequence.startMediaTimeMs`): a
+    /// review's shorter lead-in, or a sender's own length (#5409). Reads from the first sentence start at or after
+    /// `start`, short of the Margin at `targetPosition`.
+    public func leadInStartOffset(fromPosition start: Int, toTargetPosition targetPosition: Int, in text: String) -> Int {
+        Self.sentenceStart(atOrAfter: textOffset(forPosition: start), before: textOffset(forPosition: targetPosition), in: text)
     }
 
     /// Where the lead-in should start reading: the first sentence start at or after `offset`, so speech doesn't

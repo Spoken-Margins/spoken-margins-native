@@ -595,7 +595,9 @@ extension Gate1AppModel {
             conductor.startListening(atMediaTimeMs: snapshot.currentMediaTimeMs)
         } else if clock.isNarratedText {
             let text = narratedMomentText(itemId: itemId)
-            let start = clock.leadInStartOffset(forTargetPosition: target.mediaTimeMs, in: text)
+            // From the run-up the sequence decided: a moment's, or a review's shorter one (#5409).
+            let start = clock.leadInStartOffset(
+                fromPosition: conductor.sequence.startMediaTimeMs, toTargetPosition: target.mediaTimeMs, in: text)
             seekText(toCharOffset: start)
             conductor.startListening(atMediaTimeMs: clock.position(forTextOffset: start))
         } else {

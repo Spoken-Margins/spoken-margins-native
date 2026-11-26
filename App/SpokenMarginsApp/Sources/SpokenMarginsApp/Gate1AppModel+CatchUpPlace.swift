@@ -7,11 +7,33 @@ import SessionKit
 /// listener makes first drops it, and the 3 s test at every give-back is the backstop, so a missed route costs only the
 /// old behaviour, never a wrong jump.
 extension Gate1AppModel {
+    /// The clock a review or catch-up run on the item on Now counts on (#5409): narration time for an article read aloud
+    /// on the device, whose Margins are placed by characters, else the media's own time. The same choice "Play this
+    /// moment" makes (#1577), so a review's places and the place it owes back are on one clock.
+    var reviewSourceClock: MarginMomentClock {
+        snapshot.targetType == TargetType.itemTextTTS.rawValue ? .liveNarration : .media
+    }
+
+    /// Where the source stands on `reviewSourceClock`: the playhead, or the narration time of the text being read.
+    var reviewSourcePositionMs: Int? {
+        let clock = reviewSourceClock
+        guard clock.isNarratedText else { return snapshot.currentMediaTimeMs }
+        return snapshot.currentTextStart.map(clock.position(forTextOffset:))
+    }
+
+    /// Moves the source to a place on `reviewSourceClock`, for a review's or catch-up run's place given back.
+    @discardableResult
+    func seekReviewSource(toPosition position: Int) -> Bool {
+        let clock = reviewSourceClock
+        guard clock.isNarratedText else { return seekMedia(toMediaTimeMs: position) }
+        return seekText(toCharOffset: clock.textOffset(forPosition: position))
+    }
+
     /// A held place for the item on Now that Play would give back now.
     var catchUpPlaceIsWaiting: Bool {
         guard let itemId = snapshot.itemId else { return false }
         if case .giveBack = CatchUpPlace.settle(
-            reviewPlaces.owed(itemId: itemId), itemId: itemId, sourceAtMediaTimeMs: snapshot.currentMediaTimeMs) {
+            reviewPlaces.owed(itemId: itemId), itemId: itemId, sourceAtMediaTimeMs: reviewSourcePositionMs) {
             return true
         }
         return false
@@ -24,7 +46,7 @@ extension Gate1AppModel {
     func settleCatchUpPlace(trigger: String, reports: Bool = false) -> Bool {
         guard marginMomentConductor == nil, let itemId = snapshot.itemId else { return false }
         let note = reviewPlaces.owed(itemId: itemId)
-        switch CatchUpPlace.settle(note, itemId: itemId, sourceAtMediaTimeMs: snapshot.currentMediaTimeMs) {
+        switch CatchUpPlace.settle(note, itemId: itemId, sourceAtMediaTimeMs: reviewSourcePositionMs) {
         case .nothing:
             return false
         case .drop:
@@ -33,7 +55,7 @@ extension Gate1AppModel {
             return false
         case .giveBack(let placeMs):
             reviewPlaces.clear(itemId: itemId) // first, so the seek's own `listenerMovedSource` finds nothing to drop
-            guard seekMedia(toMediaTimeMs: placeMs) else {
+            guard seekReviewSource(toPosition: placeMs) else {
                 diagnostics["catchUp.place"] = "give_back_failed"
                 return false
             }
@@ -70,7 +92,7 @@ extension Gate1AppModel {
     }
 
     func keepCatchUpPlaceAfterASave(_ kept: ReviewReturnPlace?) {
-        guard let kept, !snapshot.isRecording, snapshot.itemId == kept.itemId, let at = snapshot.currentMediaTimeMs else { return }
+        guard let kept, !snapshot.isRecording, snapshot.itemId == kept.itemId, let at = reviewSourcePositionMs else { return }
         reviewPlaces.owe(kept.held(at: at))
     }
 }
