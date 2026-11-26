@@ -63,14 +63,16 @@ public enum AutomaticSourceAccess {
         return scheme == "http" || scheme == "https"
     }
 
-    /// Two spellings of one address compare equal: scheme and host in any case, http or https, with or without a
-    /// fragment or a trailing slash.
+    /// Two spellings of one address compare equal: scheme and host in any case, http or https, the path's escapes
+    /// written either way, with or without a fragment or a trailing slash.
     private static func comparisonKey(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var components = URLComponents(string: trimmed) else { return trimmed }
         components.scheme = "https"
         components.host = components.host?.lowercased()
         components.fragment = nil
+        // One spelling of each escape: `%7E` and `~`, `%2d` and `-` name the same address.
+        components.path = components.path
         while components.path.hasSuffix("/") && components.path.count > 1 { components.path.removeLast() }
         return components.string ?? trimmed
     }

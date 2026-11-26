@@ -153,6 +153,7 @@ final class AutomaticSourceAccessTests: XCTestCase {
         XCTAssertEqual(AutomaticSourceAccess.sendableLink(Self.page, of: item), Self.page)
         XCTAssertNil(AutomaticSourceAccess.sendableLink(Self.enclosure, of: item))
         XCTAssertNil(AutomaticSourceAccess.sendableLink("HTTPS://MEDIA.example.com/episode-12.mp3#t=3", of: item), "another spelling of the audio link")
+        XCTAssertNil(AutomaticSourceAccess.sendableLink("https://media.example.com/episode%2D12.mp3", of: item), "an escaped spelling")
         XCTAssertNil(AutomaticSourceAccess.sendableAudioLink(of: item))
 
         var blocked = Self.episode()
@@ -224,6 +225,34 @@ final class AutomaticSourceAccessTests: XCTestCase {
         XCTAssertEqual(AutomaticSourceAccess.sendableEpisodeGUID("show-ep-12", of: plainGUID), "show-ep-12")
     }
 
+    /// Audit of #5381: the stored fingerprint spine names the page or, with none, the audio link it was captured from,
+    /// and went into the packet beside the filtered identity.
+    func testFingerprintSpineNamesNoLinkTheIdentityLeftOut() throws {
+        let noPage = Self.episode(page: Self.enclosure, feed: Self.privateFeed, guid: Self.enclosure)
+        var blocked = Self.episode(page: nil)
+        blocked.publisherBlocked = true
+        for (name, item, guid) in [("private feed, page is the audio link", noPage, nil as String?), ("blocked, no page", blocked, "show-ep-12")] {
+            let identity = SharedItemIdentityBuilder.exportIdentity(for: item, draftEditionDigests: [nil])
+            let spine = EditionFingerprintSpineArtifact(
+                id: "spine-1", itemId: item.id, canonicalURL: item.externalReference ?? item.media?.url,
+                episodeGUID: item.episodeGUID, landmarks: []
+            )
+            let repaired = try XCTUnwrap(FingerprintSpineExportRepair.repaired(spine, item: identity, signatureAssetIDs: []), name)
+            XCTAssertNil(repaired.canonicalURL, name)
+            XCTAssertEqual(repaired.episodeGUID, guid, "\(name): a GUID that is the audio link goes; an opaque one stays")
+            let manifest = try Self.manifestJSON(for: identity, spines: [spine])
+            XCTAssertFalse(manifest.contains("media.example.com"), "\(name): \(manifest)")
+        }
+
+        // An open episode's spine keeps the link and GUID it shares with the identity, as before.
+        let open = Self.episode()
+        let identity = SharedItemIdentityBuilder.exportIdentity(for: open, draftEditionDigests: [nil])
+        let spine = EditionFingerprintSpineArtifact(id: "spine-1", itemId: open.id, canonicalURL: Self.page, episodeGUID: "show-ep-12", landmarks: [])
+        let repaired = try XCTUnwrap(FingerprintSpineExportRepair.repaired(spine, item: identity, signatureAssetIDs: []))
+        XCTAssertEqual(repaired.canonicalURL, Self.page)
+        XCTAssertEqual(repaired.episodeGUID, "show-ep-12")
+    }
+
     func testCommunityMapAndPublicMarkSkipARestrictedEpisodeWithoutAnyRequest() {
         var blocked = Self.episode()
         blocked.publisherBlocked = true
@@ -269,7 +298,9 @@ final class AutomaticSourceAccessTests: XCTestCase {
         ))
     }
 
-    private static func prepared(for identity: SharedItemIdentity) throws -> PreparedSpokenMarginsPackage {
+    private static func prepared(
+        for identity: SharedItemIdentity, spines: [EditionFingerprintSpineArtifact] = []
+    ) throws -> PreparedSpokenMarginsPackage {
         let selection = ReviewedInterjectionSelection(
             packageScopedId: "margin-0001",
             revision: InterjectionShareRevision(
@@ -282,12 +313,12 @@ final class AutomaticSourceAccessTests: XCTestCase {
         )
         return try SpokenMarginsPackageBuilder.prepare(
             packageId: "package-5340", createdAt: Date(timeIntervalSince1970: 1_790_000_000), item: identity,
-            itemTransportSelection: .reference, selections: [selection]
+            itemTransportSelection: .reference, selections: [selection], fingerprintSpines: spines
         )
     }
 
-    private static func manifestJSON(for identity: SharedItemIdentity) throws -> String {
-        let prepared = try prepared(for: identity)
+    private static func manifestJSON(for identity: SharedItemIdentity, spines: [EditionFingerprintSpineArtifact] = []) throws -> String {
+        let prepared = try prepared(for: identity, spines: spines)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         encoder.dateEncodingStrategy = .iso8601
