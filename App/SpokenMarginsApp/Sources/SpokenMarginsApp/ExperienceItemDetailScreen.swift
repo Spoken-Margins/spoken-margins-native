@@ -110,6 +110,10 @@ struct ExperienceItemDetailScreen: View {
                     if let friendIntro {
                         FriendMarginsSenderLine(intro: friendIntro)
                         friendLinkNotice
+                    } else {
+                        // The notice follows what arrived by link, not what can play now (#5351): with no Margin
+                        // ready to play there is no sender line, and the notice still says who will see the open.
+                        friendLinkNotice
                     }
                     hero
                     // At the accessibility text sizes the status lines and the second choice sit here, under the
