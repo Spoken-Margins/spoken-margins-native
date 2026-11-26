@@ -63,6 +63,7 @@ for (const kind of kinds) {
     else await expect(card.getByRole('link', { name: /^Open the/ })).toHaveCount(0);
     await expect(card.getByRole('link', { name: 'Get Spoken Margins for iPhone' })).toHaveAttribute('href', 'https://spokenmargins.com/join');
     await expect(card).toContainText('After installing, tap your friend’s link again to open it in the app.');
+    await expect(card.getByRole('link', { name: 'Get help' })).toHaveAttribute('href', 'https://spokenmargins.com/friends/#cant-hear');
     // Nothing on the card says what the browser can't do.
     await expect(card.getByText(/can’t|can't/)).toHaveCount(0);
     await shot(page, info, `cannot-play-${kind.id}-ready`);

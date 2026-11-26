@@ -33,6 +33,7 @@ import { MarginsControlList, NextMarginPill } from './MarginsTab.tsx';
 import { isPlaceholder, prefillOverPlaceholder, voiceMarginOnStop, withWords } from '../logic/voice-words.ts';
 import { TranscriptionNote, useTranscription } from '../transcription.tsx';
 import { MarginRow } from './Margins.tsx';
+import { FriendHelpLink } from './FriendHelpLink.tsx';
 
 function newId(): string {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -174,6 +175,7 @@ function MarginCue({ margins, saved }: { margins: readonly Margin[]; /** The lis
             {cue.button}
           </button>
         )}
+        <FriendHelpLink topic="cant-hear" />
       </section>
     );
   }

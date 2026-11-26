@@ -33,6 +33,7 @@ import { webAddress } from '../logic/playability.ts';
 import type { PacketRead } from '../ports.ts';
 import { usePlayer } from '../player.tsx';
 import { LeadInLine } from './MarginsTab.tsx';
+import { FriendHelpLink } from './FriendHelpLink.tsx';
 
 export interface ArrivalListenProps {
   read: PacketRead;
@@ -280,6 +281,8 @@ export function ArrivalListen(props: ArrivalListenProps) {
         )}
         <footer className="arrival-foot">
           {props.footer && <p>{props.footer}</p>}
+          {/* "Get help" at the friends page's can't-hear question, as the cards this one replaced had (#5268). */}
+          <FriendHelpLink topic="cant-hear" />
           {props.reportHref && (
             <p>
               <a href={props.reportHref} target="_blank" rel="noopener noreferrer">

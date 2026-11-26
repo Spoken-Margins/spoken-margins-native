@@ -577,7 +577,8 @@ def classify(paths, diffs=None, root=ROOT):
 # test_mac_checks_scope.py checks that every READS entry needs the Mac, App/ ones only when MAC_APP_READS names them).
 MAC_READS = ('Packages/SessionKit/', 'Contracts/', 'research/C2/frontend/', 'research/B2/', 'research/B4/',
              'research/C2/pocket/', 'research/C2/passages.json', 'research/C2/results/darwin/',
-             'Site/onboarding/catalog/', 'Site/onboarding/v1/', 'README.md', 'traces/', 'fixtures/')
+             'Site/onboarding/catalog/', 'Site/onboarding/v1/', 'Site/friends/index.html', 'README.md', 'traces/',
+             'fixtures/')
 # The App/ paths that tests only a Mac runs still read (#3538). test_mac_checks_scope.py fails on any other, so a text-only
 # read goes to SessionKitCoreTests, which also runs on Linux, instead of keeping App/ diffs on the Mac. Every other App/
 # path needs no Mac check (#3540): the Linux portable job runs the core tests that read it. No per-PR app build either

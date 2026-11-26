@@ -117,6 +117,9 @@ final class HearItLandAppTests: XCTestCase {
 
         XCTAssertEqual(model.hearItLandRun(forMomentTarget: moment.target.marginId), .moment, "the lead-in line goes with the voice")
         XCTAssertNotNil(HearItLandState.shared.aftermath.playbackEndedAt)
+        // Whose Margin it was is read off the main thread (#2256, 15e5ddec), so the event lands a moment after the voice
+        // ends. Wait for it; the deadline is only a ceiling.
+        try await pollUntil { model.isOnboardingStepComplete(.heardFirstMargin) }
         XCTAssertTrue(model.isOnboardingStepComplete(.heardFirstMargin), "the playback reaching its end is the event (#4711)")
     }
 

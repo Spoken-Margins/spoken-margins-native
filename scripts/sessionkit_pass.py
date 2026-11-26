@@ -60,6 +60,8 @@ READS = (
     'Site/onboarding/catalog/',
     # The guided tour manifest test decodes the manifest and checks the clip it names (#2051).
     'Site/onboarding/v1/',
+    # The friend help test holds the app's questions and the site page's headings together (#5268).
+    'Site/friends/index.html',
     # The trace tests find the repository root by its README.md and traces/ folder.
     'README.md',
     'traces/',
