@@ -48,7 +48,7 @@ SCANS = (
     'test_repeat_trigger_scan', 'test_resume_owners', 'test_retired_names', 'test_row_accessibility_actions',
     'test_screen_change_cue', 'test_screen_title_heading', 'test_search_field_keyboard', 'test_segmented_picker_guard',
     'test_selected_checkmarks_hidden', 'test_selected_trait', 'test_server_contact_consent', 'test_sessionkit_test_inputs',
-    'test_share_cleanup_words', 'test_share_export_glyphs', 'test_share_link_policy_pages', 'test_share_review_card_words',
+    'test_share_cleanup_words', 'test_share_export_glyphs', 'test_share_link_policy_pages', 'test_share_preview_no_packet_codes', 'test_share_review_card_words',
     'test_sharing_kit', 'test_shipped_compat_filter', 'test_siri_phrases', 'test_smallest_type_guard',
     'test_system_callback_isolation', 'test_tap_target_styles', 'test_task_cost_map', 'test_test_clock_ceilings',
     'test_third_party_notices', 'test_tracked_presentations', 'test_type3_lookup_gate', 'test_ui_test_guided_tour_fetch',

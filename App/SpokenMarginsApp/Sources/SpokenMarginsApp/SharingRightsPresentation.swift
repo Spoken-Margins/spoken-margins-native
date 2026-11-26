@@ -60,7 +60,7 @@ enum SharingRightsPresentation {
         lines.append("Text-derived matching evidence: \(package.transcriptPhraseSketches.count) phrase sketches. Acoustic opt-out is separate from this text-derived evidence.")
         for proposal in package.listeningMapProposals {
             for scene in proposal.scenes {
-                lines.append("Listening Map — \(scene.title ?? "Scene"): \(scene.summaryText ?? "No summary") (\(scene.summaryProvenance?.rawValue.replacingOccurrences(of: "_", with: " ") ?? "provenance unavailable")).")
+                lines.append("Listening Map — \(scene.title ?? "Scene"): \(scene.summaryText ?? "No summary") (\(SharePreviewWords.summarySource(scene.summaryProvenance))).")
             }
         }
         let generatedVoiceCount = manifest.assets.filter {
