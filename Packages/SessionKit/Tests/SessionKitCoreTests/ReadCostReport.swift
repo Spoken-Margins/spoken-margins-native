@@ -71,6 +71,8 @@ struct ReadCostReport {
             ("loadPaperSources()", { _ = try store.loadPaperSources() }),
             ("loadFollowLists()", { _ = try store.loadFollowLists() }),
             ("loadFollowList(id:)", { _ = try store.loadFollowList(id: "follow-list-0") }),
+            ("loadReplyBoxes()", { _ = try store.loadReplyBoxes() }),
+            ("loadReplyBox(id:)", { _ = try store.loadReplyBox(id: "00000000000000000000000000000000") }),
             ("loadListLinks()", { _ = try store.loadListLinks() }),
             ("loadListLink(id:)", { _ = try store.loadListLink(id: "list-link-0") }),
             ("loadListeningRules()", { _ = try store.loadListeningRules() }),

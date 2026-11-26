@@ -128,7 +128,7 @@ struct ReplyReportSheet: View {
                 .disabled(isFiled || form.isSending)
 
                 Section {
-                    TextField(ReplyArrivalWords.reportReasonPlaceholder, text: $form.reason, axis: .vertical)
+                    AppTextField(ReplyArrivalWords.reportReasonPlaceholder, text: $form.reason, axis: .vertical)
                         .lineLimit(3...8)
                         .accessibilityIdentifier("replyBox.report.reason")
                 } header: {
