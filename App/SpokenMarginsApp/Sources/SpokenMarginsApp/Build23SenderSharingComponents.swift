@@ -265,12 +265,7 @@ struct Build23BackToSelectionButton: View {
 
     var body: some View {
         Button(action: action) {
-            // At the accessibility sizes the title takes two lines; without these it was held to one and read
-            // "Back to" (#5334).
             Label(title, systemImage: "chevron.left")
-                .lineLimit(nil)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
                 .frame(minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
         }
@@ -291,9 +286,6 @@ struct Build23SendFileButton: View {
     var body: some View {
         Button(action: action) {
             Label("Send as a file", systemImage: "doc")
-                .lineLimit(nil)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .contentShape(Rectangle())
         }
@@ -333,7 +325,6 @@ struct Build23PreviewRow: View {
                 Image(systemName: "doc.text.magnifyingglass")
                 Text("Preview what your friend gets")
                     .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.right")
                     .font(.footnote.weight(.semibold))
