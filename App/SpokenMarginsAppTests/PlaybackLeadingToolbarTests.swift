@@ -4,13 +4,15 @@ import XCTest
 import SessionKit
 @testable import SpokenMarginsApp
 
-/// #4739: at first launch with the largest text size and dark mode, the Now header's scroll visibility fed the toolbar,
-/// whose size fed the scroll visibility, at 100% CPU. The leading item must be in the bar whether or not the header
-/// is on screen. Hosts the real toolbar content in a navigation controller and reads the bar items UIKit was given.
+/// Hosts the real toolbar content in a navigation controller and reads the bar items UIKit was given.
+///
+/// #5329: on Now the bar held an invisible copy of the Library arrow, and iOS 26 drew an empty glass pill around it.
+/// The arrow is now drawn in the corner on Now. #4739: at first launch with the largest text size and dark mode, scroll
+/// state fed the toolbar, whose size fed the scroll, at 100% CPU; the bar now takes no scroll input, and this checks
+/// that hosting it at AX3 in dark mode settles in a few passes.
 @MainActor
 final class PlaybackLeadingToolbarTests: XCTestCase {
     private final class Driver: ObservableObject {
-        @Published var headerIsVisible = true
         var bodyEvaluations = 0
     }
 
@@ -21,10 +23,10 @@ final class PlaybackLeadingToolbarTests: XCTestCase {
             let _ = { driver.bodyEvaluations += 1 }()
             Color.clear
                 .toolbar {
-                    PlaybackLeadingToolbar(
-                        pane: pane, timelineEditorHasFocus: false,
-                        nowHeaderIsVisible: driver.headerIsVisible, returnToNow: {}
-                    ) { _ in Image(systemName: "chevron.left") }
+                    PlaybackLeadingToolbar(pane: pane, timelineEditorHasFocus: false, returnToNow: {}) {
+                        Image(systemName: "chevron.left")
+                            .accessibilityIdentifier(PlaybackLeadingControl.libraryExitIdentifier)
+                    }
                 }
         }
     }
@@ -44,7 +46,7 @@ final class PlaybackLeadingToolbarTests: XCTestCase {
         return (item.leftBarButtonItems ?? []) + item.leadingItemGroups.flatMap(\.barButtonItems)
     }
 
-    func testLeadingItemIsInTheBarWhetherOrNotTheNowHeaderIsVisible() throws {
+    func testNowHasOneLeadingItemAndSettlesAtTheLargestTextSize() throws {
         let driver = Driver()
         let host = UIHostingController(rootView: Host(driver: driver, pane: .now)
             .dynamicTypeSize(.accessibility3).preferredColorScheme(.dark))
@@ -54,20 +56,8 @@ final class PlaybackLeadingToolbarTests: XCTestCase {
         window.makeKeyAndVisible()
 
         settle(nav) { !leadingItems(nav).isEmpty }
-        let whileVisible = leadingItems(nav)
-        XCTAssertFalse(whileVisible.isEmpty, "the Library arrow is in the bar while the header shows (hidden, not removed)")
-
-        driver.headerIsVisible = false
-        let evaluationsBefore = driver.bodyEvaluations
-        settle(nav) { driver.bodyEvaluations > evaluationsBefore }
-        for _ in 0..<5 { nav.view.layoutIfNeeded(); RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
-        let whileHidden = leadingItems(nav)
-        XCTAssertEqual(whileHidden.count, whileVisible.count, "same number of leading items once the header scrolls away")
-        XCTAssertTrue(zip(whileVisible, whileHidden).allSatisfy { $0 === $1 }, "the same bar items, not new ones")
-
-        driver.headerIsVisible = true
-        for _ in 0..<5 { nav.view.layoutIfNeeded(); RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
-        XCTAssertEqual(leadingItems(nav).count, whileVisible.count, "and the same when it returns")
-        XCTAssertLessThan(driver.bodyEvaluations, 40, "no layout loop: a few evaluations for two flips, not hundreds")
+        XCTAssertEqual(leadingItems(nav).count, 1, "the Library arrow is the one leading item on Now")
+        for _ in 0..<10 { nav.view.layoutIfNeeded(); RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
+        XCTAssertLessThan(driver.bodyEvaluations, 20, "no layout loop: a few evaluations, not hundreds")
     }
 }
