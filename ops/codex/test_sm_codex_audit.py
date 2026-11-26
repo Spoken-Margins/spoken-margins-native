@@ -807,6 +807,61 @@ class FailureMemory(unittest.TestCase):
         self.assertFalse(A.asks_for_audit("This doesn't need a Claude audit."))
 
 
+class RepeatedHeading(unittest.TestCase):
+    """#5332: a model answer that repeats the audit heading must still post its verdict as the first line after it.
+
+    Read back with the merge policy's own parser (`scripts/lane_merge_rules.audit_blocker`), which is what held #5180.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "lane_merge_rules_for_5332", Path(__file__).resolve().parents[2] / "scripts" / "lane_merge_rules.py")
+        cls.lane = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.lane)
+
+    def blocker(self, body):
+        return self.lane.audit_blocker([{"body": body}], HEAD)
+
+    CLEAN_SECTIONS = (
+        "**Claude audit on `e5f6547`**\n\nNo blocking findings.",  # #5180's comment 7150447827, another sha
+        "**Claude audit on `68fc333`**\n\n**Claude audit on `68fc333`**\n\nNo blocking findings.",
+        "Claude audit on `68fc333`\nNo blocking findings.",
+        "## Claude audit\n\nNo blocking findings.",
+        "**Claude audit:**\n\n**No blocking findings.**",
+        "**Codex audit (Astra) on `68fc333`**\n\nNo blocking findings.",
+        "### Codex audit\nNo findings.",
+        "**No blocking findings.**",
+        "No blocking findings.**",  # #5180's `c061f77` audit: a stray closing mark
+        "**Claude audit on `68fc333`**\n\nNo blocking findings.**",
+    )
+
+    def test_a_clean_answer_that_repeats_the_heading_clears_merge_policy(self):
+        for reviewer in ("Claude", "Codex"):
+            for section in self.CLEAN_SECTIONS:
+                with self.subTest(reviewer=reviewer, section=section):
+                    body = A.build_comment(366, HEAD, section, [366], reviewer=reviewer)
+                    self.assertEqual(sum("audit" in line and "`68fc333`" in line for line in body.splitlines()), 1, body)
+                    self.assertTrue(body.splitlines()[2].startswith("No blocking findings") or
+                                    body.splitlines()[2].startswith("No findings"), body)
+                    self.assertIsNone(self.blocker(body))
+
+    def test_findings_stay_blocking_with_or_without_a_repeated_heading(self):
+        for section in ("**Claude audit on `68fc333`**\n\n1. **High:** it loses data",
+                        "## Claude audit\n**Blocking:** packet won't import",
+                        "1. **Plausible:** No blocking findings in the parser, but the store drops a row",
+                        "**Claude audit on `68fc333`**",  # only the heading: nothing reads as clean
+                        "Claude audit on the head: one blocking finding\n1. it loses data"):
+            with self.subTest(section=section):
+                body = A.build_comment(366, HEAD, section, [366])
+                self.assertIsNotNone(self.blocker(body))
+                self.assertIn("blocking findings", self.blocker(body))
+
+    def test_split_sections_uses_the_same_rule(self):
+        out = "### PR #366\n**Claude audit on `68fc333`**\n\n**No blocking findings.**\n\nNotes."
+        self.assertEqual(A.split_sections(out, [366])[366], "No blocking findings.**\n\nNotes.")
+
+
 class HeadFiles(unittest.TestCase):
     def export(self, files, blobs):
         """blobs: path -> (mode, size, text or an Exception for show)."""
