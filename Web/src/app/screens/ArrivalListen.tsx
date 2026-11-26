@@ -287,10 +287,18 @@ export function ArrivalListen(props: ArrivalListenProps) {
               </a>
             </p>
           )}
-          {showLibrary && (
+          {showLibrary ? (
             <p>
               <button type="button" className="link-button" onClick={toLibrary}>
                 Go to your web Library
+              </button>
+            </p>
+          ) : (
+            // The card is modal, so it always keeps a way out (owner, 2026-11-26, #5355): with nothing in the web Library
+            // yet, this button closes it onto the web app, as the old article card's button did.
+            <p>
+              <button type="button" className="link-button" onClick={toLibrary}>
+                Open Spoken Margins
               </button>
             </p>
           )}

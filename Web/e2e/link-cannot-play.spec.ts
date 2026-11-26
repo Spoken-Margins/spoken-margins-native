@@ -131,10 +131,13 @@ test('offline after the card opens, Hear still plays the first Margin', async ({
   await context.setOffline(false);
 });
 
-test('a text link stores nothing in the web Library', async ({ page }) => {
+test('a text link stores nothing in the web Library, and Open Spoken Margins still closes the card (#5355)', async ({ page }) => {
   const card = await open(page, 'vectorarticle1');
   await hearAll(page);
   await expect(card.getByRole('button', { name: 'Go to your web Library' })).toHaveCount(0);
+  // The card is modal: a first-time friend with an empty web Library must still have a way out (owner, 2026-11-26).
+  await card.getByRole('button', { name: 'Open Spoken Margins' }).click();
+  await expect(card).toHaveCount(0);
 });
 
 test('opened as a file, a PDF’s Margins show on the same card, with “file” words, and nothing is stored', async ({ page }) => {
