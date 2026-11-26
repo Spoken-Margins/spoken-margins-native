@@ -9,6 +9,7 @@ import type { Episode } from '../../shared/model.ts';
 import { appleEpisodeRef } from '../../sources/apple.ts';
 import { isSubstackPostUrl } from '../../sources/substack.ts';
 import { playableArticleMargins } from './arrival.ts';
+import { findEpisode } from './import.ts';
 
 /**
  * Why a link can't be played in a browser, as far as the packet and a post's voice lookup say.
@@ -71,4 +72,60 @@ export function playability(read: Pick<PacketRead, 'episode' | 'margins' | 'perc
   if (voice === 'paid') return { verdict: 'cannot', reason: 'paid-post' };
   if (voice === 'none') return { verdict: 'cannot', reason: 'no-post-voice' };
   return { verdict: 'needs-voice-lookup', pageUrl, source: 'substack-post' };
+}
+
+/**
+ * What a packet is about, for the words on the card a browser shows when it can't play the Margins (#5265). It comes from
+ * the packet's `item.itemType` and whether it has a web address:
+ * - `article`: text with a web address; `text`: text with none (a pasted text, a Spoken Note);
+ * - `pdf`, `book` (an EPUB), `episode` (a podcast), `recording` (`other`: an audiobook or another recording).
+ * With no `itemType`, or one it doesn't know: `episode` when the packet has timed Margins, else `article` or `text`.
+ */
+export type ItemKind = 'article' | 'text' | 'pdf' | 'book' | 'episode' | 'recording';
+
+export function itemKind(read: Pick<PacketRead, 'itemType' | 'episode' | 'margins'>): ItemKind {
+  const addressed = webAddress(read.episode.pageUrl) !== undefined;
+  switch (read.itemType) {
+    case 'text':
+      return addressed ? 'article' : 'text';
+    case 'pdf':
+      return 'pdf';
+    case 'epub':
+      return 'book';
+    case 'podcast':
+      return 'episode';
+    case 'other':
+      return 'recording';
+    default:
+      if (read.margins.length > 0) return 'episode';
+      return addressed ? 'article' : 'text';
+  }
+}
+
+/** An address that is safe to offer as a tap: http or https only. */
+export function webAddress(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The packet with the listener's own copy's audio put on its episode, when a link whose episode has no audio names an
+ * episode the listener's web Library already holds with audio (#5265): Arrival asks `playability` of this instead, so
+ * the friend gets the Play card on their own copy. Undefined when there is no such copy.
+ */
+export function withOwnedAudio<R extends PacketRead>(read: R, episodes: readonly Episode[]): R | undefined {
+  const own = findEpisode(read, episodes);
+  if (!own?.audioUrl) return undefined;
+  return { ...read, episode: { ...read.episode, audioUrl: own.audioUrl, ...(own.audioOrigin && { audioOrigin: own.audioOrigin }) } };
+}
+
+/** Whether the listener's own copy of the episode makes a `no-episode-audio` link play (#5265). */
+export function ownedCopyPlays(read: PacketRead, episodes: readonly Episode[]): boolean {
+  const owned = withOwnedAudio(read, episodes);
+  return owned !== undefined && playability(owned).verdict === 'plays';
 }

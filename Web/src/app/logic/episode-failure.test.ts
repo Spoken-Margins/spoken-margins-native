@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Margin } from '../../shared/model.ts';
-import { ARRIVAL_WORDS, cueFor } from './arrival.ts';
+import { cueFor } from './arrival.ts';
 import { clipRejection, failureNoticeShown, nextFailure, playRejectionMeansFailed, type FailureEvent } from './episode-failure.ts';
 
 /** Runs events through the state and returns how many separate failures began and where it ended. */
@@ -101,13 +101,6 @@ test('a failed item with no friend Margins offers nothing (the one toast is all 
 test('an episode that has not failed keeps its countdown, and a retry that works brings it back', () => {
   assert.equal(cueFor([margin('a', 30)], 0, 'Sam', { failed: false, heardWithoutEpisode: false })?.kind, 'countdown');
   assert.equal(cueFor([margin('a', 30)], 0, 'Sam')?.kind, 'countdown');
-});
-
-test('a packet with no audio address keeps its own words', () => {
-  assert.equal(
-    ARRIVAL_WORDS.noEpisodeAudio('Sam'),
-    'This episode has no audio the browser can play. Sam’s Margins are saved in your Library. Open this in the Spoken Margins app on iPhone to hear them with the episode.',
-  );
 });
 
 test('an unnamed sender reads as “your friend” in the sentence and the button', () => {

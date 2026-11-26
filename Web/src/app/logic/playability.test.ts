@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Margin, PercentMargin } from '../../shared/model.ts';
 import type { PacketRead } from '../ports.ts';
-import { ARRIVAL_WORDS, playableArticleMargins } from './arrival.ts';
-import { episodeVoice, playability } from './playability.ts';
+import { playableArticleMargins } from './arrival.ts';
+import { episodeVoice, itemKind, ownedCopyPlays, playability, webAddress, withOwnedAudio } from './playability.ts';
 
 const margin = (id: string): Margin => ({ id, episodeId: 'e', atSeconds: 30, createdAt: '2026-11-17T10:00:00Z', text: `words ${id}`, author: 'Cole' });
 const percent = (id: string): PercentMargin => ({ margin: { ...margin(id), atSeconds: 0 }, percent: 20 }) as PercentMargin;
@@ -83,7 +83,6 @@ test('the arrival page and the check agree: the text-only card is exactly the `a
     const verdict = playability(c.read);
     assert.equal(verdict.verdict === 'cannot' && verdict.reason === 'article', textOnly, c.name);
   }
-  assert.ok(ARRIVAL_WORDS.article('Cole').includes('can’t play yet'));
 });
 
 // #4767: the Library tag, the player's lookup and the "play newest" walk ask the same question as the arrival card, so
@@ -97,4 +96,72 @@ test('episodeVoice: own audio, a Substack post or an Apple episode to look up, o
   assert.equal(episodeVoice({ pageUrl: 'https://podcasts.apple.com/us/podcast/x/id1445582279' }), 'none');
   assert.equal(episodeVoice({ pageUrl: 'https://open.spotify.com/episode/4rOoJ6Egrf8K2IrywzwOMk' }), 'none');
   assert.equal(episodeVoice({}), 'none');
+});
+
+// #5265: the card for a link a browser can't play takes its nouns from what the Margins sit on.
+const typed = (itemType: string | undefined, episode: Partial<PacketRead['episode']>, margins: Margin[] = [], percentMargins: PercentMargin[] = []) => ({
+  ...read(episode, margins, percentMargins),
+  ...(itemType !== undefined && { itemType }),
+});
+
+test('the cannot-play cases of #5265: a PDF, a book, a pasted text, a recording, a podcast with only places', () => {
+  const rows: Array<[string, ReturnType<typeof typed>, ReturnType<typeof playability>]> = [
+    ['a PDF with no address', typed('pdf', {}, [], [percent('p')]), { verdict: 'cannot', reason: 'article' }],
+    ['a PDF with an address', typed('pdf', { pageUrl: 'https://example.com/paper.pdf' }, [], [percent('p')]), { verdict: 'cannot', reason: 'article' }],
+    ['an EPUB', typed('epub', {}, [], []), { verdict: 'cannot', reason: 'article' }],
+    ['a pasted text', typed('text', {}, [], []), { verdict: 'cannot', reason: 'article' }],
+    ['a recording with timed Margins and no audio', typed('other', {}, [margin('m')]), { verdict: 'cannot', reason: 'no-episode-audio' }],
+    ['a podcast with only percent places and no length', typed('podcast', {}, [], [percent('p')]), { verdict: 'cannot', reason: 'article' }],
+  ];
+  for (const [name, r, verdict] of rows) assert.deepEqual(playability(r), verdict, name);
+});
+
+test('itemKind: every itemType, a missing one, and the fallbacks (#5265)', () => {
+  const rows: Array<[string | undefined, Partial<PacketRead['episode']>, Margin[], string]> = [
+    ['text', { pageUrl: 'https://example.com/essay' }, [], 'article'],
+    ['text', {}, [], 'text'],
+    ['text', { pageUrl: 'javascript:alert(1)' }, [], 'text'],
+    ['pdf', {}, [], 'pdf'],
+    ['pdf', { pageUrl: 'https://example.com/p.pdf' }, [], 'pdf'],
+    ['epub', {}, [], 'book'],
+    ['podcast', {}, [], 'episode'],
+    ['other', {}, [margin('m')], 'recording'],
+    [undefined, {}, [margin('m')], 'episode'],
+    [undefined, { pageUrl: 'https://example.com/essay' }, [], 'article'],
+    [undefined, {}, [], 'text'],
+    ['newkind', {}, [], 'text'],
+    ['newkind', {}, [margin('m')], 'episode'],
+    ['', { pageUrl: 'https://example.com/x' }, [], 'article'],
+  ];
+  for (const [itemType, episode, margins, kind] of rows) assert.equal(itemKind(typed(itemType, episode, margins)), kind, `${itemType} ${JSON.stringify(episode)}`);
+});
+
+test('webAddress offers only http and https', () => {
+  assert.equal(webAddress('https://example.com/a'), 'https://example.com/a');
+  assert.equal(webAddress('http://example.com/a'), 'http://example.com/a');
+  assert.equal(webAddress('javascript:alert(1)'), undefined);
+  assert.equal(webAddress('file:///etc/passwd'), undefined);
+  assert.equal(webAddress('not a url'), undefined);
+  assert.equal(webAddress(undefined), undefined);
+});
+
+test('an owned copy with audio makes a no-audio link play; one without audio leaves it on the card (#5265)', () => {
+  const packet = { contentDigest: 'd', textMarginCount: 0, pageMargins: [], ...read({ itemType: 'podcast', guid: 'g-1' }) } as PacketRead;
+  assert.deepEqual(playability(packet), { verdict: 'cannot', reason: 'no-episode-audio' });
+  const withAudio = [{ id: 'mine', showId: 's', title: 'Mine', guid: 'g-1', audioUrl: MP3 }];
+  const withoutAudio = [{ id: 'mine', showId: 's', title: 'Mine', guid: 'g-1' }];
+  assert.equal(ownedCopyPlays(packet, withAudio), true);
+  assert.equal(withOwnedAudio(packet, withAudio)?.episode.audioUrl, MP3);
+  assert.equal(ownedCopyPlays(packet, withoutAudio), false);
+  assert.equal(ownedCopyPlays(packet, []), false);
+  assert.equal(ownedCopyPlays(packet, [{ ...withAudio[0], guid: 'other' }]), false);
+});
+
+test('the listen-here card shows exactly when the verdict is cannot (article or no audio) and no owned copy plays', () => {
+  for (const c of cases) {
+    const v = playability(c.read);
+    const card = v.verdict === 'cannot' && (v.reason === 'article' || v.reason === 'no-episode-audio');
+    const packet = { contentDigest: 'd', textMarginCount: 0, pageMargins: [], ...c.read } as PacketRead;
+    assert.equal(card && !ownedCopyPlays(packet, []), card, c.name);
+  }
 });

@@ -118,17 +118,31 @@ export function marginsSeconds(margins: readonly Margin[]): number {
   return margins.reduce((sum, m) => sum + (m.voice ? m.voice.durationSeconds : readsAloud(m) ? WRITTEN_SECONDS : 0), 0);
 }
 
-export function arrivalFacts(sender: string | undefined, margins: readonly Margin[]): ArrivalFacts {
+/**
+ * Where the Margins are heard, for the explanation of "Margin": in the episode (the Play card and the preview), or on the
+ * card a browser shows when it can't play them (#5265), which names what they sit on and plays each after its words.
+ */
+export interface FactsPlace {
+  /** "article", "PDF", "book", "text", "episode", "recording". */
+  noun: string;
+  /** "place" on a text, "moment" in an episode or recording. */
+  place: string;
+}
+
+export function arrivalFacts(sender: string | undefined, margins: readonly Margin[], card?: FactsPlace): ArrivalFacts {
   const who = senderName(sender);
   const anyWritten = margins.some((m) => !m.voice);
   const count = margins.length === 1 ? '1 Margin' : `${margins.length} Margins`;
+  const noun = card?.noun ?? 'episode';
+  const place = card?.place ?? 'moment';
+  const heard = card ? 'You’ll hear each one here, after the words before it.' : 'You’ll hear each one there.';
   return {
     who,
     initial: senderInitial(sender),
     countLine: `${count} · ${lengthWords(marginsSeconds(margins))}`,
     explanation: anyWritten
-      ? `A Margin is a note ${who} left at a moment in this episode. You’ll hear each one there.`
-      : `A Margin is a voice note ${who} left at a moment in this episode.`,
+      ? `A Margin is a note ${who} left at a ${place} in this ${noun}. ${heard}`
+      : `A Margin is a voice note ${who} left at a ${place} in this ${noun}.`,
     anySpoken: margins.some((m) => m.voice !== undefined),
   };
 }
@@ -161,8 +175,6 @@ export const ARRIVAL_WORDS = Object.freeze({
   offline: 'You’re offline. Reconnect, then open the link again.',
   server: 'The server had a problem. Try again in a minute.',
   unreadable: 'This file couldn’t be opened. It may have been damaged on the way. Ask your friend to send it again.',
-  article: (who: string) => `${leading(possessive(who))} Margins are on an article’s text, which the browser can’t play yet.`,
-  noEpisodeAudio: (who: string) => `This episode has no audio the browser can play. ${leading(possessive(who))} Margins are saved in your Library. Open this in the Spoken Margins app on iPhone to hear them with the episode.`,
   // The episode has an address but it failed to load (#3356): say so once, and offer the Margins on their own.
   episodeCantPlay: (who: string) => `This episode can’t play here, but you can still hear ${possessive(who)} Margins.`,
   hearMargins: (who: string) => `Hear ${possessive(who)} Margins`,
