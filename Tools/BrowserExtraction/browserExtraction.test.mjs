@@ -1554,7 +1554,13 @@ test("#5365 audit: content that shares a figure with an icon or a chart is never
     [`<table><tr><th>Plan</th><th>Offline</th></tr><tr><td>Charted plan row</td><td><svg><path d="M0 0"/></svg></td></tr></table>`, "Charted plan row"],
     [`<ul><li>Source list item</li></ul>`, "Source list item"],
     [`<pre><code>plotted values 1 2 3</code></pre>`, "plotted values 1 2 3"],
-    [`<details><summary>Show data</summary><table><tr><td>Hidden data cell</td></tr></table></details>`, "Hidden data cell"]
+    [`<details><summary>Show data</summary><table><tr><td>Hidden data cell</td></tr></table></details>`, "Hidden data cell"],
+    // Plain words beside the chart count too (#5384 audit of c8fef4a): a credit
+    // in a <div> or <span>, a link, a bare text node.
+    [`<div class="credit">Source: Bureau of Labor Statistics</div>`, "Source: Bureau of Labor Statistics"],
+    [`<span>Credit in a span</span>`, "Credit in a span"],
+    [`<a href="data.csv">Download the data</a>`, "Download the data"],
+    [`Bare words beside the chart`, "Bare words beside the chart"]
   ]) {
     text = captureFigures([chartWith(content)]);
     assert.ok(text.includes(words), `${words}: ${text}`);

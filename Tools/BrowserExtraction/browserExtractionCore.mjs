@@ -543,11 +543,34 @@ function holdsHiddenPicture(figure) {
 // (#5384 audit of 584f63d). Words are never traded for a picture.
 const CONTENT_SELECTOR = `${READABLE_SELECTOR}, details, summary`;
 
+// Plain words count too: a "Source: …" credit in a <div>, a <span>, a
+// "Download the data" <a> or a bare text node beside the chart is dropped by
+// the same figure rule (#5384 audit of c8fef4a). A legend that sits outside
+// the chart's block is kept as words too: losing a picture costs less than
+// losing words.
+const NOT_READ = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "FIGCAPTION"]);
+
+function holdsWordsBesideChart(node, blocks) {
+  for (const child of node.childNodes) {
+    if (child.nodeType === 3) {
+      if (child.textContent.trim()) {
+        return true;
+      }
+    } else if (child.nodeType === 1 && !NOT_READ.has(child.tagName.toUpperCase()) && !blocks.has(child)) {
+      if (holdsWordsBesideChart(child, blocks)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function holdsContentBesideChart(figure, blocks) {
   return Array.from(figure.querySelectorAll(CONTENT_SELECTOR)).some(element =>
     !element.matches("figcaption, img, picture")
       && !element.closest("figcaption")
-      && ![...blocks].some(block => block.contains(element)));
+      && ![...blocks].some(block => block.contains(element)))
+    || holdsWordsBesideChart(figure, blocks);
 }
 
 function pictureInteractiveFigures(documentRef) {
