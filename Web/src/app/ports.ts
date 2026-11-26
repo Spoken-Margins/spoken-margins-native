@@ -1,7 +1,7 @@
 // The UI's view of the logic modules: `src/sources/` (#2983: podcast search, feed reading, Substack voice, the
 // relay path) and `src/packet/` (#2984: `.spokenmargins` read and write, voice recording to AAC). The UI talks only
 // to these interfaces; `services.ts` binds them to the real modules (#2979).
-import type { AudioOrigin, Episode, Margin, PercentMargin, Show } from '../shared/model.ts';
+import type { AudioOrigin, Episode, Margin, PageMargin, PercentMargin, Show } from '../shared/model.ts';
 
 /**
  * Thrown when a feed can't be read straight from the browser and the listener hasn't allowed the relay. It is the
@@ -72,6 +72,13 @@ export interface PacketRead {
   textMarginCount: number;
   /** The article-text Margins that say how far through the article they sit, so they can be placed on its voice (#4421). */
   percentMargins: PercentMargin[];
+  /**
+   * Every Margin on the text's words, with the quote it sits on and its rough place when it has one (#5265): what the card
+   * for a link the browser can't play lists. `percentMargins` stays the set the player places.
+   */
+  pageMargins: PageMargin[];
+  /** The packet's `item.itemType` (`text`, `podcast`, `pdf`, `epub`, `other`), when it gave one: the card's nouns (#5265). */
+  itemType?: string;
 }
 
 export interface PacketWritten {

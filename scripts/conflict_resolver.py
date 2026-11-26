@@ -1,38 +1,41 @@
 #!/usr/bin/env python3
-"""Propose merges for armed PRs that the hosted conflict check handed off: the shadow trial (#5320).
+"""Merge `main` into armed PRs that the hosted conflict check handed off, when the conflict is small (#5320).
 
-`scripts/lane_conflicts.py` (#683) finds an armed PR that no longer merges into `main`, takes it out of the queue and
-posts a hand-off comment carrying `<!-- lane-conflict head=<sha7> base=<sha7> -->`. The owning thread usually fixes
-it within minutes; a PR whose thread has ended waits for the Mac finisher (median 2.3 h, slowest tenth over 15 h,
-measured 2026-11-24). This script proposes the merge instead. The owner's call (2026-11-24, `docs/decisions.md`) is
-that it first runs as a 12-hour shadow trial that pushes nothing to any PR and changes no label, graded on outcomes.
+`scripts/lane_conflicts.py` (#683) finds an armed PR that no longer merges into `main`, takes it out of the queue,
+labels it `conflict-resolver` and posts a hand-off carrying `<!-- lane-conflict head=<sha7> base=<sha7> -->`. The
+owning thread usually fixes it within minutes; a PR whose thread has ended used to wait for the Mac finisher (median
+2.3 h, slowest tenth over 15 h, measured 2026-11-24). This script resolves it instead. It ran as a 12-hour shadow
+trial, then a retrospective replay on 116 past hand-offs (26 of 31 gradable merges matched or equalled the thread's
+own); the owner's call to go live is 2026-11-26 (`docs/decisions.md`).
 
-For each handed-off PR it is allowed to touch (`eligible`), it
+For each handed-off PR it is allowed to touch (`handoff`), it
 
 1. merges the PR head onto the base tip in a throwaway worktree (`diff3` conflict style), as git data only: no PR
    code runs, and git runs with no hooks, filters or user config;
 2. sorts the conflict (`sort_case`): `mechanical` (a generated `*_baseline.json` line list, both sides appending to a
    doc, whitespace), `small`, `medium` or `hard`. A file deleted or renamed on one side, a binary file, and any PR
-   that touches a protected path (`PROTECTED`) are `hard` and are only reported;
+   that touches a protected path (`PROTECTED`) are `hard`;
 3. resolves mechanical hunks itself, and asks Claude only for the small and medium ones. Claude gets the conflict
    text (the three sides of each hunk with a few lines around it, the paths, and the titles and bodies of the PR
    and of the `main` PRs that changed those files) and nothing else: no tools, no shell, no token but its own, run
    from an empty folder. The text is untrusted input on a public repo. Its reply may only fill in the hunks it was
    given (`parse_reply`); anything else refuses the whole reply;
-4. commits the proposed merge (parent 1 the base, as in GitHub's own merge commits, so the commit adds nothing
-   from `.github/` that the PR doesn't) and pushes it to `resolver-shadow/<pr>-<head7>`, never to the PR's branch;
-   then dispatches the PR's hosted checks (`hosted-portable`, `hosted-web`) on that branch, which is how the
-   trial learns whether the PR's checks pass on its proposed merge;
-5. posts one comment per PR head on the log issue (#5320), with a machine-readable record that `report` reads.
-   Comments go there, not on the PR, so the trial wakes no owning thread.
+4. commits the merge with the PR head as first parent and the base as second (a normal "merge main into the
+   branch" commit) and pushes it to the PR's branch as the project's App, never forced: a branch that moved since
+   the fetch rejects the push and the PR is left to whoever moved it. The App's push starts the PR's checks;
+5. takes `conflict-resolver` off and adds `automerge` again as the App, so the PR merges only if its checks pass,
+   and says on the PR what it merged and why;
+6. hands anything it does not merge (hard, protected, refused, a model hand-back, a failed call or push) to the Mac
+   finisher: a `Handing to the Mac finisher:` comment with the conflict marker, `needs-mac` on, `conflict-resolver`
+   off, as `lane_conflicts.py` did before;
+7. posts one record per PR head on the log issue (#5320).
 
-The trial window is 12 hours from the first run (a `trial-start` record on the log issue). After it, the script does
-nothing but say once that the window ended; `python3 scripts/conflict_resolver.py report` prints the grading:
-for each `small` or `medium` case, whether the hosted checks passed on its proposed merge and whether both sides'
-changes were kept, plus the conflict rate during the window. Going live (pushing to the PR branch) is a later PR,
-only if at least about half of those cases pass.
+A `conflict-resolver` PR whose thread pushed or armed it again is no longer the resolver's: the label comes off and
+nothing else changes. `lane_conflicts.py` hands any `conflict-resolver` PR the resolver has not acted on for
+`STALE_HOURS` to the finisher, so a broken resolver run never strands a PR.
 
-It moves no label and never dequeues anything: the merge queue rules from #5316 and the label bridge own those.
+It never dequeues anything: the merge queue rules from #5316 and the label bridge own that.
+`python3 scripts/conflict_resolver.py report` still grades the 12-hour shadow trial from its records.
 """
 from __future__ import annotations
 
@@ -64,7 +67,11 @@ ARMED = ('automerge', 'lane:queued')
 HANDOFF_PREFIXES = ('Handing to the Mac finisher:', 'Handing to the conflict resolver:')
 CONFLICT_MARKER = re.compile(r'<!-- lane-conflict head=([0-9a-f]{7}) base=([0-9a-f]{7}) -->')
 RECORD_AT_END = re.compile(r'<!-- conflict-resolver (\{[^\n]*\}) -->\s*\Z')
-SHADOW_PREFIX = 'resolver-shadow/'
+SHADOW_PREFIX = 'resolver-shadow/'  # the shadow trial's branches; `report` still reads them
+LABEL = 'conflict-resolver'  # lane_conflicts.py's hand-off to this script
+FINISHER = 'needs-mac'
+FINISHER_HANDOFF = 'Handing to the Mac finisher:'
+TRUNKS = ('main', 'next')  # never pushed to, whatever a PR says its head is
 CHECK_WORKFLOWS = ('hosted-portable.yml', 'hosted-web.yml')
 # The jobs of those that test the merged tree the same way on a PR and on a dispatch with no base; nothing else grades.
 GRADED_JOBS = {'hosted fast: portable': 'hosted-portable.yml', 'hosted web: build and Playwright': 'hosted-web.yml'}
@@ -74,7 +81,6 @@ PROTECTED = ('.github/', 'scripts/lane-runner.py')
 PROTECTED_PARTS = ('SessionKitPersistence', 'SessionKitSharing')  # any folder starting so, tests included
 GENERATED = re.compile(r'_baseline\.json$')
 DOC = re.compile(r'\.md$')  # prose only; additions to code or data, docs/ included, need judgment
-WEB = re.compile(r'^(Web/|research/B4/server/internal/links/)')  # what hosted-web.yml's `changes` job tests
 BASELINE_KEY = ('function', 'api', 'class')  # scripts/main_thread_reads.py keys its rows so
 # The proposal's sizes (notes/conflict-resolver, 2026-11-24): at most this many hunks, this many lines a side.
 SIZES = (('small', 3, 3), ('medium', 5, 10))
@@ -89,14 +95,18 @@ KEPT_ENOUGH = 0.9
 # ---------------------------------------------------------------------------------------------------------- GitHub
 
 class Api:
-    """`gh api` with reads on GH_TOKEN (the App's read-only token) and writes on SM_WRITE_TOKEN (the workflow's)."""
+    """`gh api` with reads on GH_TOKEN (the App's read-only token), the log issue's records on SM_WRITE_TOKEN (the
+    workflow's, so `records` trusts them) and PR writes (labels, PR comments) on SM_APP_TOKEN (the App's, whose
+    label events start the merge queue's workflows, as GITHUB_TOKEN's do not)."""
 
-    def __init__(self, repo, write_token=None):
+    def __init__(self, repo, write_token=None, app_token=None):
         self.repo = repo
         self.write_token = write_token
+        self.app_token = app_token
 
     def _run(self, args, write=False):
-        env = dict(os.environ, GH_TOKEN=self.write_token) if write and self.write_token else None
+        token = self.app_token if write == 'app' else self.write_token if write else None
+        env = dict(os.environ, GH_TOKEN=token) if token else None
         return subprocess.run(['gh', 'api', *args], text=True, timeout=60, capture_output=True, check=True,
                               env=env).stdout
 
@@ -107,11 +117,14 @@ class Api:
         pages = json.loads(self._run(['--paginate', '--slurp', f'repos/{self.repo}/{path}']))
         return [item for page in pages for item in (page if isinstance(page, list) else [page])]
 
-    def post(self, path, fields):
+    def post(self, path, fields, app=False):
         args = ['-X', 'POST', f'repos/{self.repo}/{path}']
         for key, value in fields.items():
             args += ['-f', f'{key}={value}']
-        self._run(args, write=True)
+        self._run(args, write='app' if app else True)
+
+    def delete(self, path):
+        self._run(['-X', 'DELETE', f'repos/{self.repo}/{path}'], write='app')
 
 
 def parse_time(text):
@@ -553,7 +566,7 @@ class Resolver:
             git(self.workdir, 'worktree', 'add', '-q', '--detach', str(tree), base_sha)
             conflicts = merge_conflicts(tree, head)
             if not conflicts:
-                return dict(record, outcome='skipped', reason='merges cleanly now')
+                return dict(record, outcome='clean', reason='merges cleanly now')
             paths = [c[0] for c in conflicts]
             record['files'] = paths[:20]
             record['sort'] = sort_case(conflicts)
@@ -565,7 +578,6 @@ class Resolver:
                             reason='touches a protected path: ' + ', '.join(blocked[:5]))
             if record['sort'] == 'hard':
                 return dict(record, outcome='handback', reason=self.hard_reason(conflicts))
-            record['web'] = any(WEB.match(p) for p in changed)
             return self.propose(record, pull, causes, tree, conflicts, base_sha, head)
         finally:
             git(tree, 'merge', '--abort', check=False)
@@ -633,37 +645,46 @@ class Resolver:
         record['kept'] = list(kept_case(pairs))
         record['whys'] = {i[0]: safe_line(whys.get(i[0], '')) for i in items}
         record['where'] = {i[0]: i[1] for i in items}
-        git(tree, 'commit', '-q', '--no-verify', '-m',
-            f'Shadow merge of {self.base} into #{record["pr"]}, proposed by the conflict resolver (#{LOG_ISSUE})\n\n'
-            f'Not pushed to the PR. Sort: {record["sort"]}.')
-        commit = git(tree, 'rev-parse', 'HEAD').stdout.strip()
-        record['shadow'] = commit
-        branch = f'{SHADOW_PREFIX}{record["pr"]}-{head[:7]}'
-        record['outcome'] = 'proposed'
-        record['diff'] = git(tree, 'diff', '--no-color', f'{base_sha}', commit, '--', *plan).stdout
+        ref = pull['head']['ref']
+        if ref in TRUNKS:
+            return dict(record, outcome='refused', reason=f'the PR\'s head is `{ref}`, which is never pushed to')
+        merged_tree = git(tree, 'write-tree').stdout.strip()
+        # First parent the PR head: the usual "merge main into the branch" commit, a fast-forward of the branch.
+        commit = git(tree, '-c', 'user.name=conflict-resolver', '-c', 'user.email=conflict-resolver@localhost',
+                     'commit-tree', merged_tree, '-p', head, '-p', base_sha, '-m',
+                     f'Merge {self.base} into #{record["pr"]}, resolved by the conflict resolver (#{LOG_ISSUE})\n\n'
+                     f'Sort: {record["sort"]}. Conflicting files: {", ".join(plan)[:500]}.').stdout.strip()
+        record['merge'] = commit
+        record['diff'] = git(tree, 'diff', '--no-color', head, commit, '--', *plan).stdout
         try:
-            git(tree, 'push', '-q', self.remote, f'{commit}:refs/heads/{branch}', auth=self.write_token,
-                timeout=600)
-            record['branch'] = branch
+            # Never forced: a branch someone pushed since the fetch rejects this, and stays theirs.
+            git(tree, 'push', '-q', self.remote, f'{commit}:refs/heads/{ref}', auth=self.write_token, timeout=600)
+        except subprocess.CalledProcessError as error:
+            if re.search(r'non-fast-forward|fetch first|stale info|\[rejected\]', error.stderr or ''):
+                return dict(record, outcome='skipped', reason='the branch moved before the push')
+            return dict(record, outcome='push-failed', reason=describe(error)[:200])
         except subprocess.SubprocessError as error:
-            record['push_error'] = describe(error)[:200]
-            return record
-        dispatched = []
-        # hosted-web only when the PR reaches the web app: on a dispatch it runs Playwright on a Mac whatever changed.
-        for workflow in [w for w in CHECK_WORKFLOWS if w != 'hosted-web.yml' or record.pop('web', False)]:
-            try:
-                self.api.post(f'actions/workflows/{workflow}/dispatches', {'ref': branch})
-                dispatched.append(workflow)
-            except subprocess.SubprocessError as error:
-                self.log(f'::warning::#{record["pr"]}: could not dispatch {workflow} ({describe(error)}).')
-        record['checks'] = dispatched
+            return dict(record, outcome='push-failed', reason=describe(error)[:200])
+        record['outcome'] = 'merged'
         return record
 
 
 def case_text(record, repo):
+    """The record's text on the log issue."""
     pr, sort, outcome = record['pr'], record.get('sort', '?'), record['outcome']
-    lines = [f'**Conflict resolver (shadow)** for #{pr} at `{record["head"]}` onto `main` `{record.get("base", "?")}`: '
-             f'sort **{sort}**, outcome **{outcome}**. Nothing was pushed to the PR and no label changed.']
+    lines = [f'**Conflict resolver** for #{pr} at `{record["head"]}` onto `main` `{record.get("base", "?")}`: '
+             f'sort **{sort}**, outcome **{outcome}**.']
+    lines += detail_lines(record)
+    if record.get('merge') and outcome == 'merged':
+        lines.append(f'Merge pushed to the PR branch: `{record["merge"][:7]}`; `automerge` is back on.')
+    elif record.get('diff') is not None:
+        lines.append('The merge it would have pushed, conflicting files only:')
+        lines.append(fenced(record['diff'][:6000]))
+    return '\n\n'.join(lines)
+
+
+def detail_lines(record):
+    lines = []
     if record.get('files'):
         lines.append('Conflicting files: ' + ', '.join(f'`{f}`' for f in record['files'][:10]) + '.')
     if record.get('main_prs'):
@@ -674,13 +695,28 @@ def case_text(record, repo):
         lines.append(f'- {hid} in `{record["where"][hid]}`: {why or "(no reason given)"}')
     if record.get('kept'):
         lines.append(f'Words kept from each side: main {record["kept"][0]:.0%}, PR {record["kept"][1]:.0%}.')
-    if record.get('branch'):
-        lines.append(f'Proposed merge: [`{record["branch"]}`](https://github.com/{repo}/tree/{quote(record["branch"])}) '
-                     f'(`{record["shadow"][:7]}`); checks dispatched there: {", ".join(record.get("checks") or []) or "none"}.')
-    elif record.get('diff') is not None:
-        lines.append(f'Push failed ({record.get("push_error", "?")}); the proposed merge of the conflicting files:')
-        lines.append(fenced(record['diff'][:6000]))
-    return '\n\n'.join(lines)
+    return lines
+
+
+def merged_text(record, base):
+    if record['outcome'] == 'clean':
+        return (f'**Conflict resolver**: this branch merges cleanly into `{base}` (`{record["base"]}`) now, so nothing '
+                f'was pushed and `automerge` is back on. Log: #{LOG_ISSUE}.')
+    lines = [f'**Conflict resolver**: merged `{base}` (`{record["base"]}`) into this branch as `{record["merge"][:7]}` '
+             f'(sort {record.get("sort")}) and added `automerge` again, so it merges only if its checks pass. '
+             f'Read the merge before building on it; if it is wrong, push a fix or revert it.']
+    lines += detail_lines(record)
+    lines.append(f'Log: #{LOG_ISSUE}.')
+    return defang('\n\n'.join(lines))
+
+
+def finisher_text(record, marker):
+    lines = [f'{FINISHER_HANDOFF} the conflict resolver did not merge `main` into this branch at `{record["head"]}` '
+             f'(sort {record.get("sort", "?")}, outcome {record["outcome"]}).']
+    lines += detail_lines(record)
+    lines.append('Done when: `main` is merged into the branch (no force-push), the conflicts are resolved, the checks '
+                 'that covered the change pass, and the branch is pushed. Then add `automerge` again.')
+    return defang('\n\n'.join(lines)) + ('\n' + marker if marker else '')
 
 
 # ----------------------------------------------------------------------------------------------------------- run
@@ -691,66 +727,118 @@ def trial_state(recs, now):
     return start, ended
 
 
+def drop_label(api, pr, name):
+    try:
+        api.delete(f'issues/{pr}/labels/{quote(name, safe="")}')
+    except subprocess.CalledProcessError as error:
+        if '404' not in (error.stderr or '') + (error.stdout or ''):
+            raise
+
+
+def to_finisher(api, pr, record, marker_comment):
+    """Hand the PR to the Mac finisher the way lane_conflicts.py did before the resolver: comment, then labels."""
+    match = CONFLICT_MARKER.search((marker_comment or {}).get('body') or '')
+    api.post(f'issues/{pr}/comments', {'body': finisher_text(record, match.group(0) if match else '')}, app=True)
+    api.post(f'issues/{pr}/labels', {'labels[]': FINISHER}, app=True)
+    drop_label(api, pr, LABEL)
+
+
+def rearm(api, pr, record, base):
+    """`automerge` goes on before `conflict-resolver` comes off, so a call that fails part way never leaves the PR
+    with neither label: still labelled, the next run re-arms it again; already armed, it sees "armed again" and only
+    drops the label. The comment that says it was armed goes last, once it is true."""
+    api.post(f'issues/{pr}/labels', {'labels[]': 'automerge'}, app=True)
+    drop_label(api, pr, LABEL)
+    api.post(f'issues/{pr}/comments', {'body': merged_text(record, base)}, app=True)
+
+
+def finish(api, pr, record, base, marker, labels):
+    """Move the labels for a recorded outcome. Run again for a record whose label move failed part way."""
+    if record['outcome'] in ('merged', 'clean'):
+        rearm(api, pr, record, base)
+    elif FINISHER in labels:
+        drop_label(api, pr, LABEL)  # the hand-off went out; only the old label was left
+    else:
+        to_finisher(api, pr, record, marker)
+
+
+# What `handoff` says when a PR is no longer the resolver's: its thread pushed, armed or closed it.
+TAKEN_BACK = ('not open', 'armed again', 'no conflict hand-off on its current head')
+
+
 def run(api, repo, base, workdir, only=None, read_token=None, write_token=None, cli=None, log=print, now=None,
         claude=run_claude, remote=None):
+    """`write_token` pushes to PR branches: the App's, so the push starts the PR's checks."""
     now = now or datetime.now(timezone.utc)
-    log_comments = api.get_all(f'issues/{LOG_ISSUE}/comments?per_page=100')
-    recs = records(log_comments)
-    start, ended = trial_state(recs, now)
-    if start is None:
-        api.post(f'issues/{LOG_ISSUE}/comments', {'body': record_comment(
-            {'kind': 'trial-start', 'hours': TRIAL_HOURS},
-            f'**Conflict resolver shadow trial started** ({TRIAL_HOURS} hours). It proposes merges for handed-off '
-            f'conflicts here and pushes nothing to any PR. Grade it with `python3 scripts/conflict_resolver.py report`.')})
-        start = now
-        log('Trial started.')
-    if now - start >= timedelta(hours=TRIAL_HOURS):
-        if not ended:
-            api.post(f'issues/{LOG_ISSUE}/comments', {'body': record_comment(
-                {'kind': 'trial-end'},
-                f'**Conflict resolver shadow trial ended** after {TRIAL_HOURS} hours; it now proposes nothing. '
-                f'Next: run `python3 scripts/conflict_resolver.py report` and post the grade here.')})
-        log('Trial window is over; nothing to do.')
-        return []
-    done = {(r.get('pr'), r.get('head')) for r in recs if r.get('kind') == 'case'}
+    recs = records(api.get_all(f'issues/{LOG_ISSUE}/comments?per_page=100'))
+    # The newest record for each PR and head. A record counts for a hand-off only when it is newer than the hand-off's
+    # marker: main can move again while the head stays put (a clean re-arm pushes nothing), and that is a new conflict.
+    done = {}
+    for r in recs:
+        if r.get('kind') == 'case':
+            done[(r.get('pr'), r.get('head'))] = r
+    # Merges this script pushed, by commit: a PR whose head is one and that is not armed lost its re-arm to an error.
+    pushed = {r['merge']: r for r in recs if r.get('kind') == 'case' and r.get('outcome') == 'merged' and r.get('merge')}
     today = [r for r in recs if r.get('kind') == 'case' and r.get('outcome') != 'skipped'
              and now - parse_time(r['at']) < timedelta(days=1)]
-    if len(today) >= DAILY_CAP:
-        log(f'Daily cap of {DAILY_CAP} reached; nothing to do.')
-        return []
     pulls = api.get_all(f'pulls?state=open&base={quote(base, safe="")}&per_page=100')
     resolver = Resolver(api, repo, base, workdir, read_token, write_token, cli, log, claude, now, remote)
     posted = []
     for pull in pulls:
-        if len(posted) >= min(PER_RUN, DAILY_CAP - len(today)):
-            break
         pr = pull['number']
         if only and pr != only:
             continue
-        if (pr, pull['head']['sha'][:7]) in done:
+        if LABEL not in {label['name'] for label in pull.get('labels', [])}:
             continue
-        labels = {label['name'] for label in pull.get('labels', [])}
-        if 'needs-mac' not in labels and not only:
-            continue  # cheap pre-filter: every hand-off adds needs-mac
+        if len(posted) >= PER_RUN:
+            break
         try:
             comments = api.get_all(f'issues/{pr}/comments?per_page=100')
-            ok, why, _ = handoff(pull, comments, now)
+            ok, why, marker = handoff(pull, comments, now)
             if not ok:
-                log(f'#{pr}: left alone ({why}).')
+                if why == 'no conflict hand-off on its current head' and pull['head']['sha'] in pushed:
+                    rearm(api, pr, pushed[pull['head']['sha']], base)
+                    log(f'#{pr}: the resolver\'s own merge is its head; re-armed it.')
+                elif why in TAKEN_BACK or why in ('from a fork', 'author is not a collaborator'):
+                    drop_label(api, pr, LABEL)
+                    log(f'#{pr}: no longer the resolver\'s ({why}); label removed.')
+                else:
+                    log(f'#{pr}: left alone for now ({why}).')
                 continue
-            log(f'#{pr}: taking it ({why}).')
-            record = resolver.resolve(pull)
+            labels = {label['name'] for label in pull.get('labels', [])}
+            earlier = done.get((pr, pull['head']['sha'][:7]))
+            if earlier and parse_time(earlier['at']) >= parse_time(marker['created_at']):
+                if earlier['outcome'] == 'merged':
+                    # Its pushed merge is no longer the head (a failed re-arm of one is the `pushed` case above): the
+                    # branch was set back. Re-arming would say a merge is there that isn't, and loop with
+                    # lane_conflicts while main stands still, so the finisher takes it.
+                    finish(api, pr, dict(earlier, outcome='taken-back'), base, marker, labels)
+                    log(f'#{pr}: its resolver merge was removed from the branch; handed to the Mac finisher.')
+                    continue
+                # Handled for this hand-off already, yet the label is still on: moving the labels failed part way.
+                finish(api, pr, earlier, base, marker, labels)
+                log(f'#{pr}: recorded as {earlier["outcome"]} at this head already; moved its labels again.')
+                continue
+            if len(today) + len(posted) >= DAILY_CAP:
+                record = {'kind': 'case', 'pr': pr, 'head': pull['head']['sha'][:7], 'outcome': 'handback',
+                          'reason': f'the daily cap of {DAILY_CAP} was reached'}
+            else:
+                log(f'#{pr}: taking it ({why}).')
+                record = resolver.resolve(pull)
+            log(f'#{pr}: {record.get("sort", "-")} / {record["outcome"]} {record.get("reason", "")}')
+            if record['outcome'] == 'skipped':
+                continue  # the head moved: the next run sees the PR afresh
+            # The record goes first: if moving the labels then fails, the next run knows what was done (a pushed
+            # merge is re-armed from its record; a hand-back left half done goes to the finisher via promote_stale).
+            text = case_text(record, repo)
+            outcome = dict(record)
+            for key in ('diff', 'whys'):
+                outcome.pop(key, None)
+            api.post(f'issues/{LOG_ISSUE}/comments', {'body': record_comment(outcome, text)})
+            posted.append(outcome)
+            finish(api, pr, record, base, marker, labels)
         except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as error:
-            log(f'::warning::#{pr}: the resolver stopped ({describe(error)}); nothing changed.')
-            continue
-        log(f'#{pr}: {record.get("sort", "-")} / {record["outcome"]} {record.get("reason", "")}')
-        if record['outcome'] == 'skipped':
-            continue
-        text = case_text(record, repo)
-        record.pop('diff', None)
-        record.pop('whys', None)
-        api.post(f'issues/{LOG_ISSUE}/comments', {'body': record_comment(record, text)})
-        posted.append(record)
+            log(f'::warning::#{pr}: the resolver stopped ({describe(error)}); the next run tries again.')
     return posted
 
 
@@ -854,7 +942,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not args.repo:
         parser.error('--repo or GH_REPO is required')
-    api = Api(args.repo, os.environ.get('SM_WRITE_TOKEN'))
+    api = Api(args.repo, os.environ.get('SM_WRITE_TOKEN'), os.environ.get('SM_APP_TOKEN'))
     if args.command == 'report':
         recs = records(api.get_all(f'issues/{LOG_ISSUE}/comments?per_page=100'))
         start, _ = trial_state(recs, datetime.now(timezone.utc))
@@ -862,8 +950,12 @@ def main(argv=None):
         print(report(api, recs, conflict_comments=count))
         return 0
     try:
+        if not os.environ.get('SM_APP_TOKEN'):
+            print('::warning::No App token: the resolver pushes only as the App. Nothing done; '
+                  'lane_conflicts.py hands waiting PRs to the Mac finisher.')
+            return 0
         run(api, args.repo, args.base, args.workdir, args.pr, os.environ.get('GH_TOKEN'),
-            os.environ.get('SM_WRITE_TOKEN'), os.environ.get('SM_CLAUDE_CLI'))
+            os.environ.get('SM_APP_TOKEN'), os.environ.get('SM_CLAUDE_CLI'))
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print(f'::warning::Conflict resolver unavailable ({describe(error)}).')
     return 0

@@ -307,6 +307,23 @@ test('scrubbing out of a playing Margin stops it and the episode plays from the 
 // engine of every iPhone browser) refused a clip started that long after a tap, so the Margin waited behind a Play;
 // "Skip to <name> now", 0.3 s before it, was close enough to the tap to pass. Each row lands with the lead-in Skip and
 // lets playback reach the Margin with no tap at all.
+/**
+ * Plays the episode at four times its speed, so a 20-second lead-in takes 5 and the rows below stop spending minutes of
+ * real time on it (#4651). What the rows check is that the clip starts with no tap near it: 5 s after the last one is
+ * still far past the moment WebKit allowed before the clip element was readied (#4472), and the old code fails them
+ * at this speed too. Clips play at their own speed.
+ */
+const EPISODE_SPEED = 4;
+async function fastEpisode(page: Page) {
+  await page.addInitScript((speed: number) => {
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+      if (this.dataset.testid === 'audio') this.playbackRate = speed;
+      return play.call(this);
+    };
+  }, EPISODE_SPEED);
+}
+
 const at = (id: string, seconds: number): Margin => ({
   id, episodeId: episode.id, atSeconds: seconds, createdAt: '2026-10-31T10:00:00Z', text: `Margin ${id}.`, voice: voice(),
 });
@@ -320,6 +337,7 @@ for (const row of leadInRows) {
   test(`after "Skip to just before", ${row.name} plays by itself when playback reaches it (#4472)`, async ({ page }) => {
     test.setTimeout(150_000);
     await watchPlays(page, false);
+    await fastEpisode(page);
     const trace = await traceMedia(page);
     const nowPlaying = await openFile(page, row.list);
     await startAtLanding(nowPlaying);
@@ -333,9 +351,9 @@ for (const row of leadInRows) {
     // as a user gesture in WebKit, and a poll here would hand the clip the tap the listener never makes. That is how the
     // tests above passed while the owner's phone refused the clip.
     const span = row.clipsAt[row.clipsAt.length - 1] - row.clipsAt[0];
-    await page.waitForTimeout((20 + span + 3.5 * row.clipsAt.length + 3) * 1000);
+    await page.waitForTimeout(((20 + span) / EPISODE_SPEED + 3.5 * row.clipsAt.length + 3) * 1000);
     if (trace.episodeAt < row.clipsAt[row.clipsAt.length - 1] + 1) {
-      // The time above is the lead-in at real speed. A slow runner plays it slower, so wait on the console-fed trace
+      // The time above is the lead-in at the speed set above. A slow runner plays it slower, so wait on the console-fed trace
       // (no page reads) until the episode is past the last Margin.
       try {
         await expect.poll(() => trace.episodeAt, { timeout: 60_000, intervals: [500] }).toBeGreaterThan(row.clipsAt[row.clipsAt.length - 1] + 1);
@@ -347,7 +365,13 @@ for (const row of leadInRows) {
     // No Margin waits behind a Play: each clip is heard where it sits, and the episode carries on after the last.
     await expect(nowPlaying.getByRole('button', { name: /^Play Sam’s Margin/ })).toHaveCount(0);
     const clips = (await plays(page)).slice(before).filter((p) => p.kind === 'clip');
-    expect(clips.map((p) => Math.floor(p.at))).toEqual(row.clipsAt);
+    // Each clip starts where its Margin sits. The episode's time moves up to a second between the checks that fire a
+    // Margin at the faster speed, so "where it sits" is the moment up to two seconds on, never before it.
+    expect(clips).toHaveLength(row.clipsAt.length);
+    row.clipsAt.forEach((moment, i) => {
+      expect(clips[i].at).toBeGreaterThanOrEqual(moment);
+      expect(clips[i].at).toBeLessThan(moment + 2);
+    });
     expect(clips.every((p) => p.episodePaused)).toBe(true);
     const last = row.clipsAt[row.clipsAt.length - 1];
     expect(await audioTime(page)).toBeGreaterThan(last + 1);

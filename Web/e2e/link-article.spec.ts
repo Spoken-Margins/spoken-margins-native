@@ -42,7 +42,7 @@ test('a share link for a Substack post plays its voice and puts the sender’s M
   const arrival = page.getByTestId('arrival');
   await expect(arrival.getByRole('heading', { name: TITLE })).toBeVisible();
   await expect(arrival.getByText('2 Margins', { exact: false })).toBeVisible();
-  await expect(arrival.getByText('which the browser can’t play yet')).toHaveCount(0);
+  await expect(page.getByTestId('arrival-listen')).toHaveCount(0);
   // The article stays one tap away, for a post whose voice turns out not to be there.
   await expect(arrival.getByRole('link', { name: 'Open the article' })).toHaveAttribute('href', POST);
   expect(pageReads).toHaveLength(0);

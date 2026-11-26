@@ -1,32 +1,52 @@
 import Foundation
 
-/// The files of a note's version with long pauses shortened (#4779). They all sit in the note's `clean/` folder, beside
-/// the takes, which are never written. Every file here can be made again from the takes.
+/// The files of a note's made versions. Shorter pauses (#4779) sits in the note's `clean/` folder and Without ums
+/// (#5342) in `clean-without-ums/`, beside the takes, which are never written. Each folder holds the same three kinds of
+/// file, and every file here can be made again from the takes. Every function takes the version and defaults to
+/// Shorter pauses, the only one before #5342.
 ///
 /// - `cut-<takeId>.json`: the take's cut (`SpokenNoteCutFile`), reused while the take and the rule are unchanged.
 /// - `whole-note.m4a`: the version.
 /// - `whole-note.json`: how it was made (`SpokenNoteCleanLayout`).
 public enum SpokenNoteCleanFiles {
     public static let folderName = "clean"
+    public static let withoutUmsFolderName = "clean-without-ums"
     public static let audioFileName = "whole-note.m4a"
     public static let layoutFileName = "whole-note.json"
     /// What an item's media URL ends with when the version with shorter pauses is attached. Two path components, so it can't be
     /// mistaken for the recording's `whole-note.m4a` one folder up.
     public static let mediaSuffix = "\(folderName)/\(audioFileName)"
 
-    public static func folder(inNoteFolder noteFolder: URL) -> URL { noteFolder.appendingPathComponent(folderName, isDirectory: true) }
-    public static func audioURL(inNoteFolder noteFolder: URL) -> URL { folder(inNoteFolder: noteFolder).appendingPathComponent(audioFileName) }
-    public static func layoutURL(inNoteFolder noteFolder: URL) -> URL { folder(inNoteFolder: noteFolder).appendingPathComponent(layoutFileName) }
-    public static func cutURL(takeId: String, inNoteFolder noteFolder: URL) -> URL {
-        folder(inNoteFolder: noteFolder).appendingPathComponent("cut-\(takeId).json")
+    /// The folder a made version's files sit in. As recorded has none; it is given `clean/` only so the call is total.
+    public static func folderName(for version: SpokenNoteAudioVersion) -> String {
+        version == .withoutUms ? withoutUmsFolderName : folderName
     }
 
-    /// Whether a media URL names a note's version with shorter pauses: its last two path components are `clean/whole-note.m4a`.
-    public static func namesCleanAudio(_ mediaURL: String?) -> Bool {
-        guard let mediaURL, let url = URL(string: mediaURL) ?? Optional(URL(fileURLWithPath: mediaURL)) else { return false }
+    public static func folder(inNoteFolder noteFolder: URL, version: SpokenNoteAudioVersion = .shorterPauses) -> URL {
+        noteFolder.appendingPathComponent(folderName(for: version), isDirectory: true)
+    }
+    public static func audioURL(inNoteFolder noteFolder: URL, version: SpokenNoteAudioVersion = .shorterPauses) -> URL {
+        folder(inNoteFolder: noteFolder, version: version).appendingPathComponent(audioFileName)
+    }
+    public static func layoutURL(inNoteFolder noteFolder: URL, version: SpokenNoteAudioVersion = .shorterPauses) -> URL {
+        folder(inNoteFolder: noteFolder, version: version).appendingPathComponent(layoutFileName)
+    }
+    public static func cutURL(takeId: String, inNoteFolder noteFolder: URL, version: SpokenNoteAudioVersion = .shorterPauses) -> URL {
+        folder(inNoteFolder: noteFolder, version: version).appendingPathComponent("cut-\(takeId).json")
+    }
+
+    /// The made version a media URL names: its last two path components are `clean/whole-note.m4a` (Shorter pauses) or
+    /// `clean-without-ums/whole-note.m4a` (Without ums). Nil for anything else, the recording included.
+    public static func madeVersion(namedBy mediaURL: String?) -> SpokenNoteAudioVersion? {
+        guard let mediaURL, let url = URL(string: mediaURL) ?? Optional(URL(fileURLWithPath: mediaURL)) else { return nil }
         let components = url.pathComponents
-        guard components.count >= 2 else { return false }
-        return components[components.count - 2] == folderName && components[components.count - 1] == audioFileName
+        guard components.count >= 2, components[components.count - 1] == audioFileName else { return nil }
+        return SpokenNoteAudioVersion.madeVersions.first { folderName(for: $0) == components[components.count - 2] }
+    }
+
+    /// Whether a media URL names one of a note's made versions (Shorter pauses or Without ums), not its recording.
+    public static func namesCleanAudio(_ mediaURL: String?) -> Bool {
+        madeVersion(namedBy: mediaURL) != nil
     }
 
     // MARK: Reading and writing
@@ -51,8 +71,8 @@ public enum SpokenNoteCleanFiles {
         return try? JSONDecoder().decode(type, from: data)
     }
 
-    public static func readLayout(inNoteFolder noteFolder: URL) -> SpokenNoteCleanLayout? {
-        guard let layout = read(SpokenNoteCleanLayout.self, from: layoutURL(inNoteFolder: noteFolder)),
+    public static func readLayout(inNoteFolder noteFolder: URL, version: SpokenNoteAudioVersion = .shorterPauses) -> SpokenNoteCleanLayout? {
+        guard let layout = read(SpokenNoteCleanLayout.self, from: layoutURL(inNoteFolder: noteFolder, version: version)),
               layout.version <= SpokenNoteCleanLayout.currentVersion else { return nil }
         return layout
     }

@@ -28,6 +28,9 @@ struct PacketPlan: Decodable {
         /// False sends text only. Defaults to true: the Margin is spoken in the plan's voice.
         let spoken: Bool?
         let voice: String?
+        /// A recording of the Margin (any format AVFoundation reads), sent in place of a `say` voice. It is encoded as
+        /// the app encodes a shared Margin: HE-AAC mono at 24 kbps in an `.m4a`.
+        let voiceFile: String?
         /// Overrides the plan's `createdAt` for this Margin.
         let createdAt: Date?
     }
@@ -145,7 +148,10 @@ enum PacketBuilder {
                 anchor = anchor.withEvidence(evidence.map(\.id))
             }
             let representation: ReviewedRepresentationSelection
-            if margin.spoken ?? true {
+            if margin.spoken ?? true, let voiceFile = margin.voiceFile {
+                let voice = try await encode(resolve(voiceFile), name: margin.id, in: scratch)
+                representation = .originalAudio(sourceURL: voice.url, durationMs: voice.durationMs)
+            } else if margin.spoken ?? true {
                 let voice = try speak(margin.text, voice: margin.voice ?? plan.voice, name: margin.id, in: scratch)
                 representation = .originalAudio(sourceURL: voice.url, durationMs: voice.durationMs)
             } else {
@@ -284,6 +290,19 @@ enum PacketBuilder {
         try Data(text.utf8).write(to: textURL)
         try run("/usr/bin/say", (voice.map { ["-v", $0] } ?? []) + ["-f", textURL.path, "-o", aiffURL.path])
         try run("/usr/bin/afconvert", ["-f", "m4af", "-d", "aac", "-b", "64000", aiffURL.path, m4aURL.path])
+        let file = try AVAudioFile(forReading: m4aURL)
+        let durationMs = Int((Double(file.length) / file.processingFormat.sampleRate * 1000).rounded())
+        return (m4aURL, durationMs)
+    }
+
+    /// Encodes a supplied recording with the app's own shared-Margin encoder (`SharedMarginAudioCompression`).
+    private static func encode(_ source: URL, name: String, in folder: URL) async throws -> (url: URL, durationMs: Int) {
+        let m4aURL = folder.appendingPathComponent("\(name).m4a")
+        do {
+            try await AVFoundationMarginAudioTranscoder().transcode(source, to: m4aURL)
+        } catch {
+            throw PlanError.voiceFailed("\(source.lastPathComponent): \(error)")
+        }
         let file = try AVAudioFile(forReading: m4aURL)
         let durationMs = Int((Double(file.length) / file.processingFormat.sampleRate * 1000).rounded())
         return (m4aURL, durationMs)

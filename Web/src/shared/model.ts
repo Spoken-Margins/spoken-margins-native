@@ -135,6 +135,19 @@ export interface PercentMargin {
   percent: number;
 }
 
+/**
+ * A Margin a friend left on a text's words, as the card for a link the browser can't play lists it (#5265): with the
+ * words it sits on (`quote`, the anchor's exact text) and how far through it sits, when the packet says.
+ */
+export interface PageMargin {
+  /** The Margin, with `atSeconds` 0: it has no time of its own. */
+  margin: Margin;
+  /** How far through the text it sits, 0 to 100, when the sender's app measured it. */
+  percent?: number;
+  /** The words the Margin sits on, when the packet carries them. */
+  quote?: string;
+}
+
 /** Where the listener left off in an episode. */
 export interface PlaybackPosition {
   episodeId: string;

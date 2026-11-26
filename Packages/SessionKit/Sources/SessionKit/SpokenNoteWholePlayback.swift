@@ -217,13 +217,13 @@ public enum SpokenNoteWholePlayback {
         return SpokenNoteWholeTimeline(note: note, layout: layout)
     }
 
-    /// The note's sentences on the clock of the file at `mediaURL`: the Shorter pauses version's when it names that
-    /// version (#4779), else the joined recording's. What the note screen lights and jumps by must be on the clock of
+    /// The note's sentences on the clock of the file at `mediaURL`: a made version's (Shorter pauses, #4779, or Without
+    /// ums, #5342) when it names one, else the joined recording's. What the note screen lights and jumps by must be on the clock of
     /// the file playing, so a version that no longer matches the joined takes gives nil, never the recording's times.
     public static func timeline(of note: SpokenNote, inFolder folder: URL, playingMediaURL mediaURL: String?) -> SpokenNoteWholeTimeline? {
-        guard SpokenNoteCleanFiles.namesCleanAudio(mediaURL) else { return timeline(of: note, inFolder: folder) }
+        guard let version = SpokenNoteCleanFiles.madeVersion(namedBy: mediaURL) else { return timeline(of: note, inFolder: folder) }
         guard existingAudioURL(inFolder: folder) != nil, let layout = readLayout(inFolder: folder) else { return nil }
-        return cleanPlayback(note: note, layout: layout, folder: folder)?.timeline
+        return cleanPlayback(note: note, layout: layout, folder: folder, version: version)?.timeline
     }
 
     /// Where the engine should play an item from: the note's joined file, when the item is a spoken note whose media was
@@ -234,9 +234,11 @@ public enum SpokenNoteWholePlayback {
         guard SpokenNoteItem.isSpokenNote(mediaType: item.mediaType), item.media?.url != nil,
               let noteId = SpokenNoteItem.noteId(fromReference: item.externalReference),
               let store = SpokenNoteStarter.store(noteId: noteId, in: applicationSupport) else { return nil }
-        // The version with shorter pauses is played when it is what `prepare` attached (#4779). The URL is rebuilt under today's
+        // A made version is played when it is what `prepare` attached (#4779, #5342). The URL is rebuilt under today's
         // folder, never taken from the row, so a moved app container still finds it.
-        if SpokenNoteCleanFiles.namesCleanAudio(item.media?.url) { return SpokenNoteCleanFiles.audioURL(inNoteFolder: store.folderURL) }
+        if let version = SpokenNoteCleanFiles.madeVersion(namedBy: item.media?.url) {
+            return SpokenNoteCleanFiles.audioURL(inNoteFolder: store.folderURL, version: version)
+        }
         return audioURL(inFolder: store.folderURL)
     }
 
@@ -280,9 +282,9 @@ public enum SpokenNoteWholePlayback {
         // The note is read again: a transcript can arrive while the takes are being joined, and the item's text and timeline
         // must not go back to the note as it was before the join. A take added meanwhile is simply not in the layout yet.
         let latest = store.peek() ?? note
-        // The version with shorter pauses is attached only when it is made from exactly these takes (#4779); otherwise, and for
-        // As recorded, the recording is.
-        let chosen = version == .shorterPauses ? cleanPlayback(note: latest, layout: layout, folder: store.folderURL) : nil
+        // A made version (Shorter pauses or Without ums) is attached only when it is made from exactly these takes (#4779,
+        // #5342); otherwise, and for As recorded, the recording is.
+        let chosen = version.isMade ? cleanPlayback(note: latest, layout: layout, folder: store.folderURL, version: version) : nil
         let playing = chosen ?? (audio, SpokenNoteWholeTimeline(note: latest, layout: layout))
         let prepared = Prepared(
             itemId: SpokenNoteItem.itemId(forNoteId: note.id), audioURL: playing.audio,
@@ -302,12 +304,12 @@ public enum SpokenNoteWholePlayback {
         ) else { throw PrepareError.itemGone }
     }
 
-    /// The version with shorter pauses and its timeline, when one is made from exactly the takes in `layout` and its file is there.
+    /// A made version and its timeline, when one is made from exactly the takes in `layout` and its file is there.
     static func cleanPlayback(
-        note: SpokenNote, layout: SpokenNoteWholeAudioLayout, folder: URL
+        note: SpokenNote, layout: SpokenNoteWholeAudioLayout, folder: URL, version: SpokenNoteAudioVersion
     ) -> (audio: URL, timeline: SpokenNoteWholeTimeline)? {
-        guard let map = SpokenNoteCleanClock.map(inNoteFolder: folder, recorded: layout) else { return nil }
-        return (SpokenNoteCleanFiles.audioURL(inNoteFolder: folder), SpokenNoteWholeTimeline(note: note, layout: layout, map: map))
+        guard let map = SpokenNoteCleanClock.map(inNoteFolder: folder, recorded: layout, version: version) else { return nil }
+        return (SpokenNoteCleanFiles.audioURL(inNoteFolder: folder, version: version), SpokenNoteWholeTimeline(note: note, layout: layout, map: map))
     }
 
     /// The recording's layout, when the note was joined.

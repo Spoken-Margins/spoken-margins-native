@@ -7,7 +7,8 @@ import { downloadFile } from '../download.ts';
 import { useRestoreFocus } from '../focus.ts';
 import { BackIcon, CloseIcon, DownIcon, DownloadIcon, ForwardIcon, MicIcon, PauseIcon, PenIcon, PlayIcon, ShareIcon, SkipIcon, StopIcon } from '../icons.tsx';
 import { withCopyLength } from '../logic/copy-length.ts';
-import { arrivedLengthNote, cueFor, friendMargins, leading, possessive, readingNote, readsAloud, senderName, speakingLine } from '../logic/arrival.ts';
+import { arrivedLengthNote, cueFor, friendMargins, leading, marginSenderName, possessive, readingNote, readsAloud, senderName, speakingLine } from '../logic/arrival.ts';
+import { contextTitle } from '../logic/arrival-card.ts';
 import { landingOffer, type Landing } from '../logic/import.ts';
 import { marginRows, nextMargin, opensOnMarginsTab, playQueue, startFor, unheardCount, type NextMargin, type Row } from '../logic/margins-control-center.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
@@ -94,8 +95,10 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
   if (!arrived) return null;
   const { margin, blocked } = arrived;
   const words = margin.text ?? (margin.voice ? 'A spoken Margin' : '');
-  const line = speakingLine(margin, margins, friendMargins(margins)[0]?.author);
-  const voiced = readsAloud(margin) && typeof window !== 'undefined' && 'speechSynthesis' in window;
+  const spoken = speakingLine(margin, margins, friendMargins(margins)[0]?.author);
+  // While the voice reads the episode's words before it (a run without the episode, #5265), the card says so.
+  const line = arrived.context ? { ...spoken, title: contextTitle(marginSenderName(margin, friendMargins(margins)[0]?.author), { noun: 'episode', namedWords: true }) } : spoken;
+  const voiced = !arrived.context && readsAloud(margin) && typeof window !== 'undefined' && 'speechSynthesis' in window;
   // A friend's Margin only (the listener's own carry no author): the listener's copy may differ from the sender's (#4614).
   // Outside the status region, so a screen reader doesn't repeat it with every Margin.
   const lengthNote = arrivedLengthNote(margin, margins, player.measuredLengthSeconds);
