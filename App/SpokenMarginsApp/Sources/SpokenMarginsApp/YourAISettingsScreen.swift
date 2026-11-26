@@ -138,7 +138,7 @@ struct YourAISettingsScreen: View {
             Text("Counts and titles for shows you follow: what you finish, share and leave Margins on. Never your Margins' words.")
                 .font(.footnote)
                 .foregroundStyle(AppColors.secondaryText)
-            Text("To let your AI read your Margins' words, export them yourself from the Margins tab as AI Handoff Markdown. Nothing goes on its own.")
+            Text("To let your AI read your Margins' words, export them yourself from the Margins tab as Markdown. Nothing goes on its own.")
         }
     }
 }

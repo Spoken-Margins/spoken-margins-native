@@ -113,7 +113,7 @@ struct HelpScreen: View {
                     #else
                     Text("Share sends your Margins to a friend as a file. It opens in Spoken Margins, or in a web browser at app.spokenmargins.com. Export takes the text out for yourself or your tools, as Markdown or JSON.")
                     #endif
-                    Text("To export a listening session, tap Export in Listening options, in the menu on the Details screen or on the Timeline. Choose the session, format, and included material. Export Session opens the iOS share sheet; Copy puts the generated Markdown or JSON on the clipboard.")
+                    Text("To export a listening session, tap Export in Listening options, in the menu on the Details screen or on the Timeline. Choose the session, the format, and what to include. Export Session opens the iOS share sheet; Copy puts the generated Markdown or JSON on the clipboard.")
                     Text("From Margins, tap Export for all your Margins in one file, or for one file per listening session. The share sheet lets you choose AirDrop, Save to Files or another app each time.")
                     Text("To report a problem, use Share Diagnostics in Settings. To make the same file from a Shortcut, for example to send it with a screenshot, add the Export Diagnostics action from the Shortcuts app.")
                 }

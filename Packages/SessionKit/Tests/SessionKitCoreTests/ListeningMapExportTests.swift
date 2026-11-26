@@ -3,7 +3,7 @@ import XCTest
 @testable import SessionKit
 import SessionKitPersistence
 
-/// The Listening Map toggle in Export (AI Handoff Markdown, Full JSON Archive and batch export all
+/// The Listening Map toggle in Export (Markdown, JSON and batch export all
 /// build through `SessionEngine.buildExport`) carries the map the item's Timeline shows (#2121).
 /// On Build 35 a podcast episode whose map is a proposal plus a projection exported no map at all,
 /// because only the legacy `ListeningMap` record was read.
@@ -38,7 +38,7 @@ final class ListeningMapExportTests: XCTestCase {
             XCTAssertTrue(markdown.contains("- The bull case (20%)"), markdown)
 
             let json = try XCTUnwrap(String(data: JSONEncoder().encode(export), encoding: .utf8))
-            XCTAssertTrue(json.contains("\"The bear case\""), "the Full JSON Archive carries the same map")
+            XCTAssertTrue(json.contains("\"The bear case\""), "the JSON export carries the same map")
 
             let off = try buildExport(store: store, itemId: episode.id, includeListeningMap: false)
             XCTAssertNil(off.listeningMap, "with the toggle off there is no map")
