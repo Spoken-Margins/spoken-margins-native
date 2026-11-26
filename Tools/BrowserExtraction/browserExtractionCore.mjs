@@ -401,7 +401,16 @@ export function fallbackReadableMarkdown(documentRef) {
   // Parent block text includes all descendants, including nested lists and
   // quotations. Never deduplicate by prose: repeated sibling text is authored.
   // A layout table is no block: its headings and paragraphs are (#5364 audit).
-  const isBlock = element => String(element.tagName || "").toLowerCase() !== "table" || isDataTable(element);
+  const dataTables = new Map();
+  const isBlock = element => {
+    if (String(element.tagName || "").toLowerCase() !== "table") {
+      return true;
+    }
+    if (!dataTables.has(element)) {
+      dataTables.set(element, isDataTable(element));
+    }
+    return dataTables.get(element);
+  };
   const insideBlock = element => {
     for (let parent = element.parentElement; parent; parent = parent.parentElement) {
       if (parent.matches?.(selector) && isBlock(parent)) {

@@ -381,7 +381,12 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
     // its headings and paragraphs are, as Defuddle flattens it (#5364 audit).
     const isDataTable = table => !table.querySelector("table") && Array.from(table.querySelectorAll("tr"))
         .some(row => Array.from(row.children).filter(cell => /^(td|th)$/i.test(String(cell.tagName || ""))).length >= 2);
-    const isBlock = element => element.tagName.toLowerCase() !== "table" || isDataTable(element);
+    const dataTables = new Map();
+    const isBlock = element => {
+        if (element.tagName.toLowerCase() !== "table") { return true; }
+        if (!dataTables.has(element)) { dataTables.set(element, isDataTable(element)); }
+        return dataTables.get(element);
+    };
     const insideBlock = element => {
         for (let parent = element.parentElement; parent; parent = parent.parentElement) {
             if (parent.matches(selector) && isBlock(parent)) { return true; }
