@@ -258,10 +258,10 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         detail: @escaping CandidateDetail,
         report: @escaping CandidateReport
     ) {
-        candidate.provider.loadItem(forTypeIdentifier: candidate.identifier, options: nil) { item, _ in
+        candidate.provider.loadItem(forTypeIdentifier: candidate.identifier, options: nil) { item, loadError in
             // Whether Safari's preprocessor results arrived at all, and with page text (#5338).
             if candidate.identifier == UTType.propertyList.identifier {
-                detail(pagePropertyListDetail(item))
+                detail(pagePropertyListDetail(item, loadError: loadError as NSError?))
             }
             // A file the provider hands over by address (`public.file-url`): a transcript is copied, not read (#2997).
             if let url = SourceLinkShareRepresentation.url(from: item), url.isFileURL,
@@ -756,8 +756,12 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     /// Safari's page property list as a diagnostic word (#5338): whether the preprocessor's results arrived, and
     /// whether they carried page text.
     /// `no_item` means the representation didn't load at all.
-    nonisolated private static func pagePropertyListDetail(_ item: Any?) -> String {
-        guard let item else { return "no_item" }
+    /// When nothing arrived, the load's error domain and code (never its text) say why: Safari couldn't turn the
+    /// preprocessor's result into a property list, say (#5338).
+    nonisolated private static func pagePropertyListDetail(_ item: Any?, loadError: NSError?) -> String {
+        guard let item else {
+            return loadError.map { "no_item(\($0.domain):\($0.code))" } ?? "no_item"
+        }
         guard let dictionary = item as? [String: Any] ?? item as? NSDictionary as? [String: Any] else { return "not_a_dictionary" }
         let rawResults = dictionary[NSExtensionJavaScriptPreprocessingResultsKey]
             ?? dictionary["NSExtensionJavaScriptPreprocessingResultsKey"]
