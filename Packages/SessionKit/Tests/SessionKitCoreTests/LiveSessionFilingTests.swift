@@ -219,6 +219,25 @@ final class LiveSessionFilingTests: XCTestCase {
         return session
     }
 
+    /// #4079: a quick session the listener renamed is never merged away or emptied away, so the name is not lost.
+    func testTidyKeepsARenamedQuickSession() {
+        var renamed = quickSession("watch", [margin("w1", 300), margin("w2", 700)])
+        renamed.title = "Lunch with Sam"
+        let phone = quickSession("phone", [margin("p1", 100), margin("p2", 400)])
+        let (kept, removed) = LiveSessionFiling.tidy([phone, renamed], now: at(1_000))
+        XCTAssertEqual(removed, [])
+        XCTAssertEqual(Set(kept.map(\.id)), ["phone", "watch"])
+        XCTAssertEqual(kept.first { $0.id == "watch" }?.title, "Lunch with Sam")
+
+        // One a named session covers is emptied, and still kept for its name.
+        var covered = quickSession("covered", [margin("c1", 50)])
+        covered.title = "My name"
+        let named = LiveSession(id: "named", kind: .meeting, title: "Standup", startedAt: at(0), endedAt: at(100), margins: [])
+        let (keptCovered, removedCovered) = LiveSessionFiling.tidy([named, covered], now: at(1_000))
+        XCTAssertEqual(removedCovered, [])
+        XCTAssertEqual(keptCovered.first { $0.id == "covered" }?.title, "My name")
+    }
+
     func testOverlappingQuickSessionsMerge() {
         let phone = quickSession("phone", [margin("p1", 100), margin("p2", 400)])
         let watch = quickSession("watch", [margin("w1", 300), margin("w2", 700)])

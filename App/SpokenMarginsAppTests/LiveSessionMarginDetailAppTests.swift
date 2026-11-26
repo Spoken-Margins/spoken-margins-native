@@ -35,12 +35,15 @@ final class LiveSessionMarginDetailAppTests: XCTestCase {
         LiveSessionMargin(id: "b", text: "", markedAt: now, sessionOffsetMs: 2_000, isBlindMark: true)
     }
 
-    private func mount(_ margin: LiveSessionMargin) throws -> MountedTree {
+    private func mount(
+        _ margin: LiveSessionMargin, photoPage: LiveSessionPlace? = nil,
+        keepHeardPlace: @escaping () -> Void = {}, declineHeardPlace: @escaping () -> Void = {}
+    ) throws -> MountedTree {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first { $0.isKeyWindow }
         let view = LiveSessionMarginDetailView(
-            margin: margin, sessionTitle: "Staff meeting", position: "1:05 in",
-            keepHeardPlace: {}, declineHeardPlace: {}, saveText: { _ in }, delete: {})
+            margin: margin, sessionTitle: "Staff meeting", position: "1:05 in", photoPage: photoPage,
+            keepHeardPlace: keepHeardPlace, declineHeardPlace: declineHeardPlace, saveText: { _ in }, delete: {})
         let host = UIHostingController(rootView: view)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -65,6 +68,30 @@ final class LiveSessionMarginDetailAppTests: XCTestCase {
         XCTAssertFalse(ids.contains("marginDetail.playRecording.button"), "A written Margin has no recording to hear")
     }
 
+    /// #2708: a page number read from the photo is offered the way a page heard in the words is, with Keep and No.
+    func testAPageReadFromAPhotoIsOfferedWithKeepAndNo() async throws {
+        var kept = 0
+        var declined = 0
+        let tree = try mount(written(), photoPage: LiveSessionPlace(unit: .page, value: 118),
+                             keepHeardPlace: { kept += 1 }, declineHeardPlace: { declined += 1 })
+        defer { tree.close() }
+        _ = try await tree.waitForNode("the offer") {
+            $0.identifier == "marginDetail.photoPage.label" && $0.label == "Read \u{201C}118\u{201D} on the page. Keep it as a checkpoint?"
+        }
+        _ = try await tree.waitForNode("No") { $0.identifier == "marginDetail.declinePhotoPage.button" }
+        XCTAssertEqual(kept + declined, 0, "Mounting keeps and turns down nothing")
+        XCTAssertTrue(tree.activate { $0.identifier == "marginDetail.keepPhotoPage.button" }, "Keep refused the activation")
+        XCTAssertEqual(kept, 1)
+        XCTAssertEqual(declined, 0)
+    }
+
+    func testNoOfferShowsWhenNoPageWasRead() async throws {
+        let tree = try mount(written())
+        defer { tree.close() }
+        _ = try await tree.waitForNode("the screen") { $0.identifier == "marginDetail.screen" }
+        XCTAssertFalse(tree.nodes().contains { $0.identifier == "marginDetail.photoPage.label" })
+    }
+
     func testASpokenMarginOffersTheRecording() async throws {
         let tree = try mount(spoken())
         defer { tree.close() }
@@ -80,23 +107,87 @@ final class LiveSessionMarginDetailAppTests: XCTestCase {
         XCTAssertFalse(tree.nodes().contains { $0.identifier == "marginDetail.playRecording.button" })
     }
 
+    /// #4311: the confirmation is absent until presented, so only tapping Delete can show that it asks first.
     func testDeleteAsksBeforeDeleting() async throws {
-        var deleted = false
+        var deleted = 0
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first { $0.isKeyWindow }
         let view = LiveSessionMarginDetailView(
             margin: written(), sessionTitle: "Staff meeting", position: "1:05 in",
-            keepHeardPlace: {}, declineHeardPlace: {}, saveText: { _ in }, delete: { deleted = true })
+            keepHeardPlace: {}, declineHeardPlace: {}, saveText: { _ in }, delete: { deleted += 1 })
+        let host = UIHostingController(rootView: view)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        window.rootViewController = UIHostingController(rootView: view)
+        window.rootViewController = host
         window.makeKeyAndVisible()
         let tree = MountedTree(window: window, previousKeyWindow: previous)
-        defer { tree.close() }
+        defer {
+            host.dismiss(animated: false) // an alert still up after a failure goes with the window
+            tree.close()
+        }
         _ = try await tree.waitForNode("Delete") { $0.identifier == "marginDetail.delete.button" }
-        XCTAssertFalse(deleted, "Mounting must not delete")
-        XCTAssertFalse(tree.nodes().contains { $0.identifier == "marginDetail.delete.confirm.button" },
-                       "The confirmation is shown only after Delete is tapped")
+        XCTAssertEqual(deleted, 0, "Mounting must not delete")
+        let isConfirm: (AccessibilityNode) -> Bool = {
+            $0.identifier == "marginDetail.delete.confirm.button" || $0.label == "Delete Margin"
+        }
+        XCTAssertFalse(tree.nodes().contains(where: isConfirm), "The confirmation is shown only after Delete is tapped")
+
+        XCTAssertTrue(tree.activate { $0.identifier == "marginDetail.delete.button" }, "Delete refused the activation")
+        XCTAssertEqual(deleted, 0, "Delete asks first; it deletes nothing until the listener confirms")
+        _ = try await tree.waitForNode("the Delete Margin confirmation", isConfirm)
+        XCTAssertEqual(deleted, 0, "the confirmation is up and nothing is deleted yet")
+
+        if !tree.activate(isConfirm) {
+            // An alert's action can refuse an in-process activation (VoiceOver then taps it); run the action as the tap would.
+            let alert = try XCTUnwrap(host.presentedViewController as? UIAlertController,
+                                      "the confirmation refused the activation and is not an alert")
+            try Self.tap("Delete Margin", in: alert)
+        }
+        try await pollUntil { deleted > 0 }
+        XCTAssertEqual(deleted, 1, "Delete Margin deletes, once")
+    }
+
+    /// #5304: on main 282b4c8 the row was a `NavigationLink` with a simultaneous tap gesture under the screen's primitive
+    /// button style, and tapping it never pushed the move sheet. Activating Move must push "Moving this Margin", with no
+    /// Choose…, for a written and a spoken Margin.
+    func testMoveToAnItemPushesTheMoveSheetForThisMargin() async throws {
+        for margin in [written(), spoken()] {
+            let session = LiveSession(id: "live-1", title: "Staff meeting", startedAt: now, margins: [margin])
+            var made = 0
+            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+            let previous = scene.windows.first { $0.isKeyWindow }
+            let view = LiveSessionMarginDetailView(
+                margin: margin, sessionTitle: "Staff meeting", position: "1:05 in",
+                keepHeardPlace: {}, declineHeardPlace: {}, saveText: { _ in }, delete: {},
+                makeMove: {
+                    made += 1
+                    return LiveMarginMoveSheetModel(
+                        session: session, marginIds: [margin.id], loadChoices: { [] },
+                        makePlan: { _, _ in throw SessionKitError.persistenceFailed("not moved in this test") })
+                })
+            let host = UIHostingController(rootView: view)
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            let tree = MountedTree(window: window, previousKeyWindow: previous)
+            defer { tree.close() }
+            _ = try await tree.waitForNode("Move to an Item… (\(margin.id))") { $0.identifier == "marginDetail.move.button" }
+            XCTAssertFalse(tree.nodes().contains { $0.identifier == "liveMove.screen" }, "the move sheet waits for the tap")
+            XCTAssertTrue(tree.activate { $0.identifier == "marginDetail.move.button" }, "Move refused the activation")
+            _ = try await tree.waitForNode("Moving this Margin (\(margin.id))") {
+                $0.identifier == "liveMove.moving.label" && $0.label == "Moving this Margin"
+            }
+            XCTAssertFalse(tree.nodes().contains { $0.identifier == "liveMove.choose.button" }, "one Margin has no Choose…")
+            XCTAssertEqual(made, 1, "the move sheet's state is made once, for this Margin")
+        }
+    }
+
+    private static func tap(_ title: String, in alert: UIAlertController) throws {
+        typealias Handler = @convention(block) (UIAlertAction) -> Void
+        let action = try XCTUnwrap(alert.actions.first { $0.title == title }, "no \(title) in \(alert.actions.compactMap(\.title))")
+        let block = try XCTUnwrap(action.value(forKey: "handler") as AnyObject?, "\(title) has no handler")
+        unsafeBitCast(block, to: Handler.self)(action)
     }
 
     func testAudioModelSaysSoWhenTheRecordingIsMissing() async throws {

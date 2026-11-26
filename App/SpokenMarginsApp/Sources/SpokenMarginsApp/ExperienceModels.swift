@@ -1,343 +1,6 @@
 import Foundation
 import SessionKit
 
-struct WrittenMarginDraft: Equatable {
-    let capture: WrittenInterjectionCapture
-    var text: String
-    let itemTitle: String
-    let targetDescription: String
-    let progressPercent: Int
-    /// The shared Margin this note answers, and whether the listener switched it to independent (#473).
-    var replyChoice = MarginReplyChoice()
-    var reply: MarginReplyDraft? { replyChoice.effective }
-
-    var captureID: String { capture.id }
-    var priorWasPlaying: Bool { capture.wasPlaying }
-    var lockedSessionID: String { capture.sessionId }
-    var lockedItemID: String { capture.itemId }
-    var lockedTargetID: String { capture.targetId }
-}
-
-enum AppRoot: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case library
-    case sources
-    case margins
-    case settings
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .library: "Library"
-        case .sources: "Following"
-        case .margins: "Margins"
-        case .settings: "Settings"
-        }
-    }
-
-    /// What the Item screen's back button says: the tab it returns to (#3214). Settings has no items, so it
-    /// reads just "Back".
-    var itemBackTitle: String {
-        switch self {
-        case .library, .sources, .margins: title
-        case .settings: "Back"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .library: "books.vertical"
-        case .sources: "dot.radiowaves.left.and.right"
-        case .margins: "quote.bubble"
-        case .settings: "gearshape"
-        }
-    }
-}
-
-enum AppRoute: Hashable, Sendable {
-    case item(String)
-    case nowPlaying
-    case timeline(String?)
-    case marginDetail(String)
-    case settings
-    case offlineStorage
-    case export(String?)
-    case batchExport
-    case help
-}
-
-enum TimelinePullPresentation {
-    static let activationDistance: CGFloat = 72
-
-    static func overscrollDistance(
-        contentOffsetY: CGFloat,
-        contentHeight: CGFloat,
-        containerHeight: CGFloat,
-        bottomInset: CGFloat,
-        topInset: CGFloat = 0
-    ) -> CGFloat {
-        let maximumScrollOffset = max(-topInset, contentHeight + bottomInset - containerHeight)
-        return max(0, contentOffsetY - maximumScrollOffset)
-    }
-
-    static func shouldOpenTimeline(overscrollDistance: CGFloat) -> Bool {
-        overscrollDistance >= activationDistance
-    }
-}
-
-enum TimelineTextPresentation {
-    static let marginCharacterLimit = 180
-    static let supportingCharacterLimit = 280
-
-    static func excerpt(_ text: String, characterLimit: Int) -> String {
-        let normalized = text
-            .split(whereSeparator: \Character.isWhitespace)
-            .joined(separator: " ")
-        guard normalized.count > characterLimit else { return normalized }
-
-        let boundary = normalized.index(normalized.startIndex, offsetBy: characterLimit)
-        let prefix = normalized[..<boundary]
-        // The limit lands exactly after a word: it fits whole, so keep it.
-        if normalized[boundary] == " " { return String(prefix) + "…" }
-        if let wordBoundary = prefix.lastIndex(of: " ") {
-            return String(prefix[..<wordBoundary]) + "…"
-        }
-        return String(prefix) + "…"
-    }
-}
-
-enum AddSourceRoute: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case linkOrPodcast
-    case pastedText
-    /// One tile for everything that comes from Files: documents, books, audiobooks and `.spokenmargins` packets.
-    /// The file's own type picks the import after the pick (`AddFromFilesPlan`, #3217).
-    case importFromFiles
-    case quickFolder
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .linkOrPodcast: "Link or Podcast"
-        case .pastedText: "Paste Text"
-        case .importFromFiles: "Import from Files"
-        case .quickFolder: "Quick Folder"
-        }
-    }
-
-    var detail: String {
-        switch self {
-        case .linkOrPodcast: "Podcast episode, RSS feed, public audio, or readable web link"
-        case .pastedText: "Make something to listen to from text already on your clipboard"
-        case .importFromFiles: "A document, book, audiobook, or Margins packet from Files"
-        case .quickFolder: "Choose a folder whose eligible files appear in Following"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .linkOrPodcast: "link"
-        case .pastedText: "text.quote"
-        case .importFromFiles: "folder.badge.plus"
-        case .quickFolder: "folder"
-        }
-    }
-}
-
-/// A tile in the Add sheet's top grid. Each is a different way in; none repeats another (#3217).
-enum AddSourceTile: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case linkOrPodcast
-    case findPodcast
-    case pastedText
-    case importFromFiles
-    case quickFolder
-    case liveSession
-    case spokenNote
-
-    var id: String { rawValue }
-
-    /// The route a tile opens inside the sheet, for the tiles that swap the sheet's content.
-    var route: AddSourceRoute? {
-        switch self {
-        case .linkOrPodcast: .linkOrPodcast
-        case .pastedText: .pastedText
-        case .importFromFiles: .importFromFiles
-        case .quickFolder: .quickFolder
-        case .findPodcast, .liveSession, .spokenNote: nil
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .findPodcast: "Find a Podcast"
-        case .liveSession: "Live Session"
-        case .spokenNote: "Spoken Note"
-        default: route?.title ?? ""
-        }
-    }
-
-    var detail: String {
-        switch self {
-        case .linkOrPodcast: "A web article, podcast episode, feed, or public audio link"
-        case .findPodcast: "Search podcasts by name"
-        case .pastedText: "Words already copied to your clipboard"
-        case .importFromFiles: "A document, book, audiobook, or Margins packet"
-        case .quickFolder: "A folder of eligible local files"
-        case .liveSession: "Margins on a meeting or book"
-        case .spokenNote: "Dictate an idea, then read it back"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .findPodcast: "magnifyingglass"
-        case .liveSession: "clock.badge"
-        case .spokenNote: "mic"
-        default: route?.systemImage ?? "plus"
-        }
-    }
-}
-
-enum AddSourcePresentation {
-    /// The grid's order: the two ways to bring in a podcast sit together, then the two from the device, then the rest, then a note of your own.
-    static let tiles: [AddSourceTile] = [
-        .linkOrPodcast, .findPodcast,
-        .pastedText, .importFromFiles,
-        .quickFolder, .liveSession,
-        .spokenNote
-    ]
-
-    /// Find a Podcast needs the catalog to open from the sheet; without that, the tile is left out.
-    static func tiles(canSearchPodcasts: Bool) -> [AddSourceTile] {
-        canSearchPodcasts ? tiles : tiles.filter { $0 != .findPodcast }
-    }
-}
-
-/// Scene-local presentation state. Playback and persistence remain in
-/// `Gate1AppModel`; switching roots must not replace an active session.
-struct AppNavigationState: Equatable, Sendable {
-    var selectedRoot: AppRoot = .library
-    var paths: [AppRoot: [AppRoute]] = [
-        .library: [],
-        .sources: [],
-        .margins: [],
-        .settings: []
-    ]
-    var taskRoute: AppRoute?
-    var addSourceRoute: AddSourceRoute?
-    /// "Search podcasts by name" in the add sheet: the sheet closes first, then the catalog opens (#1784).
-    var opensCatalogAfterAddSheet = false
-    /// Where Following was scrolled to, kept across the screen switches that destroy its list (#479).
-    var followingScroll = FollowingScrollMemory()
-    /// The same for the Library list, whose rows are also destroyed when an item opens (#2395).
-    var libraryScroll = FollowingScrollMemory()
-
-    /// Where the listener is, without the scroll memory: scrolling the list while a tapped item is read keeps the
-    /// tap; a change of place drops it (#2505).
-    struct Place: Equatable {
-        let root: AppRoot
-        let paths: [AppRoot: [AppRoute]]
-        let taskRoute: AppRoute?
-        let addSourceRoute: AddSourceRoute?
-    }
-
-    var place: Place {
-        Place(root: selectedRoot, paths: paths, taskRoute: taskRoute, addSourceRoute: addSourceRoute)
-    }
-
-    mutating func select(_ root: AppRoot, recordingIsLocked: Bool) {
-        guard !recordingIsLocked else { return }
-        selectedRoot = root
-    }
-
-    mutating func push(_ route: AppRoute, in root: AppRoot? = nil, recordingIsLocked: Bool) {
-        guard !recordingIsLocked else { return }
-        let destination = root ?? selectedRoot
-        paths[destination, default: []].append(route)
-    }
-
-    mutating func present(_ route: AppRoute, recordingIsLocked: Bool) {
-        guard !recordingIsLocked else { return }
-        taskRoute = route
-    }
-
-    mutating func searchPodcastsFromAddSheet() {
-        addSourceRoute = nil
-        opensCatalogAfterAddSheet = true
-    }
-
-    /// True once per request, so a later dismissal of the sheet doesn't open the catalog again.
-    mutating func takeCatalogRequest() -> Bool {
-        defer { opensCatalogAfterAddSheet = false }
-        return opensCatalogAfterAddSheet
-    }
-
-    mutating func dismissTask(recordingIsLocked: Bool) {
-        guard !recordingIsLocked else { return }
-        taskRoute = nil
-    }
-}
-
-enum LibraryPresentation {
-    static let continuationSuggestionCutoffPercent = 99
-
-    static func continueItem(in rows: [LibraryItemRow], activeItemId: String?) -> LibraryItemRow? {
-        if let activeItemId,
-           let active = rows.first(where: {
-               $0.id == activeItemId
-                   && !$0.isCompleted
-                   && $0.hasContinuationSession
-                   && ($0.continuationProgressPercent ?? 0) < continuationSuggestionCutoffPercent
-           }) {
-            return active
-        }
-
-        return rows
-            .filter {
-                !$0.isCompleted && $0.hasContinuationSession
-                    && ($0.continuationProgressPercent ?? 0) > 0
-                    && ($0.continuationProgressPercent ?? 0) < continuationSuggestionCutoffPercent
-            }
-            .sorted {
-                let lhs = $0.lastListenedAt ?? .distantPast
-                let rhs = $1.lastListenedAt ?? .distantPast
-                return lhs == rhs ? $0.id < $1.id : lhs > rhs
-            }
-            .first
-    }
-}
-
-enum TimelineProvenance: String, CaseIterable, Hashable, Sendable {
-    case source
-    case listeningMap
-    case myMargin
-    case sharedMargin
-    case userResponse
-    case assistantResponse
-
-    var label: String {
-        switch self {
-        case .source: "Chapter"
-        case .listeningMap: "Listening map"
-        case .myMargin: "My Margin"
-        case .sharedMargin: "Shared Margin"
-        case .userResponse: "My response"
-        case .assistantResponse: "Assistant response"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .source: "doc.text"
-        case .listeningMap: "map"
-        case .myMargin: "quote.bubble.fill"
-        case .sharedMargin: "person.2.fill"
-        case .userResponse: "person.crop.circle"
-        case .assistantResponse: "sparkles"
-        }
-    }
-}
-
 struct MarginRow: Identifiable, Equatable, Sendable {
     let interjection: Interjection
     let itemTitle: String
@@ -345,8 +8,16 @@ struct MarginRow: Identifiable, Equatable, Sendable {
     /// The chapter the Margin was made in and, for text, its paragraph number (#777). nil when the item has no
     /// chapters or the position isn't a paragraph.
     var place: MarginPlaces.Place? = nil
+    /// #4715: a spoken Margin held until the listener answers the Speech Recognition card. It is an input of the row, read
+    /// when the rows are built, so it is part of the row's equality and a Deny or Allow refreshes the rows that show it.
+    var transcriptWaitsForAnswer: Bool = false
 
-    var id: String { "\(interjection.sessionId)::\(interjection.id)" }
+    static func waitsForAnswer(_ interjection: Interjection) -> Bool {
+        interjection.captureKind != .written
+            && SpeechAskController.marginIsWaitingForAnswer(MarginIdentity.make(sessionId: interjection.sessionId, interjectionId: interjection.id))
+    }
+
+    var id: String { MarginIdentity.make(sessionId: interjection.sessionId, interjectionId: interjection.id) }
     var isWritten: Bool { interjection.captureKind == .written }
     var fullText: String {
         [interjection.displayText, interjection.cleanedTranscript, interjection.transcript]
@@ -380,6 +51,7 @@ struct MarginRow: Identifiable, Equatable, Sendable {
         TranscriptionFailureWording.marginAttention(
             transcriptionStatus: interjection.transcriptionStatus,
             speechRecognitionOff: SpeechRecognitionAccess.isOff,
+            speechRecognitionNotYetAsked: transcriptWaitsForAnswer,
             contextUnavailable: interjection.anchorContextStatus == .unavailable,
             recordingMissing: interjection.audioStatus == "missing"
         )
@@ -390,8 +62,9 @@ struct MarginRow: Identifiable, Equatable, Sendable {
         guard interjection.targetType == .item else { return "\(targetDescription) · \(interjection.roughPercent)%" }
         return MarginRowWording.placeLine(
             placeName: place?.chapterName, mediaTimeMs: interjection.anchor.mediaTimeMs,
+            meetingClockMs: place?.meetingClockMs,
             paragraph: place?.paragraph, roughPercent: interjection.roughPercent,
-            createdAt: interjection.createdAt, now: now)
+            hasPlace: interjection.hasPlace, createdAt: interjection.createdAt, now: now)
     }
 
     /// Set when a call, Siri, the headphones or a closed app ended this recording early, until the listener opens it (#1976).
@@ -411,29 +84,5 @@ struct MarginRow: Identifiable, Equatable, Sendable {
         case .assistantTurn: "Assistant response"
         case .summaryTurn: "Margin summary"
         }
-    }
-}
-
-struct SharedMarginRow: Identifiable, Equatable, Sendable {
-    let interjection: ImportedCommentaryInterjection
-    let layer: ImportedCommentaryLayer
-    let itemTitle: String
-    /// The item's placement work in flight, if any (#872).
-    var placement: SharedMarginPlacementPasses.Pass? = nil
-
-    var id: String { "shared::\(layer.id)::\(interjection.id)" }
-    var placementStatus: SharedMarginPlacementStatus {
-        SharedMarginPlacementStatus(resolution: interjection.resolution, marginId: interjection.id,
-                                    layerStatus: layer.sourceResolutionStatus, pass: placement,
-                                    hasPositionEvidence: interjection.carriesPositionEvidence(in: layer),
-                                    awaitingPlacementPass: layer.awaitsPlacementPass)
-    }
-    /// Its voice hasn't played for this listener yet (#469), and it can (#3402).
-    var isNew: Bool { interjection.showsAsNew }
-    /// The sender's name, or "a friend" when the file names nobody; a stand-in is never shown as a name (#3247).
-    var collectionLabel: String { SharedPacketArrival.senderName(layer.displayLabel) ?? "a friend" }
-    var positionDescription: String {
-        if let placing = placementStatus.positionDescription { return placing }
-        return SharedMarginPlacementWording.line(for: interjection.resolution)
     }
 }

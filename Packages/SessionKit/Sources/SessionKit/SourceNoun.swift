@@ -21,6 +21,8 @@ public struct SourceNoun: Equatable, Sendable {
     public static let audiobook = SourceNoun(capitalized: "Audiobook", inSentence: "audiobook")
     /// Pasted or imported text with no better name.
     public static let text = SourceNoun(capitalized: "Text", inSentence: "text")
+    /// An imported meeting transcript (#2997): "Transcript paused…", "Your thoughts on this transcript".
+    public static let transcript = SourceNoun(capitalized: "Transcript", inSentence: "transcript")
 
     public init(contentType: LibraryContentTypeFilter) {
         switch contentType {
@@ -35,6 +37,11 @@ public struct SourceNoun: Equatable, Sendable {
 
     /// From the open source's own stored facts (the same three the Library row reads).
     public init(mediaType: String, sourceReference: String?, sourceReferenceType: String?) {
+        // A transcript is a text item for everything else, so only its name differs from the content type's.
+        if sourceReferenceType == TranscriptItemText.referenceType {
+            self = .transcript
+            return
+        }
         self.init(contentType: LibraryRowWording.contentType(
             mediaType: mediaType, sourceReference: sourceReference, sourceReferenceType: sourceReferenceType))
     }

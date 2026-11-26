@@ -28,4 +28,28 @@ final class FollowingDismissMessagesTests: XCTestCase {
             XCTAssertEqual(FollowingDismissMessages.undoAccessibilityLabel(title: row.title), row.label, row.name)
         }
     }
+
+    /// #4285: a followed show's episode says "Not for me"; a Quick Folder file keeps "Dismiss".
+    func testAFollowedEpisodeSaysNotForMeAndAFileSaysDismiss() {
+        XCTAssertEqual(FollowingDismissMessages.actionTitle(isFollowedEntry: true), "Not for me")
+        XCTAssertEqual(FollowingDismissMessages.actionSystemImage(isFollowedEntry: true), "hand.thumbsdown")
+        XCTAssertEqual(FollowingDismissMessages.actionTitle(isFollowedEntry: false), "Dismiss")
+        XCTAssertEqual(FollowingDismissMessages.actionSystemImage(isFollowedEntry: false), "xmark")
+    }
+
+    func testTheNotForMeBannerIsShortenedLikeDismiss() {
+        let limit = ManualCompletionMessages.maxTitleCharacters
+        let table: [(name: String, title: String, message: String, label: String)] = [
+            ("plain", "The Long Article", "Not for me: The Long Article.", "Undo Not for me, The Long Article"),
+            ("one over", String(repeating: "a", count: limit + 1), "Not for me: \(String(repeating: "a", count: limit))….", "Undo Not for me, \(String(repeating: "a", count: limit + 1))"),
+            ("line break", "Part one\nPart two", "Not for me: Part one Part two.", "Undo Not for me, Part one Part two"),
+            ("runs of blanks", "  Part   one \t two  ", "Not for me: Part one two.", "Undo Not for me, Part one two"),
+            ("empty", "", "Not for me.", "Undo Not for me"),
+            ("only blanks", " \n\t ", "Not for me.", "Undo Not for me"),
+        ]
+        for row in table {
+            XCTAssertEqual(FollowingDismissMessages.notForMe(title: row.title), row.message, row.name)
+            XCTAssertEqual(FollowingDismissMessages.notForMeUndoAccessibilityLabel(title: row.title), row.label, row.name)
+        }
+    }
 }

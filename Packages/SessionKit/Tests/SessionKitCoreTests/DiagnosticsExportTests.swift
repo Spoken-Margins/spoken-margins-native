@@ -246,13 +246,51 @@ final class DiagnosticsExportTests: XCTestCase {
         XCTAssertEqual(entries["targetType"], "none")
     }
 
-    func testTheExportCarriesExactlyTheTenFixedKeysWhenThereIsNothingElse() {
+    func testTheExportCarriesExactlyTheTwelveFixedKeysWhenThereIsNothingElse() {
         let entries = DiagnosticsExport.entries(live: [:], stored: [:], fixed: fixed())
 
         XCTAssertEqual(
             Set(entries.keys),
             ["developerBuild", "developerRecording", "playbackEvents", "schemaVersion", "exportedAt",
-             "playbackStatus", "sessionPhase", "targetType", "pendingAIJobs", "responsiveness"]
+             "playbackStatus", "sessionPhase", "targetType", "pendingAIJobs", "responsiveness", "screenRebuilds", "diskWritesBySource"]
+        )
+    }
+
+    func testTheScreenRebuildsLineIsTheAppsOwnAndNoLiveEntryStandsInForIt() {
+        var ledger = PresentationLedger()
+        ledger.appeared(place: "PlaybackScreen:229", item: "item-my-secret-diary", instance: UUID(), at: 0)
+        ledger.appeared(place: "PlaybackScreen:229", item: "item-my-secret-diary", instance: UUID(), at: 0)
+        var rebuilt = fixed()
+        rebuilt.screenRebuilds = ledger.summaryText
+
+        let entries = DiagnosticsExport.entries(live: ["screenRebuilds": "stale"], stored: ["screenRebuilds": "stale"], fixed: rebuilt)
+
+        XCTAssertEqual(entries["screenRebuilds"], "rebuilds=1 whileShowing=1 afterDismissal=0 places=PlaybackScreen:229x1")
+        XCTAssertEqual(DiagnosticsExport.entries(live: [:], stored: [:], fixed: fixed())["screenRebuilds"], "rebuilds=0", "a healthy export says zero, not nothing")
+    }
+
+    func testTheDiskWritesLineIsTheAppsOwnAndNoLiveEntryStandsInForIt() {
+        var ledger = DiskWriteLedger()
+        ledger.record(bytes: 3_100_000_000, source: .download, at: Date(timeIntervalSince1970: 1_763_510_400))
+        var written = fixed()
+        written.diskWritesBySource = ledger.summaryText
+
+        let entries = DiagnosticsExport.entries(live: ["diskWritesBySource": "stale"], stored: ["diskWritesBySource": "stale"], fixed: written)
+
+        XCTAssertEqual(entries["diskWritesBySource"], "2025-11-19 total=3100MB download=3100MB; counted=download,speech_render,speech_assembly")
+        XCTAssertEqual(DiagnosticsExport.entries(live: [:], stored: [:], fixed: fixed())["diskWritesBySource"]?.hasPrefix("none_recorded"), true)
+    }
+
+    func testTheListsCountIsOnlyACountAndNoLiveEntryStandsInForIt() {
+        var counted = fixed()
+        counted.listsShowsInTwoOrMore = 3
+        let entries = DiagnosticsExport.entries(live: ["lists.showsInTwoOrMore": "stale"], stored: ["lists.showsInTwoOrMore": "stale"], fixed: counted)
+
+        XCTAssertEqual(entries["lists.showsInTwoOrMore"], "3")
+        XCTAssertEqual(DiagnosticsExport.entries(live: [:], stored: [:], fixed: counted.with(lists: 0))["lists.showsInTwoOrMore"], "0", "zero is a real answer")
+        XCTAssertNil(
+            DiagnosticsExport.entries(live: ["lists.showsInTwoOrMore": "stale"], stored: [:], fixed: fixed())["lists.showsInTwoOrMore"],
+            "lists that couldn't be read leave the key out rather than letting a stale entry stand in"
         )
     }
 
@@ -276,5 +314,13 @@ final class DiagnosticsExportTests: XCTestCase {
 
     func testTheSchemaVersionNeverChangesByAccident() {
         XCTAssertEqual(DiagnosticsExport.schemaVersion, "spoken-margins.diagnostics.v1")
+    }
+}
+
+private extension DiagnosticsExport.Fixed {
+    func with(lists count: Int?) -> Self {
+        var copy = self
+        copy.listsShowsInTwoOrMore = count
+        return copy
     }
 }

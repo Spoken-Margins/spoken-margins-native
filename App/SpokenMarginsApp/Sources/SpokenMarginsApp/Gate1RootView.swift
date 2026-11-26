@@ -68,26 +68,26 @@ struct Gate1RootView: View {
             model.requestedExperienceRoot = nil
         }
         .tracksKeyboard($keyboardIsPresented).liveSessionLinkCover(model).timesLaunchUsable(model)
-        .sheet(isPresented: $model.isTermsOfUsePresented) {
+        .trackedSheet(isPresented: $model.isTermsOfUsePresented) {
             NavigationStack {
                 SpokenMarginsTermsView(allowsAcceptance: true)
                     .environmentObject(model)
             }
             .interactiveDismissDisabled(!model.hasAcceptedCurrentTerms)
         }
-        .sheet(isPresented: $catalogDrawer.isPresented, onDismiss: {
+        .trackedSheet(isPresented: $catalogDrawer.isPresented, onDismiss: {
             catalogDrawer.didDismiss()
-            model.refreshFollowedSources(force: false)
+            model.refreshFollowedSources(force: false, trigger: .afterFollow)
         }) {
             CatalogDrawerView()
                 .environmentObject(catalogDrawer)
         }
-        .modifier(SupertonicDownloadNoticePresentation(notice: supertonicNotice))
-        .sheet(isPresented: $model.isHelpPresented) {
+        .modifier(SupertonicDownloadNoticePresentation(notice: supertonicNotice)).modifier(WatchReturnToAppTipPresentation(supertonicNotice: supertonicNotice, keyboardIsPresented: keyboardIsPresented))
+        .trackedSheet(isPresented: $model.isHelpPresented) {
             HelpScreen()
                 .environmentObject(model)
         }
-        .sheet(isPresented: $model.isSharingInterjectionsPresented) {
+        .trackedSheet(isPresented: $model.isSharingInterjectionsPresented) {
             Build23SenderSharingHost(coordinator: sharingCoordinator)
                 .environmentObject(model)
         }
@@ -142,7 +142,7 @@ private struct Build23RecipientSharingHost: View {
         Build23RecipientSharingExperience(coordinator: coordinator) { request in
             sourceRequest = request
         }
-        .sheet(item: $sourceRequest, onDismiss: resumePendingImport) { request in
+        .trackedSheet(item: $sourceRequest, onDismiss: resumePendingImport) { request in
             ExperienceAddSourceFlow(initialRoute: addSourceRoute(for: request.itemType))
                 .environmentObject(model)
         }
@@ -310,7 +310,7 @@ struct InterjectionDetailView: View {
                         isOn: Binding(
                             get: { currentInterjection.isStarredForSharing == true },
                             set: {
-                                model.setInterjectionStarredForSharing(current.id, sessionId: current.sessionId, starred: $0)
+                                model.setStarredForSharing(current, starred: $0, place: .manage)
                             }
                         )
                     )
@@ -349,7 +349,7 @@ struct InterjectionDetailView: View {
                     Text(anchorContextText(current.anchor.anchorAfter, status: current.captureKind == .written ? .unavailable : current.anchorContextStatus))
                         .textSelection(.enabled)
                     if current.captureKind != .written, current.anchorContextStatus == .unavailable {
-                        Button("Retry Context") {
+                        Button("Retry Finding Source Words") {
                             model.retryAnchorContext(current)
                         }
                         .accessibilityIdentifier("interjection.detail.retryContext")
@@ -523,6 +523,7 @@ enum AppColors {
     static let watchBackground = dynamicColor(AppSemanticColorRGB.watchBackground)
     static let watchControl = dynamicColor(AppSemanticColorRGB.watchControl)
     static let watchSecondary = dynamicColor(AppSemanticColorRGB.listeningSecondary)
+    static let watchStar = dynamicColor(AppSemanticColorRGB.watchStar)
     static let dangerText = dynamicColor(AppSemanticColorRGB.dangerText)
     static let dangerBackground = dynamicColor(AppSemanticColorRGB.dangerBackground)
     static let interjectText = dynamicColor(AppSemanticColorRGB.captureText)

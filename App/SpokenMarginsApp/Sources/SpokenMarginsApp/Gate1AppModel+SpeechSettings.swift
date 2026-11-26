@@ -251,7 +251,7 @@ extension Gate1AppModel {
             return "\(ttsVoiceSelection.displayName) (Supertonic \(voice.rawValue))"
         }
         guard !speechVoiceIdentifier.isEmpty else {
-            return "System Spoken Content Voice (Siri falls back)"
+            return SpeechVoiceMenu.systemVoiceName
         }
         if let voice = speechVoiceOptions.first(where: { $0.id == speechVoiceIdentifier }) {
             return "\(voice.name) (\(voice.language), \(voice.quality))"

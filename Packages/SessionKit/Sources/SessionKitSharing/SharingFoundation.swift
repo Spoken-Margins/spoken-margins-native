@@ -42,6 +42,12 @@ public struct ReviewedInterjectionSelection: Sendable {
     /// The sender's last share of this Margin said "no" and this one says "yes" (#3472). The packet then says "yes"
     /// out loud, because a missing key cannot tell the listener's held copy to start reading aloud again.
     public let turnsReadAloudBackOn: Bool
+    /// How much of the episode the sender asks their friend to hear before this Margin (#4171). Nil is the default,
+    /// 20 s. Nothing in the app sets it until the sender's "Before your Margin" row exists.
+    public let leadInMs: Int?
+    /// The length the sender's last share of this Margin carried, or nil if it never carried one. Only used to decide
+    /// whether a 20 s choice has to be written out loud (`SenderLeadIn.valueToWrite`).
+    public let previousLeadInMs: Int?
 
     public init(
         packageScopedId: String,
@@ -50,7 +56,9 @@ public struct ReviewedInterjectionSelection: Sendable {
         representation: ReviewedRepresentationSelection,
         replyTo: MarginReplyLink? = nil,
         readAloud: Bool = true,
-        turnsReadAloudBackOn: Bool = false
+        turnsReadAloudBackOn: Bool = false,
+        leadInMs: Int? = nil,
+        previousLeadInMs: Int? = nil
     ) {
         self.packageScopedId = packageScopedId
         self.revision = revision
@@ -59,6 +67,8 @@ public struct ReviewedInterjectionSelection: Sendable {
         self.replyTo = replyTo
         self.readAloud = readAloud
         self.turnsReadAloudBackOn = turnsReadAloudBackOn
+        self.leadInMs = leadInMs
+        self.previousLeadInMs = previousLeadInMs
     }
 }
 
@@ -222,7 +232,9 @@ public enum SpokenMarginsPackageBuilder {
                 defaultRepresentationId: representation.id,
                 representations: [representation],
                 readAloud: representation.kind == .textOnly
-                    ? (selection.readAloud ? (selection.turnsReadAloudBackOn ? true : nil) : false) : nil
+                    ? (selection.readAloud ? (selection.turnsReadAloudBackOn ? true : nil) : false) : nil,
+                // Every kind of Margin has a run-up, so unlike `readAloud` this isn't limited to written ones.
+                leadInMs: SenderLeadIn.valueToWrite(chosen: selection.leadInMs, previous: selection.previousLeadInMs)
             ))
         }
 
@@ -521,7 +533,9 @@ public enum SpokenMarginsPackageImporter {
                     ?? ImportedAnchorResolution(evidenceClass: .unresolved),
                 replyLinks: replyLinks[record.packageScopedId],
                 shareProvenance: MarginShareProvenance.token(representationID: representation.id),
-                senderReadAloud: record.readAloud
+                senderReadAloud: record.readAloud,
+                // Clamped to 0 to 5 minutes by the initializer, so a packet can't ask for an absurd run-up.
+                senderLeadInMs: record.leadInMs
             ))
         }
         let layer = ImportedCommentaryLayer(

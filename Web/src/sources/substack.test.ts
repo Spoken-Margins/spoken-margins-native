@@ -95,7 +95,7 @@ test('awkward pages', async (t) => {
     assert.equal(findSubstackVoice('<script>window._preloads = JSON.parse("[1,2]");</script>'), null);
   });
 
-  await t.test('a podcast-type post gives nothing', () => {
+  await t.test('a podcast-type post with no episode audio gives nothing: a narration is not its episode', () => {
     assert.equal(
       findSubstackVoice(page({ type: 'podcast', id: 1, canonical_url: 'https://x.example/p/a', has_voiceover: true, audio_items: [{ post_id: 1, type: 'voiceover', status: 'completed', audio_url: 'https://r.example/a.mp3' }] })),
       null,
@@ -156,6 +156,46 @@ test('awkward pages', async (t) => {
     const html = `<script>globalThis.${marker} = true; window._preloads = JSON.parse("{\\"post\\":{}}");</script>`;
     findSubstackVoice(html);
     assert.equal((globalThis as Record<string, unknown>)[marker], undefined);
+  });
+});
+
+test('a podcast post plays its own episode audio (the friend\u2019s Paul Christiano link, #4433)', async (t) => {
+  const base = { type: 'podcast', id: 7, canonical_url: 'https://podcast.example/p/ep', audience: 'everyone' };
+  const episode = 'https://api.substack.example/api/v1/audio/upload/aaaa-bbbb/src';
+  await t.test('podcast_url and podcast_duration: the episode, with its length', () => {
+    assert.deepEqual(findSubstackVoice(page({ ...base, podcast_url: episode, podcast_duration: 5948.2 })), {
+      origin: 'podcast-enclosure',
+      audioUrl: episode,
+      durationSeconds: 5948.2,
+      canonicalUrl: 'https://podcast.example/p/ep',
+    });
+  });
+  await t.test('no duration given: still plays, length unknown', () => {
+    const voice = findSubstackVoice(page({ ...base, podcast_url: episode }));
+    assert.equal(voice?.audioUrl, episode);
+    assert.equal(voice?.durationSeconds, undefined);
+  });
+  await t.test('the episode wins over a narration listed beside it', () => {
+    const tts = [{ post_id: 7, type: 'tts', status: 'completed', audio_url: 'https://r.example/tts.mp3' }];
+    assert.equal(findSubstackVoice(page({ ...base, podcast_url: episode, audio_items: tts }))?.audioUrl, episode);
+  });
+  await t.test('rows that give nothing: no audio, wrong scheme, junk, empty, a page for another post', () => {
+    for (const podcast_url of [null, undefined, '', 'http://insecure.example/a.mp3', 'not a url', 42, 'javascript:alert(1)']) {
+      assert.equal(findSubstackVoice(page({ ...base, podcast_url })), null, String(podcast_url));
+    }
+    assert.equal(findSubstackVoice(page({ ...base, podcast_url: episode, podcast_duration: -1 }))?.durationSeconds, undefined, 'negative length');
+    assert.equal(findSubstackVoice(page({ ...base, podcast_url: episode }), { finalUrl: 'https://podcast.example/p/other' }), null, 'another post');
+    assert.equal(findSubstackVoice(page({ ...base, podcast_url: episode }), { finalUrl: 'https://PODCAST.example/p/ep/' })?.audioUrl, episode, 'same post');
+  });
+  await t.test('a newsletter that merely carries a podcast_url is not treated as a podcast', () => {
+    assert.equal(findSubstackVoice(page({ ...base, type: 'newsletter', podcast_url: episode, audio_items: [] })), null);
+  });
+  await t.test('a paid podcast says paid, not "no voice", with or without an audio address on its page', () => {
+    for (const audience of ['only_paid', 'founding']) {
+      for (const podcast_url of [null, episode]) {
+        assert.deepEqual(inspectSubstackPost(page({ ...base, audience, podcast_url })), { voice: null, paidOnly: true }, `${audience} ${podcast_url}`);
+      }
+    }
   });
 });
 

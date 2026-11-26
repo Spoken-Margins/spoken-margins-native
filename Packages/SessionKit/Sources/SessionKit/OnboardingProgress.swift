@@ -15,6 +15,8 @@ public enum OnboardingStep: String, CaseIterable, Identifiable, Hashable, Sendab
     /// The listener tapped or dismissed the "Tap to add a Margin" prompt (#2852). Not a Help card step: it is
     /// kept here so it is stored and published with the rest, and an older build drops the unknown name.
     case sawFirstMarginPrompt = "saw_first_margin_prompt"
+    /// The listener heard (or saved and saw) their own first Margin (#4711). Not a Help card step; an older build drops it.
+    case heardFirstMargin = "heard_first_margin"
 
     public var id: String { rawValue }
 
@@ -108,8 +110,12 @@ public struct OnboardingProgress: Equatable, Sendable {
 
     /// #2852: once audio is on, one prompt to add a first Margin, until the listener has tapped or dismissed it
     /// or has made a Margin. While it shows, the tour coach and the Library strip stay out of the way.
-    public func shouldShowFirstMarginPrompt(hasActiveSession: Bool, suppressed: Bool) -> Bool {
-        !suppressed && hasActiveSession && !isComplete(.firstInterjection) && !isComplete(.sawFirstMarginPrompt)
+    ///
+    /// `duringFriendListen` (#3790) hides it while a friend's Margins play, so the sender's Margin has the screen to
+    /// itself; false is the rule as it was. It is not `suppressed`, which means "under tests". It hides the prompt for
+    /// now and does not mark it seen: `noteFriendListen` does that when the end card shows.
+    public func shouldShowFirstMarginPrompt(hasActiveSession: Bool, suppressed: Bool, duringFriendListen: Bool = false) -> Bool {
+        !suppressed && !duringFriendListen && hasActiveSession && !isComplete(.firstInterjection) && !isComplete(.sawFirstMarginPrompt)
     }
 
     public func shouldShowCoach(guidedItemIsSelected: Bool) -> Bool {
@@ -226,7 +232,8 @@ public enum OnboardingEvidenceClassifier {
         if userItems.contains(where: { $0.mediaType == "text" && $0.externalReferenceType == "url" }) {
             evidence.formUnion([.addedOwnSource, .addedFromSafari])
         }
-        if userItems.contains(where: { $0.externalReferenceType == "file" }) {
+        // A meeting transcript is a file the listener picked from Files, Open In or Share (#2997).
+        if userItems.contains(where: { $0.externalReferenceType == "file" || $0.externalReferenceType == TranscriptItemText.referenceType }) {
             evidence.formUnion([.addedOwnSource, .addedFromFiles])
         }
         return evidence

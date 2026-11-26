@@ -4,7 +4,7 @@
 
 ## Read this first
 
-- **Changing the Terms needs a version bump.** The app enables the on-device voice (James, Lily) only when the accepted version equals `SpokenMarginsTerms.currentVersion` (`App/SpokenMarginsApp/Sources/SpokenMarginsApp/SpokenMarginsTerms.swift:4`, `:20-22`). Publishing a new text means bumping that constant and updating both the bundled file and the public page together (`docs/legal/spoken-margins-terms.md`, "A future material revision increments…"). Every listener then has to accept again before the voice works; until then the app falls back to the iOS system voice.
+- **Changing the Terms needs a version bump.** The app enables the on-device voice (James, Lily) only when the accepted version equals `SpokenMarginsTerms.currentVersion` (`Packages/SessionKit/Sources/SessionKit/SpokenMarginsTerms.swift`, `currentVersion` and `hasAcceptedCurrentVersion`). Publishing a new text means bumping that constant and updating both the bundled file and the public page together (`docs/legal/spoken-margins-terms.md`, "A future material revision increments…"). Every listener then has to accept again before the voice works; until then the app falls back to the iOS system voice.
 - **The share-link terms go in a separate agreement** (decided as D5 in [attorney-questions.md](attorney-questions.md)): it is shown the first time someone creates a share link, and the voice Terms stay at 1.0. This draft is written as one document so the full text is in one place; splitting it is mechanical.
 - **Share links don't exist in the app yet.** The server side is #486 and the app side #487; `next` has no client code that uploads a packet. Sections 5A to 5C describe the design in those issues as revised by the 2026-10-20 decisions (D15 to D21 in [attorney-questions.md](attorney-questions.md); #2235 to #2239, #1728), and should be checked against the shipped feature before publishing. The numbers in 5A to 5C are starting points the attorney may mark up.
 - **Blanks** are marked `[[like this]]`.
@@ -104,7 +104,7 @@ Questions about these Terms or Spoken Margins may be sent to cole@proximitytopro
 
 | Change | Why | Evidence |
 |---|---|---|
-| Version and effective date | Share links add obligations (5A), so this is a material revision under section 7 | `SpokenMarginsTerms.swift:4-5` |
+| Version and effective date | Share links add obligations (5A), so this is a material revision under section 7 | `SpokenMarginsTerms.swift` (`currentVersion`, `effectiveDate`) |
 | Developer's legal name | "the developer of Spoken Margins" names no one; the seller name depends on the LLC question | attorney question 6; D1, D2 |
 | Section 1, acceptance before a share link | Otherwise someone who never enabled the voice could share without having accepted any terms | today acceptance is tied to the voice only (`docs/legal/spoken-margins-terms.md`, "Supertonic gate") |
 | Section 4, Readwise, Raindrop | The app connects to them with the listener's own credential (the OpenAI client was removed in #2845) | `Packages/SessionKit/Sources/SessionKit/ReadLaterClient.swift:29-36` |

@@ -111,7 +111,7 @@ struct BrowserTextImporter: Sendable {
             // Margin anchors. Retain the original edition and give changed text its
             // own identity.
             if let existing = try existingItem(id: itemId), existing.text != text ||
-                (document.map({ (try? (repository as? any StructuredDocumentRepository)?.loadStructuredDocument(itemId: itemId)) != $0 }) == true
+                (document.map({ (try? (repository as? any StructuredDocumentRepository)?.loadStructuredDocument(itemId: itemId))?.comparedOnReimport != $0.comparedOnReimport }) == true
                  && !(existing.text == text && openItemIds.contains(existing.id)
                       && !isPlaybackActive && existing.media?.sourceType != .generatedTTSPrerendered)) {
                 // C1 M3 step 5: a PDF re-imported with a newer extraction moves the
@@ -255,10 +255,10 @@ struct BrowserTextImporter: Sendable {
         } else { try store.saveStructuredDocument(document, itemId: item.id) }
     }
 
-    /// The pictures, embeds and links of a Substack page, kept beside the item for Timeline (#2032). Best effort: an
+    /// The pictures, embeds, links and tables of a web page, kept beside the item for Timeline (#2032). Best effort: an
     /// import never fails because of them. They are read from the same Markdown as the text, and kept only when that
     /// gives exactly the item's text, so every offset indexes it. A record from an earlier import is always
-    /// refreshed, even by a page that no longer reads as Substack or has no elements left, so a removed picture's
+    /// refreshed, even by a page that has no elements left, so a removed picture's
     /// row cannot outlive the picture.
     func saveSourceElements(for handoff: BrowserTextHandoff, item: Item) {
         guard let store = repository as? any SourceElementsRepository else { return }
@@ -270,7 +270,7 @@ struct BrowserTextImporter: Sendable {
     static func sourceElements(for handoff: BrowserTextHandoff, item: Item, hasEarlierRecord: Bool = false) -> SourceElementsRecord? {
         guard handoff.captureMode == .readablePage, handoff.contentFormat == .markdown,
               item.mediaType == "text", let text = item.text,
-              hasEarlierRecord || SourceElementCapture.isSubstackPage(sourceURL: handoff.source.url, markdown: handoff.text),
+              hasEarlierRecord || SourceElementCapture.capturesElements(sourceURL: handoff.source.url),
               let parsed = try? ObsidianMarkdownParser.parse(
                 fileName: item.title, contents: handoff.text, fallbackTitle: item.title, sourceURL: handoff.source.url),
               parsed.text == text.trimmingCharacters(in: .whitespacesAndNewlines)

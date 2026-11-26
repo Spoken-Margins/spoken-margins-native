@@ -68,6 +68,12 @@ struct PaneSwitchControl<Pane: Hashable>: View {
     let groupLabel: String
     let groupIdentifier: String
 
+    /// The icon-only slots draw the selected pane's symbol filled, a shape cue that costs no width (#3735).
+    private func symbolName(for pane: Pane) -> String {
+        let name = symbol(pane)
+        return selection == pane && !name.hasSuffix(".fill") ? name + ".fill" : name
+    }
+
     var body: some View {
         HStack(spacing: 4) {
             ForEach(panes, id: \.self) { pane in
@@ -75,7 +81,7 @@ struct PaneSwitchControl<Pane: Hashable>: View {
                     Group {
                         if dynamicTypeSize.isAccessibilitySize {
                             HStack(spacing: 4) {
-                                Image(systemName: symbol(pane))
+                                Image(systemName: symbolName(for: pane))
                                 if let count = badge(pane) {
                                     Text(count)
                                 }
@@ -88,23 +94,42 @@ struct PaneSwitchControl<Pane: Hashable>: View {
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(selection == pane ? .white.opacity(0.18) : .clear,
+                        .background(selection == pane ? Color.playbackSegment(PlaybackSegmentPalette.fill, alpha: PlaybackSegmentPalette.paneSelectedFillAlpha) : .clear,
                                     in: RoundedRectangle(cornerRadius: 10))
+                        // A second cue that needs no hue and no width: a short bar under the selected words (#3735).
+                        // An overlay, so the centred title and symbol don't move and the slot stays 44 pt tall.
+                        .overlay(alignment: .bottom) {
+                            if selection == pane {
+                                Capsule()
+                                    .fill(Color.playbackSegment(PlaybackSegmentPalette.selectedLabel))
+                                    .frame(width: 20, height: 3)
+                                    .padding(.bottom, 5)
+                                    .accessibilityHidden(true)
+                            }
+                        }
                         // A plain button takes taps only on what it draws, so an unselected pane was a target the
                         // size of its word (#430). The whole slot is the target.
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.playbackSegment(selection == pane ? PlaybackSegmentPalette.selectedLabel : PlaybackSegmentPalette.unselectedLabel))
                 .accessibilityLabel(accessibilityTitle(pane))
                 .accessibilityIdentifier(identifier(pane))
                 .accessibilityAddTraits(selection == pane ? .isSelected : [])
             }
         }
         .padding(4)
-        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color.playbackSegment(PlaybackSegmentPalette.fill, alpha: PlaybackSegmentPalette.trayAlpha), in: RoundedRectangle(cornerRadius: 14))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(groupLabel)
         .accessibilityIdentifier(groupIdentifier)
+    }
+}
+
+extension Color {
+    /// A colour of `PlaybackSegmentPalette`, drawn at `alpha`: the same colour on both planes, since the playback plate
+    /// is the same in light and dark (#3735).
+    static func playbackSegment(_ rgb: AppDynamicRGB, alpha: Double = 1) -> Color {
+        AppColors.dynamicColor(rgb).opacity(alpha)
     }
 }

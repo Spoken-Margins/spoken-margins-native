@@ -78,7 +78,7 @@ final class SharedMarginCountAgreementTests: XCTestCase {
                 XCTAssertEqual(SharedMarginAudio.canOffer(stored), row.offered, "offer, \(row.why)")
             }
             let shown = table.filter(\.showsNew).count
-            XCTAssertEqual(try store.loadSharedMarginTallies()["a"], SharedMarginTally(total: table.count, new: shown),
+            XCTAssertEqual(try store.loadSharedMarginTallies()["a"]?.counts, SharedMarginTally(total: table.count, new: shown),
                            "the SQL route counts what the rows show")
 
             let offered = try SharedMarginReview.entries(itemId: "a", in: store).map(\.interjection.id)
@@ -111,14 +111,14 @@ final class SharedMarginCountAgreementTests: XCTestCase {
         noVoiceForOtherScripts()
         try withStore { store, _ in
             _ = try store.importCommentaryLayer(layer(), interjections: [margin("hindi", words: "यह बहुत अच्छा है")])
-            XCTAssertEqual(try store.loadSharedMarginTallies()["a"], SharedMarginTally(total: 1, new: 0))
+            XCTAssertEqual(try store.loadSharedMarginTallies()["a"]?.counts, SharedMarginTally(total: 1, new: 0))
             XCTAssertEqual(try SharedMarginReview.entries(itemId: "a", in: store).count, 0)
             let before = try XCTUnwrap(store.loadImportedCommentaryInterjections(layerId: "cole").first)
             XCTAssertNil(before.firstHeardAt, "not new is not heard")
             XCTAssertTrue(before.isNewToListener)
 
             WrittenMarginSpeech.useVoiceCheck { _ in true }
-            XCTAssertEqual(try store.loadSharedMarginTallies()["a"], SharedMarginTally(total: 1, new: 1))
+            XCTAssertEqual(try store.loadSharedMarginTallies()["a"]?.counts, SharedMarginTally(total: 1, new: 1))
             XCTAssertEqual(try SharedMarginReview.entries(itemId: "a", in: store).count, 1)
             XCTAssertTrue(try XCTUnwrap(store.loadImportedCommentaryInterjections(layerId: "cole").first).showsAsNew)
         }
@@ -140,10 +140,10 @@ final class SharedMarginCountAgreementTests: XCTestCase {
     func testAHiddenNoteIsNotSubtractedTwice() throws {
         try withStore { store, _ in
             _ = try store.importCommentaryLayer(layer(), interjections: [margin("plain", words: "Great point."), margin("emoji", words: "🎧"), margin("emoji2", words: "🎧🎧")])
-            XCTAssertEqual(try store.loadSharedMarginTallies()["a"], SharedMarginTally(total: 3, new: 1))
+            XCTAssertEqual(try store.loadSharedMarginTallies()["a"]?.counts, SharedMarginTally(total: 3, new: 1))
             var hidden = HiddenSenders()
             hidden.hideMargin("emoji")
-            XCTAssertEqual(try store.loadSharedMarginTallies(hiding: hidden)["a"], SharedMarginTally(total: 2, new: 1))
+            XCTAssertEqual(try store.loadSharedMarginTallies(hiding: hidden)["a"]?.counts, SharedMarginTally(total: 2, new: 1))
         }
     }
 
@@ -157,7 +157,7 @@ final class SharedMarginCountAgreementTests: XCTestCase {
             ])
             _ = try store.markImportedCommentaryInterjectionHeard(id: "heardEmoji", at: imported)
             _ = try store.markImportedCommentaryInterjectionHeard(id: "heardHindi", at: imported)
-            XCTAssertEqual(try store.loadSharedMarginTallies()["a"], SharedMarginTally(total: 3, new: 1))
+            XCTAssertEqual(try store.loadSharedMarginTallies()["a"]?.counts, SharedMarginTally(total: 3, new: 1))
         }
     }
 
@@ -172,7 +172,7 @@ final class SharedMarginCountAgreementTests: XCTestCase {
                 margin("hindi", words: "यह बहुत अच्छा है", audio: "ImportedCommentary/hindi.m4a"),
             ]
             _ = try store.importCommentaryLayer(layer(), interjections: [margin("plain", words: "Great point.")] + recordings)
-            XCTAssertEqual(try store.loadSharedMarginTallies()["a"], SharedMarginTally(total: 4, new: 4))
+            XCTAssertEqual(try store.loadSharedMarginTallies()["a"]?.counts, SharedMarginTally(total: 4, new: 4))
             for stored in try store.loadImportedCommentaryInterjections(layerId: "cole") {
                 XCTAssertTrue(stored.showsAsNew, "the row agrees: \(stored.id)")
             }
@@ -187,7 +187,7 @@ final class SharedMarginCountAgreementTests: XCTestCase {
             XCTAssertEqual(sqlite3_open(path, &connection), SQLITE_OK)
             defer { sqlite3_close(connection) }
             XCTAssertEqual(sqlite3_exec(connection, "INSERT INTO records (kind, id, payload) VALUES ('imported_commentary_interjection', 'broken', '{not json')", nil, nil, nil), SQLITE_OK)
-            XCTAssertEqual(try store.loadSharedMarginTallies()["a"], SharedMarginTally(total: 1, new: 0))
+            XCTAssertEqual(try store.loadSharedMarginTallies()["a"]?.counts, SharedMarginTally(total: 1, new: 0))
         }
     }
 
@@ -197,8 +197,10 @@ final class SharedMarginCountAgreementTests: XCTestCase {
         XCTAssertEqual(SharedMarginAudio.unavailableWords(for: margin("x", words: "यह बहुत अच्छा है")), "This Margin can't be read aloud on this iPhone.")
         XCTAssertEqual(SharedMarginAudio.unavailableWords(for: margin("x", words: "Great point.", sender: false)),
                        "This Margin is set not to be read aloud. Turn reading on for it to hear it.")
-        XCTAssertEqual(ReadAloudWords.footer(for: margin("x", words: "यह बहुत अच्छा है"), senderName: "Cole"), "This Margin can't be read aloud on this iPhone.")
-        XCTAssertEqual(ReadAloudWords.footer(for: margin("x", words: "Great point."), senderName: "Cole"),
+        XCTAssertEqual(ReadAloudWords.footer(for: margin("x", words: "यह बहुत अच्छा है"), senderName: "Cole", hasPlace: false), "This Margin can't be read aloud on this iPhone.")
+        XCTAssertEqual(ReadAloudWords.footer(for: margin("x", words: "यह बहुत अच्छा है"), senderName: "Cole", hasPlace: true),
+                       "This Margin can't be read aloud on this iPhone. Skim and the Margins tab still take you here.")
+        XCTAssertEqual(ReadAloudWords.footer(for: margin("x", words: "Great point."), senderName: "Cole", hasPlace: true),
                        "Your phone reads this Margin aloud where it comes up, and Skim stops at it.")
     }
 

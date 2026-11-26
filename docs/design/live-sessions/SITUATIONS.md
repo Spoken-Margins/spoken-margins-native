@@ -94,7 +94,7 @@ Why this and not a visible inbox list: a quick session needs no new kind of plac
 ### 1.7 Lining up afterwards
 
 1. **From the item:** Library row, then Line up. The file picker opens at once. Picking the file applies the line-up and shows the result. That's 3 taps.
-2. **From the file itself:** a transcript opened or shared with Spoken Margins (AirDrop from a laptop, Files, Teams' or Zoom's download) goes straight to the line-up. The session is found by its times. When more than one session could fit, the screen names its pick at the top with Change. That's 2 taps, and it rests on check C8.
+2. **From the file itself:** not built. A transcript opened with Spoken Margins (AirDrop from a laptop, Files, Teams' or Zoom's download) becomes its own Library item for now (#2997), and lining up from an opened file is a later slice; use Line up from the session's item. The idea was that the file goes straight to the line-up, the session found by its times, with the screen naming its pick at the top with Change, in 2 taps. Check C8 now checks the document types alone.
 3. **The result is applied at once, with Undo.** Every Margin shows its position and all of its evidence: the estimate, the listener's own setting, the transcript match with its score, speaker and words, and the placing hint. Nothing is thrown away.
 4. **A recording** can be added the same way, before or after the transcript. With a recording the item plays it, as today.
 
@@ -372,8 +372,9 @@ compute-taps.py's rules stand: a tap is 1, a menu item is 2, typing is not count
 | Export a session as Markdown | 2 | 2 | n/a | none | 0 | nothing new |
 | Find a Margin taken with no session running | not possible | 1 | n/a | none | 0 | nothing new |
 | Fix a wrong start position afterwards | not possible | 3 | n/a | none | 0 | nothing new |
-| Add a spoken Margin to a book with Back Tap, without leaving it | not possible | 1 | no | none | 0 | C13, C3 |
-| Add a spoken Margin to a book from the Dynamic Island, with auto-stop | not possible | 2 | no | none | 0 | C2, C3 |
+| Add a spoken Margin to a book with Back Tap, without leaving it (not built) | not possible | 2 | no | none | 0 | C13, C3 |
+| Add a spoken Margin to a book from the Dynamic Island (not built) | not possible | 3 | no | none | 0 | C2, C3 |
+| Add a spoken Margin to a book with Back Tap, as built (opens Spoken Margins) | 3 | 3 | yes, while recording | none | 0 | C13 |
 
 What to read off it:
 
@@ -387,17 +388,19 @@ The owner's bar (2026-10-25): Kindle's own note is select the text, tap Note, ty
 
 | Job | Actions per Margin | Kindle's own note | Saved per Margin | Margins per sitting to pay back setup | Margins in the first sitting to pay back both setups |
 | --- | --- | --- | --- | --- | --- |
-| Add a spoken Margin to a book with Back Tap, without leaving it | 1 | 3 to 4, plus typing | 2 | 1 | 4 |
-| Add a spoken Margin to a book from the Dynamic Island, with auto-stop | 2 | 3 to 4, plus typing | 1 | 2 | n/a |
+| Add a spoken Margin to a book with Back Tap, as built (opens Spoken Margins) | 3 | 3 to 4, plus typing | none | never | n/a |
+| Add a spoken Margin to a book with Back Tap, without leaving it (not built) | 2 | 3 to 4, plus typing | 1 | 2 | 8 |
+| Add a spoken Margin to a book from the Dynamic Island (not built) | 3 | 3 to 4, plus typing | none | never | n/a |
 
 How to read it:
 
-1. **Kindle's count is the owner's, not measured here.** Saved per Margin uses its low end (3), so each break-even is the cautious one. Against 4, both are better.
+1. **Kindle's count is the owner's, not measured here.** Saved per Margin uses its low end (3), so each break-even is the cautious one.
 2. **Starting the session is not counted against a Margin** (owner, 2026-10-25, recorded in `docs/decisions.md`: "single configuration fatigue"). It is the per-sitting setup: 2 taps (plus, kind button, job L01). The break-even is that setup divided by the actions saved per Margin, rounded up.
-3. **Back Tap also has a once-ever setup:** Settings, Accessibility, Touch, Back Tap, pick the shortcut, about 6 taps. That is the thread's estimate and needs a measurement on the owner's phone. The last column adds it to that first sitting's own 2 taps, (6 + 2) / 2 saved = 4 Margins; from the second sitting on, 1 Margin pays the sitting back.
-4. **Both counts assume a pause ends the recording by itself.** Without auto-stop the island costs 3 (job L05) and Back Tap costs 2 (a second Back Tap to stop). How long a silence ends it is not settled here; it is still open on #2710.
-5. **Neither count is real until the device checks pass.** Back Tap rests on C13 and C3, the island on C2 and C3. If the microphone cannot start in place, Back Tap and the island open our recorder, the book leaves the screen, and the "without leaving it" claim fails even where the tap count wins.
-6. **Typing is a saving none of the counts include,** and Kindle's note cannot be spoken at all.
+3. **Back Tap also has a once-ever setup:** Settings, Accessibility, Touch, Back Tap, pick the shortcut, about 6 taps. That is the thread's estimate and needs a measurement on the owner's phone. The last column adds it to the first sitting's own 2 taps.
+4. **As built, Back Tap ties Kindle's low count and does not beat it (L19, #4923, 2026-11-23).** The Record a Margin intent opens Spoken Margins (owner's call of 2026-11-22; recording without opening the app is not pursued, #3086), and the live session's recording starts with no tap when nothing else holds its screen (a written Margin or the camera does). The three actions are the Back Tap, Save & resume, and the move back to the book. The first two are read from `RecordMarginShortcutIntent.swift` and `LiveSessionRecordingView.swift`; the third is an assumption (one back-link tap or swipe), and none of it has been counted on a phone. It wins on typing (none) and loses on "the book stays on screen": the book is gone while the Margin records.
+5. **A pause never ends a Margin** (owner, 2026-11-10, #3650). The two rows marked "not built" were first counted with auto-stop (1 and 2); they now count the stop as an action. The live session's recording has no spoken stop phrase either (the player's recording does, job j18 in the base flow map).
+6. **What would beat Kindle from here:** saving the move back to the book (the app returning to the previous app after Save & resume is not something iOS documents for an app; unverified), or recording in place (L17, rests on C13 and C3, not pursued).
+7. **Typing is a saving none of the counts include,** and Kindle's note cannot be spoken at all.
 
 ### Screens
 
@@ -418,12 +421,12 @@ Each platform claim this design leans on, how sure it is, and the check that set
 | C5 | The Watch can hold Margins while out of range and deliver them later, and the phone can tell the Watch each one is filed. | Documented (WatchConnectivity queues transfers), unverified for us | Phone in another room, out of range. Record two Margins, come back, and watch the waiting count reach 0. |
 | C6 | A Control Center or Lock Screen control can start a session and its Live Activity without opening the app. | Documented (Controls, iOS 18), unverified for us | Add the control. Start from inside Teams and check the island appears and Teams stays in front. |
 | C7 | Siri runs "Start a Spoken Margins session" and "Add a Margin" with no Shortcuts setup, while another app plays, and the Margin records after Siri finishes speaking. | Documented in part (App Shortcuts need no setup), unverified for us | With Audible playing on AirPods, say each phrase. Check the session starts and the Margin has the listener's words, not Siri's. |
-| C8 | Spoken Margins appears in the share sheet and in Open In for .vtt, .srt, .docx and .txt files. | Needs app work (document types and the share extension), then a check | AirDrop a Teams .vtt and a Zoom .txt from a Mac, and open each one from Files. |
+| C8 | Spoken Margins appears in the share sheet and in Open In for .vtt, .srt, .docx and .txt files. | Open In is built (#2997); the share extension is a later slice. Then a check | AirDrop a Teams .vtt and a Zoom .txt from a Mac, and open each one from Files. |
 | C9 | The Live Activity survives the app being closed, ends after 8 hours, and its Mark and End buttons work with the app closed. | Documented (8-hour limit), unverified for us | Start a session, close the app from the app switcher, tap Mark and End, then reopen and check both took effect. |
 | C10 | AirPods double-press goes to the app that owns Now Playing (Audible), not to us, while Audible plays. | Inference, high confidence | Audible playing, a session running, double-press. See which app reacts. |
 | C11 | Audible's main view shows time within the chapter, not time in the book. | Inference | Look at Audible's player. It decides the hint for an audiobook's "Where are you now?". |
 | C12 | A session started on the Watch puts the Live Activity on the phone's Lock Screen without the phone app coming forward. | Inference: probably not (an app starts a Live Activity from the foreground or an App Intent) | Phone locked, app in the background. Start a session on the Watch. Wake the phone and look for the Live Activity. |
-| C13 | A Back Tap can run a Shortcut that runs our Record a Margin intent, and the intent can start the phone's microphone with another app (Kindle, with Speak Screen reading) in front. | Unverified (#2710). The intent itself is not built yet | Set Back Tap to a shortcut that runs the intent. With Kindle open and Speak Screen playing, double-tap the back: check that a non-empty Margin is filed, Kindle stays in front, and what Speak Screen's voice does at the start and the stop. Repeat with the phone locked. |
+| C13 | A Back Tap runs a Shortcut that runs our Record a Margin intent with another app (Kindle, with Speak Screen reading) in front, opens Spoken Margins and starts the live session's spoken Margin. | Built (#4923): the intent opens the app by design. Unverified on a phone; recording in place without opening the app is not pursued (#3086) | Set Back Tap to the Record a Margin shortcut. With Kindle open and Speak Screen reading, double-tap the back: check that Spoken Margins opens recording, a non-empty Margin is filed after Save & resume, which app the status bar's back link names, and whether Speak Screen keeps reading after the return. |
 
 ---
 

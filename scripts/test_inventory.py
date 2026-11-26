@@ -63,6 +63,11 @@ def plan_tests(root, name):
     return selected
 
 
+# A script that launches with the Library's state filter on "all" finds an item the default view may hide, so the
+# journey it is listed under says so rather than claiming the item is "found in the Library" (#4315, J14).
+WIDENED_LIBRARY_FILTER = re.compile(r'"-libraryListeningStateFilter"\s*,\s*"all"')
+
+
 def scripted_journey_errors(root):
     """TestPlans/scripted-journeys.json: which UI test scripts the journeys run runs (#445).
 
@@ -80,6 +85,11 @@ def scripted_journey_errors(root):
             and all(isinstance(listing[status], list) for status in ('gating', 'probation'))):
         return ['scripted-journeys.json: expected version 1 with exactly "gating" and "probation" lists']
     available = target_tests(root, 'SpokenMarginsAppUITests')
+    sources = {}
+    for path in sorted((root / 'App/SpokenMarginsAppUITests').glob('*.swift')):
+        source = path.read_text()
+        if found := re.search(r'\bclass\s+(\w+)\s*:\s*XCTestCase\b', source):
+            sources[found.group(1)] = source
     errors, seen = [], []
     for status in ('gating', 'probation'):
         for entry in listing[status]:
@@ -90,6 +100,10 @@ def scripted_journey_errors(root):
                 continue
             if not str(entry.get('journey', '')).strip():
                 errors.append(f'scripted-journeys.json: {status} entry {test!r} names no journey')
+            elif (WIDENED_LIBRARY_FILTER.search(sources.get(name.split('/')[0], ''))
+                  and 'all-items filter' not in str(entry['journey'])):
+                errors.append(f'scripted-journeys.json: {test!r} launches with the Library on all items, which proves '
+                              f'nothing about its default view; say "under the all-items filter" in its journey')
             batch = entry.get('batch')
             if 'batch' in entry and (status != 'probation' or isinstance(batch, bool) or not isinstance(batch, int)
                                      or batch < 1):

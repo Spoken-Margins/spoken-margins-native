@@ -38,6 +38,101 @@ final class NowPlayingInfoOwnershipTests: XCTestCase {
         XCTAssertEqual(sink.info?[key] as? Bool, true, "rewrite")
     }
 
+    // MARK: Artwork (#3864)
+
+    private let artworkKey = NowPlayingInfoOwnership.artworkKey
+    private final class Picture: NSObject {}
+
+    func testThePictureIsAddedToTheCardOfItsItemAndEveryOtherKeyStays() {
+        let (ledger, sink) = make()
+        let picture = Picture()
+        ledger.setArtwork(picture, forItem: "a")
+        ledger.write(["title": "A", "rate": 1.0], as: .mediaPlayer, itemId: "a")
+        XCTAssertTrue(sink.info?[artworkKey] as? Picture === picture)
+        XCTAssertEqual(sink.title, "A")
+        XCTAssertEqual(sink.info?["rate"] as? Double, 1.0)
+        XCTAssertEqual(sink.info?[NowPlayingInfoOwnership.excludeFromSuggestionsKey] as? Bool, true)
+        // The player rewrites every second; the picture is merged into each write, so none drops it.
+        ledger.write(["title": "A", "rate": 1.0, "elapsed": 5.0], as: .mediaPlayer, itemId: "a")
+        XCTAssertTrue(sink.info?[artworkKey] as? Picture === picture)
+        XCTAssertEqual(ledger.currentHolder, .mediaPlayer)
+    }
+
+    func testAPictureSetAfterTheCardIsUpRepublishesItWithoutChangingTheHolderOrTheOtherKeys() {
+        let (ledger, sink) = make()
+        ledger.write(["title": "A"], as: .compactControls, itemId: "a")
+        XCTAssertNil(sink.info?[artworkKey], "nothing yet")
+        let picture = Picture()
+        ledger.setArtwork(picture, forItem: "a")
+        XCTAssertTrue(sink.info?[artworkKey] as? Picture === picture)
+        XCTAssertEqual(sink.title, "A")
+        XCTAssertEqual(ledger.currentHolder, .compactControls, "one owner of the card, still")
+        XCTAssertEqual(sink.info?[NowPlayingInfoOwnership.excludeFromSuggestionsKey] as? Bool, true)
+    }
+
+    func testAnItemChangeNeverShowsThePreviousItemsPicture() {
+        let (ledger, sink) = make()
+        let pictureA = Picture(), pictureB = Picture()
+        ledger.setArtwork(pictureA, forItem: "a")
+        ledger.write(["title": "A"], as: .mediaPlayer, itemId: "a")
+        XCTAssertTrue(sink.info?[artworkKey] as? Picture === pictureA)
+
+        // The queue moves on: the card is written for B before B's picture is ready.
+        ledger.write(["title": "B"], as: .mediaPlayer, itemId: "b")
+        XCTAssertNil(sink.info?[artworkKey], "A's picture is not B's")
+        XCTAssertEqual(sink.title, "B")
+
+        // A picture for B arrives and replaces the slot; later writes for B keep it, and A's is gone.
+        ledger.setArtwork(pictureB, forItem: "b")
+        XCTAssertTrue(sink.info?[artworkKey] as? Picture === pictureB)
+        ledger.write(["title": "B"], as: .mediaPlayer, itemId: "b")
+        XCTAssertTrue(sink.info?[artworkKey] as? Picture === pictureB)
+        ledger.write(["title": "A again"], as: .mediaPlayer, itemId: "a")
+        XCTAssertNil(sink.info?[artworkKey], "back on A, B's picture is not shown for it")
+    }
+
+    func testALatePictureForAnItemThatIsNoLongerPlayingDoesNotTouchTheCard() {
+        let (ledger, sink) = make()
+        ledger.write(["title": "B"], as: .mediaPlayer, itemId: "b")
+        let setsBefore = sink.setCount
+        ledger.setArtwork(Picture(), forItem: "a")
+        XCTAssertEqual(sink.setCount, setsBefore, "the card for B is left alone")
+        XCTAssertNil(sink.info?[artworkKey])
+    }
+
+    func testACardWithNoItemOrNoPictureIsAsBefore() {
+        let (ledger, sink) = make()
+        ledger.setArtwork(Picture(), forItem: "a")
+        ledger.write(["title": "Shared Margin"], as: .sharedMargin)
+        XCTAssertNil(sink.info?[artworkKey], "a card that names no item carries no picture")
+        ledger.write(["title": "No art"], as: .mediaPlayer, itemId: "z")
+        XCTAssertNil(sink.info?[artworkKey])
+        XCTAssertEqual(sink.title, "No art")
+    }
+
+    func testRemovingThePictureAndClearingTheCard() {
+        let (ledger, sink) = make()
+        ledger.setArtwork(Picture(), forItem: "a")
+        ledger.write(["title": "A"], as: .mediaPlayer, itemId: "a")
+        ledger.setArtwork(nil, forItem: "a")
+        XCTAssertNil(sink.info?[artworkKey])
+        XCTAssertEqual(sink.title, "A")
+        XCTAssertTrue(ledger.clear(as: .mediaPlayer))
+        let setsAfterClear = sink.setCount
+        ledger.setArtwork(Picture(), forItem: "a")
+        XCTAssertNil(sink.info, "a picture set with no card up does not make one")
+        XCTAssertEqual(sink.setCount, setsAfterClear)
+    }
+
+    func testAnotherWritersClearDoesNotLoseThePicture() {
+        let (ledger, sink) = make()
+        let picture = Picture()
+        ledger.setArtwork(picture, forItem: "a")
+        ledger.write(["title": "A"], as: .mediaPlayer, itemId: "a")
+        XCTAssertFalse(ledger.clear(as: .compactControls))
+        XCTAssertTrue(sink.info?[artworkKey] as? Picture === picture)
+    }
+
     func testAClearFromAnotherWriterLeavesTheHoldersCard() {
         let (ledger, sink) = make()
         ledger.write(["title": "Substack post"], as: .mediaPlayer)

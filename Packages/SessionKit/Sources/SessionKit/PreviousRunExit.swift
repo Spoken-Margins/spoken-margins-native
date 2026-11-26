@@ -66,6 +66,8 @@ public struct PreviousRunExit: Sendable, Equatable {
         "crashDiagnostics": "crashFrames",
         "cpuExceptionDiagnostics": "cpuFrames",
         "hangDiagnostics": "hangFrames",
+        // What wrote the data iOS flagged, as offsets in the app's binary the Mac can symbolicate (#4389).
+        "diskWriteExceptionDiagnostics": "diskWriteFrames",
     ]
 
     /// How many of the app's own frames are kept, leaf first.

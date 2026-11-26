@@ -42,7 +42,20 @@ final class WrittenMarginTapAppTests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    /// The `margin.tap` lines the model has recorded, as `origin/outcome/reason` (#4447).
+    private func tapLines(_ model: Gate1AppModel) -> [String] {
+        model.playbackEventRecording.events.filter { $0.kind == "margin.tap" }.map {
+            [$0.fields["origin"], $0.fields["outcome"], $0.fields["reason"]].compactMap { $0 }.joined(separator: "/")
+        }
+    }
+
     private func uniqueWords() -> String { "Lovely harbour \(UUID().uuidString)" }
+
+    /// True while "Skip to the Margins" is holding for the fixture's item. With no entries `holdReview` starts nothing: it
+    /// answers from the hold that is running, else finds no reading to wait for (#4313).
+    private func reviewIsHeld(_ model: Gate1AppModel) -> Bool {
+        WrittenMarginReadings.holdReview(itemId: "real-source", thenContinue: true, entries: [], model: model)
+    }
 
     // A reading that is ready plays at once, as a voice Margin does: the source pauses, the card says the iPhone's voice
     // is reading the friend's words (never "speaking"), and the episode comes back when it ends.
@@ -157,6 +170,7 @@ final class WrittenMarginTapAppTests: XCTestCase {
 
         model.reviewNewMargins(itemId: "real-source", thenContinue: true)
         XCTAssertNil(model.marginMoment, "the review waits for its readings")
+        XCTAssertTrue(reviewIsHeld(model), "the review is holding for its reading")
         model.pause()
         // Wait for the reading to be ready, as the tap tests above do: a fixed sleep passes whenever the reading is
         // slower than it is (#3714). Only then is "the review did not start" something the hold could have got wrong.
@@ -166,7 +180,10 @@ final class WrittenMarginTapAppTests: XCTestCase {
         _ = WrittenMarginReader.shared.start(["seed": reading])
         await WrittenMarginReader.shared.waitUntilSettled([reading], upTo: 10)
         XCTAssertTrue(WrittenMarginReader.shared.isReady(reading), "the reader found the seeded reading")
-        try await Task.sleep(for: .milliseconds(500))
+        // The hold's task starts the review, if it does, before it lets go of the hold, so once the hold is gone the
+        // decision is made; a fixed 500 ms passed for a hold slower than that (#4313).
+        try await fixture.waitUntil("the hold has ended", timeout: 10) { !reviewIsHeld(model) }
+        XCTAssertNil(model.marginMomentConductor, "nothing was started when the hold ended")
         XCTAssertNil(model.marginMoment, "the listener moved on, so the review does not start by itself")
     }
 
@@ -193,10 +210,13 @@ final class WrittenMarginTapAppTests: XCTestCase {
         model.dismissPendingImportedCommentary()
         let reading = try XCTUnwrap(fixture.writtenReading)
         try await fixture.waitUntil("the reading is ready, with nobody waiting for it") { WrittenMarginReader.shared.isReady(reading) }
+        // fixed-sleep ok: the tap's wait is a private task (WrittenMarginReadings.tapWaits) that resumes a hop after the
+        // reader answers, and nothing shows it has run; this is that hop's margin, not a guess at render time (#4313).
         try await Task.sleep(for: .milliseconds(500))
         XCTAssertNil(model.playingImportedCommentary, "a dismissed card plays nothing when its reading arrives")
         XCTAssertNil(model.marginMoment)
         XCTAssertNil(model.pendingImportedCommentary)
+        XCTAssertEqual(tapLines(model), [], "a card's wait is not a tap on a Margin's play button: a dismissed one leaves no margin.tap line (#4447)")
     }
 
     // Leaving the item's screen ends a tap's wait: when the reading arrives, nothing plays (the wiring behind `.onDisappear`).
@@ -211,8 +231,11 @@ final class WrittenMarginTapAppTests: XCTestCase {
         WrittenMarginReadings.leftItemScreen(try XCTUnwrap(fixture.layer.itemId))
         let reading = try XCTUnwrap(fixture.writtenReading)
         try await fixture.waitUntil("the reading is ready, with nobody waiting for it") { WrittenMarginReader.shared.isReady(reading) }
+        // fixed-sleep ok: the tap's wait is a private task (WrittenMarginReadings.tapWaits) that resumes a hop after the
+        // reader answers, and nothing shows it has run; this is that hop's margin, not a guess at render time (#4313).
         try await Task.sleep(for: .milliseconds(500))
         XCTAssertNil(model.playingImportedCommentary, "the listener had left: nothing plays")
+        XCTAssertEqual(tapLines(model), [], "a card's wait cancelled by leaving the item leaves no margin.tap line, only a play button's tap does (#4447)")
     }
 
     // The same for a review's hold: it never starts the review after the listener leaves the screen.
@@ -224,6 +247,7 @@ final class WrittenMarginTapAppTests: XCTestCase {
 
         model.reviewNewMargins(itemId: "real-source", thenContinue: true)
         XCTAssertNil(model.marginMoment, "the review waits for its readings")
+        XCTAssertTrue(reviewIsHeld(model), "the review is holding for its reading")
         WrittenMarginReadings.leftItemScreen("real-source")
         // Wait for the reading to be ready, as the tap tests above do: a fixed sleep passes whenever the reading is
         // slower than it is (#3714). Only then is "the review did not start" something the hold could have got wrong.
@@ -233,7 +257,10 @@ final class WrittenMarginTapAppTests: XCTestCase {
         _ = WrittenMarginReader.shared.start(["seed": reading])
         await WrittenMarginReader.shared.waitUntilSettled([reading], upTo: 10)
         XCTAssertTrue(WrittenMarginReader.shared.isReady(reading), "the reader found the seeded reading")
-        try await Task.sleep(for: .milliseconds(500))
+        // The hold's task starts the review, if it does, before it lets go of the hold, so once the hold is gone the
+        // decision is made; a fixed 500 ms passed for a hold slower than that (#4313).
+        try await fixture.waitUntil("the hold has ended", timeout: 10) { !reviewIsHeld(model) }
+        XCTAssertNil(model.marginMomentConductor, "nothing was started when the hold ended")
         XCTAssertNil(model.marginMoment, "the listener left, so the review does not start by itself")
     }
 

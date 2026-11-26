@@ -158,13 +158,19 @@ final class LiveSessionPhotoStoreTests: XCTestCase {
     }
 
     func testAReferenceThatBreaksTheRulesNeverPointsOutsideTheStore() throws {
+        // The `live-photos` folder must exist, or `live-photos/../..` cannot resolve and the test aims at nothing (#4305).
+        // From it, `../../outside.jpg` is `root/outside.jpg`, so that is where the sentinel goes.
+        let kept = try keep(session: "s1", margin: "m1")
         let good = try XCTUnwrap(LiveSessionPhoto(path: "SpokenMargins/live-photos/s1/a.jpg", widthPx: 8, heightPx: 8, byteCount: 8))
         let damaged = try edited(good, ["path": "SpokenMargins/live-photos/../../outside.jpg"])
+        let sentinel = root.appending(path: "outside.jpg")
+        try Data("keep me".utf8).write(to: sentinel)
+        XCTAssertTrue(exists(root.appending(path: "SpokenMargins/live-photos/../../outside.jpg")), "the damaged path reaches the sentinel, so the test can fail")
         XCTAssertNil(store.fileURL(for: damaged))
         XCTAssertFalse(store.fileExists(for: damaged))
-        try Data("keep me".utf8).write(to: root.deletingLastPathComponent().appending(path: "outside.jpg"))
         store.remove(damaged)
-        XCTAssertTrue(exists(root.deletingLastPathComponent().appending(path: "outside.jpg")))
+        XCTAssertTrue(exists(sentinel))
+        XCTAssertTrue(store.fileExists(for: kept))
     }
 
     // MARK: Removing
@@ -190,8 +196,19 @@ final class LiveSessionPhotoStoreTests: XCTestCase {
         XCTAssertFalse(store.fileExists(for: mine))
         XCTAssertTrue(store.fileExists(for: other))
         store.removeFolder(sessionId: "never-had-photos")
-        store.removeFolder(sessionId: "../s2")
-        XCTAssertTrue(store.fileExists(for: other), "an id that looks like a path is cleaned, not followed")
+        // Followed unescaped, `live-photos/../s2` is `SpokenMargins/s2` and `live-photos/..` is all of `SpokenMargins`;
+        // both exist here, so a store that follows the id deletes something the test checks (#4305).
+        let sibling = root.appending(path: "SpokenMargins/s2")
+        try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
+        try Data("keep me".utf8).write(to: sibling.appending(path: "note.txt"))
+        let survivor = try keep(session: "s3", margin: "m1")
+        for id in ["../s2", "..", "../..", "/", "."] {
+            store.removeFolder(sessionId: id)
+            XCTAssertTrue(exists(sibling.appending(path: "note.txt")), "removeFolder(\(id)) left the store")
+            XCTAssertTrue(store.fileExists(for: other), "removeFolder(\(id)) took another session's photo")
+            XCTAssertTrue(store.fileExists(for: survivor), "removeFolder(\(id)) took another session's photo")
+        }
+        XCTAssertTrue(exists(root.appending(path: "SpokenMargins/live-photos")), "the photo folder itself is still there")
     }
 
     // MARK: The launch sweep

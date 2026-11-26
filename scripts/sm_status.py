@@ -15,21 +15,18 @@ Flags (`!!` red, `!` look) mark what a reply must not hide:
 
   red-on-head         the newest lane report on the head is FAIL, the newest T3 report on it is FAIL, or a check
                       run on it is failing
-  t3-held             the PR's T3 request is unanswered or its newest T3 report (on any commit) isn't PASS, which
-                      holds the merge (lane-runner.py t3_gate), though the head itself may look quiet
   audit-blocking      the newest Claude or Codex audit of the head has findings (red only for audio, persistence,
                       packet and lane diffs, the kinds the runner consults audits for)
   conflict            the PR doesn't merge cleanly into next
   older-head-only     lane reports exist, but only for commits other than the head: a PASS there says nothing
   inconclusive-on-head  the newest lane report on the head is INCONCLUSIVE (not a pass, and its check stays green)
-  armed-no-lane-request  `automerge` is on, the diff needs simulator tests (scripts/test-scope.py, by path) and
-                      no `/lane T3` request was ever posted
   audit-pending       the diff is audio, persistence, packet or lane work and no audit names the head yet
   held-by-runner      the newest automerge report on the head carries a "not merged …" line (inherited audit finding,
                       the PR moved on, next kept moving, the push failed): a PASS that did not merge
   t3-unqueued         a /lane T3 request is unanswered and the PR has neither `lane:queued` nor `lane:running`
+                      (a T3 is optional and holds no merge since #4572; this only says nothing will answer it)
   scope-unknown       the diff couldn't be classified, so audit and simulator-test needs are not judged
-  owner-tap           touches scripts/lane-runner.py or .github/: the runner never merges it, only the owner does
+  owner-tap           touches scripts/lane_merge_rules.py or .github/: the runner never merges it, only the owner does
   unreadable          a read for this PR failed, so nothing about it can be called quiet
 
 It only reads GitHub (GET requests) and keeps no state. Needs GH_TOKEN or GITHUB_TOKEN (or `gh auth token`).
@@ -82,9 +79,9 @@ CLOSING = re.compile(r'\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)
 BRANCH_ISSUE = re.compile(r'^ws/(\d+)-')
 
 SHOWN_LABELS = ('automerge', 'needs-mac', 'lane:queued', 'lane:running', 'merge-audit', 'priority')
-# Mirrors lane-runner.py AUDITED, OWNER_TAP_FILES and OWNER_TAP_PREFIXES; a test keeps them equal.
+# Mirrors lane_merge_rules.py AUDITED, OWNER_TAP_FILES and OWNER_TAP_PREFIXES; a test keeps them equal.
 AUDITED_CATEGORIES = {'audio': 'audio', 'persistence': 'persistence', 'packet': 'packets'}
-OWNER_TAP_FILES = {'scripts/lane-runner.py'}
+OWNER_TAP_FILES = {'scripts/lane_merge_rules.py'}
 OWNER_TAP_PREFIXES = ('.github/',)
 FAILING = {'failure', 'timed_out', 'startup_failure', 'action_required'}
 NO_VERDICT = {'skipped', 'neutral', 'cancelled', 'stale', None, ''}
@@ -386,6 +383,15 @@ def check_summary(check_runs: list[dict]) -> dict:
     return {'failing': failing, 'running': sorted(running), 'ok': len(newest) - len(failing)}
 
 
+def status_rows(statuses: list[dict]) -> list[dict]:
+    """Commit statuses as check-run-like rows for check_summary (`merge policy` is a status, #5162). Each context's
+    statuses keep their own order by id, which is all check_summary compares within one name."""
+    conclusion = {'success': 'success', 'failure': 'failure', 'error': 'failure'}
+    return [{'id': s.get('id', 0), 'name': s.get('context') or '',
+             'status': 'in_progress' if s.get('state') == 'pending' else 'completed',
+             'conclusion': conclusion.get(s.get('state'))} for s in statuses]
+
+
 def scope_of(paths: list[str], classify=None) -> dict:
     """What scripts/test-scope.py says about the changed paths: tier, audit kinds, lane paths. Path-based only.
 
@@ -405,7 +411,7 @@ def scope_of(paths: list[str], classify=None) -> dict:
     if result.get('lane_paths'):
         kinds.append('the lane')
     taps = sorted(p for p in paths if p in OWNER_TAP_FILES or p.startswith(OWNER_TAP_PREFIXES))
-    return {'known': True, 'tier': result['tier'], 'needs_t3': result['tier'] >= 'T3', 'audit_kinds': kinds,
+    return {'known': True, 'tier': result['tier'], 'audit_kinds': kinds,
             'owner_tap': taps}
 
 
@@ -435,6 +441,8 @@ def fetch_bundle(api, summary: dict, sleep=time.sleep) -> dict:
             'events': read('events', f'issues/{number}/events', paged=True, default=[]),
             'files': read('files', f'pulls/{number}/files', paged=True, default=[]),
             'check_runs': read('checks', f'commits/{head}/check-runs', paged=True, default=[]) if head else [],
+            # `merge policy` is a commit status (#5162), not a check run
+            'statuses': read('statuses', f'commits/{head}/statuses', paged=True, default=[]) if head else [],
             'errors': errors}
 
 
@@ -480,7 +488,7 @@ def analyse(bundle: dict, classify=None) -> dict:
     other_audit = newest(audit_list, lambda a: a['shas'] and not any(same(sha, head) for sha in a['shas']))
     armed_at = armed_since(bundle['events'])
     armed = 'automerge' in labels
-    checks = check_summary(bundle['check_runs'])
+    checks = check_summary(bundle['check_runs'] + status_rows(bundle.get('statuses') or []))
     scope = scope_of([f['filename'] for f in bundle['files']], classify) if bundle['files'] else {'known': False,
                                                                                                     'why': 'no file list'}
     flags: list[dict] = []
@@ -515,21 +523,14 @@ def analyse(bundle: dict, classify=None) -> dict:
         flag('older-head-only', LOOK, f'lane reports exist only for other commits (newest: {last["verdict"]} on '
              f'{(last["commit"] or "?")[:7]}, tier {last["tier"]}); none on the head {head7}')
 
+    # A T3 holds no merge (#4572): an unanswered request only matters when nothing will answer it.
     if t3_requests:
         asked = t3_requests[-1]['index']
         answered = newest(t3_reports, lambda r: True)
-        if answered is None or answered['index'] < asked:
-            if not (t3 and t3['index'] > asked):
-                if not {'lane:queued', 'lane:running'} & set(labels):
-                    flag('t3-unqueued', LOOK, 'the newest /lane T3 request has no report and the PR carries neither '
-                         '`lane:queued` nor `lane:running`: nothing will run it until the label is (re)added')
-                flag('t3-held', LOOK, 'the newest /lane T3 request has no T3 report yet; the runner merges nothing '
-                     'until it does')
-        elif answered['verdict'] != 'PASS':
-            flag('t3-held', RED if answered['verdict'] == 'FAIL' else LOOK,
-                 f'the newest T3 report is {answered["verdict"]} (on {(answered["commit"] or "?")[:7]}'
-                 f'{"" if same(answered["commit"], head) else ", not the head"}); a PR that asked for T3 merges only '
-                 f'on a T3 PASS')
+        if (answered is None or answered['index'] < asked) and not (t3 and t3['index'] > asked) \
+                and not {'lane:queued', 'lane:running'} & set(labels):
+            flag('t3-unqueued', LOOK, 'the newest /lane T3 request has no report and the PR carries neither '
+                 '`lane:queued` nor `lane:running`: nothing will run it until the label is (re)added')
 
     if audit and not audit['clean']:
         audited = not scope.get('known') or bool(scope['audit_kinds'])   # the runner consults audits for those only
@@ -544,10 +545,6 @@ def analyse(bundle: dict, classify=None) -> dict:
     word = mergeable_word(pull)
     if word == 'conflict':
         flag('conflict', RED, f'does not merge cleanly into {BASE}')
-
-    if armed and scope.get('known') and scope['needs_t3'] and not t3_requests and not t3_reports:
-        flag('armed-no-lane-request', LOOK, f'automerge is on and the diff needs simulator tests ({scope["tier"]} by '
-             'path), but no /lane T3 request was posted')
 
     if not scope.get('known'):
         flag('scope-unknown', LOOK, f'could not work out what the diff touches ({scope.get("why")}), so audit, '

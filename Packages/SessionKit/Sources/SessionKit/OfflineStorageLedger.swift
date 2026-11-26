@@ -137,6 +137,29 @@ public actor OfflineStorageLedger {
         if let overflowReservationId { try repository.deleteOfflineStorageReservation(id: overflowReservationId) }
     }
 
+    /// `commit` for a writer whose item can be permanently deleted while it works (an episode-map run, #4227): the
+    /// asset row is saved only while the item still has a row, in one transaction with the check. A delete that
+    /// lands first leaves no row and no file here: the reservation is released, the file the writer made is removed
+    /// (unless an item plays it), and this returns false. A delete that lands after the commit takes the row with the
+    /// item. An asset with no `itemId`, or a store without transactions, commits as `commit` does.
+    @discardableResult
+    public func commitIfItemExists(reservationId: String, asset: OwnedOfflineAsset) throws -> Bool {
+        guard let itemId = asset.itemId, let store = repository as? any SessionRepositoryTransaction else {
+            try commit(reservationId: reservationId, asset: asset)
+            return true
+        }
+        let committed = try store.withSessionTransaction {
+            guard try store.hasItemRow(id: itemId) else { return false }
+            try commit(reservationId: reservationId, asset: asset)
+            return true
+        }
+        if !committed {
+            try release(reservationId: reservationId)
+            _ = try? discardUncommittedFile(rootDirectory.appending(path: asset.relativePath))
+        }
+        return committed
+    }
+
     public func release(reservationId: String) throws {
         try repository.deleteOfflineStorageReservation(id: reservationId)
         pinnedPaths[reservationId] = nil

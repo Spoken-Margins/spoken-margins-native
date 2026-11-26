@@ -14,6 +14,8 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
     /// Where the imported Margin sits (`UITestingLaunchSeed.coopMarginMediaTimeMs`), and the lead-in before it.
     private let friendMarginAt = 300
     private let leadIn = 10
+    /// "Play this moment" and Skim seek 30 s before the Margin (`MarginMomentSequence.defaultLeadInMs`, #1577).
+    private let momentLeadIn = 30
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -113,6 +115,8 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
 
     /// #3219: the item screen of an item with a friend's unheard Margin offers two labelled choices, and the big one
     /// starts the episode at once, without the "New Margins to hear" question.
+    /// "At once" is read off the episode: it reaches the playing state and its clock moves. Only then is the question's
+    /// absence checked, because the question would have stopped it from playing (#4315).
     func testItemScreenOffersTwoChoicesForAFriendsNewMargin() throws {
         XCTContext.runActivity(named: "J9 item screen, step 1: The episode is in the Library (offline seed)") { _ in
             app.launch()
@@ -129,7 +133,7 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
             XCTAssertTrue(element("item.screen").waitForExistence(timeout: 8), "The item screen did not open")
         }
 
-        XCTContext.runActivity(named: "J9 item screen, step 3: Two choices, and the big one plays at once") { _ in
+        try XCTContext.runActivity(named: "J9 item screen, step 3: Two choices, and the big one plays at once") { _ in
             let play = app.buttons["item.start.button"].firstMatch
             XCTAssertTrue(play.waitForExistence(timeout: 5), "The big button is missing")
             XCTAssertEqual(play.label, "Play")
@@ -142,10 +146,197 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
                 app.buttons["item.markCompleteVisible.button"].exists,
                 "Mark complete leads the item before the friend's Margins are heard"
             )
+            // #3788: on arrival the friend sees the intro, not "Mark complete" and not a placement status, in any element.
+            for words in ["Mark complete", "Placing in your copy", "Matching positions in your episode"] {
+                let shown = NSPredicate(format: "label CONTAINS[c] %@", words)
+                XCTAssertEqual(app.descendants(matching: .any).matching(shown).count, 0, "\"\(words)\" shows on arrival")
+            }
+            XCTAssertFalse(element("item.arrival.waitingLine").exists, "The waiting line shows with nothing to wait for")
+            // #3855: each fact once above the Play choices. Scroll to the bottom first so the imported-layer card is in the tree;
+            // one friend, one layer, so the card's own "From Sam" line is dropped and the count line carries the "1 Margin".
+            for _ in 0..<4 { app.swipeUp() }
+            let screen = element("item.screen")
+            // Any element type: a card's single VoiceOver element is not necessarily reported as static text.
+            func count(labelPrefix: String) -> Int {
+                screen.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", labelPrefix)).count
+            }
+            XCTAssertEqual(count(labelPrefix: "From "), 1, "The sender's name is said more than once before Play")
+            XCTAssertEqual(count(labelPrefix: "1 Margin"), 1, "\"1 Margin\" is said more than once before Play")
+            // The card keeps its one VoiceOver element and its id, with the sender sentence dropped (#3855).
+            let provenance = screen.descendants(matching: .any).matching(NSPredicate(
+                format: "identifier BEGINSWITH 'build23.imported.layer.' AND identifier ENDSWITH '.provenance'")).firstMatch
+            XCTAssertTrue(provenance.exists, "The imported card lost its VoiceOver element")
+            XCTAssertFalse(provenance.label.hasPrefix("From "), "The card still says who sent it: \(provenance.label)")
             play.tap()
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "The episode did not start")
+            XCTAssertEqual(app.buttons["playback.itemTitle.button"].label, episodeTitle, "A different item is playing")
+            try waitUntilPlaying("The big button opened the episode but it never reached the playing state")
+            let start = try position()
+            waitUntil("The episode clock is stuck after the big button", timeout: 8) { self.currentPosition().map { $0 > start } ?? false }
             XCTAssertFalse(app.buttons["newMarginsOffer.review"].exists, "The big button asked a question before playing")
             XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
+        }
+    }
+
+    /// #4447: the owner's report from his phone. A friend's Margin sits well behind where he is listening, and on the
+    /// playback screen he could not seek back to it from the Margins tab and found no Skim arrows. Before this there was
+    /// no step for either, so both could break unseen. The listener is paused at about 20:00; Sam's Margin is at 5:00.
+    /// This presses the friend row's Play on the Margins tab and checks that the episode lands at the Margin's 30 s lead-in (270 s).
+    func testMarginsTabPlayReachesAFriendsMarginFromFarPast() throws {
+        try openTheEpisodeFarPastAFriendsMargin(step: "J9 Margins tab")
+
+        try XCTContext.runActivity(named: "J9 Margins tab, step 4: The friend's row has an enabled Play that seeks back to the Margin") { _ in
+            tap("playback.margins.button")
+            let friendPlay = app.buttons.matching(NSPredicate(
+                format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "margins.shared.row.", ".play"
+            )).firstMatch
+            XCTAssertTrue(friendPlay.waitForExistence(timeout: 8), "The friend's Margin has no Play button on the Margins tab")
+            XCTAssertTrue(friendPlay.isEnabled, "The friend's Margin is listed with a Play button that is disabled")
+            XCTAssertTrue(friendPlay.isHittable, "The friend's Play button can't be tapped")
+            let before = try position()
+            friendPlay.tap()
+            // The episode jumps to the lead-in before the Margin, then plays on or waits on the card. Both are inside this window.
+            waitUntil("A tap on the friend's Margin did not take the episode from \(before) s to its Margin at \(friendMarginAt) s; clock shows \(element("playback.progress.label").label)", timeout: 15) {
+                self.currentPosition().map { ($0 >= self.friendMarginAt - self.momentLeadIn - 5) && $0 <= self.friendMarginAt + 5 } ?? false
+            }
+            XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
+        }
+    }
+
+    /// #4934: the same position, but the friend's Margin is a written one that is never read aloud
+    /// (`SPOKEN_MARGINS_UI_TEST_COOP_SILENT`, `UITestingLaunchSeed.coopSilentInterjection`). Its row on the Margins tab has
+    /// a Go-to button, not Play: the tap lands at the Margin's own place (5:00, no lead-in) and the episode plays on with no
+    /// voice. The pinned card on Now shows the words and a Dismiss. That nothing is spoken is the owner's by ear.
+    func testMarginsTabGoesToASilentFriendMarginWithNoVoice() throws {
+        try openTheEpisodeFarPastAFriendsMargin(step: "J9 silent Go-to", silentFriend: true)
+
+        try XCTContext.runActivity(named: "J9 silent Go-to, step 4: The friend's row has a Go-to that lands at the Margin and plays on") { _ in
+            tap("playback.margins.button")
+            let goTo = app.buttons.matching(NSPredicate(
+                format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "margins.shared.row.", ".play"
+            )).firstMatch
+            XCTAssertTrue(goTo.waitForExistence(timeout: 8), "The friend's silent Margin has no button on the Margins tab")
+            XCTAssertTrue(goTo.isEnabled, "The friend's silent Margin is listed with a button that is disabled")
+            XCTAssertTrue(goTo.isHittable, "The button can't be tapped")
+            XCTAssertTrue(goTo.label.hasPrefix("Go to this moment"), "The button says \(goTo.label), not Go to this moment")
+            let before = try position()
+            goTo.tap()
+            waitUntil("Go-to did not take the episode from \(before) s to the Margin at \(friendMarginAt) s; clock shows \(element("playback.progress.label").label)", timeout: 15) {
+                self.currentPosition().map { ($0 >= self.friendMarginAt - 5) && $0 <= self.friendMarginAt + 20 } ?? false
+            }
+            XCTAssertTrue(element("marginCard").waitForExistence(timeout: 8), "The pinned card did not appear on Now")
+            XCTAssertTrue(app.buttons["marginCard.silent.dismiss"].firstMatch.exists, "The card has no Dismiss")
+            XCTAssertFalse(element("review.playing").exists, "A voice started for a Margin that is never read aloud")
+            XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
+            try waitUntilPlaying("The episode did not play on after Go-to")
+        }
+    }
+
+    /// #4447: the same position, the same friend. Skim's two arrows are on the playback screen beside the chapter
+    /// title, and Skim backward goes to the friend's Margin. A hidden arrow (no row) is the owner's other symptom.
+    func testSkimArrowsAreOnTheNowScreenAndGoBackToAFriendsMargin() throws {
+        try openTheEpisodeFarPastAFriendsMargin(step: "J9 Skim")
+
+        try XCTContext.runActivity(named: "J9 Skim, step 4: Both arrows are drawn, and backward goes to the Margin") { _ in
+            let backward = app.buttons["playback.skim.backward.button"].firstMatch
+            let forward = app.buttons["playback.skim.forward.button"].firstMatch
+            XCTAssertTrue(backward.waitForExistence(timeout: 8), "No Skim backward arrow, with a friend's Margin behind the listener")
+            XCTAssertTrue(forward.exists, "No Skim forward arrow")
+            XCTAssertTrue(backward.isEnabled, "Skim backward is dimmed, with a friend's Margin behind the listener")
+            XCTAssertTrue(backward.isHittable, "Skim backward can't be tapped")
+            let before = try position()
+            backward.tap()
+            waitUntil("Skim backward did not go to the friend's Margin at \(friendMarginAt) s from \(before) s; clock shows \(element("playback.progress.label").label)", timeout: 15) {
+                self.currentPosition().map { ($0 >= self.friendMarginAt - self.momentLeadIn - 5) && $0 <= self.friendMarginAt + 5 } ?? false
+            }
+            XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
+        }
+    }
+
+    /// #4934: Skim stops at a friend's Margin that is never read aloud, in both directions. From the owner's position (saved near
+    /// 20:00, the friend's written Margin at 5:00 with reading off) Skim backward lands at 5:00 itself, with no lead-in, plays on
+    /// and shows the card; a second backward press does not land there again. From well before it, Skim forward lands at 5:00 too.
+    /// That nothing is spoken is the owner's by ear.
+    func testSkimGoesToASilentFriendMarginBothWays() throws {
+        try openTheEpisodeFarPastAFriendsMargin(step: "J9 silent Skim", silentFriend: true)
+
+        try XCTContext.runActivity(named: "J9 silent Skim, step 4: Backward lands on the Margin's own place and plays on") { _ in
+            let backward = app.buttons["playback.skim.backward.button"].firstMatch
+            XCTAssertTrue(backward.waitForExistence(timeout: 8), "No Skim backward arrow, with a friend's silent Margin behind the listener")
+            XCTAssertTrue(backward.isEnabled, "Skim backward is dimmed: the silent Margin is not a stop")
+            let before = try position()
+            backward.tap()
+            waitUntil("Skim backward did not go to the silent Margin at \(friendMarginAt) s from \(before) s; clock shows \(element("playback.progress.label").label)", timeout: 15) {
+                self.currentPosition().map { ($0 >= self.friendMarginAt - 5) && $0 <= self.friendMarginAt + 20 } ?? false
+            }
+            XCTAssertTrue(element("marginCard").waitForExistence(timeout: 8), "The pinned card did not appear on Now")
+            XCTAssertTrue(app.buttons["marginCard.silent.dismiss"].firstMatch.exists, "The card has no Dismiss")
+            XCTAssertFalse(element("review.playing").exists, "A voice started for a Margin that is never read aloud")
+            XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
+            try waitUntilPlaying("The episode did not play on after Skim went to the silent Margin")
+        }
+
+        try XCTContext.runActivity(named: "J9 silent Skim, step 5: Forward from before the Margin lands on it") { _ in
+            try scrub(to: 0.1)
+            waitUntil("Scrub did not land near 2:30; clock shows \(element("playback.progress.label").label)", timeout: 10) {
+                self.currentPosition().map { $0 < self.friendMarginAt - 60 } ?? false
+            }
+            let forward = app.buttons["playback.skim.forward.button"].firstMatch
+            XCTAssertTrue(forward.waitForExistence(timeout: 8), "No Skim forward arrow")
+            XCTAssertTrue(forward.isEnabled, "Skim forward is dimmed: the silent Margin ahead is not a stop")
+            forward.tap()
+            waitUntil("Skim forward did not go to the silent Margin at \(friendMarginAt) s; clock shows \(element("playback.progress.label").label)", timeout: 15) {
+                self.currentPosition().map { ($0 >= self.friendMarginAt - 5) && $0 <= self.friendMarginAt + 20 } ?? false
+            }
+            XCTAssertTrue(element("marginCard").waitForExistence(timeout: 8), "The pinned card did not appear on Now")
+            XCTAssertFalse(element("item.lastFailure").exists, "A playback problem was reported")
+        }
+    }
+
+    /// The owner's position for #4447: saved near 20:00 and paused, then a friend's Margin from 5:00 arrives and he
+    /// chooses "Listen without them", so the Margin is behind him and the Now screen is where he is.
+    private func openTheEpisodeFarPastAFriendsMargin(step: String, silentFriend: Bool = false) throws {
+        XCTContext.runActivity(named: "\(step), step 1: The episode is in the Library (offline seed)") { _ in
+            app.launch()
+            XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "Library did not open")
+            XCTAssertTrue(revealLibraryRow(), "Seeded episode did not appear in the Library")
+        }
+
+        try XCTContext.runActivity(named: "\(step), step 2: Listen to about 20:00 and pause") { _ in
+            tap("queue.start.\(itemId)")
+            XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
+            try waitUntilPlaying("Episode never reached the playing state")
+            try scrub(to: 0.8)
+            waitUntil("Scrub did not land near 20:00; clock shows \(element("playback.progress.label").label)", timeout: 10) {
+                self.currentPosition().map { (17 * 60...23 * 60).contains($0) } ?? false
+            }
+            playPause.tap()
+            waitUntil("Episode did not reach the paused state") { self.playPause.label == "Play" }
+        }
+
+        try XCTContext.runActivity(named: "\(step), step 3: Force-quit; a friend's Margin from before this point arrives; carry on without it") { _ in
+            app.terminate()
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_COOP"] = "1"
+            if silentFriend { app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_COOP_SILENT"] = "1" }
+            app.launch()
+            XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "Library did not reopen")
+            XCTAssertTrue(revealLibraryRow(), "Episode is missing from the Library after relaunch")
+            tap("queue.start.\(itemId)")
+            let skip = offerButton("newMarginsOffer.skip", orLabel: "Listen without them")
+            if silentFriend {
+                // Whether a note nobody reads aloud is offered as new is #3402's rule, not this step's: take the offer if it comes.
+                if skip.waitForExistence(timeout: 5) { skip.tap() }
+            } else {
+                XCTAssertTrue(skip.waitForExistence(timeout: 5), "Continue did not offer a way to carry on without the new Margin")
+                skip.tap()
+            }
+            XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
+            try waitUntilPlaying("The episode never carried on without the friend's Margin")
+            playPause.tap()
+            waitUntil("Episode did not reach the paused state") { self.playPause.label == "Play" }
+            let at = try position()
+            XCTAssertTrue((17 * 60...25 * 60).contains(at), "Episode carried on at \(at) s, not near 20:00")
         }
     }
 
@@ -176,11 +367,14 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
         XCTContext.runActivity(named: "J9 large text, step 3: The lead-in card fits, and its buttons can be tapped") { _ in
             XCTAssertTrue(element("review.comingUp").waitForExistence(timeout: 8), "No lead-in before the friend's Margin")
             assertCardFits(stage: "lead-in", buttons: ["marginMoment.end"], oneOf: ["marginCard.next", "marginMoment.playNow"])
+            // #4171: "Start a minute earlier" is left off at accessibility3 and above, so the stacked card keeps its budget.
+            XCTAssertFalse(app.buttons["marginCard.startEarlier"].exists, "Start a minute earlier is drawn at the largest text size")
         }
 
         XCTContext.runActivity(named: "J9 large text, step 4: The playing card fits, with one button to skip the Margin") { _ in
             XCTAssertTrue(element("review.playing").waitForExistence(timeout: 25), "The friend's Margin never started playing")
             assertCardFits(stage: "playing", buttons: ["marginMoment.skip"], oneOf: [])
+            XCTAssertFalse(app.buttons["marginCard.startEarlier"].exists, "Start a minute earlier is drawn at the largest text size")
         }
     }
 
@@ -217,6 +411,9 @@ final class J9HearNewMarginsJourneyUITests: XCTestCase {
             XCTAssertLessThanOrEqual(frame.maxY - lowest, 32, "A blank row sits under the \(stage) card's last button: \(frame.maxY - lowest) pt")
         }
         XCTAssertTrue(playReachable, "The dock's play button is out of reach under the \(stage) card")
+        // A card that exposes no text or button labels would pass the check below without reading anything (#4315).
+        XCTAssertFalse(words.replacingOccurrences(of: "|", with: "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                       "The \(stage) card exposes no text or button labels to read for \"item\" or \"review\"")
         XCTAssertNil(words.lowercased().range(of: #"\b(item|review)\b"#, options: .regularExpression), "The \(stage) card says item or review: \(words)")
         let note = XCTAttachment(string: "\(stage): card \(Int(frame.height)) pt of \(Int(window.height)) pt; words: \(words)")
         note.name = "J9 large text, \(stage) card"

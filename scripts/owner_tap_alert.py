@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Tell the owner's phone when a PR into next waits only for his merge tap (#2047).
 
-The lane runner never merges a PR touching `scripts/lane-runner.py` or anything under `.github/` (owner rule
-2026-10-09, `owner_tap_paths` in scripts/lane-runner.py); the owner merges those himself. Nothing told him when
+No agent merges a PR touching `scripts/lane_merge_rules.py` or anything under `.github/` (owner rule
+2026-10-09, `owner_tap_paths` in scripts/lane_merge_rules.py); the owner merges those himself. Nothing told him when
 one was ready: every agent comment is posted under his own account, and GitHub never notifies anyone of their
 own activity. On 2026-10-18 #1964, #1966, #2038 and #1885 sat waiting only for his tap.
 
@@ -30,7 +30,11 @@ Persistent label (owner, 2026-10-22). While a PR qualifies for his tap (every ru
 head yet", so it keeps the label after the alert), it carries `needs-owner-tap`, so he can filter for what waits on
 him. The label is created when missing. It comes off when the PR stops qualifying (new head with failing or pending
 checks, a blocking audit, a conflict, a draft) or no longer touches the owner-tap paths, and a sweep of every open
-PR also strips it from closed and merged PRs. Adding and removing it only needs `issues: write` on the job token.
+PR also strips it from closed and merged PRs. A PR that already carries the owner's own `owner-tap` label (his tap,
+which merge_policy.py reads) loses it and gets no alert, so the list is what still waits on him (#4939). Adding and
+removing it needs `issues: write` and `pull-requests: write` on the job token: with `pull-requests: read` GitHub
+answered every label and comment write on a PR with 403, so no PR got the label or an alert (every run read on
+2026-11-22, 02:21 to 05:19 UTC, ended in that 403; #4939). The list: https://github.com/Spoken-Margins/spoken-margins-native/pulls?q=is%3Apr+is%3Aopen+label%3Aneeds-owner-tap
 
 An alert posted before the audit says so. When the audit of that head lands afterwards (the audit script audits an
 owner-tap PR once its checks finish and then asks for a check, #2052), one follow-up comment says "no blocking
@@ -65,16 +69,17 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import comment_trust  # noqa: E402
 
-# The runner's owner-tap paths (scripts/lane-runner.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES). A test keeps them equal.
+# The owner-tap paths (scripts/lane_merge_rules.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES). A test keeps them equal.
 OWNER_LOGIN = 'uncomposed'  # who to @mention; the repo's owner is the org after #2169
-OWNER_TAP_FILES = {'scripts/lane-runner.py'}
+OWNER_TAP_FILES = {'scripts/lane_merge_rules.py'}
 OWNER_TAP_PREFIXES = ('.github/',)
-# The runner's audit formats (scripts/lane-runner.py AUDITS, AUDIT_SHA, CLEAN_AUDIT). A test keeps them equal.
+# The audit formats (scripts/lane_merge_rules.py AUDITS, AUDIT_SHA, CLEAN_AUDIT). A test keeps them equal.
 AUDITS = ('**Codex audit (Astra)', '## Codex audit', '**Claude audit on `')
 AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
 CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)
@@ -85,9 +90,24 @@ FOLLOWUP_RE = re.compile(r'<!-- owner-tap-audit: ([0-9a-f]{40}) -->')
 NO_AUDIT_TEXT = 'no Claude audit covers this head'  # what an alert posted before the audit says (alert_body)
 # The job that runs this script (the same name in all three workflows): it is running on the head while it checks it.
 OWN_CHECKS = {'owner-tap-alert'}
+# Gates, not tests (#4693): "merge policy" stays red until the PR has its audit and the owner's `owner-tap` label. A
+# red gate must not count as a failed check here, or the audit script (which reads this) never audits an owner-tap PR
+# and this alert never tells the owner it is ready: each waits on the other.
+# The job is named apart from the check it writes (#4986), and that check is a commit status, not a check run (#5162),
+# so both lists below skip these names.
+GATE_CHECKS = {'merge policy', 'merge policy run'}
+# Checks whose cancelled run is no failure (#5249). lane-conflicts' `check` runs in one concurrency group and every run
+# sweeps all armed PRs, so a burst of pushes cancels older runs by design and the newest run covers the cancelled one.
+# Read as failed, it kept the audit off #5161, #5177, #5185 and #5186 for 3 to 4 hours until each was re-run by hand.
+# Only names listed here: a cancelled `compat` or `signoff` has checked nothing, so it still holds the audit and the
+# alert. A test keeps each name a lane-conflicts job and out of the required set (scripts/required_checks.py).
+CANCEL_SUPERSEDED_CHECKS = {'check'}
 LABEL = 'owner-tap-check'  # the Mac's and the audit script's way to ask Actions for a check (--via-label)
+OWNER_TAP_LABEL = 'owner-tap'  # the owner's own tap (merge_policy.py reads it); a PR that carries it no longer waits on him
+MERGEABLE_TRIES = 4  # GitHub works `mergeable` out on the first read after a push; ask again a few times (#4939)
+MERGEABLE_WAIT = 5  # seconds between those reads
 TAP_LABEL = 'needs-owner-tap'  # persistent: this PR waits only for the owner's merge tap
-TAP_LABEL_DESCRIPTION = "Waits only for the owner's merge tap (.github or lane-runner change)"
+TAP_LABEL_DESCRIPTION = "Waits only for the owner's merge tap (.github or merge-rules change)"
 TAP_LABEL_COLOR = '0075ca'  # blue
 ALREADY_ALERTED = 'already alerted on'
 # The check that runs scripts/tests/test_workflow_files.py on every PR (workflow-files.yml, #2596) and what that test
@@ -141,16 +161,18 @@ def checks_state(check_runs: list[dict], statuses: list[dict]) -> tuple[str, lis
     failed, pending = [], []
     for run in check_runs:
         name = run.get('name') or '?'
-        if name in OWN_CHECKS:
+        if name in OWN_CHECKS or name in GATE_CHECKS:
             continue
         if run.get('status') != 'completed':
             pending.append(name)
+        elif run.get('conclusion') == 'cancelled' and name in CANCEL_SUPERSEDED_CHECKS:
+            continue  # superseded by a newer sweep (#5249), above
         elif run.get('conclusion') in FAILED:
             failed.append(name)
     seen = set()
     for status in statuses:  # newest first from the API: the first per context is the current one
         context = status.get('context') or '?'
-        if context in seen:
+        if context in seen or context in GATE_CHECKS:
             continue
         seen.add(context)
         if status.get('state') in ('failure', 'error'):
@@ -174,6 +196,11 @@ def guard_run(check_runs: list[dict]) -> dict | None:
     return next((run for run in check_runs if run.get('name') == GUARD_CHECK), None)
 
 
+def tapped(pr: dict) -> bool:
+    """Whether the PR already carries the owner's `owner-tap` label (the REST pulls/N shape)."""
+    return any(label.get('name') == OWNER_TAP_LABEL for label in pr.get('labels') or [])
+
+
 def readiness(pr: dict, files: list[dict], check_runs: list[dict], statuses: list[dict],
               comments: list[dict], repo: str, guard_stale: str = '') -> tuple[bool, str]:
     """(ready, why) for one open PR. `pr` is the REST pulls/N shape. `guard_stale` is why the head's
@@ -182,6 +209,8 @@ def readiness(pr: dict, files: list[dict], check_runs: list[dict], statuses: lis
     tap = owner_tap_paths(files)
     if not tap:
         return False, 'no owner-tap paths'
+    if tapped(pr):
+        return False, f'already tapped (`{OWNER_TAP_LABEL}` label)'
     if pr.get('draft'):
         return False, 'draft'
     if (pr['head'].get('repo') or {}).get('full_name') != repo:
@@ -370,12 +399,24 @@ def sync_tap_label(api: GitHubApi, number: int, pr: dict, waits: bool, dry_run: 
         print(f'#{number}: could not update `{TAP_LABEL}`: {(getattr(exc, "stderr", "") or "").strip()[:160]}')
 
 
+def get_pr(api: GitHubApi, number: int) -> dict:
+    """The single-PR read, asked again while GitHub has not worked out `mergeable` (it does so lazily, so a PR pushed
+    seconds ago answers null and would otherwise keep a stale label until some later event, #4939)."""
+    pr = api.get(f'pulls/{number}')
+    for _ in range(MERGEABLE_TRIES - 1):
+        if pr.get('mergeable') is not None:
+            break
+        time.sleep(MERGEABLE_WAIT)
+        pr = api.get(f'pulls/{number}')
+    return pr
+
+
 def check_pr(api: GitHubApi, number: int, mention: str, dry_run: bool, via_label: str | None = None) -> str:
     files = api.get_all(f'pulls/{number}/files?per_page=100')
     if not owner_tap_paths(files):
         sync_tap_label(api, number, api.get(f'pulls/{number}'), False, dry_run)  # it may carry the label from before
         return 'no owner-tap paths'
-    pr = api.get(f'pulls/{number}')  # the single-PR read is the one that carries `mergeable`
+    pr = get_pr(api, number)  # the single-PR read is the one that carries `mergeable`
     head = pr['head']['sha']
     runs = api.get_all(f'commits/{head}/check-runs?filter=latest&per_page=100')
     statuses = api.get_all(f'commits/{head}/statuses?per_page=100')

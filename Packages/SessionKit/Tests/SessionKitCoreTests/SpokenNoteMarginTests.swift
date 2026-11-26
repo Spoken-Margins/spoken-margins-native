@@ -148,4 +148,72 @@ final class SpokenNoteMarginTests: XCTestCase {
         XCTAssertEqual(played.currentMediaTimeMs, 6_000, "at the start of the sentence it was made on, not at the old 4.2 s")
         XCTAssertEqual(relaunchedAudio.mediaTimeMs, 6_000)
     }
+    /// #4779: with Shorter pauses playing, a Margin's time is saved on the recording's clock, a new session can start at a
+    /// given moment, and a saved time plays at the same moment of the version.
+    func testOnTheVersionWithShorterPausesMarginTimesAreSavedOnTheRecordingsClock() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("note-clean-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+        // One 4 s take; the version keeps 0–1 s and 2.5–4 s, so recorded 3 s plays at 1.5 s.
+        let take = SpokenNoteWholeAudioLayout.Requested(id: "a", audioFileName: "take-a.m4a", durationMs: 4_000)
+        try JSONEncoder().encode(SpokenNoteWholeAudioLayout(requested: [take], placed: [.init(takeId: "a", startMs: 0, durationMs: 4_000)], durationMs: 4_000))
+            .write(to: folder.appendingPathComponent(SpokenNoteWholePlayback.layoutFileName))
+        try SpokenNoteCleanFiles.write(SpokenNoteCleanLayout(
+            requested: [take], cutFingerprints: ["a": "x"],
+            placements: [.init(takeId: "a", takeStartMs: 0, takeEndMs: 1_000, outputStartMs: 0), .init(takeId: "a", takeStartMs: 2_500, takeEndMs: 4_000, outputStartMs: 1_000)],
+            durationMs: 2_500, result: .made(savedMs: 1_500)
+        ), to: SpokenNoteCleanFiles.layoutURL(inNoteFolder: folder))
+        let clean = SpokenNoteCleanFiles.audioURL(inNoteFolder: folder)
+        try Data("clean".utf8).write(to: clean)
+        let item = Item(
+            id: itemId, title: "Spoken note", mediaType: SpokenNoteItem.mediaType, text: "",
+            externalReference: SpokenNoteItem.reference(forNoteId: noteId), status: "ready", externalReferenceType: SpokenNoteItem.referenceType,
+            media: ItemMedia(sourceType: .nativeMediaFile, url: clean.absoluteString, durationMs: 2_500, nativeMediaId: "spoken-note-audio-\(itemId)"))
+        let repository = InMemorySessionRepository(items: [item.id: item])
+
+        let audio = NoteAudio()
+        let playing = engine(repository: repository, audio: audio)
+        _ = try playing.startSession(itemId: item.id, atMediaTimeMs: 1_500)
+        XCTAssertEqual(audio.mediaTimeMs, 1_500, "a version change starts the new session at the mapped moment")
+        _ = try playing.beginInterjection()
+        _ = try playing.finishInterjection(audioRef: nil)
+        let saved = try XCTUnwrap(try repository.loadInterjections(sessionId: try XCTUnwrap(playing.currentSession?.id)).first)
+        XCTAssertEqual(saved.anchor.mediaTimeMs, 3_000, "1.5 s into the version is 3 s into the recording")
+
+        let relaunchedAudio = NoteAudio()
+        let played = try engine(repository: repository, audio: relaunchedAudio).playInterjectionAnchor(saved)
+        XCTAssertEqual(played.currentMediaTimeMs, 1_500)
+        XCTAssertEqual(relaunchedAudio.mediaTimeMs, 1_500)
+    }
+
+    /// #4779: a version change sets the old session aside, so Continue never picks it over the new one (even when both
+    /// were saved in the same second), and starts the new one at the given moment, paused when the note was paused.
+    func testRestartingTheNoteSetsTheOldSessionAsideAndStartsAtTheGivenMoment() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("whole-note-\(UUID().uuidString).m4a")
+        try Data("joined".utf8).write(to: file)
+        addTeardownBlock { try? FileManager.default.removeItem(at: file) }
+        let item = Item(
+            id: itemId, title: "Spoken note", mediaType: SpokenNoteItem.mediaType, text: "",
+            externalReference: SpokenNoteItem.reference(forNoteId: noteId), status: "ready", externalReferenceType: SpokenNoteItem.referenceType,
+            media: ItemMedia(sourceType: .nativeMediaFile, url: file.absoluteString, durationMs: 8_000, nativeMediaId: "spoken-note-audio-\(itemId)"))
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let audio = NoteAudio()
+        let playing = engine(repository: repository, audio: audio)
+        _ = try playing.startSession(itemId: item.id, atMediaTimeMs: 0)
+        let oldId = try XCTUnwrap(playing.currentSession?.id)
+
+        let restarted = try playing.restartSpokenNote(atMediaTimeMs: 1_500, playing: false)
+        let newId = try XCTUnwrap(playing.currentSession?.id)
+        XCTAssertNotEqual(newId, oldId)
+        XCTAssertEqual(audio.mediaTimeMs, 1_500)
+        XCTAssertFalse(restarted.status.isPlaybackActive, "a paused note stays paused on the other version")
+
+        let sessions = try repository.loadSessions(itemId: item.id)
+        let old = try XCTUnwrap(sessions.first { $0.id == oldId })
+        XCTAssertFalse(SessionContinuation.isResumableSession(old))
+        XCTAssertEqual(sessions.filter(SessionContinuation.isResumableSession).map(\.id), [newId])
+        XCTAssertEqual(SessionContinuation.preferredContinuationSession(in: sessions.filter(SessionContinuation.isResumableSession))?.id, newId)
+
+        XCTAssertTrue(try playing.restartSpokenNote(atMediaTimeMs: 500, playing: true).status.isPlaybackActive)
+    }
 }

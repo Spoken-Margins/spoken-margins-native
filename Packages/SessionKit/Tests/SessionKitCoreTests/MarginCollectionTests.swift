@@ -136,22 +136,28 @@ final class MarginCollectionTests: XCTestCase {
         }
     }
 
-    // These source checks pin the app/core identity and diagnostic boundary on Linux too.
-    // Runtime publication and playback remain covered by the unchanged app-hosted tests.
-    func testAppAndBuilderKeepPrivateAndSharedIdentityFormats() throws {
+    // These source-text checks (#4306) pin the app/core identity and diagnostic boundary on Linux too, on the code with its
+    // comments removed. Runtime publication and playback remain covered by the unchanged app-hosted tests.
+    func testSourceTextAppAndBuilderKeepPrivateAndSharedIdentityFormats() throws {
         let entries = try build(notes: [note("same")], layers: [layer("layer")], shared: [sharedNote("same", layerID: "layer")])
         XCTAssertEqual(entries.privateRows.first?.id, "session::same")
         XCTAssertEqual(entries.sharedRows.first?.id, "shared::layer::same")
         let rows = try appSource("ExperienceModels.swift")
-        let model = try appSource("Gate1AppModel.swift")
-        XCTAssertTrue(rows.contains(#"var id: String { "\(interjection.sessionId)::\(interjection.id)" }"#))
-        XCTAssertTrue(rows.contains(#"var id: String { "shared::\(layer.id)::\(interjection.id)" }"#))
+        // `SharedMarginRow` moved into SessionKit with the other plain row values (#318).
+        let sharedRows = TestInputs.withoutComments(try String(
+            contentsOf: TestInputs.packageURL("Sources/SessionKit/ExperiencePresentation.swift"), encoding: .utf8))
+        // `playSharedMarginMoment` lives in the voice-playback extension (moved out of the model file for #3961).
+        let sharedMoment = try appSource("Gate1AppModel+MarginVoicePlayback.swift")
+        // The "session::margin" format now has one builder, `MarginIdentity.make` (#4715), whose format MarginIdentityTests pins.
+        XCTAssertEqual(MarginIdentity.make(sessionId: "session", interjectionId: "same"), "session::same")
+        XCTAssertTrue(rows.contains(#"var id: String { MarginIdentity.make(sessionId: interjection.sessionId, interjectionId: interjection.id) }"#))
+        XCTAssertTrue(sharedRows.contains(#"public var id: String { "shared::\(layer.id)::\(interjection.id)" }"#))
         let curation = try appSource("Gate1AppModel+MarginCuration.swift")
-        XCTAssertTrue(curation.contains(#"static func marginIdentity(_ interjection: Interjection) -> String {"# + "\n" + #"        "\(interjection.sessionId)::\(interjection.id)""#))
-        XCTAssertTrue(model.contains(#"let targetID = "shared::\(row.layer.id)::\(row.interjection.id)""#))
+        XCTAssertTrue(curation.contains(#"static func marginIdentity(_ interjection: Interjection) -> String {"# + "\n" + #"        MarginIdentity.make(sessionId: interjection.sessionId, interjectionId: interjection.id)"#))
+        XCTAssertTrue(sharedMoment.contains(#"let targetID = "shared::\(row.layer.id)::\(row.interjection.id)""#))
     }
 
-    func testAppRefreshKeepsDiagnosticAndPublishesOnlyAfterSuccessfulBuildInOrder() throws {
+    func testSourceTextAppRefreshKeepsDiagnosticAndPublishesOnlyAfterSuccessfulBuildInOrder() throws {
         // The main-thread rebuild moved next to the off-main reads it is sequenced with (#2505).
         let model = try appSource("Gate1AppModel+MarginRowsRefresh.swift")
         let start = try XCTUnwrap(model.range(of: "    func refreshMarginRows() {"))
@@ -164,7 +170,9 @@ final class MarginCollectionTests: XCTestCase {
             remainder = remainder[range.upperBound...]
         }
         XCTAssertFalse(remainder.contains("publishMarginEntries"))
-        XCTAssertFalse(remainder.contains("marginRows ="))
+        // A failed rebuild leaves the published rows as they were: the catch names neither list, so `marginRows = []`,
+        // `.removeAll()` and `sharedMarginRows.removeLast()` all fail here.
+        XCTAssertFalse(remainder.contains("arginRows"), "the catch of refreshMarginRows touches the Margin rows")
         let publishStart = try XCTUnwrap(model.range(of: "    private func publishMarginEntries("))
         let publish = model[publishStart.upperBound...].prefix { $0 != "}" }
         var published = publish[...]
@@ -201,6 +209,6 @@ final class MarginCollectionTests: XCTestCase {
     }
 
     private func appSource(_ name: String) throws -> String {
-        try TestInputs.text(.appSources, name)
+        try TestInputs.code(.appSources, name)
     }
 }

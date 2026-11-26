@@ -39,7 +39,7 @@ Yesterday these failed late, at the rollup, and forced refactors. Run them befor
 - `.venv/bin/python scripts/verify-tests.py --plan fast`, at most one per cluster at a time. A sub-PR may use `--plan fast --changed-files`, which skips the hot-file ratchet, so a sub-PR touching Swift also runs `scripts/hot_file_ratchet.py` directly. Run one full `--plan fast` on the cluster branch before the rollup. A plan that gives up waiting for a Mac slot ran no tests. The Mac has two host-test slots.
 - The hot-file ratchet and the main-thread-reads guard (both run in `--plan fast`; if one fails, fix the design, don't raise the ceiling).
 - For app changes, both builds from "Verification" in AGENTS.md.
-- If the change needs simulator tests, say so in the sub-PR, and ask for `/lane T3` once on the rollup with every needed test on its `tests:` line.
+- If the change needs simulator tests, say so in the sub-PR. A `/lane T3` request is optional and never holds the merge (#4572); ask once on the rollup, with every needed test on its `tests:` line, only to see them pass before `main`'s scheduled `main-t3` run does.
 - When a diff changes a shared predicate or its callers, that `tests:` line names every class that reaches any caller. The runner adds only what `scripts/test-scope.py` suggests, and that script doesn't follow callers. On 2026-11-05 #3412's line left out `LocalAudioListeningPackageTests`, so a Skim side effect reached `main` and showed only in the hosted integration run.
 
 ## Rollup PRs
@@ -75,11 +75,15 @@ The chief of staff checks that `main` is green for the start: the Linux SessionK
 
 - A cloud session can't message the director, so it reports on its status comment, and the chief of staff watches its PRs. A question for the director goes on the first line of that comment, starting `QUESTION FOR DIRECTOR`, and the chief of staff's watcher passes it on.
 - Starting it takes the owner's click on a card, so start it while he is at the app.
+- **Push the director's own branch before the start.** A cloud session started from a worktree session checks out that session's branch. If the branch was never pushed, the cloud session stops with "The requested branch or commit was not found" and can't continue. Run #5030 lost Lead C three times this way, twice with no visible error. A director branch with no commits of its own is fast-forwarded to `origin/main` and pushed. The cloud lead then works only on its cluster branch.
+- **Its first act is its status comment.** The brief says to post the status comment before any reading or code, and to write any blocker there before stopping. The chief of staff sets a check about 30 minutes after the start, and if no comment has appeared by then it records the lead as stalled. A cloud session sends no note when it ends, so a silent stall otherwise goes unseen.
+- **Tell the owner which session is which.** A cloud session doesn't appear among the director's linked sessions, and its title can look like a local one's. In run #5030 the owner archived the chief of staff, meaning to archive the stopped cloud lead. Put "(cloud)" in the cloud lead's title, and when a lead stops, name the exact session to archive.
+- **A start lost to a network drop shows nothing.** If no "started" note arrives within about 10 minutes, assume the start is lost, and retry it while the owner is at the app.
 - That cluster's full check before the rollup is a dispatched hosted fast run on its branch, not a local plan.
 
 ## Context budget
 
-Cluster leads and the chief of staff are automatic sessions. The hook blocks at 300k (owner overlay, "How to work"), but since 2026-11-05 cluster leads do not stop at 250k: they let auto-compact run and keep their hand-off current (owner, 2026-11-05; the hook's 250k cue says the same to every automatic session since 2026-11-13, #4191). The director is owner-started (400k/500k), but it stays well under them by delegating.
+Cluster leads and the chief of staff are automatic sessions. The hook blocks at 300k (owner overlay, "How to work"), but since 2026-11-05 cluster leads do not stop at 250k: they let auto-compact run and keep their hand-off current (owner, 2026-11-05; the hook's 250k cue says the same to every non-headless automatic session since 2026-11-13, #4191). The director is owner-started (400k/500k), but it stays well under them by delegating.
 
 - Delegate every read of a big file, every diff review, every log, and every fix to a background agent. Ask for a summary of under 300 words, and full detail written to a file the lead reads only if needed.
 - Never paste issue bodies, diffs, CI logs or audit text into the lead's own context when an agent can summarize them.
@@ -91,8 +95,12 @@ Cluster leads and the chief of staff are automatic sessions. The hook blocks at 
 
 ## Wind-down
 
-When every rollup is merged or handed back:
+When every rollup is merged or handed back, the run winds down at once. **The chief of staff owns the trigger:** the moment the last lead stops, it starts the steps below in that same turn, without waiting for the director or the owner. On run #4225 (2026-11-13) every cluster was finished by 21:44Z, but nobody wound down. The chief of staff kept a usage watcher and a watcher on a PR that could no longer merge, its status still called a merged rollup open, and the owner came back almost four hours later to sessions that had lost their cache and had to ask whether the run was done.
 
 1. Each lead sets its status comment to its final state and stops.
-2. The chief of staff removes the run's merged worktrees and local branches (the housekeeping in the owner overlay's 2026-10-14 calls), and checks that every finished issue is closed.
-3. The run's lead session posts a short retrospective on the tracking issue (what merged, what was handed back, token use per session, what to change), then closes it.
+2. The chief of staff stops every watcher it armed. No watcher runs while no lead is working.
+3. The chief of staff re-reads from GitHub the state of every PR and issue the run lists, and fixes its status comment from what it read. It removes the run's merged worktrees and local branches (the housekeeping in the owner overlay's 2026-10-14 calls), and checks that every finished issue is closed.
+4. The chief of staff drafts the retrospective (what merged, what was handed back, token use per session, what to change) and sends it to the director. The director posts it on the tracking issue and closes the issue. If the director has stopped, the chief of staff posts it and closes the issue itself.
+5. Sessions archive at the end. The chief of staff archives the leads, and the director archives the chief of staff. The owner archives only the director.
+
+Any status comment, at any point in the run, is written from the PR and issue states read just before writing, not from memory.

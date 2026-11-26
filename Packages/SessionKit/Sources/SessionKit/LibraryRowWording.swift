@@ -10,6 +10,8 @@ public enum LibraryRowWording {
         sourceReference: String?,
         sourceReferenceType: String?
     ) -> LibraryContentTypeFilter {
+        // A meeting transcript is text whatever its file is called ("notes.pdf.txt" is still a transcript) (#2997).
+        if sourceReferenceType == TranscriptItemText.referenceType { return .text }
         if sourceReference?.lowercased().contains(".pdf") == true { return .pdf }
         switch mediaType.lowercased() {
         case "pdf": return .pdf
@@ -20,6 +22,12 @@ public enum LibraryRowWording {
         default:
             return sourceReferenceType == "url" ? .article : .text
         }
+    }
+
+    /// Whether an item is a PDF by the Library filter's own rule. One helper, so every menu, sheet and screen that
+    /// only makes sense for a PDF (Export PDF with Margins, the Paper note, #4338, #4340) agrees with the "PDF" filter.
+    public static func isPDF(mediaType: String, sourceReference: String?, sourceReferenceType: String?) -> Bool {
+        contentType(mediaType: mediaType, sourceReference: sourceReference, sourceReferenceType: sourceReferenceType) == .pdf
     }
 
     /// The kind in words, matching the Library filter's names so a listener can
@@ -34,6 +42,7 @@ public enum LibraryRowWording {
     ) -> String {
         if mediaType.lowercased() == "guided_tour" { return "Guided tour" }
         if SpokenNoteItem.isSpokenNote(mediaType: mediaType) { return "Spoken note" }
+        if sourceReferenceType == TranscriptItemText.referenceType { return "Transcript" }
         switch contentType(mediaType: mediaType, sourceReference: sourceReference, sourceReferenceType: sourceReferenceType) {
         case .pdf:
             // The app reads a PDF through the new reader only when it's stored as "pdf".
@@ -50,17 +59,22 @@ public enum LibraryRowWording {
     /// A web address shows as its site ("arxiv.org"), never as the raw URL.
     public static func byline(sourceTitle: String?, author: String?, title: String) -> String? {
         for candidate in [sourceTitle, author] {
-            guard var value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { continue }
-            if value.hasPrefix("[["), value.hasSuffix("]]") {
-                value = String(value.dropFirst(2).dropLast(2))
-            }
-            if isAddress(value) {
-                guard let site = webSiteName(value) else { continue }
-                value = site
-            }
+            guard let value = readableName(candidate) else { continue }
             if value.caseInsensitiveCompare(title) != .orderedSame { return value }
         }
         return nil
+    }
+
+    /// A source or author name as a listener may see it, or nil when there is nothing readable. A web address
+    /// becomes its site ("arxiv.org"); any other address (`note://…`, `bundled://…`, `file://…`) is an internal
+    /// reference, never a name, so it gives nil (#5345: a spoken note's player showed `note://<id>`).
+    public static func readableName(_ candidate: String?) -> String? {
+        guard var value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        if value.hasPrefix("[["), value.hasSuffix("]]") {
+            value = String(value.dropFirst(2).dropLast(2)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if isAddress(value) { return webSiteName(value) }
+        return value.isEmpty ? nil : value
     }
 
     /// A URL of any scheme ("https://…", "file://…", "bundled://…") or a bare "www." address.
@@ -91,12 +105,14 @@ public enum LibraryRowWording {
 public struct LibraryRowDetail: Equatable, Sendable {
     /// "about 25 min" for a text item; nil when there's no length to show (podcasts).
     public let length: String?
-    /// The byline, kind, listening progress and status, joined with " · ".
+    /// The match note, byline, kind, listening progress and status, joined with " · ".
     public let rest: String
 
-    public init(byline: String?, kind: String, length: String?, listening: String?, status: String?) {
+    /// - Parameter matched: why a search listed the row when its title, source and author do not match, "From Sam and
+    ///   2 friends" (#4649). It leads `rest`, so a long byline cuts itself, not the reason.
+    public init(byline: String?, kind: String, length: String?, listening: String?, status: String?, matched: String? = nil) {
         self.length = Self.nonEmpty(length)
-        rest = [byline, kind, listening, status].compactMap(Self.nonEmpty).joined(separator: Self.separator)
+        rest = [matched, byline, kind, listening, status].compactMap(Self.nonEmpty).joined(separator: Self.separator)
     }
 
     /// The whole line as one string, for sizes where the row wraps instead of truncating.

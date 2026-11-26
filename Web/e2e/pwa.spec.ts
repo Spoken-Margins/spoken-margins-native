@@ -89,8 +89,9 @@ test('the offline precache leaves out the transcription worker, which is kept on
   info.annotations.push({ type: 'precache', description: `${shell.length} files, ${bytes} bytes` });
   console.log(`precache: ${shell.length} files, ${(bytes / 1e6).toFixed(2)} MB; opt-in: ${optIn.join(', ')}`);
   expect(shell.filter((path) => /worker|ort-wasm/.test(path))).toEqual([]);
-  // The shell was 0.38 MB before transcription (#3024) and 0.94 MB with its worker in it.
-  expect(bytes).toBeLessThan(500_000);
+  // The shell was 0.38 MB before transcription (#3024) and 0.94 MB with its worker in it. The Margins tab and arrival
+  // preview (part of #3216) took it from about 0.47 MB to 0.50 MB; 0.55 MB still fails long before a worker gets in.
+  expect(bytes).toBeLessThan(550_000);
   expect(optIn).toHaveLength(1);
   expect(optIn[0]).toMatch(/^\.\/assets\/opt-in\/worker-[\w-]+\.js$/);
   const worker = optIn[0] as string;

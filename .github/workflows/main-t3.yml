@@ -1,0 +1,405 @@
+# The scheduled T3 on main (#4573, plan on #2048). Owner decision 2026-11-18: no per-PR simulator runs (#4572); every
+# 3 hours, and only when main's head has no `main-t3` commit status yet, run the whole app suite (both app test plans,
+# every test) on a GitHub-hosted Mac, and record the result as a `main-t3` commit status on that SHA. Releases refuse
+# a commit without a green one (#4575). A failure opens or updates one "Main T3 failed on <sha7>" issue labelled
+# `regression`; finding the culprit is #4574: after a red `t3` job, the `bisect` job at the bottom runs
+# scripts/main_t3_bisect.py, and reverts a safe culprit as the GitHub App. scripts/main_t3.py has the contract and the
+# rules.
+#
+# The Mac job is lane.yml's hosted T3 setup (xcode-27, Xcode 27.0): its own lane state and evidence folders, the iOS
+# runtime check, Git LFS from a cache, the Xcode compilation cache, Python 3.12 and XcodeGen. It runs main's own
+# scripts/lane-runner.py T3 machinery (simulator clone, boot rules, crash-flood stop) through scripts/main_t3.py.
+#
+# A push to main starts it through main-t3-push.yml (#4839), which dispatches this workflow unless a main-t3 run did
+# simulator work in the last 3 hours. Every Mac run stays in the one concurrency group below, so runs are still one at a
+# time, in order, and a dispatched run decides like a tick (the head's own status), so it never loses a tick or a release
+# cut that it replaces in the queue.
+#
+# workflow_dispatch: `force` runs even when the SHA already has a status (a release cut asking for a fresh run, or a
+# retry after a runner fault); `sha` tests an older commit on main instead of its head.
+name: main-t3
+
+on:
+  schedule:
+    # Every 3 hours at minute 17, not on the hour (GitHub delays runs scheduled at :00).
+    - cron: '17 */3 * * *'
+    # Owner, 2026-11-18: two fixed ticks so a run on the newest main finishes before his phone builds at 8:00 and
+    # 17:00 America/Phoenix (UTC-7, no daylight saving): 6:30 and 15:30 there. They skip like the others when main's
+    # head already has a result.
+    - cron: '30 13 * * *'
+    - cron: '30 22 * * *'
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'A full commit SHA on main to test (default: main''s head)'
+        required: false
+        default: ''
+      force:
+        description: 'Run even if the commit already has a main-t3 status'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+# One run at a time; a tick that lands while one runs waits, then finds the status and skips.
+concurrency:
+  group: main-t3
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    name: 'decide: has main moved since its last main-t3?'
+    # Only from the trunk: a dispatch from another branch writes nothing.
+    if: github.ref_name == (vars.SM_TRUNK || 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Reads only, as the GitHub App: GITHUB_TOKEN's 1,000 requests an hour for the repository ran out on 2026-11-23 and
+    # the last three runs failed on `commits/<sha>/statuses` ("API rate limit exceeded for installation", runs
+    # 45300688296, 45302516935, 45311388294). The App token has its own, larger budget (#5217). The `t3` job below
+    # stays on GITHUB_TOKEN: it writes the status and the failure issue, and the issue lookup in scripts/main_t3.py
+    # is built around the workflow bot's issues.
+    environment:
+      name: agent-identity
+      deployment: false
+    permissions:
+      contents: read
+      statuses: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      sha: ${{ steps.sha.outputs.sha }}
+    env:
+      GH_REPO: ${{ github.repository }}
+      SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
+    steps:
+      - id: app-token
+        # A failed mint falls back to GITHUB_TOKEN instead of failing the run.
+        continue-on-error: true
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.SM_APP_ID }}
+          private-key: ${{ secrets.SM_APP_PRIVATE_KEY }}
+          # No owner or repositories: the token is scoped to this repository alone.
+          permission-contents: read
+          permission-statuses: read
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ vars.SM_TRUNK || 'main' }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Which commit
+        id: sha
+        env:
+          WANTED: ${{ inputs.sha }}
+        run: |
+          head=$(git rev-parse HEAD)
+          sha="${WANTED:-$head}"
+          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::sha must be a full 40-character commit SHA"; exit 1
+          fi
+          if ! git merge-base --is-ancestor "$sha" "$head"; then
+            echo "::error::$sha is not on $SM_TRUNK"; exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Decide
+        id: decide
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          SHA: ${{ steps.sha.outputs.sha }}
+          FORCE: ${{ inputs.force && '--force' || '' }}
+        run: python3 scripts/main_t3.py decide --sha "$SHA" $FORCE
+
+  t3:
+    name: 'main-t3: the whole app suite on main'
+    needs: decide
+    if: needs.decide.outputs.run == 'true'
+    runs-on: xcode-27
+    # `failure` only when a test failed (an `error` proves nothing about main); the `bisect` job reads it.
+    outputs:
+      state: ${{ steps.run.outputs.state }}
+    # The build, one simulator boot and both whole plans. hosted-integration.yml's app plan alone took about 80 min
+    # with its reruns and journeys on this image; main_t3.py gives each verify-tests.py run 100 min.
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      statuses: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SHA: ${{ needs.decide.outputs.sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      SM_LANE_GITHUB_HOSTED: '1'
+      # The app plan's 600 s budget is the owner's Mac; this 3-core hosted Mac needs about an hour for it (#2596).
+      SM_PLAN_TIMEOUT_SECONDS: '3600'
+      # The packages the app build fetched before, restored below and handed to xcodebuild by scripts/verify-tests.py
+      # (#4664). Without them every run downloads the onnxruntime binary targets from download.onnxruntime.ai, whose
+      # certificate was invalid for 15 hours on 2026-11-21 and failed every run before any test.
+      SM_SPM_DIR: ${{ github.workspace }}/.build/spm
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.decide.outputs.sha }}
+          # Full history: a failure issue lists the merges since the last green main-t3.
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: false
+      - name: Lane folders, Xcode and the iOS runtime
+        run: |
+          {
+            echo "SM_LANE_STATE_DIR=$RUNNER_TEMP/lane-state"
+            echo "SM_LANE_EVIDENCE_DIR=$RUNNER_TEMP/lane-evidence"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/lane-state" "$RUNNER_TEMP/lane-evidence"
+          # A fresh hosted Mac has no crash-report folder, and verify-tests.py stops without one (#2557).
+          mkdir -p "$HOME/Library/Logs/DiagnosticReports"
+          xcodebuild -version
+          sysctl -n hw.ncpu hw.memsize
+          # The lane tests on iOS 26 (lane_sim.IOS_MAJOR); with no iOS 26 runtime on the image, its newest iOS.
+          runtimes=$(xcrun simctl list runtimes --json)
+          major=$(echo "$runtimes" | /usr/bin/python3 -c 'import json,sys
+          ok=[r["version"].split(".")[0] for r in json.load(sys.stdin)["runtimes"] if r.get("isAvailable") and r.get("platform")=="iOS"]
+          print("26" if "26" in ok else (max(ok, key=int) if ok else "26"))')
+          if [ "$major" != 26 ]; then
+            echo "::warning title=main-t3 iOS::No iOS 26 simulator runtime on this image; the run uses iOS $major."
+          fi
+          echo "SM_LANE_IOS_MAJOR=$major" >> "$GITHUB_ENV"
+      - name: List LFS objects
+        run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
+      - name: LFS cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
+          restore-keys: lfs-
+      - name: Fetch LFS files
+        run: |
+          # The checkout keeps no credentials; the job token is handed to this one command.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+      # hosted-app-macos.yml saves this cache under the same key whenever Package.resolved changes, and its builds on
+      # main kept passing through the bad certificate because of it. This run only restores it (no save: a cache
+      # saved from a failed or partial fetch must never replace a good one).
+      - name: Restore the Swift packages
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ env.SM_SPM_DIR }}
+          key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: spm-
+      # The same rolling compilation cache as lane.yml's hosted T3 and hosted-app-macos.yml (scripts/ci-cas-cache.sh).
+      - name: Restore the Xcode compilation cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/cas-pack
+          key: xcode-cas-sparse-27.0-main-t3-${{ github.run_id }}
+          restore-keys: xcode-cas-sparse-27.0-
+      - name: Unpack the Xcode compilation cache
+        run: CAS="$RUNNER_TEMP/lane-state/compilation-cache" PACK="$RUNNER_TEMP/cas-pack" bash scripts/ci-cas-cache.sh unpack
+      - name: Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: XcodeGen
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: command -v xcodegen >/dev/null || brew install xcodegen; xcodegen --version
+      - name: Python tools
+        env:
+          GH_TOKEN: ''
+        run: PYTHON=python3 bash scripts/bootstrap-python-tools.sh
+      # Sets `pending`, runs both plans, sets success, failure or error, and updates the failure issue. Red unless
+      # success, so a runner fault never shows green either.
+      - name: Run the whole app suite
+        id: run
+        run: python3 scripts/main_t3.py run --sha "$SHA" --run-url "$RUN_URL" --evidence "$SM_LANE_EVIDENCE_DIR/main-${SHA:0:7}"
+      # A job killed after `pending` (cancel, timeout, a dead step) records `error`, so the next tick retries.
+      - name: Record a lost run
+        if: (failure() || cancelled()) && steps.run.outputs.state == ''
+        run: python3 scripts/main_t3.py lost --sha "$SHA" --run-url "$RUN_URL"
+      # Saved only after a green run: its builds finished, so the store holds finished compiles (lane.yml, #2617).
+      - name: Pack the Xcode compilation cache
+        id: cas-pack
+        if: always() && steps.run.outputs.state == 'success'
+        run: CAS="$RUNNER_TEMP/lane-state/compilation-cache" PACK="$RUNNER_TEMP/cas-pack" bash scripts/ci-cas-cache.sh pack
+      - name: Save the Xcode compilation cache
+        if: always() && steps.cas-pack.outputs.ok == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/cas-pack
+          key: xcode-cas-sparse-27.0-main-t3-${{ github.run_id }}
+      # Logs, manifests and the run's main-t3.json; result bundles are large and the logs name each failure.
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: main-t3-evidence
+          path: |
+            ${{ runner.temp }}/lane-evidence/**/*.log
+            ${{ runner.temp }}/lane-evidence/**/*.json
+            ${{ runner.temp }}/lane-evidence/**/*.md
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # A red main-t3 names the merges since the last green; this job narrows them to one (#4574, plan on #2048). It runs
+  # only after `state == failure` (never `error`, never a skipped run), once per red commit, and only the failing test
+  # classes at each probe: about log2(merges) + 1 probes, no probe started after 130 minutes. It exits 0 whatever it
+  # finds and writes no commit status, so main-t3's own result stays as the `t3` job set it. A culprit gets one `ready`
+  # + `regression` issue; anything undecided is a note on the "Main T3 failed on <sha7>" issue and names no PR.
+  # It is its own job so the red run's 180 minutes and its own 240 are each bounded; the red run's manifests come from
+  # the `main-t3-evidence` artifact the t3 job uploads (`gh run download`, so no new action to pin).
+  # A culprit the script finds safe to revert is reverted after the bisection, as the spoken-margins-agent App: a PR
+  # opened with GITHUB_TOKEN starts no workflows, so it would never be tested or merged. The App token is minted only
+  # then, because it lives one hour and the bisection can take four, and so no probe of an older commit runs with it.
+  bisect:
+    name: 'main-t3 bisect: which merge broke main?'
+    needs: [decide, t3]
+    if: ${{ !cancelled() && needs.t3.outputs.state == 'failure' }}
+    runs-on: xcode-27
+    timeout-minutes: 240
+    # The App's key is an `agent-identity` secret (main only; see the decide job). `deployment: false`: no deployment
+    # entry, as in the decide job.
+    environment:
+      name: agent-identity
+      deployment: false
+    permissions:
+      contents: read
+      statuses: read
+      issues: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SHA: ${{ needs.decide.outputs.sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      SM_LANE_GITHUB_HOSTED: '1'
+      SM_PLAN_TIMEOUT_SECONDS: '3600'
+      # The t3 job's Swift packages (#4664), restored below: probes build older commits with the same dependencies.
+      SM_SPM_DIR: ${{ github.workspace }}/.build/spm
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.decide.outputs.sha }}
+          # Full history: the probes check out the first-parent merges between the last green and the red commit.
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: false
+      - name: Lane folders, Xcode and the iOS runtime
+        run: |
+          {
+            echo "SM_LANE_STATE_DIR=$RUNNER_TEMP/lane-state"
+            echo "SM_LANE_EVIDENCE_DIR=$RUNNER_TEMP/lane-evidence"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/lane-state" "$RUNNER_TEMP/lane-evidence"
+          # A fresh hosted Mac has no crash-report folder, and verify-tests.py stops without one (#2557).
+          mkdir -p "$HOME/Library/Logs/DiagnosticReports"
+          xcodebuild -version
+          sysctl -n hw.ncpu hw.memsize
+          # The lane tests on iOS 26 (lane_sim.IOS_MAJOR); with no iOS 26 runtime on the image, its newest iOS.
+          runtimes=$(xcrun simctl list runtimes --json)
+          major=$(echo "$runtimes" | /usr/bin/python3 -c 'import json,sys
+          ok=[r["version"].split(".")[0] for r in json.load(sys.stdin)["runtimes"] if r.get("isAvailable") and r.get("platform")=="iOS"]
+          print("26" if "26" in ok else (max(ok, key=int) if ok else "26"))')
+          if [ "$major" != 26 ]; then
+            echo "::warning title=main-t3 iOS::No iOS 26 simulator runtime on this image; the run uses iOS $major."
+          fi
+          echo "SM_LANE_IOS_MAJOR=$major" >> "$GITHUB_ENV"
+      - name: List LFS objects
+        run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
+      - name: LFS cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
+          restore-keys: lfs-
+      - name: Fetch LFS files
+        run: |
+          # The checkout keeps no credentials; the job token is handed to this one command.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+      # Restore only, as in the t3 job: a cache saved from a failed or partial fetch must never replace a good one.
+      - name: Restore the Swift packages
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ env.SM_SPM_DIR }}
+          key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: spm-
+      # The same rolling compilation cache as lane.yml's hosted T3 and hosted-app-macos.yml (scripts/ci-cas-cache.sh).
+      - name: Restore the Xcode compilation cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/cas-pack
+          key: xcode-cas-sparse-27.0-main-t3-bisect-${{ github.run_id }}
+          restore-keys: xcode-cas-sparse-27.0-
+      - name: Unpack the Xcode compilation cache
+        run: CAS="$RUNNER_TEMP/lane-state/compilation-cache" PACK="$RUNNER_TEMP/cas-pack" bash scripts/ci-cas-cache.sh unpack
+      - name: Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: XcodeGen
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: command -v xcodegen >/dev/null || brew install xcodegen; xcodegen --version
+      - name: Python tools
+        env:
+          GH_TOKEN: ''
+        run: PYTHON=python3 bash scripts/bootstrap-python-tools.sh
+      - name: The red run's manifests
+        id: red
+        run: |
+          gh run download "$GITHUB_RUN_ID" --name main-t3-evidence --dir "$RUNNER_TEMP/red-evidence"
+          # The folder that holds the verify-* manifests, whatever root the artifact kept.
+          first=$(find "$RUNNER_TEMP/red-evidence" -type d -name 'verify-*' -print -quit)
+          if [ -z "$first" ]; then echo "::error::the red run's evidence has no verify-* manifests"; exit 1; fi
+          echo "dir=$(dirname "$first")" >> "$GITHUB_OUTPUT"
+      # Never sees the revert token. When the culprit is safe to revert, it leaves main-t3-revert-request.json.
+      - name: Bisect the red commit
+        id: bisect
+        env:
+          EVIDENCE: ${{ steps.red.outputs.dir }}
+        run: |
+          python3 scripts/main_t3_bisect.py bisect --sha "$SHA" --run-url "$RUN_URL" --evidence "$EVIDENCE"
+          if [ -f "$EVIDENCE/main-t3-revert-request.json" ]; then echo "revert=true" >> "$GITHUB_OUTPUT"; fi
+      # Minted here, not at the start: an App installation token lives one hour. Only what the revert does: push
+      # revert/pr<N>, open the PR with `automerge`, file the re-land issue. No `workflows`: the script refuses to revert
+      # a merge that touched .github/. A failed mint leaves the token empty, and the revert step then says on the
+      # culprit issue that no revert was opened and why.
+      - name: The App token for the revert
+        id: revert-token
+        if: steps.bisect.outputs.revert == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.SM_APP_ID }}
+          private-key: ${{ secrets.SM_APP_PRIVATE_KEY }}
+          # No owner or repositories: the token is scoped to this repository alone.
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      # Checks every rule again on the newest main, then opens the revert and says so on both issues.
+      - name: Revert the culprit
+        if: steps.bisect.outputs.revert == 'true'
+        env:
+          EVIDENCE: ${{ steps.red.outputs.dir }}
+          SM_REVERT_TOKEN: ${{ steps.revert-token.outputs.token }}
+        run: python3 scripts/main_t3_bisect.py revert --evidence "$EVIDENCE"
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: main-t3-bisect-evidence
+          path: |
+            ${{ runner.temp }}/red-evidence/**/bisect-*/**/*.log
+            ${{ runner.temp }}/red-evidence/**/main-t3-bisect.json
+            ${{ runner.temp }}/red-evidence/**/main-t3-revert-request.json
+          if-no-files-found: ignore
+          retention-days: 14

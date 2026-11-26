@@ -18,19 +18,31 @@ import SessionKitPersistence
 enum PlayerRunController {
     private static var recorder = PlayerRunRecorder()
     private static weak var model: Gate1AppModel?
+    /// The Library's store, once the model has reported to this controller; nil before that.
+    static var store: SQLiteSessionStore? { model?.store }
     /// What the Watch was last told the player has loaded (#3494).
     private static var publishedNowPlaying: WatchNowPlaying?
 
     /// Notes what the player reports now. Cheap: a few comparisons.
     static func note(_ snapshot: SessionSnapshot, in model: Gate1AppModel, at time: Date = Date()) {
         self.model = model
-        recorder.observe(observation(of: snapshot), at: time)
+        // The file the engine plays, so a place is kept with the clock it is on (#4779).
+        recorder.observe(PlayerRunRecorder.observation(of: snapshot, mediaURL: model.openSessionMediaURL), at: time)
         // The Watch moves the position on by itself, so only a change it could not predict is sent (#3494).
-        let next = WatchNowPlayingFeed.nowPlaying(from: snapshot, at: time)
+        // A spoken note's file goes with the board, so a Watch Margin carries the clock its place is on (#4779). Only a
+        // note has two clocks; other items send none and keep the board small.
+        let item = model.engine?.currentItem
+        let noteFile = item.flatMap { SpokenNoteItem.isSpokenNote(mediaType: $0.mediaType) ? $0.media?.url : nil }
+        let next = WatchNowPlayingFeed.nowPlaying(from: snapshot, at: time, mediaFile: noteFile)
         if WatchNowPlayingFeed.shouldPublish(previous: publishedNowPlaying, next: next) {
             publishedNowPlaying = next
             WatchMarginReceiver.shared.nowPlayingChanged(next)
         }
+    }
+
+    /// Which file each item had attached, and since when, newest last (#4779).
+    static func filesAttached() -> [LiveSessionFiling.FileAttachment] {
+        recorder.filesAttached
     }
 
     /// Runs a Watch transport command on the player, through the same compact command path as the Lock Screen (#3494).
@@ -44,10 +56,7 @@ enum PlayerRunController {
     }
 
     static func observation(of snapshot: SessionSnapshot) -> PlayerRunRecorder.Observation {
-        .init(
-            itemId: snapshot.itemId, mediaTimeMs: snapshot.currentMediaTimeMs, rate: snapshot.playbackRate,
-            isPlaying: snapshot.status == .playing
-        )
+        PlayerRunRecorder.observation(of: snapshot)
     }
 
     /// The runs to file against, newest last.
@@ -63,12 +72,16 @@ enum PlayerRunController {
             if let audioPath = placement.audioPath {
                 saved = try PlayerItemMargin.placeSpoken(
                     audioPath: audioPath, atMediaTimeMs: placement.positionMs, markedAt: placement.markedAt,
-                    itemId: placement.itemId, repository: store
+                    itemId: placement.itemId, repository: store, readAloudPlace: readAloudPlace(for: placement),
+                    playedOnMediaURL: placement.playingThen?.playingMediaURL, // the file it was taken on (#4779)
+                    playedFromRun: placement.playingThen?.source == .playerRun
                 )
             } else {
                 // A Lock Screen Mark: a written Margin with words that say what it is (#3203).
                 saved = try PlayerItemMargin.placeMark(
-                    atMediaTimeMs: placement.positionMs, markedAt: placement.markedAt, itemId: placement.itemId, repository: store
+                    atMediaTimeMs: placement.positionMs, markedAt: placement.markedAt, itemId: placement.itemId, repository: store,
+                    playedOnMediaURL: placement.playingThen?.playingMediaURL,
+                    playedFromRun: placement.playingThen?.source == .playerRun
                 )
             }
         } catch {
@@ -82,6 +95,14 @@ enum PlayerRunController {
             if model.activeItemId == placement.itemId { model.refreshSelectedItemInBackground() }
         }
         return true
+    }
+
+    /// For an article read aloud with the on-device voice, which has no media time: the text place it was paused at when
+    /// the Watch began recording. A Margin the listener aimed at the item ("On this episode") with no pause on record
+    /// goes to the article's saved place rather than a quick session; one nobody aimed there gets no text place (#4561).
+    private static func readAloudPlace(for placement: LiveSessionFileWorker.PlayerPlacement) -> PlayerItemMargin.ReadAloudPlace? {
+        if let char = recorder.readAloudPlace(itemId: placement.itemId, near: placement.markedAt) { return .textOffset(char) }
+        return placement.aimedAtItem ? .savedPlace : nil
     }
 
     /// The listener deleted a Margin on the Watch that the phone may already have put on an item: marks it deleted there

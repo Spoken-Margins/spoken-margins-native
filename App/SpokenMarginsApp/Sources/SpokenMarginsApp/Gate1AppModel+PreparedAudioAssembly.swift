@@ -28,9 +28,12 @@ extension Gate1AppModel {
         guard !PreparedAudioCoordinator.hasStandIns(manifest) else { return }
         // Narration replaces Item.text with its own, so it keeps Item.text and maps into it (#336).
         guard let speech = PreparedSpeechHooks.texts.resolve(item: item, documents: store), speech.text == sourceText else { return }
+        // The plan kind is the manifest's own (#3777): the plan passed in was made for it.
+        let asides = NarrationChunkPlanner.usesAsides(identity: manifest.articleIdentity, ofArticle: sourceText)
         let chunks = try PreparedAudioCoordinator.assemblyChunks(
             plan: plan, manifest: manifest, sourceText: sourceText,
-            preparedRoot: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
+            preparedRoot: support.appending(path: "PreparedAudio", directoryHint: .isDirectory),
+            asides: asides
         )
         let assemblyReservation = try await ledger.reserve(
             ownerId: "prepared-artifact-\(manifest.id)",
@@ -41,7 +44,7 @@ extension Gate1AppModel {
             let prepared = try await SupertonicPreparedAudioAssembler.assemble(
                 itemId: item.id,
                 sourceText: speech.itemText,
-                projection: speech.assemblyProjection(),
+                projection: speech.assemblyProjection(asides: asides),
                 voice: voice,
                 voiceKey: assemblyVoiceKey,
                 chunks: chunks,

@@ -39,6 +39,10 @@ public final class MarginMomentConductor {
     public var onVoiceUnavailable: (@MainActor (_ marginId: String, _ reason: String) -> Void)?
     /// Called once a Margin's voice has started playing (#469: a shared Margin is no longer new).
     public var onVoiceStarted: (@MainActor (_ marginId: String) -> Void)?
+    /// Called when a Margin's voice stops for any reason but `cancel()` or `stopReview()` (#4711). `reachedEnd` is true
+    /// only when the recording played to its end; a skip, a decode error, a missing file and a voice that would not
+    /// start report false. The conductor doesn't know whose Margin it played.
+    public var onVoiceEnded: (@MainActor (_ margin: MarginMomentAnchor, _ reachedEnd: Bool) -> Void)?
     /// Called before a voice starts, to configure the audio session (iOS).
     public var prepareAudioSession: (@MainActor () throws -> Void)?
     public var voiceRate: Float = 1
@@ -155,6 +159,21 @@ public final class MarginMomentConductor {
         finishVoice()
     }
 
+    /// "Start a minute earlier" (#4171): plays `plan`'s Margin again after its longer run-up. A sounding voice (or its chime)
+    /// stops without counting as finished, so a review does not move on and keeps its count; the source goes back to the
+    /// run-up's start and, if a voice had paused it, plays again. During a run-up the source is already playing and only
+    /// moves. Does nothing when the plan is for neither the Margin playing nor the target in its run-up.
+    public func restartLonger(_ plan: StartEarlier.Plan) {
+        let voiceHeldTheSource = sequence.isPlayingMargin
+        guard let start = sequence.restartLonger(marginId: plan.marginId, leadInMs: plan.leadInMs) else { return }
+        stopVoice()
+        source.seek(start)
+        // After the seek, as in `start()`: the app tells `sourceMoved()` about every seek, which would clear this baseline.
+        lastObservedMs = start
+        onChange?()
+        if voiceHeldTheSource { source.resume() }
+    }
+
     /// Ends the moment without resuming the source (another item, a recording, leaving playback).
     public func cancel() {
         stopVoice()
@@ -183,12 +202,12 @@ public final class MarginMomentConductor {
             try prepareAudioSession?()
             let player = try AVAudioPlayer(contentsOf: url)
             let playerID = ObjectIdentifier(player)
-            let delegate = VoiceDelegate { [weak self] in
+            let delegate = VoiceDelegate { [weak self] reachedEnd in
                 Task { @MainActor [weak self] in
                     guard let self, let voice = self.voice, ObjectIdentifier(voice) == playerID else { return }
                     // Named for the hang probe (#2255): finishing resumes the source or starts the next voice.
                     let labels = MainThreadOperationLabels.shared
-                    labels.scoped("marginMomentVoiceFinished") { self.finishVoice() }
+                    labels.scoped("marginMomentVoiceFinished") { self.finishVoice(reachedEnd: reachedEnd) }
                 }
             }
             player.delegate = delegate
@@ -263,8 +282,10 @@ public final class MarginMomentConductor {
         }
     }
 
-    private func finishVoice() {
+    private func finishVoice(reachedEnd: Bool = false) {
+        let ended = sequence.playing
         stopVoice()
+        if let ended { onVoiceEnded?(ended, reachedEnd) }
         let advance = sequence.marginFinished(sourceAtMediaTimeMs: lastObservedMs)
         onChange?()
         switch advance {
@@ -300,13 +321,20 @@ public final class MarginMomentConductor {
         isVoicePaused = false
     }
 
+    /// Test seam (#4711): hands the playing voice's delegate the finish the system would, with the given flag, since a
+    /// real player can't be made to report an unsuccessful finish on demand.
+    func deliverVoiceFinishForTesting(successfully: Bool) {
+        guard let voice, let voiceDelegate else { return }
+        voiceDelegate.audioPlayerDidFinishPlaying(voice, successfully: successfully)
+    }
+
     private enum VoiceError: Error { case didNotStart }
 
     private final class VoiceDelegate: NSObject, AVAudioPlayerDelegate, @unchecked Sendable {
-        let finished: @Sendable () -> Void
-        init(finished: @escaping @Sendable () -> Void) { self.finished = finished }
-        func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { finished() }
-        func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) { finished() }
+        let finished: @Sendable (_ reachedEnd: Bool) -> Void
+        init(finished: @escaping @Sendable (_ reachedEnd: Bool) -> Void) { self.finished = finished }
+        func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { finished(flag) }
+        func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) { finished(false) }
     }
 }
 #endif

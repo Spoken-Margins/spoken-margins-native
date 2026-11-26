@@ -30,24 +30,30 @@ extension Gate1AppModel {
     func bootstrapLibraryIfNeeded() {
         guard pendingUITestingSeed != nil || (libraryItems.isEmpty && store == nil) else { return }
         SessionShareFiles.removeLeftovers() // files of a multi-session share whose sheet died with the app (#1528)
+        removeInterruptedPDFOriginalWrites() // temporary files of an original PDF a quit cut short (#4338)
         do {
             let store = try requireStore()
             libraryAccessError = nil
             purgeExpiredEpisodeMapPreparationJobs(store: store)
+            finishInterruptedPermanentDeletes(store: store)
             let seed = pendingUITestingSeed ?? UITestingLaunchSeed.none; pendingUITestingSeed = nil
             switch seed {
             case .none: break
             case .keepLibrary:
                 try UITestingLaunchSeedWriter.importCoopLayerIfRequested(into: store)
                 try UITestingLaunchSeedWriter.markListenerMarginSharedIfRequested(into: store)
+                try UITestingLaunchSeedWriter.seedFollowedShowIfRequested(into: store)
             case .firstRun: try store.reset() // then the launch goes on as a new install's does
             case .fixture: resetAndSeed(); return
             case .importedPDF: resetAndSeed(); try importObsidianMarkdownFiles(urls: [UITestingLaunchSeedWriter.writePDF()]); return
             case .text, .offlinePodcast:
-                try seedUITesting(store: store, item: UITestingLaunchSeedWriter.write(seed, into: store)); return
+                let seeded = try UITestingLaunchSeedWriter.write(seed, into: store)
+                try UITestingLaunchSeedWriter.seedFollowedShowIfRequested(into: store)
+                try seedUITesting(store: store, item: seeded); return
             }
             var rows = try loadLibraryRows(store: store)
             libraryWasEmptyAtLaunch = rows.isEmpty
+            if !UITestingHooks.suppressesFirstRun { runHeardFirstMarginMigration(libraryWasEmptyAtLaunch: rows.isEmpty) }
             let storedWelcomeSampleVersion = UserDefaults.standard.integer(
                 forKey: Self.welcomeSampleSeedVersionKey
             )
@@ -88,12 +94,15 @@ extension Gate1AppModel {
             // manifest from an obsolete voice or model identity.
             // The Recently Deleted rows come from this same read: the snapshot already holds deleted items, so a
             // second `listDeletedItemSummaries` pass would read the whole item table again (#2508).
-            let launchData = try LibraryReadSnapshot.read(store: store, hiddenSenders: hiddenSenders.current)
+            let launchData = settleCollectionImports( // an import ended mid-way is settled before the first draw (#3769)
+                try LibraryReadSnapshot.read(store: store, hiddenSenders: hiddenSenders.current), store: store)
             rows = LibraryRowBuilder.rows(from: launchData, context: startupAudioContext)
             let deletedRows = Self.recentlyDeletedRows(from: launchData)
-            try reconcileOnboardingEvidence(items: launchData.liveItems, store: store)
+            let hadMargin = try reconcileOnboardingEvidence(items: launchData.liveItems, store: store)
+            WatchReturnToAppTipNotice.shared.noteLibraryLoaded(hadMargin: hadMargin)
             try recoverInterruptedAIJobs(store: store); settleOrphanedTranscriptions(store: store)
             libraryItems = rows
+            if let stored = launchData.collections { libraryCollections.publish(stored, folders: launchData.libraryFolders) }
             recentlyDeletedItems = deletedRows
             let availableItemIDs = Set(rows.map(\.id))
             var writtenMarginNotice: String?
@@ -179,7 +188,10 @@ extension Gate1AppModel {
             try store.reset()
             let item = try loadFixtureItem(name: "text-with-listening-map")
             let map = try loadFixtureMap(name: "valid-listening-map")
-            try store.seed(item: item)
+            let fillers = UITestingLaunchSeed.libraryFillerItems(
+                count: UITestingHooks.libraryFillerCount, fixtureAddedAt: item.createdAt ?? Date()
+            )
+            for seeded in [item] + fillers { try store.seed(item: seeded) }
             try store.seed(map: map)
             self.store = store
             try configurePodcastDownloads(store: store)
@@ -192,10 +204,11 @@ extension Gate1AppModel {
             selectedItem = try loadItemDetail(id: item.id, store: store)
             diagnostics = [
                 "runtimeProfile": selectedProfileId,
-                "seededItems": "1",
+                "seededItems": String(1 + fillers.count),
                 "database": databaseURL.lastPathComponent
             ]
             exportPreview = ""
+            exportSpokenNoteFootnote = nil
             refreshMarginRowsInBackground()
             tryRefreshOfflineStorageUsage()
             reportSuccess("Listening queue ready.")

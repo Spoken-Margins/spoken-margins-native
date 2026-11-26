@@ -16,6 +16,7 @@ import { MiniPlayer, NowPlaying } from './screens/NowPlaying.tsx';
 import { Settings } from './screens/Settings.tsx';
 import { useNativeOpenedFiles } from './native-files.ts';
 import { useLaunchedFiles, useSharedFiles } from './shared-files.ts';
+import { SearchProvider, useClearSearches } from './search.tsx';
 import { UiProvider } from './ui.tsx';
 
 type Tab = 'library' | 'following' | 'margins' | 'settings';
@@ -35,6 +36,8 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
   const [tab, setTabState] = useState<Tab>(tabFromHash);
   const [nowPlaying, setNowPlaying] = useState(false);
   const [followOpen, setFollowOpen] = useState(false);
+  // The name a Following search found nothing for, which the Follow sheet opens looking for.
+  const [followQuery, setFollowQuery] = useState<string>();
   const [dropping, setDropping] = useState(false);
   // Where the last opened file left the listener, so Now Playing can offer to start there (#3039).
   const [landing, setLanding] = useState<Landing>();
@@ -51,10 +54,13 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
   }, []);
 
   const openPlayer = useCallback(() => setNowPlaying(true), []);
+  const clearSearches = useClearSearches();
   const landed = useCallback((at: Landing) => {
+    // Something new came in: an old search must not hide it once Now Playing closes.
+    clearSearches();
     setLanding(at);
     setNowPlaying(true);
-  }, []);
+  }, [clearSearches]);
   const openMarginFile = useOpenMarginFile(landed);
   // Every way a file arrives goes through the same unpacking, so a backup `.zip` shared to the installed app, or
   // opened with the Android app, opens its packets as a picked one does.
@@ -88,7 +94,15 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
 
   // The tab's title names where the listener is, so a screen reader or the tab switcher can tell (WCAG 2.4.2).
   const player = usePlayer();
-  const playingTitle = nowPlaying ? player.episode?.title : undefined;
+  // Now Playing shows only when there is an episode for it to show. A tap on a post whose voice isn't found, a paid post,
+  // a refused relay or a dead page opens nothing, and then the page behind must stay usable: Now Playing makes the tabs
+  // and the content inert, so one that drew nothing would freeze the whole page (#4433). Asked for while the voice is
+  // being looked up, it shows when the episode arrives; asked for and nothing came, the request is dropped.
+  const nowPlayingShown = nowPlaying && player.episode !== undefined;
+  useEffect(() => {
+    if (nowPlaying && player.episode === undefined && !player.loading) setNowPlaying(false);
+  }, [nowPlaying, player.episode, player.loading]);
+  const playingTitle = nowPlayingShown ? player.episode?.title : undefined;
   useEffect(() => {
     if (arriving) return;
     const label = TABS.find((t) => t.id === tab)?.label ?? 'Library';
@@ -105,7 +119,7 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
       }}
       onDrop={onDrop}
     >
-      <nav className="tabbar" aria-label="Sections" inert={nowPlaying || arriving}>
+      <nav className="tabbar" aria-label="Sections" inert={nowPlayingShown || arriving}>
         <span className="brand" aria-hidden="true">
           <img src="./icons/icon.svg" alt="" width="28" height="28" />
           Spoken Margins
@@ -117,7 +131,7 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
           </button>
         ))}
       </nav>
-      <main className="content" inert={nowPlaying || arriving}>
+      <main className="content" inert={nowPlayingShown || arriving}>
         {tab === 'library' && (
           <Library
             onPlay={openPlayer}
@@ -126,15 +140,31 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
               setTab('following');
               setFollowOpen(true);
             }}
+            onGoFollowing={() => setTab('following')}
           />
         )}
-        {tab === 'following' && <Following onPlay={openPlayer} followOpen={followOpen} setFollowOpen={setFollowOpen} />}
+        {tab === 'following' && (
+          <Following
+            onPlay={openPlayer}
+            followOpen={followOpen}
+            setFollowOpen={(open) => {
+              setFollowOpen(open);
+              // Every way the sheet closes passes here, so a later "Follow a show" opens with an empty field.
+              if (!open) setFollowQuery(undefined);
+            }}
+            followQuery={followQuery}
+            onLookFor={(query) => {
+              setFollowQuery(query);
+              setFollowOpen(true);
+            }}
+          />
+        )}
         {tab === 'margins' && <Margins onPlay={openPlayer} onOpenFile={openMarginFile} onOpenLink={openShareLink} />}
         {tab === 'settings' && <Settings />}
       </main>
-      {!nowPlaying && !arriving && <MiniPlayer onOpen={openPlayer} />}
+      {!nowPlayingShown && !arriving && <MiniPlayer onOpen={openPlayer} />}
       {arriving && <Arrival link={launchLink} onDone={arrived} />}
-      {nowPlaying && (
+      {nowPlayingShown && (
         <NowPlaying
           landing={landing}
           onClose={() => {
@@ -157,9 +187,11 @@ export function App({ launchLink = { kind: 'none' } }: { launchLink?: ParsedLink
     <UiProvider>
       <DataProvider>
         <FeedRefreshProvider>
-          <PlayerProvider>
-            <Shell launchLink={launchLink} />
-          </PlayerProvider>
+          <SearchProvider>
+            <PlayerProvider>
+              <Shell launchLink={launchLink} />
+            </PlayerProvider>
+          </SearchProvider>
         </FeedRefreshProvider>
       </DataProvider>
     </UiProvider>

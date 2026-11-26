@@ -28,14 +28,4 @@ final class HangTelemetryTests: XCTestCase {
         XCTAssertEqual(outcomes, ["accepted", "already_dismissing"])
         XCTAssertEqual(events(model, kind: "miniPlayer.close").count, 2, "both taps are still logged")
     }
-
-    func testAStatusChangeAfterATapIsLoggedWithItsDelay() {
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
-        model.hangTelemetry.noteTap(command: "togglePlayPause", status: "paused")
-        let answer = model.hangTelemetry.statusChanged(to: "playing")
-        XCTAssertEqual(answer?["from"], "paused")
-        XCTAssertEqual(answer?["to"], "playing")
-        XCTAssertNotNil(answer?["tapToStateMs"].flatMap(Int.init))
-        XCTAssertNil(model.hangTelemetry.statusChanged(to: "paused"), "one answer per tap")
-    }
 }

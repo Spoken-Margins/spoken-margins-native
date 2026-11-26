@@ -14,6 +14,15 @@ struct ExperienceShowScreen: View {
     @State private var lookedAtOnOpen: Date?
     /// Built off the main thread when the entries reload; `body` only reads it.
     @State private var episodes: [FollowingShowEpisode] = []
+    /// The Up next card (#3863): `FollowingUpNext.pick`, the episode the Following row's ▶ plays. Built with `episodes`.
+    @State private var upNext: ShowUpNext?
+    /// The Library's size when this screen last looked, so a change reads the entries again (see the task below).
+    @State private var libraryCountSeen: Int?
+    /// The follow lists (#4046): the Lists row's value, and the sheet it opens.
+    @ObservedObject private var listsState = FollowListsState.shared
+    @State private var isShowingLists = false
+    /// "Skipped by your rules" starts collapsed each time the screen opens (#4046 PR 10b).
+    @State private var isShowingSkipped = false
 
     init(subscriptionID: String, lookedAtOnOpen: Date?, artwork: FollowingArtworkCache) {
         self.subscriptionID = subscriptionID
@@ -38,28 +47,112 @@ struct ExperienceShowScreen: View {
         .accessibilityIdentifier("show.screen")
         .onAppear { if subscription != nil { model.markShowLooked(id: subscriptionID) } }
         .onDisappear { if subscription != nil { model.markShowLooked(id: subscriptionID) } }
+        // Add and Play on the Up next card change what the Library holds while this screen is up. The reload that Following's
+        // own screen runs on that change may not run while it is covered, so this screen asks too; the card then flips to
+        // "In your Library" (#3863). The first value is only noted: opening the screen reads nothing extra.
+        .task(id: model.libraryItems.count) {
+            defer { libraryCountSeen = model.libraryItems.count }
+            guard let seen = libraryCountSeen, seen != model.libraryItems.count else { return }
+            await model.reloadFollowingShowEntries()
+        }
         .task(id: model.followingShowRevision) {
             guard let subscription else { return }
+            // The library state is read here with the entries: both are set together, under the revision this task keys on.
             let entries = model.followingShowEntries, looked = lookedAtOnOpen
-            episodes = await Task.detached(priority: .userInitiated) {
-                FollowingShowRows.episodes(of: subscription, in: entries, lookedAt: looked)
+            let library = model.followingLibraryEpisodes, rate = model.speechPlaybackRateMultiplier
+            let inputs = model.followingRuleInputs
+            let built = await Task.detached(priority: .userInitiated) { () -> ([FollowingShowEpisode], ShowUpNext?) in
+                // The same evaluator the Following rows read (#4046): the card never names an episode a rule set aside.
+                let rules = FollowingRuleEvaluation.evaluate(
+                    subscriptions: [subscription], entries: entries, inputs: inputs, libraryEpisodes: library)
+                let setAside = rules.outcome(for: subscription.id).setAside
+                let card = FollowingUpNext.card(
+                    entries: entries.filter { $0.subscriptionId == subscription.id && !setAside.contains($0.id) },
+                    libraryEpisodes: library)
+                return (
+                    FollowingShowRows.episodes(of: subscription, in: entries, lookedAt: looked, rules: rules),
+                    card.map { ShowUpNext(card: $0, rate: rate) })
             }.value
+            episodes = built.0
+            upNext = built.1
         }
     }
 
     private func content(for subscription: FeedSubscription) -> some View {
         let title = FollowingShowRows.displayTitle(of: subscription)
         let newCount = subscription.state == .muted ? 0 : episodes.filter(\.isNew).count
+        // The Up next episode is on the card, so the list leaves it out; "N new" still counts it. Episodes a rule skipped go
+        // to their own collapsed group at the bottom (#4046 PR 10b).
+        let listed = episodes.filter { $0.id != upNext?.card.entry.id && $0.skippedWord == nil }
+        let skipped = episodes.filter { $0.skippedWord != nil }
         return List {
-            headerRows(for: subscription, title: title)
-            Section {
-                if episodes.isEmpty {
-                    Text("No episodes yet. Pull down on Following to look for new ones.")
-                        .font(.subheadline)
-                        .foregroundStyle(AppColors.secondaryText)
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
+            headerRow(for: subscription, title: title)
+            listsRow(for: subscription)
+            if let upNext {
+                ShowUpNextCard(upNext: upNext)
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
+            }
+            settingsRows(for: subscription)
+            // When the card holds the show's only episode there is nothing left to list, so no empty Episodes header; nor
+            // when every other episode was skipped by a rule, which the Skipped group below lists (PR 10b audit).
+            if !listed.isEmpty || (upNext == nil && skipped.isEmpty) {
+                Section {
+                    if listed.isEmpty && skipped.isEmpty {
+                        Text("No episodes yet. Pull down on Following to look for new ones.")
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
+                    }
+                    ForEach(listed) { episode in
+                        episodeRow(episode)
+                            .listRowInsets(EdgeInsets(
+                                top: 0,
+                                leading: horizontalSizeClass == .regular ? 28 : 16,
+                                bottom: 0,
+                                trailing: horizontalSizeClass == .regular ? 28 : 16
+                            ))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(AppColors.bone)
+                    }
+                } header: {
+                    HStack {
+                        Text("Episodes")
+                            .font(.headline)
+                            .foregroundStyle(AppColors.text)
+                        Spacer()
+                        if newCount > 0 {
+                            Text("\(newCount) new")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                    }
+                    .textCase(nil)
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
                 }
-                ForEach(episodes) { episode in
+            }
+            if !skipped.isEmpty {
+                skippedSection(skipped)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .listStyle(.plain)
+        .refreshable { await model.pullToRefreshFollowing() }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await model.reloadFollowLists() }
+        .trackedSheet(isPresented: $isShowingLists) {
+            FollowListPickerSheet(subscription: subscription)
+                .environmentObject(model)
+        }
+    }
+
+    /// "Skipped by your rules (<n>)", collapsed, with **Show** (#4046 PR 10b). Each row says which word skipped it, and its
+    /// menu's **Hear it anyway** does what tapping the row does. Nothing here changes a rule.
+    @ViewBuilder
+    private func skippedSection(_ skipped: [FollowingShowEpisode]) -> some View {
+        Section {
+            if isShowingSkipped {
+                ForEach(skipped) { episode in
                     episodeRow(episode)
                         .listRowInsets(EdgeInsets(
                             top: 0,
@@ -70,32 +163,54 @@ struct ExperienceShowScreen: View {
                         .listRowSeparator(.hidden)
                         .listRowBackground(AppColors.bone)
                 }
-            } header: {
-                HStack {
-                    Text("Episodes")
-                        .font(.headline)
-                        .foregroundStyle(AppColors.text)
-                    Spacer()
-                    if newCount > 0 {
-                        Text("\(newCount) new")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(AppColors.secondaryText)
-                    }
-                }
-                .textCase(nil)
-                .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
             }
+        } header: {
+            HStack {
+                Text(ListeningRuleScreens.skippedHeader(count: skipped.count))
+                    .font(.headline)
+                    .foregroundStyle(AppColors.text)
+                Spacer()
+                Button { isShowingSkipped.toggle() } label: {
+                    Text(isShowingSkipped ? "Hide" : "Show").minimumTapTarget()
+                }
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityLabel(isShowingSkipped ? "Hide skipped episodes" : "Show skipped episodes")
+                    .accessibilityIdentifier("show.skipped.toggle")
+            }
+            .textCase(nil)
+            .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
         }
-        .scrollContentBackground(.hidden)
-        .listStyle(.plain)
-        .refreshable { await model.pullToRefreshFollowing() }
-        .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
     }
 
-    /// Each control is its own list row, so a tap on one can never reach another (Unfollow in particular).
+    /// "Lists", the lists this show is in ("News, Commute", or "None") and a chevron. It opens "Lists for <show>" (#4046).
     @ViewBuilder
-    private func headerRows(for subscription: FeedSubscription, title: String) -> some View {
+    private func listsRow(for subscription: FeedSubscription) -> some View {
+        Button { isShowingLists = true } label: {
+            HStack(spacing: 8) {
+                Text("Lists")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(AppColors.text)
+                Spacer(minLength: 8)
+                Text(FollowListWords.rowValue(listsState.lists(containing: subscription)))
+                    .font(.body)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .multilineTextAlignment(.trailing)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityHidden(true)
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Choose which lists this show is in.")
+        .accessibilityIdentifier("show.lists")
+        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+    }
+
+    @ViewBuilder
+    private func headerRow(for subscription: FeedSubscription, title: String) -> some View {
         HStack(spacing: 14) {
             ShowArtworkView(url: artwork.artworkURL(for: subscription.id), title: title, size: 72)
             VStack(alignment: .leading, spacing: 4) {
@@ -110,6 +225,11 @@ struct ExperienceShowScreen: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
+    }
+
+    /// Each control is its own list row, so a tap on one can never reach another (Unfollow in particular).
+    @ViewBuilder
+    private func settingsRows(for subscription: FeedSubscription) -> some View {
         // Quiet: the show sinks to Following's collapsed group, stops counting new episodes and stops
         // appearing in the New list. It is still followed and its episodes are still listed here.
         Toggle(isOn: Binding(
@@ -147,6 +267,18 @@ struct ExperienceShowScreen: View {
         .accessibilityHint("Stops following this show. Everything already in your Library is kept. You can undo right after.")
         .accessibilityIdentifier("show.unfollow")
         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+        // Not for me (#4285): unfollows, then stops the show being suggested on this iPhone. Its own row, in the
+        // same style, so a tap can never reach Unfollow.
+        Button(role: .destructive) {
+            model.notForMeShow(subscription)
+        } label: {
+            Label(FollowingDismissMessages.notForMeTitle, systemImage: FollowingDismissMessages.notForMeSystemImage)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .buttonStyle(.borderless)
+        .accessibilityHint(CatalogPackWords.showNotForMeHint)
+        .accessibilityIdentifier(CatalogPackWords.showNotForMeIdentifier)
+        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
     }
 
     /// A waiting episode keeps the row actions Following's stream had: add, play now, dismiss. A played one is
@@ -156,7 +288,8 @@ struct ExperienceShowScreen: View {
         if episode.isInLibrary {
             InLibraryEpisodeRow(episode: episode, itemId: model.followingLibraryEpisodes[episode.entry.id]?.itemID)
         } else {
-            SourceInboxRow(candidate: .followedSource(episode.entry), artwork: artwork)
+            SourceInboxRow(candidate: .followedSource(episode.entry), artwork: artwork,
+                           skippedWord: episode.skippedWord, isPick: episode.isPick, offersShowLess: episode.skippedWord == nil)
         }
     }
 }

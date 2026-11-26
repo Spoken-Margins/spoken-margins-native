@@ -52,11 +52,9 @@ final class LiveSessionBoard: ObservableObject {
 /// The Live row at the top of the Library: one line per unsaved session, the running one first. Tapping a line opens
 /// that session's screen. Slice 1a keeps it simple; grouping a day's Mark-only quick sessions comes later.
 struct LiveSessionLiveRows: View {
-    @EnvironmentObject private var model: Gate1AppModel
     @ObservedObject private var board: LiveSessionBoard
-    /// The session whose screen is open over the Library.
-    @State private var openedId: String?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.liveSessionWindow) private var window
     @ScaledMetric(relativeTo: .title3) private var glyphWidth: CGFloat = 28
 
     private static let shownRows = 3
@@ -70,7 +68,9 @@ struct LiveSessionLiveRows: View {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(board.rows.prefix(Self.shownRows)) { row in
                     AdaptiveStack(spacing: 8, wrapsText: true) {
-                        Button { openedId = row.id } label: { line(row) }
+                        // The root presents the screen, not this row: a list re-hosts its rows, and a cover on a row was
+                        // presented again each time, as a new screen (#4091). This window's root only, not every window's.
+                        Button { LiveSessionLinkRouter.shared.openScreen(sessionId: row.id, window: window) } label: { line(row) }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("library.liveRow.\(row.id)")
                         if let until = row.resumableUntil { resumeButton(row, until: until) }
@@ -82,7 +82,6 @@ struct LiveSessionLiveRows: View {
                         .foregroundStyle(AppColors.secondaryText)
                 }
             }
-            .background { LiveSessionCoverHost(model: model, sessionId: $openedId).equatable() }
         }
     }
 
@@ -142,42 +141,5 @@ struct LiveSessionLiveRows: View {
         if row.isRunning { return "Running since \(started) · \(count)" }
         let ended = (row.endedAt ?? row.startedAt).formatted(date: .abbreviated, time: .shortened)
         return row.isQuick ? "\(count) · last at \(ended)" : "Ended \(ended) · \(count) · not saved yet"
-    }
-}
-
-/// Holds the Live row's session screen in a view the Library's redraws do not reach (#4091). The Library redraws on
-/// every model publish while an item is loaded, and a cover on the row itself re-ran its presentation with each one.
-/// The screen's own `.equatable()` already stops those reruns at the screen; this host is a guard on the presentation
-/// too, as the play queue sheet's host is (#3891). It is equal to its last copy unless the session changes, so SwiftUI
-/// skips it and leaves the presentation alone.
-struct LiveSessionCoverHost: View, Equatable {
-    let model: Gate1AppModel
-    @Binding var sessionId: String?
-    /// The session open when this copy was made, for `==`: the binding itself is read on the main actor only.
-    private let openedId: String?
-
-    private struct Opened: Identifiable {
-        let id: String
-    }
-
-    init(model: Gate1AppModel, sessionId: Binding<String?>) {
-        self.model = model
-        _sessionId = sessionId
-        openedId = sessionId.wrappedValue
-    }
-
-    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.model === rhs.model && lhs.openedId == rhs.openedId
-    }
-
-    var body: some View {
-        #if DEBUG
-        let _ = ScreenRedrawProbe.record("liveSessionCoverHost")
-        #endif
-        // The binding writes the row's own state, so an older copy of this closure still closes the screen.
-        Color.clear
-            .fullScreenCover(item: Binding(get: { sessionId.map { Opened(id: $0) } }, set: { sessionId = $0?.id })) { opened in
-                LiveSessionView(model: model, sessionId: opened.id).equatable()
-            }
     }
 }

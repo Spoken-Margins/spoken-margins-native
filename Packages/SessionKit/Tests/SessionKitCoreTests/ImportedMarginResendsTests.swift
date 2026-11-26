@@ -225,6 +225,59 @@ final class ImportedMarginResendsTests: XCTestCase {
         XCTAssertEqual(try graph().threads.values.map(\.count), [3])
     }
 
+    // MARK: A friend with no name (#5337)
+    // A friend who never set a name sends no label, only their phone's random sender id. Each replies packet carries
+    // every reply so far; without the id as the sender, each one added all the earlier replies again, and catch-up
+    // replayed them.
+
+    private let otherPhone = "99887766554433221100ffeeddccbbaa"
+
+    func testANamelessFriendsCumulativeRepliesAddOnlyTheNewReply() throws {
+        let link = MarginReplyLink.replying(to: id("O", "O-1"), parentConversationId: nil)
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)]))
+        _ = try send(packet("R1", from: nil, [("reply one", 60_000)], links: [link], person: "Ben"), senderId: sender)
+        let first = try XCTUnwrap(margins().first { $0.approvedTranscript == "reply one" })
+        let heardAt = clock
+        _ = try store.markImportedCommentaryInterjectionHeard(id: first.id, at: heardAt)
+
+        let round2 = packet("R2", from: nil, [("reply one", 60_000), ("reply two", 90_000)], links: [link], person: "Ben")
+        guard case .imported(_, let ids) = try send(round2, senderId: sender) else { return XCTFail("reply two is new") }
+        XCTAssertEqual(ids.count, 1, "only reply two arrives")
+        let round3 = packet("R3", from: nil, [("reply one", 60_000), ("reply two", 90_000), ("reply three", 120_000)], links: [link], person: "Ben")
+        _ = try send(round3, senderId: sender)
+
+        let replies = try margins().filter { $0.approvedTranscript.hasPrefix("reply") }
+        XCTAssertEqual(replies.map(\.approvedTranscript).sorted(), ["reply one", "reply three", "reply two"], "each reply held once")
+        XCTAssertEqual(replies.first { $0.approvedTranscript == "reply one" }?.firstHeardAt, heardAt, "the heard reply stays heard")
+        XCTAssertEqual(replies.filter(\.isNewToListener).map(\.approvedTranscript).sorted(), ["reply three", "reply two"])
+        // Reply one is known by all three packets.
+        XCTAssertEqual(try identities(of: "reply one").map(\.packageDigest), ["R1", "R2", "R3"])
+        // The same packet opened again adds nothing.
+        XCTAssertFalse(try send(round3, senderId: sender).isImported)
+    }
+
+    func testAFriendWhoClearsTheirNameIsStillTheSameSender() throws {
+        _ = try send(packet("O", from: "Ben", [("one", 60_000)]), senderId: sender)
+        XCTAssertTrue(try send(packet("U", from: nil, [("one", 60_000), ("two", 90_000)], person: "Ben"), senderId: sender).isImported)
+        XCTAssertEqual(try margins().map(\.approvedTranscript).sorted(), ["one", "two"])
+    }
+
+    func testANamelessPacketWithoutASenderIdIsStillImportedWhole() throws {
+        _ = try send(packet("O", from: nil, [("one", 60_000)], person: "Ben"), senderId: sender)
+        _ = try send(packet("U", from: nil, [("one", 60_000)], person: "Ben"))
+        XCTAssertEqual(try margins().count, 2, "nothing ties a packet with no label and no id to anyone")
+    }
+
+    func testAnotherPhonesSenderIdDoesNotMergeANamelessFriendsMargins() throws {
+        _ = try send(packet("O", from: nil, [("one", 60_000)], person: "Ben"), senderId: sender)
+        // The same words and place from someone else's capture: another token, so another Margin.
+        _ = try send(packet("U", from: nil, [("one", 60_000)], person: "Mallory"), senderId: otherPhone)
+        XCTAssertEqual(try margins().count, 2)
+        // Even under Ben's id, Mallory's capture is not Ben's Margin: the token decides, never the id alone.
+        _ = try send(packet("V", from: nil, [("one", 60_000)], person: "Mallory"), senderId: sender)
+        XCTAssertEqual(try margins().count, 3)
+    }
+
     // MARK: Storage
 
     func testAMarginThatArrivedOnceHasNoPacketAliases() throws {
@@ -492,6 +545,73 @@ final class ImportedMarginResendsTests: XCTestCase {
         XCTAssertNil(held.senderReadAloud)
         XCTAssertEqual(held.readsAloud, false)
         XCTAssertEqual(held.alsoSharedAs?.count, 1)
+    }
+
+    // MARK: The sender's run-up length on a re-sent Margin (#4171)
+
+    func testAResentMarginTakesTheSendersNewLeadIn() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)]))
+        XCTAssertNil(try XCTUnwrap(margins().first).senderLeadInMs)
+        _ = try send(packet("U", from: "Ada", [("one", 60_000)], leadInMs: 60_000))
+        let held = try margins()
+        XCTAssertEqual(held.count, 1, "A change of length must not make a second copy")
+        XCTAssertEqual(held.first?.senderLeadInMs, 60_000)
+        XCTAssertNotNil(held.first?.senderLeadInAt, "A change is stamped")
+        XCTAssertEqual(held.first?.alsoSharedAs, [id("U", "U-1")], "The alias is added in the same pass")
+        XCTAssertNil(held.first?.senderReadAloud, "The read-aloud choice is a separate thing")
+    }
+
+    /// The sender's app writes no key for the 20 s default, so a re-share that only repeats an earlier Margin must not
+    /// cancel an earlier length.
+    func testAResendWithNoLeadInKeepsTheEarlierLength() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)], leadInMs: 120_000))
+        _ = try send(packet("U", from: "Ada", [("one", 60_000), ("two", 90_000)]))
+        let held = try margins().first { $0.approvedTranscript == "one" }
+        XCTAssertEqual(held?.senderLeadInMs, 120_000)
+        XCTAssertNil(held?.senderLeadInAt, "Nothing changed, so nothing is stamped")
+        XCTAssertEqual(try margins().count, 2)
+    }
+
+    /// Re-shared at 20 sec after a minute: the sender's app writes 20 000 out loud, and the copy comes back to 20 s.
+    func testASenderTakingTheLengthBackToTwentySecondsResetsTheHeldCopy() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)], leadInMs: 60_000))
+        _ = try send(packet("U", from: "Ada", [("one", 60_000)], leadInMs: SenderLeadIn.defaultMs))
+        XCTAssertEqual(try XCTUnwrap(margins().first).senderLeadInMs, SenderLeadIn.defaultMs)
+        XCTAssertEqual(try margins().count, 1)
+    }
+
+    func testTheSameLeadInAgainChangesNothing() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)], leadInMs: 45_000))
+        _ = try send(packet("U", from: "Ada", [("one", 60_000)], leadInMs: 45_000))
+        let held = try XCTUnwrap(margins().first)
+        XCTAssertEqual(held.senderLeadInMs, 45_000)
+        XCTAssertNil(held.senderLeadInAt, "Only a change is stamped")
+    }
+
+    /// Unlike the read-aloud choice, a spoken Margin has a run-up too, and the listener has no choice of their own
+    /// that beats the sender's.
+    func testARecordedMarginFollowsTheSendersLeadInToo() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)], voiceMs: 4_000, recording: true))
+        _ = try send(packet("U", from: "Ada", [("one", 60_000)], voiceMs: 4_000, recording: true, leadInMs: 30_000))
+        XCTAssertEqual(try XCTUnwrap(margins().first).senderLeadInMs, 30_000)
+    }
+
+    func testACopyLoadedBeforeTheLeadInResendCannotUndoIt() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)]))
+        var stale = try XCTUnwrap(margins().first)
+        _ = try send(packet("U", from: "Ada", [("one", 60_000)], leadInMs: 60_000))
+        stale.firstHeardAt = clock // the app saves a stale copy after the resend, as a hearing would
+        try store.saveImportedCommentaryInterjection(stale)
+        let held = try XCTUnwrap(margins().first)
+        XCTAssertEqual(held.senderLeadInMs, 60_000, "A stale save mustn't undo the newer length")
+        XCTAssertNotNil(held.firstHeardAt)
+    }
+
+    func testALeadInChangeNeverMergesTwoSendersOrMakesACopy() throws {
+        _ = try send(packet("O", from: "Ada", [("one", 60_000)], leadInMs: 60_000))
+        _ = try send(packet("U", from: "Bea", [("one", 60_000)], person: "Bea", leadInMs: 10_000))
+        XCTAssertEqual(try margins().count, 2, "Another person's identical words are another Margin")
+        XCTAssertEqual(Set(try margins().map(\.senderLeadInMs)), [60_000, 10_000])
     }
 
     func testACopyLoadedBeforeTheResendCannotUndoTheFlip() throws {
@@ -766,7 +886,7 @@ final class ImportedMarginResendsTests: XCTestCase {
     private func packet(
         _ digest: String, from label: String?, _ margins: [(String, Int)],
         voiceMs: Int? = nil, evidence: [String] = [], itemId: String? = "item-1", links: [MarginReplyLink] = [], provenance: Bool = true, person: String? = nil, readAloud: Bool? = nil, recording: Bool = false,
-        place: PortableAnchorEvidence? = nil
+        leadInMs: Int? = nil, place: PortableAnchorEvidence? = nil
     ) -> Packet {
         var occurrences: [Int: Int] = [:]
         return Packet(
@@ -788,7 +908,8 @@ final class ImportedMarginResendsTests: XCTestCase {
                     audioDurationMs: voiceMs,
                     replyLinks: links.isEmpty ? nil : links,
                     shareProvenance: provenance ? captureOrigins[capture] : nil,
-                    senderReadAloud: readAloud
+                    senderReadAloud: readAloud,
+                    senderLeadInMs: leadInMs
                 )
             },
             links: links

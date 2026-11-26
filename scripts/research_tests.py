@@ -38,6 +38,7 @@ PYTHON_SUITES = (
     ('python research/D3', 'research/D3', ('discover', '-s', 'tests')),
     ('python research/C1/tools test_net', 'research/C1/tools', ('test_net',)),
     ('python research/C1/tools test_groundtruth', 'research/C1/tools', ('test_groundtruth',)),
+    ('python research/C1/tools test_marker_diff', 'research/C1/tools', ('test_marker_diff',)),
 )
 # Packages from research/C1/requirements.txt and requirements-dev.txt. A suite that can't import one is
 # skipped by name; any other missing module is a real failure.
@@ -45,7 +46,7 @@ THIRD_PARTY = ('lxml', 'regex', 'fitz', 'pdfminer', 'jsonschema')
 # Suites in the research folders that need packages or models this runner does not install.
 NOT_COVERED = (
     ('python research/C1/tools (test_i14, test_score, test_precheck, test_chapters)',
-     'they need the packages in research/C1/requirements.txt (pymupdf, regex, ...)'),
+     'they need the packages in research/C1/requirements.txt (pymupdf, pdfminer, ...)'),
     ('python research/C2/frontend', 'it needs research/C2/.venv with the speech engines installed'),
 )
 
@@ -138,10 +139,13 @@ def python_suite(root, label, folder, arguments):
 
 
 # Deploy test scripts that print "N passed" last: the rollback path, and the host check for kept visitor
-# addresses (#2034), which must stay read-only and print no address.
+# addresses (#2034), which must stay read-only and print no address, and the non-root deploy's sudo wrapper and its
+# two on-box scripts (#2478), and the same wrapper under the Dial gate and bandwidth check deploys (#4848).
 COUNTED_SHELL_SUITES = (
     'research/B4/deploy/test-server-rollback.sh',
     'research/B4/deploy/test-check-visitor-ips.sh',
+    'research/B4/deploy/test-remote-root.sh',
+    'ops/test-remote-root-deploys.sh',
 )
 
 

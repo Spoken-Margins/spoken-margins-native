@@ -18,6 +18,8 @@ extension Gate1AppModel {
         case needsChoice
         /// Nothing was followed. The line says why; the sheet shows it, because the app's banner sits behind a sheet.
         case stopped(String?)
+        /// The link is a list of shows (#4046 PR 7a): the sheet opens its "Add <list>" preview.
+        case list(URL)
     }
 
     /// Paste on the Follow sheet: a copied link is followed with no further tap.
@@ -48,6 +50,15 @@ extension Gate1AppModel {
 
     private func followLinkWithUndo(_ link: String) async -> FollowLinkOutcome {
         guard !link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .stopped(nil) }
+        // A list of shows opens its preview. Anything else, including a page that names a feed, follows as it always did,
+        // and an address that didn't answer gets the follow path's own words (#4046 PR 7a).
+        if let url = ListLinkWords.webURL(link) {
+            let session = ListLinkTransport.makeSession()
+            let kind = await ListLinkProbe.probe(url, session: session)
+            // A session with a delegate lives until it is invalidated.
+            session.finishTasksAndInvalidate()
+            if kind == .list { return .list(url) }
+        }
         return await perform { [weak self] coordinator in
             let candidates = try await coordinator.discover(urlString: link)
             self?.diagnostics["followedSourceNetworkHosts"] = DiagnosticsHostRedaction.hostCount(await coordinator.contactedHosts)
@@ -73,6 +84,7 @@ extension Gate1AppModel {
                 reportConfirmation(Self.chooseFeedMessage, fileID: fileID, line: line)
                 return .needsChoice
             }
+            await loadNotForMe() // a refollow must see the marks (#4285)
             let subscription = try await coordinator.follow(candidate: candidate)
             await publishFeedSubscriptionsAfterChange()
             followedSourceCandidates = []
@@ -90,7 +102,7 @@ extension Gate1AppModel {
                 FollowPasteDecision.followedMessage(showTitle: title, wasAlreadyFollowed: wasAlreadyFollowed),
                 action: undo, fileID: fileID, line: line)
             // The first look at the new show's episodes can wait on the network; the sheet does not.
-            refreshFollowedSources(force: true)
+            refreshFollowedSources(force: true, trigger: .afterFollow)
             return .followed
         } catch {
             if let coordinator = followedSourceCoordinator {

@@ -50,7 +50,6 @@ struct ExperienceAddSourceFlow: View {
                     } else if showsRoutePicker {
                         routePicker
                     } else {
-                        selectedRouteHeader
                         routeContent
                     }
                 }
@@ -77,7 +76,7 @@ struct ExperienceAddSourceFlow: View {
             .navigationTitle(showsPinnedTextAction ? "Add Text" : "Add to Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if showsPinnedTextAction {
+                if showsRouteBack {
                     ToolbarItem(placement: .topBarLeading) {
                         Button {
                             focusedField = nil
@@ -116,6 +115,15 @@ struct ExperienceAddSourceFlow: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .accessibilityIdentifier("addSource.sheet")
+        // On the sheet's outermost view, not on the tile picker: the picker sits in a branch that gives way to the link
+        // review or a chosen route, and a cover on a view that leaves dismisses with it, so a screen still in use
+        // closed or was built again (#4091).
+        .trackedFullScreenCover(isPresented: $showsLiveSession, onDismiss: { dismiss() }) {
+            LiveSessionView(model: model).equatable()
+        }
+        .trackedFullScreenCover(isPresented: $showsSpokenNote, onDismiss: { dismiss() }) {
+            SpokenNoteRecordingView().environmentObject(model)
+        }
     }
 
     private var pastedTextActions: some View {
@@ -155,6 +163,11 @@ struct ExperienceAddSourceFlow: View {
         !showsRoutePicker && selectedRoute == .pastedText && model.sourceLinkCandidateReview == nil
     }
 
+    /// Every route page (Link, Paste Text, Quick Folder) uses this one toolbar back, so iOS draws its glass circle (#4954).
+    private var showsRouteBack: Bool {
+        !showsRoutePicker && model.sourceLinkCandidateReview == nil
+    }
+
     /// Paste & go sits in the bottom inset of the route picker, in thumb reach at the medium detent (#145).
     private var showsPasteAndGo: Bool {
         showsRoutePicker && model.sourceLinkCandidateReview == nil
@@ -162,7 +175,8 @@ struct ExperienceAddSourceFlow: View {
 
     private var routePicker: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Add to Library")
+            // The sheet's own title already says "Add to Library"; the heading asks the question the tiles answer (#4612).
+            Text("What would you like to add?")
                 .font(.title2.weight(.bold))
                 .screenTitle()
                 .foregroundStyle(AppColors.text)
@@ -228,12 +242,6 @@ struct ExperienceAddSourceFlow: View {
                     .accessibilityIdentifier("document.import.error")
             }
         }
-        .fullScreenCover(isPresented: $showsLiveSession, onDismiss: { dismiss() }) {
-            LiveSessionView(model: model).equatable()
-        }
-        .fullScreenCover(isPresented: $showsSpokenNote, onDismiss: { dismiss() }) {
-            SpokenNoteRecordingView().environmentObject(model)
-        }
     }
 
     /// A tile either swaps the sheet to its page, opens the Files picker, closes the sheet to search the catalog,
@@ -253,27 +261,6 @@ struct ExperienceAddSourceFlow: View {
             guard let route = tile.route else { return }
             selectedRoute = route
             showsRoutePicker = false
-        }
-    }
-
-    private var selectedRouteHeader: some View {
-        HStack(spacing: 12) {
-            Button {
-                focusedField = nil
-                showsRoutePicker = true
-            } label: {
-                Image(systemName: "chevron.left")
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.bordered)
-            .accessibilityLabel("Choose a different source type")
-            .accessibilityIdentifier("addSource.route.back")
-            Image(systemName: selectedRoute.systemImage)
-                .foregroundStyle(AppColors.evergreen)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(selectedRoute.title).font(.headline)
-            }
         }
     }
 
@@ -319,6 +306,9 @@ struct ExperienceAddSourceFlow: View {
                     }
                     .filledActionButton()
                     .disabled(model.sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isResolvingSourceLink)
+                    // The label is swapped for a bare spinner while the link resolves; the name sits on the Button so it
+                    // never goes blank for VoiceOver (#5036).
+                    .accessibilityLabel(model.isResolvingSourceLink ? "Adding to Library" : "Add to Library")
                     .accessibilityIdentifier("sourceLink.import.button")
                 }
                 SourceLinkImportStatusView()
@@ -401,11 +391,21 @@ struct ExperienceAddSourceFlow: View {
                 Text("Quick Folder").font(.headline)
                 Text(model.quickAccessFolderName)
                     .foregroundStyle(AppColors.secondaryText)
+                // Where it is, once a scan has learned it, so two folders with the same name can be told apart (#3770).
+                if let location = model.quickAccess.status().settingsLocationLine {
+                    Text(location)
+                        .font(.footnote)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .accessibilityIdentifier("quickFolder.location")
+                }
                 Button("Choose Folder", systemImage: "folder.badge.plus") {
                     presentFileImporter(.quickFolder)
                 }
                 .filledActionButton()
                 .accessibilityIdentifier("quickFolder.choose.button")
+                Text(QuickFolderStatus.addSheetFootnote)
+                    .font(.footnote)
+                    .foregroundStyle(AppColors.secondaryText)
                 if !model.quickAccessRecentFiles.isEmpty {
                     Divider()
                     ForEach(model.quickAccessRecentFiles) { file in
@@ -479,6 +479,14 @@ struct ExperienceAddSourceFlow: View {
     private static let filesContentTypes: [UTType] = [
         // Documents and books, and Listening Edition collections (`.json`) and folders of them.
         UTType(filenameExtension: "md") ?? .plainText, .plainText, .pdf, UTType(filenameExtension: "epub") ?? .data, .json, .folder,
+        // Meeting transcripts (#2997): WebVTT, SubRip (declared in Info.plist; the system has no type for it) and Word.
+        // `.txt` is plain text above. The fallbacks keep each pickable if a type ever failed to register.
+        UTType("org.w3.webvtt") ?? UTType(filenameExtension: "vtt") ?? .plainText,
+        UTType("com.spokenmargins.subrip") ?? UTType(filenameExtension: "srt") ?? .plainText,
+        // A Word document that isn't a transcript is a document item (#4594). An old `.doc` is pickable so the import can
+        // say how to make it a `.docx`, rather than sit greyed out with no reason.
+        UTType("org.openxmlformats.wordprocessingml.document") ?? UTType(filenameExtension: "docx") ?? .data,
+        UTType("com.microsoft.word.doc") ?? UTType(filenameExtension: "doc") ?? .data,
         // Audiobooks.
         .mp3, .mpeg4Audio, .mpeg4Movie, UTType(filenameExtension: "m4b") ?? .audio,
         // A Margins packet. The app exports this type; the fallback keeps the picker usable if it ever failed to register.
@@ -516,11 +524,12 @@ struct ExperienceAddSourceFlow: View {
         }
     }
 
-    /// A Listening Edition collection (`.json`) goes to the edition import, like a PDF added from here: it lands in
-    /// the Library and nothing opens (#2373). Everything else goes the way it always did. The sheet closes unless
-    /// something could not be imported, and then it says what, under the Files button.
+    /// A picked folder becomes a collection (#3769, owner's decision 2026-11-19), and so does a link list with a title
+    /// picked on its own. Any other Listening Edition (`.json`) goes to the edition import, like a PDF added from here:
+    /// it lands in the Library and nothing opens (#2373). Everything else goes the way it always did. The sheet closes
+    /// unless something could not be imported, and then it says what, under the Files button. Collections fill in
+    /// after the sheet has closed, one at a time, each with its own banner when it is done.
     private func importDocumentsAndCollections(_ picked: [URL]) {
-        // A picked folder (#2672) goes to the edition import too, which walks it for `.json` collection files.
         let folders = picked.filter { $0.hasDirectoryPath || ((try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true) }
         let files = picked.filter { url in !folders.contains(url) }
         let editionURLs = files.filter { $0.pathExtension.lowercased() == "json" }
@@ -529,21 +538,31 @@ struct ExperienceAddSourceFlow: View {
         guard !editionURLs.isEmpty || !folders.isEmpty else { importDocuments(urls, closes: !picked.isEmpty); return }
         // The edition files are read off the main thread (#2510), so the rest waits for them.
         Task { @MainActor in
-            // A `.json` file that says it is a structured link list (#3767) adds its links; any other `.json` file
-            // goes to the edition import as before. Only the file's own `schemaVersion` decides, never its name.
-            // The same goes for the `.json` files inside a picked folder: link lists there are added, and the edition
-            // import skips them and takes the rest.
-            let picks = await model.splitLinkLists(from: editionURLs, folders: folders)
-            let editionImportRuns = picks.needsEditionImport(foldersPicked: !folders.isEmpty)
+            // A `.json` file that says it is a structured link list (#3767) adds its links, or becomes a collection
+            // when it has a title; any other `.json` file goes to the edition import as before. Only the file's own
+            // `schemaVersion` decides, never its name.
+            let split = await model.splitLinkLists(from: editionURLs).splittingCollections()
+            let picks = split.rest
+            let editionImportRuns = picks.needsEditionImport(foldersPicked: false)
             var linkResult: (allImported: Bool, message: String?) = (true, nil)
             if !picks.isEmpty { linkResult = await model.importLinkLists(picks, noteFolderTruncation: !editionImportRuns) }
             var editionsImported = true
             if editionImportRuns {
-                editionsImported = await model.importListeningEditionFiles(picks.others, folders: folders, skipping: picks.folderFilePaths)
+                editionsImported = await model.importListeningEditionFiles(picks.others)
             }
             let allImported = linkResult.allImported && editionsImported
             if !allImported { fileImportError = editionsImported ? linkResult.message : (model.lastError ?? linkResult.message) }
             model.hangTelemetry.labels.scoped("addSheet.documentImport") { importDocuments(urls, closes: allImported) }
+            // Outside the sheet's life: the model runs the imports, and the sheet may already be gone.
+            let lists = split.collections
+            let app = model
+            Task { @MainActor in
+                for folder in folders { await app.importFolderAsCollection(folder) }
+                for found in lists {
+                    guard let url = found.url, let title = found.collectionTitle else { continue }
+                    await app.importLinkListAsCollection(url, list: found.list, title: title)
+                }
+            }
         }
     }
 
@@ -551,7 +570,8 @@ struct ExperienceAddSourceFlow: View {
         var closes = closes
         let epubURLs = urls.filter { $0.pathExtension.lowercased() == "epub" }
         if epubURLs.isEmpty, !urls.isEmpty {
-            model.importObsidianMarkdownFiles(urls: urls)
+            // A transcript file is read by its own rule first; the rest of the pick is imported as before (#2997).
+            model.importFilesWithTranscriptRule(urls: urls, route: .init(securityScopedURLs: urls))
         } else if urls.count == 1, let epubURL = epubURLs.first {
             model.importEPUBFile(url: epubURL, openWhenFinished: false)
         } else if !urls.isEmpty {

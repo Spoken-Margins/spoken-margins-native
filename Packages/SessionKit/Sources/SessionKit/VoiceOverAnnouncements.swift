@@ -17,9 +17,10 @@ public enum VoiceOverAnnouncements {
         }
     }
 
-    /// The Margin card on Now. A friend's Margin that waits for a tap, or one that could not play, appears at the top of
-    /// the screen in silence. Returns the card's headline and its one line ("Margin from Cole is here. Tap Listen to
-    /// hear it.") when the card has just *entered* one of those two stages or another Margin has replaced it in the same
+    /// The Margin card on Now. A friend's Margin that waits for a tap, one that could not play, or one the listener went to
+    /// that is never spoken (`silentHere`, #4934) appears at the top of the screen in silence. Returns the card's headline and
+    /// its one line ("Margin from Cole is here. Tap Listen to hear it.") when the card has just *entered* one of those stages
+    /// or another Margin has replaced it in the same
     /// stage, and nil on every other change (the same card redrawn, a stage that speaks for itself, no card).
     ///
     /// - `playsByItself`: this card's Margin is guided (auto-play), so it waits only a beat (420 ms) and then plays
@@ -36,16 +37,27 @@ public enum VoiceOverAnnouncements {
 
     private static func needsAnnouncement(_ stage: PinnedMarginCard.Stage) -> Bool {
         switch stage {
-        case .waitingForTap, .failed: true
+        case .waitingForTap, .failed, .silentHere: true
         default: false
         }
     }
 
     private static func sameKind(_ a: PinnedMarginCard.Stage, _ b: PinnedMarginCard.Stage) -> Bool {
         switch (a, b) {
-        case (.waitingForTap, .waitingForTap), (.failed, .failed): true
+        case (.waitingForTap, .waitingForTap), (.failed, .failed), (.silentHere, .silentHere): true
         default: false
         }
+    }
+
+    /// What VoiceOver says when the first-Margin prompt appears on Now (#5036). The card arrives mid-playback above the
+    /// header while focus is usually on the play controls, so without this a VoiceOver listener is never told it is there.
+    /// Focus is not moved. The words are said once per showing: when the card is in view and has not been announced yet,
+    /// including a screen that opens with it already there. Going to another pane and back does not repeat it, so the view
+    /// keeps `alreadyAnnounced` and passes it in. The card never comes back after a tap, a dismiss or a first Margin.
+    public static let firstMarginPromptText = "Add a Margin: say what you're thinking."
+
+    public static func firstMarginPrompt(alreadyAnnounced: Bool, isInView: Bool) -> String? {
+        !alreadyAnnounced && isInView ? firstMarginPromptText : nil
     }
 
     /// The sender's sharing sheet swaps its stage in place (choose, review, recipient preview, share) while focus can stay
@@ -70,6 +82,15 @@ public enum VoiceOverAnnouncements {
     /// a screen change in itself.
     public static func sharingStage(from previous: SharingStep, to step: SharingStep) -> String? {
         previous == step ? nil : step.title
+    }
+
+    /// The ended line on a live session's writing screen (#3847). It appears in place while the listener types (the Watch
+    /// ended the session), so focus stays where it was and VoiceOver would say nothing. Returns the line when it has just
+    /// appeared (`previous` nil, `line` set), and nil when it goes away (the session resumed) or only changed words. A screen
+    /// that opens with the line already there has no change to watch, so the view posts nothing and the line is read in order
+    /// after the anchor.
+    public static func liveSessionEnded(from previous: String?, to line: String?) -> String? {
+        previous == nil ? line : nil
     }
 
     /// The Reader's chapter step (Previous or Next chapter replaces the text and the heading under the pressed button):

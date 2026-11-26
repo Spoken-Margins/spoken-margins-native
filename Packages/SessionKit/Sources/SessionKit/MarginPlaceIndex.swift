@@ -124,10 +124,19 @@ public enum MarginPlaces {
     public struct Place: Equatable, Sendable {
         public let chapterName: String?
         public let paragraph: Int?
+        /// For a Margin in a meeting transcript: where in the meeting it was made, in ms from the transcript's start
+        /// (#2997). Shown ahead of `paragraph`.
+        public let meetingClockMs: Int?
+
+        public init(chapterName: String?, paragraph: Int?, meetingClockMs: Int? = nil) {
+            self.chapterName = chapterName
+            self.paragraph = paragraph
+            self.meetingClockMs = meetingClockMs
+        }
     }
 
     /// Keyed by `MarginCollection.PrivateEntry.id`. Only Margins on the item itself have a place; responses and
-    /// summaries aren't in the source.
+    /// summaries aren't in the source, and neither is a moved Margin captured with no position (`hasPlace`, #4233).
     /// - A Margin at a text position gets its chapter name and paragraph number. The item's text is only read, and
     ///   only as far as its last such Margin, when there is one.
     /// - A Margin with a clock time gets the name of the publisher chapter its time falls in, from `loadMediaChapters`.
@@ -137,23 +146,34 @@ public enum MarginPlaces {
     ///   argument to leave text Margins without a place.
     /// - `loadMediaChapters`: the item's chapters with their start times, empty when it has none. Asked only for items
     ///   that have a Margin with a clock time.
+    /// - `loadTranscriptTimes`: a meeting transcript's cue times (#2997). Asked once, only for a transcript item that has
+    ///   a text Margin. With it a text Margin gets `meetingClockMs`, even when `loadMap` is nil.
     public static func places(
         for entries: [MarginCollection.PrivateEntry],
         items: [Item],
         loadMap: ((String) -> ListeningMap?)?,
-        loadMediaChapters: (String) -> [MediaTimelineChapter] = { _ in [] }
+        loadMediaChapters: (String) -> [MediaTimelineChapter] = { _ in [] },
+        loadTranscriptTimes: ((String) -> TranscriptTimes?)? = nil
     ) -> [String: Place] {
         let itemsById = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var result: [String: Place] = [:]
-        for (itemId, group) in Dictionary(grouping: entries.filter { $0.interjection.targetType == .item }, by: \.interjection.itemId) {
+        for (itemId, group) in Dictionary(grouping: entries.filter { $0.interjection.targetType == .item && $0.interjection.hasPlace }, by: \.interjection.itemId) {
             let atText = group.filter { $0.interjection.anchor.mediaTimeMs == nil }
-            if let loadMap, let furthest = atText.map({ $0.interjection.anchor.startChar }).max() {
+            // A transcript item's meeting times, read once for the item and only for a transcript (#2997).
+            let times = itemsById[itemId]?.externalReferenceType == TranscriptItemText.referenceType && !atText.isEmpty
+                ? loadTranscriptTimes?(itemId) : nil
+            if loadMap != nil || times != nil, let furthest = atText.map({ $0.interjection.anchor.startChar }).max() {
                 let index = MarginPlaceIndex(
-                    chapters: loadMap(itemId)?.chapters ?? [], text: itemsById[itemId]?.text, readingUpTo: furthest)
+                    chapters: loadMap?(itemId)?.chapters ?? [], text: loadMap == nil ? nil : itemsById[itemId]?.text,
+                    readingUpTo: furthest)
                 for entry in atText {
                     let offset = entry.interjection.anchor.startChar
-                    let place = Place(chapterName: index.chapterName(atChar: offset), paragraph: index.paragraph(atChar: offset))
-                    if place.chapterName != nil || place.paragraph != nil { result[entry.id] = place }
+                    // Without a map argument a text Margin has no chapter or paragraph; a transcript's clock stands alone.
+                    let place = Place(
+                        chapterName: loadMap == nil ? nil : index.chapterName(atChar: offset),
+                        paragraph: loadMap == nil ? nil : index.paragraph(atChar: offset),
+                        meetingClockMs: times?.clockMs(atCharacter: offset))
+                    if place.chapterName != nil || place.paragraph != nil || place.meetingClockMs != nil { result[entry.id] = place }
                 }
             }
             let atTime = group.filter { $0.interjection.anchor.mediaTimeMs != nil }

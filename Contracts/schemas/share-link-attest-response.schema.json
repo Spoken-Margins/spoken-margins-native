@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "share-link-attest-response.schema.json",
+  "title": "Recorded attested middleware answer (#4134)",
+  "description": "The real Go middleware's status and JSON body, written by research/B4/server/internal/api/attest_contract_test.go and read by ShareLinkAttestContractTests through the app's mapping.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "body"],
+  "properties": {
+    "status": {"type": "integer", "minimum": 100, "maximum": 599},
+    "body": {"type": "object"}
+  }
+}

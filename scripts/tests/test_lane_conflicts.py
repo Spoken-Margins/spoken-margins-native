@@ -62,18 +62,29 @@ class TempOrigin:
 class FakeApi:
     repo = REPO
 
-    def __init__(self, pulls, comments=None, runs=(), jobs=None):
+    def __init__(self, pulls, comments=None, runs=(), jobs=None, queue=None):
         self.pulls = {pull['number']: pull for pull in pulls}
         self.comments = {number: list(found) for number, found in (comments or {}).items()}
         self.runs, self.jobs = list(runs), jobs or {}
         self.posted, self.deleted, self.cancelled, self.delete_errors = [], [], [], {}
+        # GitHub's merge-queue state per PR: {'autoMergeRequest': ..., 'mergeQueueEntry': ...}, an exception to
+        # raise, or absent (neither queued nor set to merge).
+        self.queue, self.queue_reads, self.dispatched = dict(queue or {}), [], []
+
+    def graphql(self, query, **variables):
+        self.queue_reads.append(variables)
+        found = self.queue.get(variables['number'], {'autoMergeRequest': None, 'mergeQueueEntry': None})
+        if isinstance(found, Exception):
+            raise found
+        return {'data': {'repository': {'pullRequest': found}}}
 
     def get(self, path):
         if re.fullmatch(r'pulls/\d+', path):
             return self.pulls[int(path.split('/')[1])]
         if path.startswith('actions/workflows/lane.yml/runs?'):
             status = path.split('status=')[1].split('&')[0]
-            found = [run for run in self.runs if run['status'] == status]
+            event = path.split('event=')[1].split('&')[0]
+            found = [run for run in self.runs if run['status'] == status and run.get('event', 'pull_request') == event]
             return {'total_count': len(found), 'workflow_runs': found}
         if path.startswith('actions/runs/'):
             jobs = self.jobs.get(int(path.split('/')[2]), [])
@@ -91,6 +102,9 @@ class FakeApi:
     def post(self, path, fields=None):
         if path.endswith('/cancel'):
             self.cancelled.append(int(path.split('/')[2]))
+            return
+        if path.startswith('actions/workflows/'):
+            self.dispatched.append((path, fields))
             return
         self.posted.append((path, fields))
         number = int(path.split('/')[1])
@@ -112,8 +126,8 @@ def pull(number, head, labels=('automerge',), repo=REPO):
             'labels': [{'name': name} for name in labels]}
 
 
-def run(run_id, pr, head, status='queued'):
-    return {'id': run_id, 'status': status, 'display_title': f'lane pr={pr} head={head} lane=false auto=true'}
+def run(run_id, pr, head, status='queued', event='pull_request'):
+    return {'id': run_id, 'status': status, 'event': event, 'display_title': f'lane pr={pr} head={head} lane=false auto=true'}
 
 
 class ConflictCheckTests(unittest.TestCase):
@@ -158,6 +172,193 @@ class ConflictCheckTests(unittest.TestCase):
         self.assertEqual([name['name'] for name in api.pulls[7]['labels']], ['needs-mac'])
         self.assertEqual(sorted(api.deleted), ['issues/7/labels/automerge', 'issues/7/labels/lane%3Aqueued'])
         self.assertEqual(api.cancelled, [50])  # the run already on a Mac keeps going
+
+    QUEUED = {'autoMergeRequest': None, 'mergeQueueEntry': {'id': 'MQE_7'}}
+    AUTO_ON = {'autoMergeRequest': {'enabledAt': '2026-11-24T18:02:27Z'}, 'mergeQueueEntry': None}
+    BRIDGE_DISPATCH = ('actions/workflows/merge-queue-label-bridge.yml/dispatches', {'ref': 'main', 'inputs[pr]': '7'})
+
+    def test_a_queued_conflicting_pr_is_handed_to_the_bridge_to_dequeue_after_the_label_swap(self):
+        # #5302: #5276 stayed queued 5 hours after the hand-off, and the finisher's push was refused (GH006).
+        head = self.conflicting_pr()
+        api = FakeApi([pull(7, head)], queue={7: self.QUEUED})
+        order = []
+        real_post = api.post
+
+        def post(path, fields=None):
+            order.append((path, sorted(label['name'] for label in api.pulls[7]['labels'])))
+            real_post(path, fields)
+        api.post = post
+        self.sweep(api)
+        self.assertEqual(api.dispatched, [self.BRIDGE_DISPATCH])
+        # The bridge takes out only a PR that already carries needs-mac and no arming label.
+        self.assertEqual(order[-1], (self.BRIDGE_DISPATCH[0], ['needs-mac']))
+        self.assertTrue(any('asked the merge-queue bridge to dequeue' in line for line in self.logs))
+
+    def test_a_pr_set_to_auto_merge_but_not_yet_queued_is_handed_to_the_bridge_too(self):
+        head = self.conflicting_pr()
+        api = FakeApi([pull(7, head)], queue={7: self.AUTO_ON})
+        self.sweep(api)
+        self.assertEqual(api.dispatched, [self.BRIDGE_DISPATCH])
+
+    def test_a_pr_that_is_neither_queued_nor_set_to_merge_gets_no_dispatch(self):
+        head = self.conflicting_pr()
+        api = FakeApi([pull(7, head)])
+        self.sweep(api)
+        self.assertEqual(len(api.queue_reads), 1)
+        self.assertEqual(api.dispatched, [])
+        self.assertEqual([label['name'] for label in api.pulls[7]['labels']], ['needs-mac'])
+
+    def test_an_unreadable_queue_state_still_asks_the_bridge_which_reads_the_pr_itself(self):
+        head = self.conflicting_pr()
+        api = FakeApi([pull(7, head)], queue={7: subprocess.CalledProcessError(1, 'gh', stderr='HTTP 502')})
+        self.sweep(api)
+        self.assertEqual(api.dispatched, [self.BRIDGE_DISPATCH])
+
+    def test_the_dispatch_is_on_the_repositorys_default_branch(self):
+        head = self.conflicting_pr()
+        found = pull(7, head)
+        found['base'] = {'ref': 'next', 'repo': {'default_branch': 'trunk'}}
+        api = FakeApi([found], queue={7: self.QUEUED})
+        self.sweep(api)
+        self.assertEqual(api.dispatched, [(self.BRIDGE_DISPATCH[0], {'ref': 'trunk', 'inputs[pr]': '7'})])
+
+    def test_a_failed_dispatch_is_a_warning_and_the_hand_off_stands(self):
+        head = self.conflicting_pr()
+        api = FakeApi([pull(7, head)], queue={7: self.QUEUED})
+        real_post = api.post
+
+        def post(path, fields=None):
+            if path.startswith('actions/workflows/'):
+                raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 422')
+            real_post(path, fields)
+        api.post = post
+        self.assertEqual(self.sweep(api), {7: ['shared.txt']})
+        self.assertEqual([label['name'] for label in api.pulls[7]['labels']], ['needs-mac'])
+        self.assertTrue(any('hand-off stopped' in line for line in self.logs))
+
+    def test_a_queued_pr_github_alone_calls_unmergeable_is_handed_to_the_bridge_too(self):
+        head = self.clean_pr()
+        found = pull(8, head)
+        found['mergeable'] = False
+        api = FakeApi([found], queue={8: self.QUEUED})
+        self.assertEqual(self.sweep(api), {8: []})
+        self.assertEqual(api.dispatched, [(self.BRIDGE_DISPATCH[0], {'ref': 'main', 'inputs[pr]': '8'})])
+
+    def test_a_clean_pr_is_never_read_for_its_queue_state_or_dispatched(self):
+        head = self.clean_pr()
+        api = FakeApi([pull(8, head)], queue={8: self.QUEUED})
+        api.pulls[8]['mergeable'] = True
+        self.sweep(api)
+        self.assertEqual((api.queue_reads, api.dispatched), ([], []))
+
+    def test_a_pr_git_merges_but_github_calls_unmergeable_gets_a_hand_off_with_its_own_comment(self):
+        # #4538: GitHub builds no merge ref for it, so a label event starts no run and it sits armed and silent.
+        head = self.clean_pr()
+        pr = pull(8, head)
+        pr['mergeable'] = False
+        api = FakeApi([pr])
+        self.assertEqual(self.sweep(api), {8: []})
+        comments = [fields['body'] for path, fields in api.posted if path.endswith('/comments')]
+        self.assertEqual(len(comments), 1)
+        self.assertTrue(comments[0].startswith(conflicts.HANDOFF))
+        self.assertIn('not mergeable', comments[0])
+        self.assertIn('no lane run', comments[0].replace('starts no lane run', 'no lane run'))
+        self.assertIn(conflicts.marker(head, run_git(self.origin.bare, 'rev-parse', 'next'), 'no-merge-ref'), comments[0])
+        self.assertEqual([label['name'] for label in api.pulls[8]['labels']], ['needs-mac'])
+        self.assertEqual(api.deleted, ['issues/8/labels/automerge'])
+        self.assertEqual(self.sweep(api), {})  # no longer armed: nothing more to do
+
+    def test_a_re_armed_github_only_hand_off_gets_a_short_reason_not_a_second_full_comment(self):
+        head = self.clean_pr()
+        pr = pull(8, head)
+        pr['mergeable'] = False
+        api = FakeApi([pr])
+        self.sweep(api)
+        api.pulls[8]['labels'] = [{'name': 'automerge'}]  # re-armed by hand
+        self.sweep(api)
+        comments = [fields['body'] for path, fields in api.posted if path.endswith('/comments')]
+        self.assertEqual(len(comments), 2)
+        self.assertEqual(comments[0].count('lane-conflict-no-merge-ref'), 1, 'only the first carries the marker')
+        self.assertIn('came off again', comments[1])
+        self.assertNotIn('<!--', comments[1])
+        self.assertEqual(api.deleted, ['issues/8/labels/automerge', 'issues/8/labels/automerge'])
+
+    def test_a_state_other_than_dirty_changes_nothing_and_a_pr_that_settles_before_the_hand_off_is_left_alone(self):
+        head = self.clean_pr()
+        pr = pull(8, head)
+        pr['mergeable'], pr['mergeable_state'] = False, 'behind'
+        api = FakeApi([pr])
+        self.assertEqual(self.sweep(api), {})
+        self.assertEqual((api.posted, api.deleted), ([], []))
+        # GitHub settles between the check and the hand-off: act_on_conflict reads the PR again.
+        pr['mergeable_state'] = 'dirty'
+        original, reads = api.get, []
+
+        def settle(path):
+            result = dict(original(path))  # what this read saw
+            if path == 'pulls/8':
+                reads.append(path)
+                if len(reads) >= 2:
+                    result['mergeable'] = True  # the read inside the hand-off: GitHub has settled
+            return result
+        api.get = settle
+        self.assertEqual(self.sweep(api), {8: []})
+        self.assertEqual((api.posted, api.deleted), ([], []))
+
+    def test_an_unknown_or_true_mergeable_state_changes_nothing(self):
+        for state in (None, True):
+            with self.subTest(mergeable=state):
+                head = self.clean_pr(number=10, name=f'clean-{state}')
+                pr = pull(10, head)
+                pr['mergeable'] = state
+                api = FakeApi([pr])
+                self.assertEqual(self.sweep(api), {})
+                self.assertEqual((api.posted, api.deleted, api.cancelled), ([], [], []))
+
+    def test_a_pr_with_a_live_lane_run_for_its_head_is_left_to_finish(self):
+        head = self.clean_pr()
+        pr = pull(8, head)
+        pr['mergeable'] = False
+        api = FakeApi([pr], runs=[run(60, 8, head, 'in_progress')], jobs={60: [{'name': 'automerge', 'status': 'in_progress'}]})
+        self.assertEqual(self.sweep(api), {})
+        self.assertEqual((api.posted, api.deleted, api.cancelled), ([], [], []))
+
+    def test_a_dispatched_lane_run_for_its_head_is_left_to_finish_too(self):
+        # The release hand-off and the hosted audit dispatch lane.yml; those runs are not `pull_request` runs (#4538).
+        for status in ('queued', 'in_progress', 'waiting', 'pending'):
+            with self.subTest(status=status):
+                head = self.clean_pr(number=11, name=f'dispatched-{status}')
+                pr = pull(11, head)
+                pr['mergeable'] = False
+                api = FakeApi([pr], runs=[run(61, 11, head, status, event='workflow_dispatch')])
+                self.assertEqual(self.sweep(api), {})
+                self.assertEqual((api.posted, api.deleted, api.cancelled), ([], [], []))
+
+    def test_a_dispatched_run_for_another_head_or_a_finished_one_does_not_hold_the_hand_off(self):
+        head = self.clean_pr(number=12, name='other-runs')
+        pr = pull(12, head)
+        pr['mergeable'] = False
+        other = 'f' * 40
+        api = FakeApi([pr], runs=[run(62, 12, other, 'queued', event='workflow_dispatch'),
+                                  run(63, 12, head, 'completed', event='workflow_dispatch')])
+        self.assertEqual(self.sweep(api), {12: []})
+        self.assertTrue(api.deleted)
+
+    def test_a_real_conflict_is_still_the_conflict_hand_off_even_when_github_agrees(self):
+        head = self.conflicting_pr()
+        pr = pull(7, head)
+        pr['mergeable'] = False
+        api = FakeApi([pr])
+        self.assertEqual(self.sweep(api), {7: ['shared.txt']})
+        body = [fields['body'] for path, fields in api.posted if path.endswith('/comments')][0]
+        self.assertIn('does not merge cleanly', body)
+
+    def test_a_failure_reading_githubs_state_leaves_the_pr_as_it_was(self):
+        head = self.clean_pr()
+        api = FakeApi([pull(8, head)])
+        with mock.patch.object(conflicts, 'github_cannot_merge', side_effect=OSError('boom')):
+            self.assertEqual(self.sweep(api), {})
+        self.assertEqual((api.posted, api.deleted, api.cancelled), ([], [], []))
 
     def test_a_clean_merge_changes_nothing(self):
         head = self.clean_pr()
@@ -442,12 +643,32 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertNotIn('git push', text)
         self.assertNotIn('--force', text)
 
+    def test_it_also_runs_without_an_event_because_runner_merges_and_merge_less_prs_start_nothing(self):
+        # #4538: the lane runner merges with the workflow token, which starts no workflow, and GitHub starts no
+        # pull_request run for a PR it can't build a merge ref for. Without a schedule such a PR sits armed and silent.
+        # Since #4866 the hourly start is the VPS's workflow_dispatch (ops/dispatch-backstop/), and the cron is the
+        # one daily last resort.
+        text = self.workflow.read_text()
+        self.assertRegex(text, r"schedule:\n\s+- cron: '\d+ \d+ \* \* \*'")
+        self.assertIn('workflow_dispatch:', text)
+        self.assertIn('(github.event_name != \'push\' || github.ref_name == (vars.SM_TRUNK || \'main\'))', text)
+
     def test_it_starts_when_next_moves_and_when_a_lane_label_or_push_lands(self):
         text = self.workflow.read_text()
         self.assertIn('ONLY_PR: ${{ inputs.pr }}', text)  # a PR event sweeps everything; only a dispatch narrows
         for needle in ('push:', 'branches: [next, main]', 'pull_request:', 'types: [labeled, synchronize, reopened]',
                        'workflow_dispatch:', "'automerge'", "'lane:queued'"):
             self.assertIn(needle, text)
+
+    def test_the_dequeue_dispatch_has_what_it_needs_from_both_workflows(self):
+        # #5302: dispatching needs `actions: write` here; the bridge must take a one-PR dispatch and run it as a
+        # one-PR check (where a handed-off PR is taken out).
+        self.assertIn('actions: write', self.workflow.read_text())
+        bridge = (self.workflow.parent / conflicts.BRIDGE).read_text()
+        self.assertIn('workflow_dispatch:', bridge)
+        self.assertRegex(bridge, r'inputs:\n\s+pr:')
+        self.assertIn('PR: ${{ github.event.pull_request.number || inputs.pr }}', bridge)
+        self.assertIn('--pr "$PR" --action edited', bridge)
 
 
 if __name__ == '__main__':

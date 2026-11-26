@@ -37,6 +37,18 @@ public final class MainThreadOperationLabels: @unchecked Sendable {
         return try body()
     }
 
+    /// Runs `body`, with `label` on the stack only when this is the main thread. The stack is one for the whole
+    /// process, not one per thread, so a call made on a background queue must never be labelled: the hang probe would
+    /// blame it for a stall it didn't cause (#842). `onMainThread` is there for tests.
+    public func scopedOnMainThread<T>(
+        _ label: String,
+        onMainThread: Bool = Thread.isMainThread,
+        _ body: () throws -> T
+    ) rethrows -> T {
+        guard onMainThread else { return try body() }
+        return try scoped(label, body)
+    }
+
     /// The stack from the outermost label to the innermost, joined by `>`; empty when nothing is in flight.
     public var current: String {
         lock.lock()

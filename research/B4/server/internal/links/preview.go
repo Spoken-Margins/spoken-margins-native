@@ -44,6 +44,7 @@ var sameHostPath = regexp.MustCompile(`^/[A-Za-z0-9._~/-]*$`)
 
 var landing = template.Must(template.New("landing").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Shared Margins — Spoken Margins</title>
+{{.PreviewTags}}
 <style>body{font:17px/1.6 system-ui,sans-serif;margin:0;background:#faf9f6;color:#252524}main{max-width:42rem;margin:auto;padding:1.5rem}article{margin:2rem 0;padding:1rem;background:white;border:1px solid #ddd;border-radius:.7rem}blockquote{margin:1rem 0;border-left:3px solid #aaa;padding-left:1rem}p{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#305d78}button,select{font:inherit;padding:.5rem;max-width:100%}small{color:#555}</style>
 <script type="module" src="/l/share-link-page.mjs"></script></head>
 <body><main><header><p>Spoken Margins</p><h1>Shared Margins</h1><p>These Margins are available for 30 days. Source audio is not served here.</p></header>
@@ -77,11 +78,12 @@ func Render(w io.Writer, id string, installURL string, webURL string) error {
 		return errors.New("links: invalid page configuration")
 	}
 	return landing.Execute(w, struct {
-		ID         string
-		InstallURL string
-		WebURL     string
-		Policies   []PolicyLink
-	}{id, installURL, webURL, PolicyLinks})
+		ID          string
+		InstallURL  string
+		WebURL      string
+		Policies    []PolicyLink
+		PreviewTags template.HTML
+	}{id, installURL, webURL, PolicyLinks, PreviewTags})
 }
 
 // Unavailable is why a share page has nothing to show. Not found, expired and taken down share one
@@ -102,6 +104,7 @@ var unavailableWords = map[Unavailable]struct{ Heading, Body string }{
 
 var unavailable = template.Must(template.New("unavailable").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>{{.Heading}} — Spoken Margins</title>
+{{.PreviewTags}}
 <style>body{font:17px/1.6 system-ui,sans-serif;margin:0;background:#faf9f6;color:#252524}main{max-width:42rem;margin:auto;padding:1.5rem}a{color:#305d78}small{color:#555}</style></head>
 <body><main><header><p>Spoken Margins</p><h1>{{.Heading}}</h1></header><p>{{.Body}}</p>{{if .InstallURL}}<p><a href="{{.InstallURL}}" rel="noreferrer noopener">Get Spoken Margins</a></p>{{end}}
 <footer><p>{{range $i, $l := .Policies}}{{if $i}} · {{end}}<a href="{{$l.Path}}">{{$l.Title}}</a>{{end}}</p></footer>
@@ -128,5 +131,6 @@ func RenderUnavailable(w io.Writer, reason Unavailable, installURL string) error
 	return unavailable.Execute(w, struct {
 		Heading, Body, InstallURL string
 		Policies                  []PolicyLink
-	}{words.Heading, words.Body, installURL, PolicyLinks})
+		PreviewTags               template.HTML
+	}{words.Heading, words.Body, installURL, PolicyLinks, PreviewTags})
 }

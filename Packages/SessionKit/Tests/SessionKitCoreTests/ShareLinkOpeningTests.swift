@@ -143,7 +143,7 @@ final class ShareLinkOpeningTests: XCTestCase {
         let sealed = try ShareLinkSealing.seal(packet: packet, preview: preview, key: key)
         let table: [(status: Int, expected: ShareLinkPacketDownloader.Failure)] = [
             (404, .expired), (410, .expired),
-            (429, .serverProblem), (500, .serverProblem), (503, .serverProblem), (599, .serverProblem),
+            (429, .serverProblem), (500, .serverProblem), (502, .serverProblem), (503, .switchedOff), (599, .serverProblem),
             (204, .expiredOrUnreachable), (301, .expiredOrUnreachable), (403, .expiredOrUnreachable)
         ]
         for (status, expected) in table {
@@ -209,20 +209,20 @@ final class ShareLinkOpeningTests: XCTestCase {
         }
     }
 
-    func testALinkWithoutItsKeyIsDamagedAndNeverAsksTheServer() async throws {
+    func testALinkWithoutItsKeyIsCutOffAndNeverAsksTheServer() async throws {
         let requested = Requests()
         let downloader = ShareLinkPacketDownloader { url, maximumBytes in
             requested.record(url, maximumBytes)
             return (200, Data())
         }
 
-        await assertFails(downloader, link: try link(key: nil), as: .incompleteOrDamaged)
+        await assertFails(downloader, link: try link(key: nil), as: .cutOff)
 
         XCTAssertTrue(requested.urls.isEmpty)
     }
 
     /// J10, the offline check (#1842), opens this link in `docs/journeys.md` and `J10OfflineJourneyUITests`.
-    /// Without a usable key it would fail as damaged before asking the server, so the check would never
+    /// Without a usable key it would fail as cut off before asking the server, so the check would never
     /// reach the unreachable host it is meant to test.
     func testTheOfflineCheckLinkAsksTheServerAndSaysOffline() async throws {
         let text = "https://\(host)/l/\(id)#AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -254,7 +254,7 @@ final class ShareLinkOpeningTests: XCTestCase {
         ]
         for (name, blob, linkKey) in blobs {
             let downloader = ShareLinkPacketDownloader { _, _ in (200, blob) }
-            await assertFails(downloader, link: try link(key: linkKey), as: .incompleteOrDamaged, name)
+            await assertFails(downloader, link: try link(key: linkKey), as: .damaged, name)
         }
     }
 
@@ -265,22 +265,6 @@ final class ShareLinkOpeningTests: XCTestCase {
         _ = try? await downloader.download(try link(key: .random()), into: directory)
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
-    }
-
-    func testTheMessagesTheListenerSees() {
-        XCTAssertEqual(ShareLinkPacketDownloader.Failure.expiredOrUnreachable.message, "This link has expired or can't be reached.")
-        XCTAssertEqual(ShareLinkPacketDownloader.Failure.incompleteOrDamaged.message, "This link is incomplete or damaged.")
-        XCTAssertEqual(ShareLinkPacketDownloader.Failure.offline.message, "You're offline. Reconnect, then tap the link again.")
-        XCTAssertEqual(ShareLinkPacketDownloader.Failure.expired.message, "This link has expired. Ask your friend to share it again.")
-        XCTAssertEqual(ShareLinkPacketDownloader.Failure.serverProblem.message, "The server had a problem. Try again in a minute.")
-    }
-
-    func testOnlyAConnectionOrServerProblemIsWorthRetrying() {
-        typealias Failure = ShareLinkPacketDownloader.Failure
-        XCTAssertEqual(
-            [Failure.offline, .expired, .serverProblem, .expiredOrUnreachable, .incompleteOrDamaged].map(\.isRetryable),
-            [true, false, true, false, false]
-        )
     }
 
     private func assertFails(

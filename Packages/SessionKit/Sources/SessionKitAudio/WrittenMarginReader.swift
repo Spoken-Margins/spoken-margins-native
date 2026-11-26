@@ -21,7 +21,22 @@ import CryptoKit
 /// has a time limit. A render that outlasts it is abandoned: its waiters get `RenderError.timedOut`, its thread is left
 /// to finish or not (the synthesizer is never released mid-write), and the next reading starts on a fresh lane.
 public final class WrittenMarginReader: @unchecked Sendable {
-    public static let shared = WrittenMarginReader()
+    /// The app-wide reader. Production uses the one built here; an app-hosted test replaces it (`replaceShared`) with a
+    /// reader whose renderer never reaches the system voice, because a real speech render can block the hosted Mac's
+    /// speech service past a test's end and fail the tests after it (#4664).
+    public static var shared: WrittenMarginReader { sharedLock.withLock { sharedReader } }
+
+    /// Tests only: every later `shared` is `reader`. Returns the reader it replaced.
+    @discardableResult
+    public static func replaceShared(with reader: WrittenMarginReader) -> WrittenMarginReader {
+        sharedLock.withLock {
+            defer { sharedReader = reader }
+            return sharedReader
+        }
+    }
+
+    private static let sharedLock = NSLock()
+    nonisolated(unsafe) private static var sharedReader = WrittenMarginReader()
 
     /// Where rendered readings are kept. Caches, so the system may clear them and the next play renders again. Built
     /// from the path alone: nothing is read or created.

@@ -85,6 +85,21 @@ final class PendingOpenPlaybackStartTests: XCTestCase {
         await ReturnFixture.expectSharedReaderIdle()
     }
 
+    /// #4447: a tap on a friend's Margin says what it did, so a tap that does nothing has a reason in the export.
+    func testATapOnAFriendsMarginLogsOneLineSayingItStarted() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        let row = SharedMarginRow(interjection: fixture.record, layer: fixture.layer, itemTitle: "Real source")
+        model.playSharedMarginMoment(row)
+        let lines = model.playbackEventRecording.events.filter { $0.kind == "margin.tap" }
+        XCTAssertEqual(lines.count, 1)
+        XCTAssertEqual(lines.first?.fields, ["origin": "shared", "outcome": "started"])
+        XCTAssertNotNil(model.marginMoment)
+        await ReturnFixture.expectSharedReaderIdle()
+    }
+
     /// The other side of the rule: playback going on, or ending, with nothing started, leaves the open alone.
     func testAnOpenStillLandsWhenNothingWasStartedMeanwhile() async throws {
         let (model, _, second) = playingFirstItem()

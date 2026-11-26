@@ -856,6 +856,9 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
     private var pendingStartTargetId: String?
     private var startedTargetId: String?
     private var playbackStartFailure: String?
+    /// Reports the first sound of each `play` to the start cue (#842). Armed in `play`, taken in `didStart`.
+    private var firstAudioLatch = FirstAudioLatch()
+    private let postFirstAudio: FirstAudioPoster
     private var paused = false
     private var voiceIdentifier: String?
     /// The listener's speed as `multiplier × 0.5` (the app's stored "speechRate" units), not an
@@ -877,6 +880,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
     #endif
 
     public override init() {
+        self.postFirstAudio = { FirstAudioSignals.shared.post($0) }
         self.voiceIdentifier = nil
         self.speechRate = AVSpeechUtteranceDefaultSpeechRate
         self.readsSpeechSettingsAtPlayback = true
@@ -890,8 +894,10 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
     public init(
         voiceIdentifier: String? = nil,
         speechRate: Float = AVSpeechUtteranceDefaultSpeechRate,
-        isVoiceAvailable: @escaping (String) -> Bool = { AVSpeechSynthesisVoice(identifier: $0) != nil }
+        isVoiceAvailable: @escaping (String) -> Bool = { AVSpeechSynthesisVoice(identifier: $0) != nil },
+        postFirstAudio: @escaping FirstAudioPoster = { FirstAudioSignals.shared.post($0) }
     ) {
+        self.postFirstAudio = postFirstAudio
         self.voiceIdentifier = voiceIdentifier?.isEmpty == true ? nil : voiceIdentifier
         self.speechRate = speechRate
         self.readsSpeechSettingsAtPlayback = false
@@ -972,9 +978,10 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
         try PlaybackAudioSessionPolicy.ensurePlaybackCategory(
             options: PlaybackAudioSessionPolicy.options(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio)
         )
-        try AVAudioSession.sharedInstance().setActive(true)
+        try AudioSessionOperationLabel.scoped(AudioSessionOperationLabel.speechActivate) { try AVAudioSession.sharedInstance().setActive(true) }
         #endif
         lastTargetId = targetId
+        firstAudioLatch.arm(targetId: targetId)
         lastStartOffset = charOffset
         currentOffset = chunks[0].sourceStart
         currentRangeLength = 0
@@ -1142,7 +1149,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
         if mixesWithOtherAudio, lowersBackgroundAudio { try? PlaybackAudioSessionPolicy.releaseDucking() }
         #endif
         #if os(iOS) || os(watchOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        try? AudioSessionOperationLabel.scoped(AudioSessionOperationLabel.speechRelease) { try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
         #endif
         #endif
     }
@@ -1310,6 +1317,9 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         startedTargetId = lastTargetId
         pendingStartTargetId = nil
         playbackStartFailure = nil
+        if let targetId = lastTargetId, firstAudioLatch.take(targetId: targetId) {
+            postFirstAudio(targetId)
+        }
     }
 
     public func speechSynthesizer(
@@ -1783,7 +1793,12 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
     private var completionObserver: NSObjectProtocol?
     private var timeJumpObserver: NSObjectProtocol?
     private var timeObserverToken: Any?
+    private var boundaryObserverToken: Any?
     private var playerStateObservation: NSKeyValueObservation?
+    /// Reports the first sound of each `play` to the start cue (#842). Armed in `play`, taken once when the player
+    /// first reaches `.playing`, so a rebuffer inside one play posts nothing more. Touched on the main queue only.
+    private var firstAudioLatch = FirstAudioLatch()
+    private let postFirstAudio: FirstAudioPoster
     private var audioSessionObservers: [NSObjectProtocol] = []
     /// Timing of the latest play() until the player reports playing (#160).
     private var pendingStartTrace: (startedAt: TimeInterval, accessLogEvents: Int, fields: [String: String])?
@@ -1884,8 +1899,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
         audioSessionNotificationCenter: NotificationCenter = .default,
         interruptionHandler: (@Sendable (AudioPlaybackInterruptionEvent) -> Void)? = nil,
         interruptionHold: InterruptionBackgroundHold? = nil,
-        remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)? = nil
+        remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)? = nil,
+        postFirstAudio: @escaping FirstAudioPoster = { FirstAudioSignals.shared.post($0) }
     ) {
+        self.postFirstAudio = postFirstAudio
         self.preferredSkipBackSeconds = Self.validatedSkipSeconds(preferredSkipBackSeconds)
         self.preferredSkipForwardSeconds = Self.validatedSkipSeconds(preferredSkipForwardSeconds)
         self.audioSessionNotificationCenter = audioSessionNotificationCenter
@@ -2057,6 +2074,13 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
         let rebuildsItem = activeTargetId != targetId || activePlaybackURL != url || player == nil
         if activeTargetId != targetId || activePlaybackURL != url || player == nil {
             installPlayerItem(url: url, targetId: targetId)
+        }
+        // A player that is already sounding this target makes no new `.playing` change, so arming would hold the
+        // latch until a later rebuffer posted it late. Its sound is audible now, and the engine's next check sees it.
+        if !rebuildsItem, player?.timeControlStatus == .playing {
+            firstAudioLatch = FirstAudioLatch()
+        } else {
+            firstAudioLatch.arm(targetId: targetId)
         }
         let sessionStartedAt = ProcessInfo.processInfo.systemUptime
         #if os(iOS) || os(watchOS)
@@ -2498,7 +2522,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
         if mixesWithOtherAudio, lowersBackgroundAudio { try? PlaybackAudioSessionPolicy.releaseDucking() }
         #endif
         #if os(iOS) || os(watchOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        try? AudioSessionOperationLabel.scoped(AudioSessionOperationLabel.mediaRelease) { try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
         #endif
         #endif
     }
@@ -2961,6 +2985,22 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
             guard let self else { return }
             self.publishNowPlaying(isPlaying: !self.paused)
         }
+        installBoundaryObserver()
+    }
+
+    /// The boundary times asked for, on the player of their target only: a player for another file never runs them.
+    private func installBoundaryObserver() {
+        guard let player, boundaryObserverToken == nil, let request = boundaryRequest,
+              request.targetId == activeTargetId, !request.timesMs.isEmpty else { return }
+        let times = request.timesMs.map { NSValue(time: CMTime(value: CMTimeValue(max(0, $0)), timescale: 1_000)) }
+        let handler = request.handler
+        boundaryObserverToken = player.addBoundaryTimeObserver(forTimes: times, queue: .main) { handler() }
+    }
+
+    private func removeBoundaryObserver() {
+        guard let boundaryObserverToken else { return }
+        player?.removeTimeObserver(boundaryObserverToken)
+        self.boundaryObserverToken = nil
     }
 
     private func installPlayerStateObserver() {
@@ -2972,6 +3012,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
                 switch status {
                 case .playing:
                     self.finishPlaybackStartTrace(player: player)
+                    self.noteFirstSound(of: player)
                     self.publishNowPlaying(isPlaying: !self.paused)
                 case .paused:
                     // `paused` tracks user intent. A transient AVPlayer pause must
@@ -2986,6 +3027,18 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
                 }
             }
         }
+    }
+
+    /// The player of the latest `play`, for tests of `noteFirstSound(of:)`.
+    var debugPlayer: AVPlayer? { player }
+
+    /// A `.playing` change reached the main queue. It counts as the first sound of the latest `play` only if that
+    /// player is the current one and is still playing now: the change was queued when it happened, and a `play` that
+    /// arrived since has armed the latch for a start that has made no sound yet (audit of #5012). Main queue only.
+    func noteFirstSound(of observed: AVPlayer) {
+        guard observed === player, observed.timeControlStatus == .playing,
+              let targetId = activeTargetId, firstAudioLatch.take(targetId: targetId) else { return }
+        postFirstAudio(targetId)
     }
 
     private func removePlayerStateObserver() {
@@ -3013,6 +3066,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
     }
 
     private func removeTimeObserver() {
+        removeBoundaryObserver()
         guard let timeObserverToken else { return }
         if let player {
             player.removeTimeObserver(timeObserverToken)
@@ -3106,7 +3160,21 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
     private func removePlayerStateObserver() {}
     private func removeCompletionObserver() {}
     private func removeTimeObserver() {}
+    private func installBoundaryObserver() {}
+    private func removeBoundaryObserver() {}
     #endif
+
+    private var boundaryRequest: (targetId: String, timesMs: [Int], handler: @Sendable () -> Void)?
+
+    /// Runs `handler` on the main queue each time playback of `targetId` crosses one of `timesMs`, exactly, instead of
+    /// at the next periodic report (#3777: the start of each run of footnotes in a prepared file, so the chime stops
+    /// before the note's first word). It holds for that target until replaced; an empty list or nil removes it. A player
+    /// built for the target later (a new play, an item rebuilt before a seek) gets the same times. Main queue only.
+    public func setBoundaryTimes(_ timesMs: [Int], targetId: String, handler: (@Sendable () -> Void)?) {
+        removeBoundaryObserver()
+        boundaryRequest = handler.map { (targetId: targetId, timesMs: timesMs, handler: $0) }
+        installBoundaryObserver()
+    }
 
     private func currentChapterId(mediaTimeMs: Int) -> String? {
         mediaContext?.chapters
@@ -3152,7 +3220,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, HeardAudio
            url.scheme?.isEmpty == false {
             info[MPNowPlayingInfoPropertyAssetURL] = url
         }
-        NowPlayingInfoOwnership.shared.write(info, as: .mediaPlayer, detail: nowPlayingLedgerDetail())
+        NowPlayingInfoOwnership.shared.write(info, as: .mediaPlayer, itemId: context?.itemId, detail: nowPlayingLedgerDetail())
         configureRemoteCommandAvailability(canSeek: durationSeconds != nil)
         #if canImport(UIKit)
         Task { @MainActor in
@@ -3395,6 +3463,10 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
 
     public func currentRecoveryCharOffset() -> Int? {
         activeRoute == .speech ? speech.currentRecoveryCharOffset() : nil
+    }
+
+    public func footnoteContinuationSourceOffset() -> Int? {
+        activeRoute == .speech ? speech.footnoteContinuationSourceOffset() : nil
     }
 
     public func currentMediaTimeMs() -> Int? {
@@ -4314,16 +4386,14 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
         self.fileManager = fileManager
     }
 
-    public func transcribe(audioPath: String) async throws -> String {
-        try await transcribeAligned(audioPath: audioPath).text
+    /// `purpose` has no default: it is what the Speech Recognition gate reports if it holds the work (#4715).
+    public func transcribe(audioPath: String, for purpose: HeldTranscription) async throws -> String {
+        try await transcribeAligned(audioPath: audioPath, for: purpose).text
     }
 
-    public func transcribeAligned(audioPath: String) async throws -> AlignedInterjectionTranscript {
+    public func transcribeAligned(audioPath: String, for purpose: HeldTranscription) async throws -> AlignedInterjectionTranscript {
         #if canImport(Speech)
-        let status = await requestAuthorization()
-        guard status == .authorized else {
-            throw SessionKitError.persistenceFailed("speech_recognition_not_authorized")
-        }
+        try await SpeechAuthorizationAsk.requireAuthorized(for: purpose)
         let url = try audioURL(for: audioPath)
         guard fileManager.fileExists(atPath: url.path) else {
             throw SessionKitError.persistenceFailed("audio_file_missing")
@@ -4471,16 +4541,6 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
         }
     }
 
-    private func requestAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
-        let current = SFSpeechRecognizer.authorizationStatus()
-        guard current == .notDetermined else { return current }
-        return await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { status in
-                continuation.resume(returning: status)
-            }
-        }
-    }
-
     private func prepareAudioChunks(for url: URL) async throws -> PreparedAudioChunks {
         #if canImport(AVFoundation)
         let asset = AVURLAsset(url: url)
@@ -4582,12 +4642,11 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
 
     public init() {}
 
-    public func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+    public func transcribeSourceAudio(
+        url: URL, itemId: String, durationMs: Int?, for purpose: HeldTranscription
+    ) async throws -> TranscriptTimeline {
         #if canImport(Speech) && canImport(AVFoundation)
-        let status = await requestAuthorization()
-        guard status == .authorized else {
-            throw SessionKitError.persistenceFailed("speech_recognition_not_authorized")
-        }
+        try await SpeechAuthorizationAsk.requireAuthorized(for: purpose)
         guard url.isFileURL, FileManager.default.fileExists(atPath: url.path) else {
             throw SessionKitError.persistenceFailed("source_audio_file_missing")
         }
@@ -4643,13 +4702,11 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         anchorMediaTimeMs: Int,
         durationMs: Int?,
         windowBeforeMs: Int,
-        windowAfterMs: Int
+        windowAfterMs: Int,
+        for purpose: HeldTranscription
     ) async throws -> TranscriptTimeline {
         #if canImport(Speech) && canImport(AVFoundation)
-        let status = await requestAuthorization()
-        guard status == .authorized else {
-            throw SessionKitError.persistenceFailed("speech_recognition_not_authorized")
-        }
+        try await SpeechAuthorizationAsk.requireAuthorized(for: purpose)
         guard url.isFileURL || ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
             throw SessionKitError.persistenceFailed("source_audio_url_unsupported")
         }
@@ -4753,7 +4810,8 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         anchorMediaTimeMs: Int,
         durationMs: Int?,
         windowBeforeMs: Int,
-        windowAfterMs: Int
+        windowAfterMs: Int,
+        for purpose: HeldTranscription
     ) async throws -> SourceAudioWindowTranscription {
         let timeline = try await transcribeSourceAudioWindow(
             url: url,
@@ -4761,7 +4819,8 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             anchorMediaTimeMs: anchorMediaTimeMs,
             durationMs: durationMs,
             windowBeforeMs: windowBeforeMs,
-            windowAfterMs: windowAfterMs
+            windowAfterMs: windowAfterMs,
+            for: purpose
         )
         #if canImport(AVFoundation)
         let caches = try FileManager.default.url(
@@ -4854,16 +4913,6 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
                 }
             }
             return RecognitionHandle { task.cancel() }
-        }
-    }
-
-    private func requestAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
-        let current = SFSpeechRecognizer.authorizationStatus()
-        guard current == .notDetermined else { return current }
-        return await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { status in
-                continuation.resume(returning: status)
-            }
         }
     }
 

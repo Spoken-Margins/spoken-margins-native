@@ -31,11 +31,22 @@ public struct ItemListeningChoices: Equatable, Sendable {
         /// A reply to one of the listener's own Margins, as opposed to a new Margin from the friend.
         public var isReplyToYou: Bool { replyToYouParentId != nil }
 
-        public init(senderName: String, audioDurationMs: Int?, transcript: String, replyToYouParentId: String? = nil) {
+        /// A reply whose parent Margin is not in this Library (#4174): replies never carry the Margin they answer.
+        public let parentMissing: Bool
+
+        /// The run-up the sender chose for this Margin (#4171), nil for the review's own length.
+        public let leadInMs: Int?
+
+        public init(
+            senderName: String, audioDurationMs: Int?, transcript: String, replyToYouParentId: String? = nil,
+            parentMissing: Bool = false, leadInMs: Int? = nil
+        ) {
+            self.leadInMs = leadInMs.map(SenderLeadIn.clamped)
             self.senderName = senderName
             self.audioDurationMs = audioDurationMs
             self.transcript = transcript
             self.replyToYouParentId = replyToYouParentId
+            self.parentMissing = parentMissing
         }
     }
 
@@ -81,15 +92,38 @@ public struct ItemListeningChoices: Equatable, Sendable {
     ///   - hasFinishedSession: the item's session reached its end, so the plain button says "Replay".
     ///   - hasContinuationSession: the item has a session to carry on, so the plain button says "Continue".
     ///   - isPreparingAudio: the item's audio is still being made or fetched, so the plain button says "Listen now".
+    ///   - catchUp: the item is finished and a new Margin answers one of the listener's own (#4785). It outranks every
+    ///     other state: the big button plays only the new Margins and pauses after them.
+    ///   - resumesShortOfEnd: in catch-up, the listener is part way through a re-listen (`PlayRule.startAction` resumes
+    ///     a session under 99%), so the second choice is "Continue" rather than "Play from the start".
+    ///   - ownParentDurationsMs: in catch-up, the length of each distinct own Margin the run plays before its reply.
     public init(
         unheardFriendMargins: [WaitingMargin],
         marginsBehindPlace: [WaitingMargin] = [],
         placeIsAtEnd: Bool = false,
         hasFinishedSession: Bool,
         hasContinuationSession: Bool,
-        isPreparingAudio: Bool
+        isPreparingAudio: Bool,
+        catchUp: ConversationCatchUp? = nil,
+        resumesShortOfEnd: Bool = false,
+        ownParentDurationsMs: [Int] = []
     ) {
-        if !marginsBehindPlace.isEmpty {
+        if let catchUp {
+            // A turn in a conversation the listener is already in, on an item they finished: hear only that, then stop.
+            let minutes = catchUp.minutes(ownParentDurationsMs: ownParentDurationsMs)
+            primaryTitle = catchUp.bigButtonTitle(minutes: minutes)
+            primaryAccessibilityLabel = catchUp.bigButtonAccessibilityLabel(minutes: minutes)
+            primaryAction = .reviewNewMargins(thenContinue: false)
+            if resumesShortOfEnd {
+                secondaryTitle = "Continue"
+                secondaryAccessibilityLabel = "Continue your listen. The new Margins stay new and play in place."
+                secondaryAction = .play
+            } else {
+                secondaryTitle = "Play from the start"
+                secondaryAccessibilityLabel = "Play from the start. The new Margins stay new and play in place."
+                secondaryAction = .startFromBeginning
+            }
+        } else if !marginsBehindPlace.isEmpty {
             // Margins the episode would skip. The first button plays exactly these, then carries on, so the words
             // and the minutes are counted over them.
             let (whose, counted) = Self.describe(marginsBehindPlace)
@@ -163,12 +197,14 @@ public struct ItemListeningChoices: Equatable, Sendable {
     }
 
     /// How long "Skip to …" takes, in whole minutes and never under one: each Margin, written ones at the on-device
-    /// voice's pace, plus the review's lead-in before each.
-    static func marginsOnlyMinutes(_ margins: [WaitingMargin]) -> Int {
+    /// voice's pace, plus the review's lead-in before each (the sender's own length for a Margin that has one, #4171).
+    /// `ownParentDurationsMs` adds the listener's own Margins a catch-up run plays before the replies to them (#4785).
+    static func marginsOnlyMinutes(_ margins: [WaitingMargin], ownParentDurationsMs: [Int] = []) -> Int {
         let leadInMs = ListeningMoment.rule(for: .reviewNewMargins).leadInMs
-        let totalMs = margins.reduce(0) { sum, margin in
-            sum + leadInMs + max(0, margin.audioDurationMs ?? spokenLengthMs(of: margin.transcript))
+        let marginsMs = margins.reduce(0) { sum, margin in
+            sum + (margin.leadInMs ?? leadInMs) + max(0, margin.audioDurationMs ?? spokenLengthMs(of: margin.transcript))
         }
+        let totalMs = marginsMs + ownParentDurationsMs.reduce(0) { $0 + max(0, $1) }
         return max(1, Int((Double(totalMs) / 60_000).rounded()))
     }
 
@@ -186,7 +222,9 @@ extension SharedMarginReview.Entry {
             senderName: layer.displayLabel ?? "",
             audioDurationMs: interjection.audioDurationMs,
             transcript: interjection.approvedTranscript,
-            replyToYouParentId: replyContext?.yoursParentId
+            replyToYouParentId: replyContext?.yoursParentId,
+            parentMissing: replyContext?.parent == .missing,
+            leadInMs: interjection.senderLeadInMs
         )
     }
 }

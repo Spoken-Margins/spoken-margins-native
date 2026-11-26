@@ -8,12 +8,14 @@
 
 Re-check the citations if the network code changes before submission.
 
+**Updated 2026-11-18 (#2842, redline A8).** The table below now lists the share-link upload, the podcast name search, Type III Audio, the server-config fetch and the community-map calls, which the first draft called absent or left out. Rows 13 to 17 cite the code by file and symbol, because line numbers drift. **The label answers are not changed here.** Whether encrypted audio and text that the server cannot read count as "collected" is for the lawyer, so redline B6 in `docs/legal/public-wording-redlines-2842.md` waits with the public share-link release.
+
 ## 1. App Privacy ("nutrition label")
 
 ### Short answer
 
-- **Does the app collect data?** Draft answer: **Yes, one type: "Other User Content", linked to the user, not used for tracking.** The reason is the optional Readwise sync (row 12): when a listener turns on "Send Margins to Readwise", Margin text and the passage around it go from the phone to their own Readwise account. Over-declaring is safe; under-declaring is the compliance risk (owner's walkthrough on #175, 2026-10-17). Whether that sync is "collection" at all is attorney question 7 ([attorney-questions.md](../legal/attorney-questions.md)). Nothing else is collected, on one condition (question Q1): the owner's server must keep no logs that tie an IP address to a request beyond serving it.
-- **Tracking:** No. The app has no ad or analytics SDK and never calls App Tracking Transparency, AdServices, `ASIdentifierManager` or `identifierForVendor`. The only packages are onnxruntime 1.24.2 and ZIPFoundation 0.9.20.
+- **Does the app collect data?** Draft answer: **Yes, one type: "Other User Content", linked to the user, not used for tracking.** The reason is the optional Readwise sync (row 12): when a listener turns on "Send Margins to Readwise", Margin text and the passage around it go from the phone to their own Readwise account. Over-declaring is safe; under-declaring is the compliance risk (owner's walkthrough on #175, 2026-10-17). Whether that sync is "collection" at all is attorney question 7 ([attorney-questions.md](../legal/attorney-questions.md)). Nothing else is collected on the condition in Q1, which is now met: the owner's server keeps no logs that tie an IP address to a request beyond serving it.
+- **Tracking:** No. The app has no ad or analytics SDK and never calls App Tracking Transparency, AdServices, `ASIdentifierManager` or `identifierForVendor`. The only packages are onnxruntime 1.24.2 and ZIPFoundation 0.9.21.
 
 ### What leaves the device
 
@@ -29,20 +31,25 @@ Apple counts data as "collected" when it leaves the device and the developer or 
 | 6 | Playback (user), offline download (**automatic on Wi-Fi**, user-only on cellular), and transcribing a short window of a streamed episode's audio after a Margin is recorded (**automatic**) | The episode's audio host | The enclosure URL | `SK/SessionKitAudio/AudioAdapters.swift:1855`, `:3615-3626`; `A/PodcastDownloadCoordinator.swift:453`, `:472`; `SK/SessionKit/PodcastDownloads.swift:153-158` |
 | 7 | User adds an article (share, paste, Safari extension handoff, followed article, Read Later) | The article's site, in a hidden non-persistent web view with page scripts and images blocked | The article URL | `A/AppOwnedReadablePageExtractor.swift:53-69` |
 | 8 | User shares a PDF link | The PDF's host | The PDF URL | `M:3557` |
-| 9 | User connects Readwise Reader or Raindrop.io, and taps Refresh | `readwise.io/api/v3/list/`, `api.raindrop.io/rest/v1/raindrops/0` | The user's own access token. It is kept in the Keychain as `WhenUnlockedThisDeviceOnly` (`A/ReadLaterModel.swift:21`, `M:16835`) | `SK/SessionKit/ReadLaterClient.swift:29-36`; `A/ReadLaterModel.swift:52` |
+| 9 | User connects Readwise Reader or Raindrop.io, and taps Refresh | `readwise.io/api/v3/list/`, `api.raindrop.io/rest/v1/raindrops/0` | The user's own access token. It is kept in the Keychain as `WhenUnlockedThisDeviceOnly` (`A/ReadLaterModel.swift:11-16`, `M:16835`) | `SK/SessionKit/ReadLaterClient.swift:29-36`; `A/ReadLaterModel.swift:33-35` |
 | 10 | **Removed (#2845).** The OpenAI client and its settings are no longer in the app, so nothing is sent to `api.openai.com` | — | — | `git grep api.openai.com -- App Packages/SessionKit/Sources` finds nothing |
 | 11 | First on-device transcription | Apple's speech-model download (`AssetInventory`) | The locale | `SK/SessionKitAudio/AudioAdapters.swift:226-229` |
 | 12 | **Off by default.** The listener turns on "Send Margins to Readwise" in Settings. Then the app checks once a minute while it is open, including Margins that already exist when it is first turned on | `readwise.io/api/v2/highlights/` (Readwise, with the listener's own token; no Spoken Margins server) | For each Margin with text: the Margin text (as the note; for a spoken Margin, its transcribed words), the source passage around it (as the highlight), the item's title, author, a shareable source URL (private feed links are dropped), category and creation time. Recording audio is not sent | `A/ReadwiseHighlightSync.swift:12`, `:33-45`, `:89-114`; `SK/SessionKit/ReadwiseHighlightClient.swift:8-52`, `:79`; toggle text `A/PKMSettingsViews.swift:427-430` |
+| 13 | **Share as Link**, in a build with `SM_SHARE_LINK_CREATION` on (internal and beta builds; `project.yml`). Only after the listener agrees in the consent alert, the first time (`ServerSendConsent`, share-links) | `POST /api/v1/links` on the owner's server (`ShareLinkUpload.linksPath`) | The packet and a preview, each sealed on the phone with a key that stays in the link's `#` part and never reaches the server. The packet holds the Margins' audio and text, a source excerpt, the source's title and address and the sender name if typed. The server keeps the sealed copy 30 days and cannot read it | `SK/SessionKit/ShareLinkUpload.swift` (`linksPath`, the seal and upload); `A/ShareLinkSender.swift` (`ServerSendConsent.hasConsented(to: .shareLinks)` guard); `SK/SessionKit/ServerSendConsent.swift` |
+| 14 | **Opening the share sheet for a link**, automatically before it needs the server | `GET` of the server config (`BridgeService.refreshConfigOnly`), which says whether links are on | Nothing beyond the request. It carries no library data and no identifier | `A/BridgeService.swift`, called from `A/ShareLinkSender.swift`; `SK/SessionKit/BridgeManifestStore.swift` |
+| 15 | **Typing at least 2 letters in the podcast search box** | `itunes.apple.com/search` (Apple's public podcast search) | The typed words as `term`, plus the request itself | `SK/SessionKit/ITunesSearchSourceResolver.swift` (`https://itunes.apple.com/search`); `SK/SessionKit/PodcastNameSearch.swift` (`minimumQueryLength = 2`); `A/CatalogDrawer.swift` |
+| 16 | **Opening, playing or sharing a LessWrong or EA Forum post** | `api.type3.audio/narration/find`, then the narration streams from `dl.type3.audio` | The post's address. The app may read the recording once to line it up with the text, then deletes that copy | `SK/SessionKitFeeds/TypeIIIAudioNarration.swift` (`findEndpoint`); `A/SharedLinkVoiceover.swift`; `A/PublisherAudioTextMapper.swift` |
+| 17 | **Removed from the app (#5359, 2026-11-25).** Builds up to 37 had two opt-in Settings switches, "Help make listening maps" and "Look up community maps"; later builds have neither and never call the maps server | None from builds after #5359. Builds 36 and 37 can still reach `/api/v1/maps/transcripts` and `/api/v1/maps/` while the server answers | Nothing from builds after #5359 | `SK/SessionKit/CommunityMapUpload.swift` and `SK/SessionKit/CommunityMapFetch.swift` are kept with no app caller; `scripts/tests/test_server_contact_consent.py` guards that |
 
 Also checked, and nothing leaves the device:
 
 - **Speech recognition** runs on the device. Every request sets `requiresOnDeviceRecognition = true` (`SK/SessionKitAudio/AudioAdapters.swift:297`).
 - **Microphone recordings** (Margins) stay in local files. They leave only when the user exports a packet through the share sheet (`A/SharingExperience.swift:868`, `A/ExportScreen.swift:116`, `:204`).
-- **Packets** hold the Margins' audio and text, the source URLs, fingerprints, and an optional sender label the user types (`A/SharingExperience.swift:79`, `:287`). The app never uploads a packet: no share-link server is wired up, and the entitlements hold only the app group.
+- **Packets** hold the Margins' audio and text, the source URLs, fingerprints, a random sender code made on the phone (one per phone) and an optional sender label the user types (`A/SharingExperience.swift:79`, `:287`). A packet sent as a file goes only where the listener sends it. A packet is uploaded only by **Share as Link**, sealed, after the listener agrees (row 13); the entitlements hold only the app group.
 - **ShazamKit** matches against a catalog built on the device (`SK/SessionKitAudio/PodcastAnchorEvidence.swift:285`, `:354`), never Shazam's servers.
 - **Share, Safari and widget extensions** make no network calls. The Live Activity has no push (`pushType: nil`).
 - **Not present anywhere:** analytics, crash reporting SDKs, MetricKit upload, remote push, CloudKit or iCloud, Sign in with Apple, location, contacts, photos, health, StoreKit.
-- **Never called today:** a server-config fetch (`SK/SessionKit/BridgeManifestStore.swift:11-12`) and a podcast name search (`SK/SessionKit/ITunesSearchSourceResolver.swift`) exist, but nothing creates them. Re-check this page if either gets wired up.
+- **Both are called now** (this replaces "never called today"): the server-config fetch (`SK/SessionKit/BridgeManifestStore.swift`, run by `A/BridgeService.swift`; row 14) and the podcast name search (`SK/SessionKit/ITunesSearchSourceResolver.swift`, created in `A/CatalogDrawer.swift`; row 15). Re-check this page when a new request is wired up; `scripts/tests/test_server_contact_consent.py` lists every file that reaches the owner's server.
 
 ### Answer per data type
 
@@ -56,11 +63,11 @@ Every answer below is **Not collected** except one: **User content: other** is d
 | Location: precise, coarse | Not collected | No Core Location. The owner's server sees IP addresses at launch (row 1); see Q1 |
 | Sensitive info | Not collected | — |
 | Contacts | Not collected | — |
-| User content: audio | Not collected | Recordings stay on the device and are shared only as a file the user sends |
-| User content: other (Margin text, notes) | **Collected: "Other User Content", linked to the user, not used for tracking** | Only if the listener turns on "Send Margins to Readwise": Margin text and the passage around it go to their Readwise account (row 12). Everyone else's Margin text stays on the device and is shared only as a file the user sends. It would also be "shared with OpenAI" if `SMRemoteProviderExperienceEnabled` is turned on (row 10) |
+| User content: audio | Not collected (pending the lawyer, redline B6) | Recordings stay on the device and are shared as a file the user sends. In a build with link creation on, **Share as Link** uploads them sealed (row 13); whether that counts as "collected" is the open question in B6 |
+| User content: other (Margin text, notes) | **Collected: "Other User Content", linked to the user, not used for tracking** | Only if the listener turns on "Send Margins to Readwise": Margin text and the passage around it go to their Readwise account (row 12). Everyone else's Margin text stays on the device and is shared only as a file the user sends. Nothing goes to OpenAI: that client is removed (row 10). Share links (row 13) and the community-map upload (row 17) also send Margin text or transcripts to the owner's server; see redline B6 for how those might change this answer |
 | User content: emails or texts, photos or videos, gameplay, customer support | Not collected | Support is by email from the user's own mail app |
 | Browsing history | Not collected | Article and feed URLs go only to the site itself (rows 3, 7) |
-| Search history | Not collected | Episode titles go to Apple's iTunes Search to answer the request (row 4). The app keeps no search history of its own |
+| Search history | Not collected | Episode titles (row 4) and words typed in the podcast search box (row 15) go to Apple's iTunes Search to answer the request. The app keeps no search history of its own |
 | Identifiers: user ID, device ID | Not collected | None created or sent |
 | Purchases | Not collected | — |
 | Usage data: product interaction, advertising, other | Not collected | Playback events are logged on the device only (`M:628`). Diagnostics go out only when the user copies them into an email (`A/SettingsScreen.swift:351`) |
@@ -89,7 +96,7 @@ It also says there is "no developer-operated … backend", but rows 1 and 2 use 
 
 ### Questions for Cole
 
-- **Q1. Server logs.** Does the VPS web server keep access logs (IP address, time, path) for `/onboarding/`? If they're kept only briefly for security, the label stays at "Other User Content" alone. If they're kept longer, or used for anything else, answer "Coarse location" or "Other data" as collected, not linked, not tracking. My pick: keep logs short-lived and say so in the privacy policy.
+- **Q1. Server logs. Answered 2026-11-22 (#2034).** The server keeps no visitor addresses: the web server writes no access log, the journals hold none, and the firewall log holds only blocked probes of closed ports. The hosting provider's console offers no firewall, access or network log. The provider may keep its own network logs, which we can't see or turn off; Apple counts data as collected only when the developer or its partners can keep it longer than the request needs, so the label stays at "Other User Content" alone. The owner chose to say this plainly, without naming the provider, rather than ask the provider in writing.
 
 ## 2. App Review notes (DRAFT)
 
@@ -118,7 +125,7 @@ It also says there is "no developer-operated … backend", but rows 1 and 2 use 
 > 2. Settings › **Hidden senders** lists everyone you have hidden, each with **Show again**.
 > 3. To hide one Margin and keep the rest, tap **Hide this Margin** on its card in the item, or open it from the Margins tab and tap **Hide this Margin**. It disappears from every list and from playback on this phone. Settings › **Hidden Margins** lists each one with **Show again**.
 > 4. Margins that came from a share link also show **Report this link**, which opens the link's page in the browser, where a short form needs no account. The server stops serving a reported link at once and the developer reads the report record and can remove a link by its id. Nobody reads the reported content, because shares are end-to-end encrypted.
-> 5. The contact address for anything else is in Settings › Help & Privacy.
+> 5. The contact address for anything else is in Settings › Help & Diagnostics › Support.
 >
 > **Voices:** the James and Lily voices run on the device. They require accepting the in-app Terms of Use, which supplement Apple's standard EULA. The system voice works without it.
 >
@@ -136,7 +143,7 @@ Facts behind the draft:
 - Terms gate: `docs/legal/spoken-margins-terms.md`.
 - Purpose strings: `project.yml:119-120`.
 - Background modes: `project.yml:122-124`.
-- There's no free-text podcast search in this build (#471 would add one), so the notes point the reviewer at the drawer or a pasted link.
+- The podcast drawer now has a search box (row 15), so the reviewer can also find a show by typing its name. The notes above still start from the drawer or a pasted link, which need no typing.
 - **Demo packet:** the repo has none. `Contracts/fixtures/interjection-packages` holds JSON descriptions, not packets. Before submitting, export one from a TestFlight build on a public episode and attach it.
 
 ## 3. Listing (DRAFT)
@@ -188,7 +195,7 @@ My pick is option 1, as a small follow-up. Users can still add any feed they lik
 
 - **Settings → Developer** (reset library, sample content, runtime profile, the listening-map editor) is inside `#if DEBUG` (`A/SettingsScreen.swift:368-414`).
 - **"Create Recipient Test Session"** (#150) shows only in Debug (`A/Gate1RootView.swift:138-148`).
-- **The OpenAI settings** are hidden by the Info.plist switch (row 10 above).
+- **The OpenAI settings** are gone, not hidden: the client and its settings were removed (#2845, row 10 above).
 - **The `spokenmargins://` URL handler** (`M:8386-8454`) has no reset or seed routes.
 - **The extensions** have no developer UI.
 
@@ -234,12 +241,12 @@ My pick: ask the attorney. If the answer isn't clear before submission, use the 
 
 | Component | Where it ships | License | App Store distribution | What it asks of us | Met? |
 |---|---|---|---|---|---|
-| Supertonic 3 model and preset voices (Supertone) | App, `Resources/Supertonic` | BigScience Open RAIL-M (`L/SUPERTONIC_MODEL_OPENRAIL-M.txt`) | Allowed. Paragraph 4 permits distribution "in any medium", subject to 4(a)–(d) | 4(a) restrictions as an enforceable provision and notice to users; 4(b) a copy of the license; 4(c) notices on modified files; 4(d) keep attribution | 4(a): built (the Terms and the voice gate), but whether it's enough is Q3. 4(b): yes, the license is bundled and shown in Settings > Support & Privacy > Legal > On-Device Voice (`App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicLegalView.swift:19-23`). 4(c): **partly**. `L/THIRD_PARTY_NOTICES.txt` says the INT8 graphs are modified, quantized derivatives that were renamed, but the license asks for "prominent notices" on the modified files, and the `.onnx` files themselves carry none: #630. 4(d): yes, the same notice |
+| Supertonic 3 model and preset voices (Supertone) | App, `Resources/Supertonic` | BigScience Open RAIL-M (`L/SUPERTONIC_MODEL_OPENRAIL-M.txt`) | Allowed. Paragraph 4 permits distribution "in any medium", subject to 4(a)–(d) | 4(a) restrictions as an enforceable provision and notice to users; 4(b) a copy of the license; 4(c) notices on modified files; 4(d) keep attribution | 4(a): built (the Terms and the voice gate), but whether it's enough is Q3. 4(b): yes, the license is bundled and shown in Settings > Privacy & Legal > About & Legal > Legal · On-Device Voice (`App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicLegalView.swift:19-23`). 4(c): **partly**. `L/THIRD_PARTY_NOTICES.txt` says the INT8 graphs are modified, quantized derivatives that were renamed, but the license asks for "prominent notices" on the modified files, and the `.onnx` files themselves carry none: #630. 4(d): yes, the same notice |
 | Supertonic Swift inference code (Supertone) | App | MIT (`L/SUPERTONIC_CODE_MIT.txt`) | Allowed | Keep the copyright and permission notice | Yes, bundled and linked from the same screen |
 | INT8 model conversion (k2-fsa sherpa-onnx) | App (the converted graphs) | Apache-2.0 (`L/SHERPA_ONNX_APACHE-2.0.txt`) | Allowed | Section 4: a copy of the license, notice of changes, and any NOTICE file | Yes. The license is bundled and linked, and the change is described in `L/THIRD_PARTY_NOTICES.txt` |
 | ONNX Runtime 1.24.2 (Microsoft), via `onnxruntime-swift-package-manager` | App, linked framework | MIT (`L/ONNXRUNTIME_MIT.txt`) | Allowed | Keep the notice | Yes, bundled and linked |
 | ONNX Runtime's own third-party components | Inside the framework | Listed in `L/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt`: MIT, BSD, Apache-2.0 (including OpenSSL), zlib, Boost, ISC, the Unlicense (G3log), the PIL/HPND license, public domain (SQLite), the Intel Simplified Software License, and MPL-2.0 (Eigen) | Allowed. None is GPL or LGPL; the only copyleft is Eigen's MPL-2.0, which is file-level | Keep the notices. MPL-2.0 §3.2 also asks that recipients be told where Eigen's source is | Yes. The file is bundled and linked unchanged. Microsoft's notice gives its source-request address, and Eigen is unmodified and public at gitlab.com/libeigen/eigen |
-| ZIPFoundation 0.9.20 (Thomas Zoechling) | App, Swift package | MIT (`App/SpokenMarginsApp/Resources/Legal/ZIPFoundation-LICENSE.txt`) | Allowed | Keep the notice "in all copies" | The file is in the app bundle, but no screen shows it. Fine for MIT; adding it to the Legal screen is good practice (#630) |
+| ZIPFoundation 0.9.21 (Thomas Zoechling) | App, Swift package | MIT (`App/SpokenMarginsApp/Resources/Legal/ZIPFoundation-LICENSE.txt`) | Allowed | Keep the notice "in all copies" | The file is in the app bundle, but no screen shows it. Fine for MIT; adding it to the Legal screen is good practice (#630) |
 | Defuddle 0.19.5 (Steph Ango) | App, Safari extension and Share extension, compiled into `browserTextCapture.js` and `SourceLinkPreprocessor.js` | MIT (`App/SharedResources/Defuddle-LICENSE.txt`, and a copy in the Share extension) | Allowed | Keep the notice | The file is bundled beside each script but not shown in the app |
 | Defuddle's bundled dependencies: turndown, temml, mathml-to-latex, @xmldom/xmldom | The same two scripts | MIT (per `package-lock.json`) | Allowed | Keep each notice | **No.** `Tools/BrowserExtraction/build.mjs` builds with `legalComments: "none"` and copies only Defuddle's LICENSE, so these notices ship nowhere: #630 |
 | Swift packages | — | — | — | — | Only onnxruntime and ZIPFoundation (`Packages/SessionKit/Package.swift:21-30`, `Package.resolved`). `swift-crypto` is Linux-only (`Package.swift:139-142`) and never ships |

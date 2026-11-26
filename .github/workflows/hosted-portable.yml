@@ -4,6 +4,8 @@
 # validators, the test inventory, the browser-extraction and share-link suites, and the research suites. It
 # prints each step it leaves out and a host test fails if a fast-plan step is in neither list. The same job builds
 # SessionKit's Linux targets and runs SessionKitCoreTests in the swift image (#3529), so a red test frees the Mac early.
+# A PR push runs the same whole plan and the Linux SessionKitCoreTests as the merge group (#5281, 2026-11-24, ending
+# the 2026-11-20 quick tier; see the "Portable fast plan" step), so a PR reaches the queue having passed them.
 # The second job, `sessionkit`, runs `--plan fast-hosted-sessionkit` on a GitHub-hosted Mac: SessionKit's build and
 # SessionKitCoreTests. The third, `mac-rest` (#2459), runs `--plan fast-mac-rest` on another GitHub-hosted Mac with
 # the BlackHole virtual audio output installed: what neither of the others runs (SessionKitTests and
@@ -40,6 +42,16 @@
 # then `mac-rest`, or `sessionkit` with the variable off) stop or leave the queue (#2596): a PR the cheap job
 # already fails has no use for a hosted-Mac slot, and the org has five of them.
 #
+# Guards first (merge groups only): the Mac jobs also wait for `guards`, about 2 minutes of hosted Linux running the
+# repository's rule tests (scripts/queue_guards.py), and `stop-on-guard-red` cancels the run when one of those tests
+# fails. `stop-macs-on-red` fired only when `portable` ended, 16 minutes in at the median, after the app build (8
+# minutes) had finished and most of Mac rest (25) had run. No result of `guards` skips a Mac job: a skipped required
+# check counts as passed, so only the cancel stops them, and a cancel that fails leaves them running as before.
+#
+# The slow tier (#5145, owner 2026-11-23): every plan here runs with --leave-out-slow, which leaves out the tests in
+# scripts/slow_tier.py (slow on these runners, no failure in 30 days, none a packet, database or owner-data guard) and
+# names them in the log. main-slow.yml runs exactly those on main nightly and before the phone builds.
+#
 # Dispatch it by hand on any branch with `gh workflow run hosted-portable.yml --ref <branch>`.
 #
 # No secrets, a read-only token, no pull_request_target, no Git LFS (the voice models stay pointers; the
@@ -60,8 +72,14 @@ on:
         default: ''
   pull_request:
     branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
-    # Docs-only PRs are T0 (scripts/test-scope.py): the lane runs nothing for them and never waits for these checks.
-    paths-ignore: ['**/*.md', 'docs/**', 'research/**', 'Design/**', 'references/**', 'Site/**', 'Contracts/docs/**']
+    # No paths filter: a required check must report on every PR and every merge group, and a workflow a paths filter
+    # skips leaves its checks pending, which would block the merge queue. Docs-only changes (the old paths-ignore
+    # list) are now skipped at the job level by the `scope` job's `docs_only` output; a skipped job reports success.
+  # GitHub's merge queue (#4693): each queued entry is tested here as main plus the PRs ahead of it plus itself, on a
+  # gh-readonly-queue/main/... branch. Harmless until the "protect main" ruleset requires the queue.
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
 
 permissions:
   contents: read
@@ -76,11 +94,19 @@ jobs:
     # same guard as every other job keeps the rule in one place). Always true for workflow_dispatch.
     # And, for a PR, only once the lane takes hosted results (LANE_HOSTED_FAST, above).
     name: 'hosted fast: portable'
+    # Waits for `scope` (about 20 seconds) only to learn whether the change is docs-only. A merge group always runs:
+    # the queue merges every entry ahead of a green head on that head's result (HEADGREEN grouping), so a skip here
+    # merged untested PRs ahead of a docs-only head on 2026-11-23 (#5179). Groups are few and this job is Linux.
+    needs: scope
     if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on')
+      !cancelled() && needs.scope.result == 'success' &&
+      (github.event_name == 'merge_group' || needs.scope.outputs.docs_only != 'true') &&
+      (github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on'))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Successful runs take 20 to 29 minutes, so a 30-minute limit cancelled busy runs that were passing; in the merge
+    # queue that drops a PR for no real failure (#4693, 2026-11-20). The limit is a ceiling, not a pace.
+    timeout-minutes: 45
     outputs:
       # The SessionKitCoreTests that passed only on their Linux rerun, for linux-retry-tally (#2176).
       retried: ${{ steps.core.outputs.retried }}
@@ -143,8 +169,34 @@ jobs:
         run: |
           bash scripts/bootstrap-python-tools.sh
           npm ci
+      # The whole plan on PRs too (#5281, 2026-11-24). From 2026-11-20 a PR push ran a quick tier (no runner-tests, no
+      # Linux SessionKitCoreTests) and left both to the merge group. That made the queue the first place they ran: of
+      # the 58 PRs that left the queue from 2026-11-23 12:30Z to 2026-11-24 12:30Z, 18 failed "hosted fast: portable",
+      # and every portable failure read on 2026-11-24 was in one of those two parts. Each one is dropped only after the
+      # groups ahead of it finish, and the queue then rebuilds every group behind it, so 3 PRs merged in 3 h 20 min
+      # with about 30 armed. The quick tier's own waste signal (queue failures on these parts outweigh the PR minutes
+      # it saved) had fired, and its main saving is gone: runner-tests runs in about 4 minutes in parallel (#4769),
+      # not the 20 it took when the tier was set.
+      # Cost and catch: about 12 more free hosted Linux minutes per PR push (public repository), and a PR's own
+      # result arrives in about 15 minutes instead of 3. It catches a PR that breaks a source scan in runner-tests or
+      # a Linux SessionKit test before it enters the queue, where each such failure costs a queue cycle of about
+      # 20 minutes for every PR behind it. Waste signal: two weeks in which merge groups still fail "hosted fast:
+      # portable" as often per merged PR as in the week before this change.
       - name: Portable fast plan
-        run: .venv/bin/python scripts/verify-tests.py --plan fast-portable
+        run: .venv/bin/python scripts/verify-tests.py --plan fast-portable --leave-out-slow
+      # #4937: the pipeline harness. It runs this tree's workflows, queue scripts, merge policy and VPS backstop through
+      # about 400 timed combinations (black-box Mac jobs that pass, fail, hang or never start; same-second label bursts in
+      # both orders; download outages; token refusals; dropped schedules) and fails on a stuck, silent, looping or
+      # broken-merge case not in its KNOWN list, or on a KNOWN entry that no longer happens.
+      # Cost and catch: about 30 seconds of a hosted Linux job per PR push and per merge group, no Mac, no tokens. It
+      # runs on every PR rather than on a path list, because a path list is one more thing to fall out of date and the
+      # harness reads scripts no list would name. Replayed against the last two days, it finds #4929 (a re-arm left the
+      # required check cancelled for 2 to 5 hours), the bridge's silent 403, the disarmed timed-out queue entry, the
+      # grey cancelled portable check (#4747) and the skipped-means-passed web check (docs/workstreams/ci-model.md).
+      # Waste signal: three months in which it never fails a PR, or it passes 2 minutes; then run it only on pipeline
+      # paths.
+      - name: Pipeline harness
+        run: .venv/bin/python scripts/ci_harness.py --check
       # #2681: SessionKit also builds on Linux (the daily Substack canary runs on it), but no per-PR check compiled it
       # there, so #2671's Foundation-only `.bySentences` broke the Linux build on main unnoticed. #3529: and it runs
       # SessionKitCoreTests here, in the same swift image and dependency cache as hosted-sessionkit-linux.yml, so a red
@@ -210,6 +262,9 @@ jobs:
     outputs:
       mac: ${{ steps.scope.outputs.mac }}
       reason: ${{ steps.scope.outputs.reason }}
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+      app: ${{ steps.scope.outputs.app }}
+      app_reason: ${{ steps.scope.outputs.app_reason }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -219,13 +274,28 @@ jobs:
         id: scope
         env:
           BASE: ${{ inputs.base }}
+          QUEUE_TRUNK: ${{ github.event.merge_group.base_ref }}
+          EVENT: ${{ github.event_name }}
         run: |
-          # A PR: the merge commit's parent 1 is the base, parent 2 the PR's head (the changed-files rule of the
-          # Mac rest job). A dispatch with a base: the dispatched commit against that base's tip. A dispatch without
-          # a base has no diff to look at, so the Mac checks run.
+          # A merge group: everything the group adds to the trunk itself (refs/heads/main, fetched here), not only the
+          # last PR's diff, so a group whose head entry is docs-only still runs the Mac checks for a Swift PR ahead of
+          # it (the queue merges the whole group on the head's result). Not merge_group.base_sha: that is the commit
+          # the entry was built on, which for any entry behind another is the previous entry's queue commit, not
+          # main's tip, so its diff held only the last PR (#5179, 2026-11-23). The rule is read from that same trunk
+          # commit. A PR: the merge commit's parent 1 is the base, parent 2 the PR's
+          # head (the changed-files rule of the Mac rest job). A dispatch with a base: the dispatched commit against
+          # that base's tip. A dispatch without a base has no diff to look at, so the Mac checks run.
           list="$RUNNER_TEMP/changed-files.txt"
           rule="$RUNNER_TEMP/test-scope.py"
-          if git rev-parse --verify --quiet HEAD^2 > /dev/null; then
+          if [ "$EVENT" = merge_group ]; then
+            trunk="${QUEUE_TRUNK#refs/heads/}"
+            trunk="refs/remotes/origin/${trunk:-main}"
+            git fetch --no-tags origin "+refs/heads/${trunk#refs/remotes/origin/}:$trunk" &&
+              git diff --name-only --no-renames "$(git merge-base HEAD "$trunk")" HEAD > "$list" || rm -f "$list"
+            git show "$trunk:scripts/test-scope.py" > "$rule" 2> /dev/null || rm -f "$rule"
+          # Not a dispatch: a dispatch on the trunk checks out its tip, a merge commit whose HEAD^2 is the last merged PR,
+          # and that PR's files are not a diff to test (a seeding dispatch must run every step, #4664).
+          elif [ "$EVENT" != workflow_dispatch ] && git rev-parse --verify --quiet HEAD^2 > /dev/null; then
             git diff --name-only --no-renames "$(git merge-base HEAD^1 HEAD^2)" HEAD^2 > "$list" || rm -f "$list"
             git show HEAD^1:scripts/test-scope.py > "$rule" 2> /dev/null || rm -f "$rule"
           elif [ -n "$BASE" ]; then
@@ -239,13 +309,70 @@ jobs:
             { echo "mac=true"; echo "reason=no changed-file list or base rule, so the Mac checks run"; } | tee -a "$GITHUB_OUTPUT"
           fi
           grep -q '^mac=' "$GITHUB_OUTPUT" || echo "mac=true" >> "$GITHUB_OUTPUT"
+          # The merge queue's app compile (app-compile below). A base rule without --app-compile-required prints only a
+          # usage error, so no app= line: the grep after this writes app=true. Unsure builds.
+          if [ -s "$list" ] && [ -s "$rule" ]; then
+            python3 "$rule" --app-compile-required "$list" | tee -a "$GITHUB_OUTPUT" || true
+          else
+            echo "app=true" | tee -a "$GITHUB_OUTPUT"
+          fi
+          grep -q '^app=' "$GITHUB_OUTPUT" || echo "app=true" >> "$GITHUB_OUTPUT"
+          # Docs-only: every changed path is one the old paths-ignore list skipped. No list says false. The Site/
+          # folders that hold code with tests are not docs (Site/quiz/, #5048): a change there runs the portable plan,
+          # whose runner tests in the merge group include test_quiz_page.
+          if [ -s "$list" ] && python3 -c '
+          import sys
+          docs = ("docs/", "research/", "Design/", "references/", "Site/", "Contracts/docs/")
+          code = ("Site/quiz/",)
+          paths = [p.strip() for p in open(sys.argv[1]) if p.strip()]
+          sys.exit(0 if paths and all(p.endswith(".md") or (p.startswith(docs) and not p.startswith(code)) for p in paths) else 1)
+          ' "$list"; then
+            echo "docs_only=true" | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=false" | tee -a "$GITHUB_OUTPUT"
+          fi
+
+  guards:
+    # The repository's rule tests first, in a merge group only (scripts/queue_guards.py says which and why). The Mac
+    # jobs below wait for this job; when a guard test fails (output `red`), stop-on-guard-red cancels the run, so the
+    # queue drops the group in minutes instead of when `portable` ends. 2026-11-20 to 11-24: 157 merge groups failed first in
+    # `portable` while their Mac jobs ran beside it (1,569 Mac minutes), and 117 of them failed a test this job runs.
+    # `portable` still runs every one of these tests and stays the required check: a skipped Mac job reports success,
+    # so a red here must be red there too, which test_fast_portable keeps true. Not on a PR push: the Mac jobs are
+    # queue-only there, and the quick tier runs the Swift scans itself (#5220). No result of this job skips a Mac job
+    # (audit on 089d17c): a failure in checkout, setup-python or Python tools (a PyPI flake, which `portable` may not
+    # hit) is not `red` and cancels nothing, and if the cancel itself fails (#5217's token budget) the Mac jobs run.
+    # Cost and catch: about 2 minutes of hosted Linux per merge group (the scans took 59 s on a PR's portable job,
+    # 75 s for the whole set in one process on the owner's Mac), and that much later Mac start in each group, beside a
+    # 16-minute `portable`. Waste signal: a month in which it fails no group, or it passes 5 minutes.
+    name: 'hosted fast: guards'
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      red: ${{ steps.guard-tests.outcome == 'failure' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Python tools
+        run: bash scripts/bootstrap-python-tools.sh
+      - name: Repository guard tests
+        id: guard-tests
+        run: .venv/bin/python scripts/queue_guards.py
 
   sessionkit:
     name: 'hosted fast: SessionKit core'
-    needs: scope
+    needs: [scope, guards]
     # Not with LANE_HOSTED_MAC_REST `on`: the mac-rest job below runs these tests then (#2596).
     if: >-
-      !cancelled() && needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && vars.LANE_HOSTED_MAC_REST != 'on' && (github.event_name != 'pull_request' ||
+      !cancelled() &&
+      needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && vars.LANE_HOSTED_MAC_REST != 'on' && (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on'))
     # The image and Xcode the lane Mac builds with (hosted-app-macos.yml says why), so the two can't disagree.
     runs-on: xcode-27
@@ -292,7 +419,7 @@ jobs:
       - name: SessionKit build and SessionKitCoreTests
         run: |
           swift --version
-          .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit
+          .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit --leave-out-slow
       - name: Keep the step logs
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -313,6 +440,93 @@ jobs:
           seconds=$(( $(date +%s) - STARTED ))
           echo "hosted fast SessionKit core took ${seconds}s on xcode-27." | tee -a "$GITHUB_STEP_SUMMARY"
 
+  app-compile:
+    # 2026-11-20: no required check compiled the app, so #4602's Swift error in FollowListsScreen.swift passed every gate
+    # and main did not compile for about 2.5 hours (#4750). This builds the app for the simulator, with no tests and no
+    # simulator, in each merge group whose diff reaches an app build input (test-scope.py app_compile_required). On a PR
+    # it is skipped, which reports success, so the required check passes on the PR and is earned in the queue: one Mac
+    # build per merge group, never per push. The per-PR app builds of 2026-11-18 (retired) queued for 1 to 2.5 hours;
+    # the queue builds at most 3 groups at once, so this holds at most 3 Macs. main-t3.yml still runs the app tests.
+    # Cost and catch: about 8 minutes of hosted Mac per merge group that touches the app (hosted-app-macos.yml on main
+    # took 6 to 8 minutes, 2026-11-20). It would have caught #4602. Waste signal: a month in which it never fails.
+    name: 'hosted app: build (no tests)'
+    needs: [scope, guards]
+    if: >-
+      !cancelled() &&
+      needs.scope.result == 'success' && needs.scope.outputs.app != 'false' &&
+      (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch')
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      DERIVED: ${{ github.workspace }}/.build/hosted-dd
+      CAS: ${{ github.workspace }}/.build/compilation-cache
+      CAS_PACK: ${{ github.workspace }}/.build/compilation-cache-pack
+      SPM: ${{ github.workspace }}/.build/spm
+    steps:
+      - name: Start the clock
+        run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # The app bundles the voice models (LFS). The same cache hosted-app-macos.yml keeps on main.
+      - name: List LFS objects
+        run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
+          restore-keys: lfs-
+      - name: Fetch LFS files
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+      # Restore only: main's hosted-app-macos.yml runs save these, and a merge group's run can read main's caches.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.SPM }}
+          key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: spm-
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        continue-on-error: true
+        with:
+          path: ${{ env.CAS_PACK }}
+          key: xcode-cas-sparse-27.0-${{ github.run_id }}
+          restore-keys: xcode-cas-sparse-27.0-
+      - name: Unpack the compilation cache
+        run: CAS="$CAS" PACK="$CAS_PACK" bash scripts/ci-cas-cache.sh unpack
+      - name: Build the app for the simulator (build-for-testing, no tests)
+        env:
+          WHY: ${{ needs.scope.outputs.app_reason }}
+        run: |
+          echo "Why: ${WHY:-no reason given}"
+          mkdir -p "$RUNNER_TEMP/results"
+          root="$GITHUB_WORKSPACE"
+          set -o pipefail
+          xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsAppBehavior -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$DERIVED" \
+            -clonedSourcePackagesDirPath "$SPM" \
+            COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_CAS_PATH="$CAS" COMPILATION_CACHE_LIMIT_SIZE=1G \
+            SWIFT_ENABLE_PREFIX_MAPPING=YES SWIFT_ENABLE_PROJECT_PREFIX_MAPPING=YES \
+            CLANG_ENABLE_PREFIX_MAPPING=YES CLANG_ENABLE_PROJECT_PREFIX_MAPPING=YES \
+            SWIFT_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" CLANG_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" \
+            build-for-testing 2>&1 | tee "$RUNNER_TEMP/results/build-for-testing.log" | grep -E 'error:|BUILD|cacheable tasks' || true
+          grep -q 'TEST BUILD SUCCEEDED' "$RUNNER_TEMP/results/build-for-testing.log"
+      - name: Keep the build log
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: app-compile-log
+          path: ${{ runner.temp }}/results/build-for-testing.log
+          retention-days: 14
+      - name: How long it took
+        if: always()
+        run: |
+          seconds=$(( $(date +%s) - STARTED ))
+          echo "hosted app compile took ${seconds}s." | tee -a "$GITHUB_STEP_SUMMARY"
+
   mac-rest:
     # #2459: --plan fast-mac-rest, which the lane's automerge job used to run on the owner's build Mac (about 8 minutes
     # a PR, behind a queue of up to 21 jobs on 2026-10-22). Same PRs and paths as the two jobs above, once
@@ -322,11 +536,18 @@ jobs:
     # Mac's), and RealSpeechTranscriberTests skipped, with no en_US SpeechTranscriber model. macos-26 matches the lane
     # Mac's OS but has no Xcode 27, and Xcode 26.6 does not compile SessionKit's tests (run 39836269608). #2469 tracks it.
     name: 'hosted fast: Mac rest'
-    needs: scope
+    needs: [scope, guards]
+    # Merge queue (#4693): with the repository variable MERGE_QUEUE_MAC set to `queue-only`, this job runs in the
+    # merge queue and on a dispatch, never on a PR push. On a PR it is then skipped, which reports success, so the
+    # one required check name passes on the PR and is earned in the queue: one Mac run per merge instead of one per
+    # push. For an early Mac run on a PR, dispatch this workflow on its branch (`gh workflow run hosted-portable.yml
+    # --ref <branch>`). Unset (today), PRs run it as before, because the lane still merges on it. The variable goes
+    # on in the same hour the ruleset starts requiring the queue.
     if: >-
-      !cancelled() && needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && (github.event_name != 'pull_request' ||
+      !cancelled() &&
+      needs.scope.result != 'skipped' && needs.scope.outputs.mac != 'false' && (github.event_name != 'pull_request' ||
       ((github.event.pull_request.head.repo.full_name == github.repository && vars.LANE_HOSTED_FAST == 'on') &&
-       vars.LANE_HOSTED_MAC_REST == 'on'))
+       vars.MERGE_QUEUE_MAC != 'queue-only' && vars.LANE_HOSTED_MAC_REST == 'on'))
     runs-on: xcode-27
     # SessionKit's build (cached dependencies) and SessionKitCoreTests (the `sessionkit` job's 40 minutes before they
     # moved here, #2596), its two serial targets, and the compatibility checks when the diff reaches them (the lane's
@@ -378,18 +599,31 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: requirements-dev.txt
+      # This job's own key (#4664). Its `tools` step builds Packages/SessionKitTools into .build/tools, which fetches the
+      # onnxruntime binary targets again from download.onnxruntime.ai (an invalid certificate there failed this job's
+      # `tools` step on 2026-11-21, after `package` had passed from the cache). The `sessionkit` job above shares the
+      # plain key and never runs `tools`, so whichever of the two saved first decided that .build/tools was never
+      # cached. Keyed apart, and on the tools package's own files too, this job saves a .build that holds it. The
+      # fallback to the shared prefix keeps the first run warm; a cache is saved only by a run that passed.
+      # A run reads only its own ref's caches and the default branch's, and a merge group's ref is new every time, so
+      # the entry that serves the queue is the one saved from main: dispatch this workflow on main after the key
+      # changes (shipped-build-compat.yml restores the same entry).
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: Packages/SessionKit/.build
-          key: sessionkit-macos-xcode27.0-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved') }}
-          restore-keys: sessionkit-macos-xcode27.0-
+          key: sessionkit-mac-rest-xcode27.0-${{ hashFiles('Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved', 'Packages/SessionKitTools/Package.swift', 'Packages/SessionKitTools/Package.resolved') }}
+          restore-keys: |
+            sessionkit-mac-rest-xcode27.0-
+            sessionkit-macos-xcode27.0-
       - name: Python tools
         run: bash scripts/bootstrap-python-tools.sh
       # Before BlackHole, as the `sessionkit` job ran them (#2596). The second plan's build is then incremental.
+      # #5281: a merge group builds only (the `Mac build` step below); these tests run on main in main-slow.yml.
       - name: SessionKit build and SessionKitCoreTests
+        if: github.event_name != 'merge_group'
         run: |
           swift --version
-          .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit
+          .venv/bin/python scripts/verify-tests.py --plan fast-hosted-sessionkit --leave-out-slow
       - name: Keep the Mac test list
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -402,6 +636,7 @@ jobs:
       # BlackHole gives Core Audio one. brew refuses to run as root; the cask's installer asks for sudo itself,
       # which is passwordless on hosted runners. verify-tests.py checks the output starts before the audio tests.
       - name: Install BlackHole (virtual audio output)
+        if: github.event_name != 'merge_group'
         run: |
           brew install --cask blackhole-2ch
           brew install switchaudio-osx
@@ -413,18 +648,44 @@ jobs:
       # What the lane's own run gets (lane-runner.py changed_paths_for_tests): every path the PR changes against its
       # merge base with the base, both sides of a rename. A dispatch without a base runs every step.
       - name: Changed files
+        env:
+          QUEUE_TRUNK: ${{ github.event.merge_group.base_ref }}
+          EVENT: ${{ github.event_name }}
+          DISPATCH_BASE: ${{ inputs.base }}
         run: |
-          if git rev-parse --verify --quiet HEAD^2 > /dev/null; then
+          # A merge group: everything the group adds to the trunk itself, as in the `scope` job (not base_sha, the
+          # previous queue entry's commit, #5179).
+          if [ "$EVENT" = merge_group ]; then
+            trunk="${QUEUE_TRUNK#refs/heads/}"
+            trunk="refs/remotes/origin/${trunk:-main}"
+            git fetch --no-tags origin "+refs/heads/${trunk#refs/remotes/origin/}:$trunk"
+            git diff --name-only --no-renames "$(git merge-base HEAD "$trunk")" HEAD > "$RUNNER_TEMP/changed-files.txt"
+            echo "CHANGED_ARGS=--changed-files $RUNNER_TEMP/changed-files.txt" >> "$GITHUB_ENV"
+            echo "$(grep -c . "$RUNNER_TEMP/changed-files.txt" || true) changed files in the merge group"
+          # A dispatch with no base is not a merge to read a diff from: on the trunk it checks out the tip, a merge commit
+          # whose HEAD^2 is the last merged PR, and that PR's files would skip `tools` in the run that seeds the cache
+          # (#4664). With a base, the step above merged it in, so HEAD^2 is the dispatched commit.
+          elif { [ "$EVENT" != workflow_dispatch ] || [ -n "$DISPATCH_BASE" ]; } && git rev-parse --verify --quiet HEAD^2 > /dev/null; then
             git diff --name-only --no-renames "$(git merge-base HEAD^1 HEAD^2)" HEAD^2 > "$RUNNER_TEMP/changed-files.txt"
             echo "CHANGED_ARGS=--changed-files $RUNNER_TEMP/changed-files.txt" >> "$GITHUB_ENV"
             echo "$(grep -c . "$RUNNER_TEMP/changed-files.txt" || true) changed files"
           else
             echo "Not a merge commit: every fast-mac-rest step runs."
           fi
-      - name: Mac rest of the fast plan
+      # #5281: the merge queue's Mac job builds and runs no Mac tests. A green group needed about 24 minutes, and this
+      # job's two test plans were 25 of them on the Mac (14 for SessionKitCoreTests, which Linux runs too, 10 for the
+      # rest). The build still compiles SessionKit and every test target with the Mac's Swift, and the shipped build's
+      # packet and database checks still run when the diff reaches them. --plan main-mac runs the tests on main.
+      - name: Mac build (merge queue, no tests)
+        if: github.event_name == 'merge_group'
         run: |
           swift --version
-          .venv/bin/python scripts/verify-tests.py --plan fast-mac-rest $CHANGED_ARGS
+          .venv/bin/python scripts/verify-tests.py --plan mac-build $CHANGED_ARGS
+      - name: Mac rest of the fast plan
+        if: github.event_name != 'merge_group'
+        run: |
+          swift --version
+          .venv/bin/python scripts/verify-tests.py --plan fast-mac-rest $CHANGED_ARGS --leave-out-slow
       - name: Keep the step logs
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -456,6 +717,29 @@ jobs:
     name: stop-macs-on-red
     needs: portable
     if: always() && needs.portable.result == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the Mac jobs of this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN: ${{ github.run_id }}
+        run: gh run cancel "$RUN" || true
+
+  stop-on-guard-red:
+    # The same cancel when a guard test fails (merge groups only); a setup failure in `guards` is not red and cancels
+    # nothing. The run's Mac jobs may become ready in the same moment, but they wait for a Mac slot and start slower
+    # than this Linux job, so the cancel reaches them queued. Its failed check stays red, which the queue and
+    # merge_queue_dequeued.py read as the PR's failure (`needs-fix`); `portable` and the Mac checks end `cancelled`.
+    # The group is dropped about 2 minutes in instead of when `portable` ends (median 16.5 minutes), so a broken PR
+    # leaves the queue before more groups are built on it: #5172 stayed queued for 2 h 10 min on 2026-11-23 and 25
+    # groups failed with it on the same rule.
+    name: stop-on-guard-red
+    needs: guards
+    if: always() && needs.guards.outputs.red == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -527,7 +811,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
       issues: write
       actions: read
       checks: read
@@ -553,3 +837,42 @@ jobs:
             exit 0
           fi
           python3 scripts/owner_tap_alert.py --pr "$PR"
+
+  rearm:
+    # Start the merge run of each armed PR on this head again, now that this workflow run is over (lane-runner.py
+    # WAITING, scripts/lane_rearm.py). It is a job here, not a workflow_run workflow, because GitHub starts no
+    # workflow_run for a run that GITHUB_TOKEN caused, and the lane's own dispatches of this workflow are such runs:
+    # their PRs would never have been started again. A dispatch sent with GITHUB_TOKEN does start lane.yml. It waits for
+    # every other job, so the PR's last check has recorded before the merge run reads it. `always()` also runs it after
+    # a failure or a cancel, so the PR gets its report (a PASS, or a FAIL it can be fixed from). The script comes from the PR's base
+    # (the trunk, or the lane-check/** base under test), never the PR's head, and the head reaches the shell only through env. Same-repo runs only. Its outcome is read from the
+    # check jobs only: owner-tap-alert and linux-retry-tally run `always()` and end `success` even when every check skipped.
+    name: rearm
+    needs: [portable, scope, guards, sessionkit, mac-rest, app-compile, stop-macs-on-red, stop-on-guard-red, linux-retry-tally, owner-tap-alert]
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: write  # dispatching lane.yml
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.base.ref || inputs.base || vars.SM_TRUNK || 'main' }}
+          persist-credentials: false
+          sparse-checkout: scripts/lane_rearm.py
+          sparse-checkout-cone-mode: false
+      - name: Start the merge run of each armed PR on this head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RESULTS: ${{ needs.portable.result }} ${{ needs.scope.result }} ${{ needs.sessionkit.result }} ${{ needs.mac-rest.result }}
+        run: |
+          if [ ! -f scripts/lane_rearm.py ]; then
+            echo "::notice::scripts/lane_rearm.py is not on the trunk; nothing started."
+            exit 0
+          fi
+          python3 scripts/lane_rearm.py --head "$HEAD_SHA" --results "$RESULTS"

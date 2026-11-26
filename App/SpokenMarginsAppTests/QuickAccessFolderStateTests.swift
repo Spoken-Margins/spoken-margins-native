@@ -28,26 +28,6 @@ final class QuickAccessFolderStateTests: XCTestCase {
         super.tearDown()
     }
 
-    // MARK: Inbox feeds the queue (#1990 slice 3)
-
-    /// The setting is off by default, persists, and a completed refresh reports to the model so the inbox can run.
-    func testInboxSettingIsOffByDefaultPersistsAndRefreshReportsToTheModel() async throws {
-        let fixture = try makeFixture()
-        XCTAssertFalse(fixture.state.inboxFeedsQueue)
-        var refreshed = 0
-        fixture.state.onFilesRefreshed = { refreshed += 1 }
-        fixture.state.inboxFeedsQueue = true
-        try await waitFor("toggle starts a scan") { fixture.bench.scansStarted == 1 }
-        fixture.bench.finishScan(0, with: Self.scan(["a"]))
-        try await waitFor("refresh reports") { refreshed == 1 }
-        XCTAssertNil(fixture.state.inboxSeenFileIds, "turning it on starts with no baseline")
-        fixture.state.inboxSeenFileIds = ["a"]
-        XCTAssertTrue(QuickAccessFolderState(defaults: fixture.defaults, dependencies: fixture.bench.dependencies()).inboxFeedsQueue)
-        XCTAssertEqual(QuickAccessFolderState(defaults: fixture.defaults, dependencies: fixture.bench.dependencies()).inboxSeenFileIds, ["a"])
-        fixture.state.inboxFeedsQueue = false
-        XCTAssertNil(fixture.state.inboxSeenFileIds)
-    }
-
     // MARK: Stale refresh guard
 
     /// A refresh that started later wins, whichever scan finishes first. Removing the refresh-ID check makes
@@ -98,6 +78,7 @@ final class QuickAccessFolderStateTests: XCTestCase {
         let fixture = try makeFixture()
         fixture.state.folderName = "Vault"
         fixture.state.recentFiles = [Self.file("old")]
+        fixture.state.followingPool = [Self.file("old")]
         fixture.state.refresh()
         try await waitFor("scan starts") { fixture.bench.scansStarted == 1 }
         XCTAssertTrue(fixture.state.isRefreshing)
@@ -106,6 +87,7 @@ final class QuickAccessFolderStateTests: XCTestCase {
         fixture.state.refresh()
         XCTAssertFalse(fixture.state.isRefreshing, "no folder, no spinner")
         XCTAssertEqual(fixture.state.recentFiles, [])
+        XCTAssertEqual(fixture.state.followingPool, [])
         XCTAssertEqual(fixture.state.folderName, "Vault", "the displayed name stays")
         XCTAssertEqual(fixture.bench.cancelledScans, 1)
 
@@ -120,14 +102,95 @@ final class QuickAccessFolderStateTests: XCTestCase {
         let fixture = try makeFixture()
         fixture.state.folderName = "Vault"
         fixture.state.recentFiles = [Self.file("old")]
+        fixture.state.followingPool = [Self.file("old")]
         fixture.state.refresh()
         try await waitFor("scan starts") { fixture.bench.scansStarted == 1 }
         fixture.bench.finishScan(0, with: QuickAccessFolderScan(files: [], errorDescription: "unreadable"))
         try await waitFor("scan's access stops") { fixture.bench.count("stop") == 1 }
         XCTAssertEqual(fixture.state.recentFiles, [])
+        XCTAssertEqual(fixture.state.followingPool, [])
         XCTAssertEqual(fixture.state.folderName, "Vault")
         XCTAssertFalse(fixture.state.isRefreshing)
         XCTAssertEqual(fixture.log.value(for: "quickAccessError"), "unreadable")
+    }
+
+    // MARK: Files past the newest eight (#4274)
+
+    /// 12 files saved after the folder was chosen: once the newest 8 are dismissed (adding a file dismisses it too), the older 4
+    /// are listed, each with its time. Before #4274 Following listed only the scan's newest 8, so these 4 never appeared.
+    func testNewFilesPastTheNewestEightAppearOnceNewerOnesAreDismissed() async throws {
+        let fixture = try makeFixture(now: { Self.chosenAt })
+        XCTAssertEqual(fixture.state.folderChosenAt, Self.chosenAt, "a folder saved by an earlier build takes this launch as its date")
+        fixture.state.refresh()
+        try await waitFor("scan starts") { fixture.bench.scansStarted == 1 }
+        fixture.bench.finishScan(0, with: Self.scan(dated: Self.twelveFiles(newestAt: Self.chosenAt.addingTimeInterval(3_600))))
+        try await waitFor("scan stored") { fixture.state.lastCheckedAt != nil }
+        XCTAssertEqual(fixture.state.recentFiles.count, 8, "the Add sheet keeps the newest eight")
+        XCTAssertEqual(fixture.state.followingPool.count, 12)
+        XCTAssertEqual(Self.localFileIDs(fixture.state), Array(Self.twelveIDs.prefix(8)))
+
+        fixture.state.followingPool.prefix(8).forEach { fixture.state.dismiss($0) }
+
+        let listed = Self.localFiles(fixture.state)
+        XCTAssertEqual(listed.map(\.id), Array(Self.twelveIDs.suffix(4)))
+        XCTAssertTrue(listed.allSatisfy { !$0.modifiedAtDescription.isEmpty }, "each listed row keeps its time")
+    }
+
+    /// The same 12 files, all older than the folder's date: only the newest 8 are ever listed, as before, so a long-lived
+    /// folder's old files don't come back as new.
+    func testOldFilesPastTheNewestEightStayHidden() async throws {
+        let fixture = try makeFixture(now: { Self.chosenAt })
+        fixture.state.refresh()
+        try await waitFor("scan starts") { fixture.bench.scansStarted == 1 }
+        fixture.bench.finishScan(0, with: Self.scan(dated: Self.twelveFiles(newestAt: Self.chosenAt.addingTimeInterval(-60))))
+        try await waitFor("scan stored") { fixture.state.lastCheckedAt != nil }
+        XCTAssertEqual(fixture.state.followingPool.count, 8)
+
+        fixture.state.followingPool.forEach { fixture.state.dismiss($0) }
+
+        XCTAssertEqual(Self.localFileIDs(fixture.state), [])
+    }
+
+    /// The date is set once on upgrade and stored, kept when the same folder is chosen again (Choose Folder or Choose Folder
+    /// Again), restarted for a different folder, and cleared with the folder.
+    func testTheChosenDateIsSetOnUpgradeKeptForTheSameFolderAndClearedOnRemove() async throws {
+        let clock = SettableClock(Self.chosenAt)
+        let fixture = try makeFixture(now: { clock.now })
+        XCTAssertEqual(fixture.state.folderChosenAt, Self.chosenAt)
+        XCTAssertEqual(fixture.defaults.object(forKey: "quickAccessFolderChosenAt") as? Date, Self.chosenAt)
+        clock.now = Self.chosenAt.addingTimeInterval(100)
+        let reopened = QuickAccessFolderState(defaults: fixture.defaults, dependencies: fixture.bench.dependencies())
+        XCTAssertEqual(reopened.folderChosenAt, Self.chosenAt, "a later launch reads the stored date")
+
+        fixture.state.refresh()
+        try await waitFor("scan starts") { fixture.bench.scansStarted == 1 }
+        fixture.bench.finishScan(0, with: Self.scan(["a"]))
+        try await waitFor("scan stored") { fixture.state.lastCheckedAt != nil }
+
+        clock.now = Self.chosenAt.addingTimeInterval(200)
+        try fixture.state.configure(url: URL(fileURLWithPath: fixture.folder.path, isDirectory: true)) {}
+        XCTAssertEqual(fixture.state.folderChosenAt, Self.chosenAt, "Choose Folder on the same folder keeps its date")
+        try await waitFor("second scan starts") { fixture.bench.scansStarted == 2 }
+        fixture.bench.finishScan(1, with: Self.scan(["a"]))
+        try await waitFor("second scan stored") { fixture.state.folderPath != nil && !fixture.state.isRefreshing }
+        let decision = try fixture.state.reconnect(url: fixture.folder) {}
+        XCTAssertEqual(decision, .keepSeenFiles)
+        XCTAssertEqual(fixture.state.folderChosenAt, Self.chosenAt, "Choose Folder Again on the same folder keeps its date")
+        try await waitFor("third scan starts") { fixture.bench.scansStarted == 3 }
+        fixture.bench.finishScan(2, with: Self.scan(["a"]))
+        try await waitFor("third scan stored") { !fixture.state.isRefreshing }
+
+        let other = try makeFolder(named: fixture.folder.lastPathComponent)
+        clock.now = Self.chosenAt.addingTimeInterval(300)
+        try fixture.state.configure(url: other) {}
+        XCTAssertEqual(fixture.state.folderChosenAt, Self.chosenAt.addingTimeInterval(300), "a different folder starts its own date")
+        try await waitFor("fourth scan starts") { fixture.bench.scansStarted == 4 }
+
+        fixture.state.remove()
+        fixture.bench.finishScan(3, with: Self.scan(["late"]))
+        XCTAssertNil(fixture.state.folderChosenAt)
+        XCTAssertNil(fixture.defaults.object(forKey: "quickAccessFolderChosenAt"))
+        XCTAssertNil(QuickAccessFolderState(defaults: try makeDefaults()).folderChosenAt, "no folder, no date")
     }
 
     // MARK: Lifetime and scoped access
@@ -162,7 +225,7 @@ final class QuickAccessFolderStateTests: XCTestCase {
 
         try state.configure(url: folder) { bench.record("saved") }
 
-        XCTAssertEqual(bench.events, ["start", "start", "saved", "stop"], "configure's access spans the refresh start and the report")
+        XCTAssertEqual(bench.events, ["start", "saved", "stop"], "configure's access spans the report; the refresh resolves and starts its own access off the main actor (#3770)")
         XCTAssertEqual(state.folderName, "Vault")
         XCTAssertEqual(defaults.string(forKey: "quickAccessFolderName"), "Vault")
         XCTAssertNotNil(defaults.data(forKey: "quickAccessFolderBookmark"))
@@ -222,7 +285,7 @@ final class QuickAccessFolderStateTests: XCTestCase {
         XCTAssertNotEqual(refreshed, Data([9]), "the refreshed bookmark is written back")
     }
 
-    func testABookmarkThatNoLongerResolvesIsReportedAndYieldsNoFolder() throws {
+    func testABookmarkThatNoLongerResolvesIsReportedAndYieldsNoFolder() async throws {
         let defaults = try makeDefaults()
         defaults.set(Data([1, 2, 3]), forKey: "quickAccessFolderBookmark")
         let state = QuickAccessFolderState(defaults: defaults)
@@ -232,8 +295,11 @@ final class QuickAccessFolderStateTests: XCTestCase {
         XCTAssertNil(state.resolvedFolderURL())
         XCTAssertNotNil(log.value(for: "quickAccessBookmarkError"))
 
+        state.followingPool = [Self.file("old")]
         state.refresh()
-        XCTAssertFalse(state.isRefreshing)
+        try await waitFor("the refresh gives up on the bookmark") { !state.isRefreshing }
+        XCTAssertEqual(state.followingPool, [])
+        XCTAssertEqual(state.problem, .cantOpen, "a bookmark that doesn't resolve is \"can't open this folder\"")
         XCTAssertNil(QuickAccessFolderState(defaults: try makeDefaults()).resolvedFolderURL(), "no bookmark, no folder, no diagnostic")
     }
 
@@ -248,6 +314,196 @@ final class QuickAccessFolderStateTests: XCTestCase {
         XCTAssertEqual(urls.fileURL.lastPathComponent, "notes.md")
         XCTAssertEqual(urls.fileURL.deletingLastPathComponent().resolvingSymlinksInPath().path, folder.resolvingSymlinksInPath().path)
         XCTAssertEqual(urls.folderURL.resolvingSymlinksInPath().path, folder.resolvingSymlinksInPath().path)
+    }
+
+    // MARK: What a scan remembers (#3770)
+
+    nonisolated private static let checkedAt = Date(timeIntervalSince1970: 1_800_000_000)
+
+    /// A scan that finishes writes the folder's path and the time, and they survive a reopen. Without the write, Settings
+    /// would have nothing to say about where the folder is or when it was last read.
+    func testASuccessfulScanStoresThePathAndTheTimeAndTheyOutliveTheState() async throws {
+        let fixture = try makeFixture(now: { Self.checkedAt })
+        XCTAssertNil(fixture.state.folderPath)
+        XCTAssertNil(fixture.state.lastCheckedAt)
+        fixture.state.refresh()
+        try await waitFor("scan starts") { fixture.bench.scansStarted == 1 }
+        XCTAssertNil(fixture.state.lastCheckedAt, "nothing is stored until the scan finishes")
+        fixture.bench.finishScan(0, with: Self.scan(["a"]))
+        try await waitFor("scan stored") { fixture.state.lastCheckedAt != nil }
+
+        XCTAssertEqual(fixture.state.lastCheckedAt, Self.checkedAt)
+        XCTAssertEqual(fixture.state.folderPath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }, fixture.folder.resolvingSymlinksInPath().path)
+        XCTAssertNil(fixture.state.problem)
+        let reopened = QuickAccessFolderState(defaults: fixture.defaults, dependencies: fixture.bench.dependencies())
+        XCTAssertEqual(reopened.lastCheckedAt, Self.checkedAt)
+        XCTAssertEqual(reopened.folderPath, fixture.state.folderPath)
+        XCTAssertEqual(
+            Set(fixture.defaults.dictionaryRepresentation().keys).intersection(["quickAccessFolderPath", "quickAccessLastCheckedAt"]),
+            ["quickAccessFolderPath", "quickAccessLastCheckedAt"]
+        )
+    }
+
+    /// A scan that can't read the folder marks it "can't open" and leaves the last good time and path alone; the next scan that
+    /// works clears the mark. A scan that a newer refresh replaced writes nothing, and exactly one completion writes the time.
+    func testAFailedScanMarksTheFolderAndTheNextGoodScanClearsIt() async throws {
+        let ticks = Counter()
+        let fixture = try makeFixture(now: { Self.checkedAt.addingTimeInterval(Double(ticks.next())) })
+        fixture.state.refresh()
+        try await waitFor("first scan starts") { fixture.bench.scansStarted == 1 }
+        fixture.bench.finishScan(0, with: Self.scan(["a"]))
+        try await waitFor("first scan stored") { fixture.state.lastCheckedAt != nil }
+        let firstTime = fixture.state.lastCheckedAt
+        let firstPath = fixture.state.folderPath
+
+        fixture.state.refresh()
+        try await waitFor("second scan starts") { fixture.bench.scansStarted == 2 }
+        fixture.bench.finishScan(1, with: QuickAccessFolderScan(files: [], errorDescription: "unreadable"))
+        try await waitFor("the failure is marked") { fixture.state.problem == .cantOpen }
+        XCTAssertEqual(fixture.state.lastCheckedAt, firstTime, "a failed scan is not a check")
+        XCTAssertEqual(fixture.state.folderPath, firstPath)
+        XCTAssertEqual(QuickAccessFolderState(defaults: fixture.defaults, dependencies: fixture.bench.dependencies()).problem, .cantOpen)
+        XCTAssertEqual(fixture.defaults.string(forKey: "quickAccessFolderProblem"), "cantOpen")
+
+        fixture.state.refresh()
+        try await waitFor("third scan starts") { fixture.bench.scansStarted == 3 }
+        fixture.state.refresh()
+        try await waitFor("fourth scan starts") { fixture.bench.scansStarted == 4 }
+        fixture.bench.finishScan(2, with: Self.scan(["stale"]))
+        try await waitFor("stale scan's access stops") { fixture.bench.count("stop") == 3 }
+        XCTAssertEqual(fixture.state.problem, .cantOpen, "a replaced scan clears nothing")
+        // Judged by the stored time, not by how often the clock was read: the state also reads it in `init` for an upgraded
+        // folder's chosen-at date (#4274), and counting every read broke this test on main (#5217).
+        XCTAssertEqual(fixture.state.lastCheckedAt, firstTime, "and writes no time")
+        let readsBeforeTheGoodScan = ticks.value
+        fixture.bench.finishScan(3, with: Self.scan(["b"]))
+        try await waitFor("the good scan clears the mark") { fixture.state.problem == nil }
+        XCTAssertEqual(ticks.value, readsBeforeTheGoodScan + 1, "exactly one completion wrote a time")
+        XCTAssertEqual(fixture.state.lastCheckedAt, Self.checkedAt.addingTimeInterval(Double(readsBeforeTheGoodScan + 1)))
+        XCTAssertNil(fixture.defaults.object(forKey: "quickAccessFolderProblem"))
+    }
+
+    /// The bookmark is resolved in the refresh's own task, off the main actor, so a slow provider folder can't hold the screen.
+    func testTheRefreshResolvesTheBookmarkOffTheMainThread() async throws {
+        let seen = Counter()
+        let onMain = Counter()
+        let folder = try makeFolder()
+        let fixture = try makeFixture(resolveBookmark: { _ in
+            _ = seen.next()
+            if Thread.isMainThread { _ = onMain.next() }
+            return (folder, false)
+        })
+        fixture.state.refresh()
+        XCTAssertEqual(seen.value, 0, "nothing resolves before the task runs")
+        try await waitFor("scan starts") { fixture.bench.scansStarted == 1 }
+        XCTAssertEqual(seen.value, 1)
+        XCTAssertEqual(onMain.value, 0, "the resolve ran off the main thread")
+        fixture.bench.finishScan(0, with: Self.scan([]))
+        try await waitFor("scan stored") { fixture.state.lastCheckedAt != nil }
+        XCTAssertEqual(fixture.state.folderPath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }, folder.resolvingSymlinksInPath().path)
+    }
+
+    /// An upgrade from a build that had the queue switch (#4274): the four retired keys are deleted at launch, so an older build
+    /// installed over this one reads the switch as off with no stale baseline. The folder and the dismissed files read as
+    /// before, and the newer values are unknown, not invented.
+    func testAnUpgradeRetiresTheQueueKeysAndKeepsTheFolder() throws {
+        let defaults = try makeDefaults()
+        let folder = try makeFolder(named: "Clippings")
+        try save(folder, in: defaults)
+        defaults.set(["quick-access:a.md"], forKey: "dismissedQuickAccessFilesV1")
+        defaults.set(true, forKey: "quickFolderFeedsQueueV1")
+        defaults.set(["a.md"], forKey: "quickFolderInboxSeenFilesV1")
+        defaults.set(true, forKey: "quickFolderInboxSeenWholeFolderV1")
+        defaults.set(Data(#"{"fileName":"a.pdf","reason":"x","date":0}"#.utf8), forKey: "quickAccessLastImportProblem")
+
+        let state = QuickAccessFolderState(defaults: defaults)
+
+        for key in ["quickFolderFeedsQueueV1", "quickFolderInboxSeenFilesV1", "quickFolderInboxSeenWholeFolderV1", "quickAccessLastImportProblem"] {
+            XCTAssertNil(defaults.object(forKey: key), key)
+        }
+        XCTAssertEqual(state.folderName, "Clippings")
+        XCTAssertEqual(state.dismissedFileKeys, ["quick-access:a.md"])
+        XCTAssertNotNil(defaults.data(forKey: "quickAccessFolderBookmark"), "the folder is kept")
+        XCTAssertNil(state.folderPath)
+        XCTAssertNil(state.lastCheckedAt)
+        XCTAssertNil(state.problem)
+    }
+
+    // MARK: Choose again and remove (#3770)
+
+    /// The same folder keeps what the last scan learned; a different folder, or an unknown stored path, drops it.
+    func testChoosingTheSameFolderAgainKeepsWhatTheScanLearnedAndAnyOtherFolderStartsOver() async throws {
+        let fixture = try makeFixture(now: { Self.checkedAt })
+        fixture.state.refresh()
+        try await waitFor("scan starts") { fixture.bench.scansStarted == 1 }
+        fixture.bench.finishScan(0, with: Self.scan(["a"]))
+        try await waitFor("scan stored") { fixture.state.lastCheckedAt != nil }
+        fixture.state.dismiss(Self.file("gone.md"))
+
+        // Same folder, written as a URL with a trailing slash.
+        let decision = try fixture.state.reconnect(url: URL(fileURLWithPath: fixture.folder.path, isDirectory: true)) {}
+        XCTAssertEqual(decision, .keepSeenFiles)
+        XCTAssertEqual(fixture.state.lastCheckedAt, Self.checkedAt)
+        XCTAssertNotNil(fixture.state.folderPath)
+        XCTAssertEqual(fixture.state.dismissedFileKeys, [Self.file("gone.md").dismissalKey])
+
+        // A different folder with the same name.
+        let other = try makeFolder(named: fixture.folder.lastPathComponent)
+        XCTAssertNotEqual(other.path, fixture.folder.path)
+        let otherDecision = try fixture.state.reconnect(url: other) {}
+        XCTAssertEqual(otherDecision, .freshBaseline)
+        XCTAssertNil(fixture.state.folderPath)
+        XCTAssertNil(fixture.state.lastCheckedAt)
+        XCTAssertNil(fixture.state.problem)
+        XCTAssertEqual(fixture.state.dismissedFileKeys, [Self.file("gone.md").dismissalKey], "dismissed files stay dismissed")
+    }
+
+    func testChoosingAgainWithNoStoredPathStartsOver() throws {
+        let defaults = try makeDefaults()
+        let folder = try makeFolder()
+        try save(folder, in: defaults)
+        let state = QuickAccessFolderState(defaults: defaults, dependencies: ScanBench().dependencies())
+
+        let decision = try state.reconnect(url: folder) {}
+
+        XCTAssertEqual(decision, .freshBaseline, "an upgrade stored no path, so the folder can't be known to be the same")
+    }
+
+    /// Removing forgets the folder and what was learned about it, keeps what was dismissed, and ends a scan in flight. Nothing
+    /// already imported is this state's to touch.
+    func testRemovingTheFolderForgetsItKeepsTheDismissedFilesAndEndsTheScan() async throws {
+        let fixture = try makeFixture(now: { Self.checkedAt })
+        fixture.state.refresh()
+        try await waitFor("scan starts") { fixture.bench.scansStarted == 1 }
+        fixture.bench.finishScan(0, with: Self.scan(["a"]))
+        try await waitFor("scan stored") { fixture.state.lastCheckedAt != nil }
+        fixture.state.dismiss(Self.file("gone.md"))
+        fixture.state.refresh()
+        try await waitFor("the second scan starts") { fixture.bench.scansStarted == 2 }
+
+        fixture.state.remove()
+
+        XCTAssertEqual(fixture.state.folderName, "No folder selected")
+        XCTAssertNil(fixture.state.folderPath)
+        XCTAssertNil(fixture.state.lastCheckedAt)
+        XCTAssertNil(fixture.state.problem)
+        XCTAssertEqual(fixture.state.recentFiles, [])
+        XCTAssertFalse(fixture.state.isRefreshing)
+        XCTAssertEqual(fixture.state.dismissedFileKeys, [Self.file("gone.md").dismissalKey])
+        for key in [
+            "quickAccessFolderBookmark", "quickAccessFolderName", "quickAccessFolderPath", "quickAccessLastCheckedAt",
+            "quickAccessFolderProblem", "quickAccessFolderChosenAt",
+        ] {
+            XCTAssertNil(fixture.defaults.object(forKey: key), key)
+        }
+        XCTAssertEqual(fixture.defaults.stringArray(forKey: "dismissedQuickAccessFilesV1"), [Self.file("gone.md").dismissalKey])
+
+        // The scan that was in flight finishes into a state with no folder and changes nothing.
+        fixture.bench.finishScan(1, with: Self.scan(["late"]))
+        try await waitFor("late scan's access stops") { fixture.bench.count("stop") == 2 }
+        XCTAssertEqual(fixture.state.recentFiles, [])
+        XCTAssertNil(fixture.state.lastCheckedAt)
+        XCTAssertEqual(fixture.state.folderName, "No folder selected")
     }
 
     // MARK: Dismissed files
@@ -274,7 +530,7 @@ final class QuickAccessFolderStateTests: XCTestCase {
     // MARK: Candidate cache
 
     /// The cache is cleared by five inputs: the Library, followed entries, subscriptions (all on the model)
-    /// and this state's own files and dismissed keys. A cache that misses any one shows a stale list here.
+    /// and this state's own Following pool (#4274) and dismissed keys. A cache that misses any one shows a stale list here.
     func testQuickAddCandidatesFollowEveryInput() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         let file = Self.file("notes.md")
@@ -288,13 +544,13 @@ final class QuickAccessFolderStateTests: XCTestCase {
         let sameShowAndTitle = LibraryItemRow(id: "heard", title: "Episode", status: "Ready", canDelete: true, mediaType: "text", sourceTitle: "The Show")
         func ids() -> [String] { model.quickAddCandidates.map(\.id) }
         model.quickAccess.dismissedFileKeys = []
-        model.quickAccess.recentFiles = []
+        model.quickAccess.followingPool = []
         model.followedSourceEntries = []
         model.feedSubscriptions = []
         model.libraryItems = []
         XCTAssertEqual(ids(), [])
 
-        model.quickAccess.recentFiles = [file]
+        model.quickAccess.followingPool = [file]
         XCTAssertEqual(ids(), ["local-file:notes.md"], "files")
         model.followedSourceEntries = [entry]
         XCTAssertEqual(ids(), ["local-file:notes.md", "followed-source:episode"], "followed entries")
@@ -373,6 +629,31 @@ final class QuickAccessFolderStateTests: XCTestCase {
 
     // MARK: Helpers
 
+    /// 2026-09-21 14:13:20 UTC: when the fixture's folder counts as chosen.
+    nonisolated private static let chosenAt = Date(timeIntervalSince1970: 1_790_000_000)
+    private static let twelveIDs = (0..<12).map { String(format: "f%02d.md", $0) }
+
+    /// `f00.md` the newest at `newest`, each next one a minute older.
+    private static func twelveFiles(newestAt newest: Date) -> [QuickAccessFileCandidate] {
+        twelveIDs.enumerated().map { index, id in
+            QuickAccessFileCandidate(id: id, name: id, relativePath: id, modifiedAt: newest.addingTimeInterval(-Double(index) * 60))
+        }
+    }
+
+    /// A scan as the scanner gives it: the newest eight as `files`, every file as `allFiles`.
+    private static func scan(dated all: [QuickAccessFileCandidate]) -> QuickAccessFolderScan {
+        QuickAccessFolderScan(files: Array(all.prefix(QuickAccessFolderScanner.quickAddLimit)), errorDescription: nil, allFiles: all)
+    }
+
+    private static func localFiles(_ state: QuickAccessFolderState) -> [QuickAccessFile] {
+        state.candidates(followedEntries: [], subscriptions: [], libraryItems: []).compactMap { candidate -> QuickAccessFile? in
+            if case .localFile(let file) = candidate { return file }
+            return nil
+        }
+    }
+
+    private static func localFileIDs(_ state: QuickAccessFolderState) -> [String] { localFiles(state).map(\.id) }
+
     private static func scan(_ ids: [String]) -> QuickAccessFolderScan {
         QuickAccessFolderScan(
             files: ids.map { QuickAccessFileCandidate(id: $0, name: $0, relativePath: $0, modifiedAt: Date(timeIntervalSince1970: 100)) },
@@ -392,12 +673,15 @@ final class QuickAccessFolderStateTests: XCTestCase {
         let log: DiagnosticLog
     }
 
-    private func makeFixture() throws -> Fixture {
+    private func makeFixture(now: (@Sendable () -> Date)? = nil, resolveBookmark: (@Sendable (Data) throws -> (url: URL, isStale: Bool))? = nil) throws -> Fixture {
         let defaults = try makeDefaults()
         let folder = try makeFolder()
         try save(folder, in: defaults)
         let bench = ScanBench()
-        let state = QuickAccessFolderState(defaults: defaults, dependencies: bench.dependencies())
+        var dependencies = bench.dependencies()
+        if let now { dependencies.now = now }
+        if let resolveBookmark { dependencies.resolveBookmark = resolveBookmark }
+        let state = QuickAccessFolderState(defaults: defaults, dependencies: dependencies)
         let log = DiagnosticLog()
         state.recordDiagnostic = { log.append($0, $1) }
         return Fixture(state: state, defaults: defaults, folder: folder, bench: bench, log: log)
@@ -476,6 +760,13 @@ private final class ScanBench: @unchecked Sendable {
     }
 }
 
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    @discardableResult func next() -> Int { lock.withLock { count += 1; return count } }
+}
+
 @MainActor
 private final class DiagnosticLog {
     private(set) var entries: [(key: String, value: String)] = []
@@ -495,5 +786,16 @@ private struct QuickFolderProbe: View {
     var body: some View {
         let _ = log.lines.append("\(model.quickAccessFolderName)|\(model.quickAccessRecentFiles.map(\.name).joined(separator: ","))")
         Text(model.quickAccessFolderName)
+    }
+}
+
+/// A clock a test moves by hand, read from the state's `@Sendable` `now`.
+private final class SettableClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Date
+    init(_ start: Date) { value = start }
+    var now: Date {
+        get { lock.withLock { value } }
+        set { lock.withLock { value = newValue } }
     }
 }

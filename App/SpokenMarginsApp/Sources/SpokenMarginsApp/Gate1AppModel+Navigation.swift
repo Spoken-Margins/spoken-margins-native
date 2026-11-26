@@ -32,6 +32,9 @@ extension Gate1AppModel {
         if let index = libraryItems.firstIndex(where: { $0.id == snapshot.itemId }), snapshot.sessionId != nil {
             libraryItems[index].hasContinuationSession = true
             libraryItems[index].continuationProgressPercent = snapshot.sourceProgressPercent
+            // The saved place came from the last Library read and is older than this percent; the row says "43%" until
+            // the read after this one fills it in, never "N min left" from a stale place (#4062).
+            libraryItems[index].continuationMediaTimeMs = nil
         }
         navigationRefreshTask?.cancel()
         guard let store else { return }
@@ -213,7 +216,7 @@ extension Gate1AppModel {
         activeItemId = id
         selectedItem = detail
         prepareImportedLocalAudioBridges(itemId: id)
-        scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }; fetchCommunityMapIfNeeded(itemId: id); retryVoiceoverLookupIfNeeded(itemId: id)
+        scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }; retryVoiceoverLookupIfNeeded(itemId: id, trigger: .open)
         prewarmPlaybackProjection(itemId: id, store: store) // off main, so a Play does not project the text (#2256)
         listeningMapJSON = ""
         screen = .item

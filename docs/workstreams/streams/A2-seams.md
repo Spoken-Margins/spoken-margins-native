@@ -13,7 +13,7 @@
 - `Gate1RootView` switches full-screen on `Gate1Screen` (home, item, playback, timeline, settings, offlineStorage, export, batchExport). `home` is a three-tab `TabView` (Library, Following, Margins) in `ExperienceRootViews.swift`.
 - About 1,200 lines are dead: the private `HomeScreen` (roughly lines 680–1517) and `ItemScreen` (roughly 1571–1972) are never instantiated. Confirm with a search before deleting.
 - `PlaybackScreen` is about 1,460 lines inside the root view. `SettingsScreen`, `ExportScreen` and `BatchExportScreen` also live there.
-- `AppNavigationState` (in `ExperienceModels.swift`) keeps per-root paths that the root view mostly ignores.
+- `AppNavigationState` (in `Packages/SessionKit/Sources/SessionKit/AppNavigationState.swift` since #318) keeps per-root paths that the root view mostly ignores.
 - Playback today: source playback via `SessionEngine`, plus separate players for the Skim bridge (`startSkimBridge` / `completeSkimBridge`), Margin audio and imported commentary. The parked branch's playback work is reference only.
 - Branch `play-this-moment` (going into Build 30) adds `MarginMomentConductor` (lead-in → Margin → continue) and `HeardAudioWindowRecorder` on the podcast tap, and grows `Gate1AppModel` by about 325 lines. M2 folds the conductor into the coordinator; it isn't a fifth player.
 

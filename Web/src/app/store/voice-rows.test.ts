@@ -60,3 +60,11 @@ test('a star is kept by the stored row, for a written and a voice Margin, and a 
     assert.equal('starred' in fromRow(await toRow(margin)), false);
   }
 });
+
+test('the sender\u2019s copy length is kept by the stored row, for a written and a voice Margin, and a Margin without one has no key (#4614)', async () => {
+  for (const margin of [written, voice]) {
+    const back = fromRow(await toRow({ ...margin, copyLengthSeconds: 1946.018 }));
+    assert.equal(back.copyLengthSeconds, 1946.018);
+    assert.equal('copyLengthSeconds' in fromRow(await toRow(margin)), false);
+  }
+});

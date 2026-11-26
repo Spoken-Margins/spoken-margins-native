@@ -10,8 +10,9 @@ import SwiftUI
 /// and saves it at each stage, so a launch that was killed before the Library showed is still there for the
 /// next run to report. The lines are pinned, so Refresh Diagnostics doesn't drop them.
 ///
-/// Marks: the root view appearing, the Library loaded, and the root view showing it (`usable`), in milliseconds
-/// since `App.init`. The time from the kernel's process start to `App.init` is kept apart: iOS can prewarm an app
+/// Marks: the root view appearing, the Library loaded, the root view showing it (`usable`), and the launch's feed refresh
+/// finishing (`followingFresh`, #4388), in milliseconds since `App.init`, and the main-thread stalls of the first minute with
+/// the work each was in (`noteHang`). The time from the kernel's process start to `App.init` is kept apart: iOS can prewarm an app
 /// (start its process hours before the listener opens it), and then that gap is idle time, so it is dropped and
 /// the launch is marked `prewarmed`. A launch iOS makes with no screen (a background refresh) never shows the
 /// root view and reads `no_ui`. A unit test has no recorder (`shared` stays nil) and every call is a no-op.
@@ -65,7 +66,14 @@ final class LaunchRecorder {
         publishLines()
     }
 
-    func markRootAppeared() { mark(.rootAppear) }
+    /// Called when the root view first appears, before the Library bootstrap that follows it in the same `onAppear`. The hang
+    /// probe starts there, so the stall of a slow cold launch is seen and not only those after the app turns active (#3752).
+    var onRootAppeared: (@MainActor () -> Void)?
+
+    func markRootAppeared() {
+        mark(.rootAppear)
+        onRootAppeared?()
+    }
 
     /// The Library's rows are loaded and published. The root view shows them on its next update, which marks
     /// `usable` (`markLibraryShown`); an empty Library changes nothing the root view watches, so the next turn does.
@@ -77,7 +85,22 @@ final class LaunchRecorder {
     /// The root view updated for the loaded Library. Ignored until the Library is ready.
     func markLibraryShown() { mark(.usable) }
 
+    /// The launch's feed refresh finished, so Following is up to date (#4388); `firstScreenOnly` when Low Power Mode kept it
+    /// to the shows on the first screen.
+    func markFollowingFresh(firstScreenOnly: Bool) { mark(.followingFresh, firstScreenOnly: firstScreenOnly) }
+
     func markLibraryFailed() { mark(.libraryReady, libraryFailed: true) }
+
+    /// A main-thread stall the hang probe just reported. The first minute's stalls are kept with the launch, so a slow
+    /// open says where the main thread was (#3752); later ones are in the event log only.
+    func noteHang(_ hang: MainThreadHangProbe.Hang) {
+        guard let elapsed = LaunchHistory.elapsedMs(from: launchStart, to: now()) else { return }
+        // A stall outside the first minute changes nothing, so it costs no save and no publish (the probe reports every
+        // stall of the session, long after the event log's allowance is spent).
+        guard history.noteHang(elapsedMs: elapsed, durationMs: hang.durationMs, operation: hang.operation, samples: hang.samplesField) else { return }
+        save()
+        publishLines()
+    }
 
     /// One `app.previous_exit` event's fields, kept past the event log's 300.
     func noteExit(fields: [String: String]) {
@@ -86,9 +109,9 @@ final class LaunchRecorder {
         publishLines()
     }
 
-    private func mark(_ stage: LaunchHistory.Stage, libraryItems: Int? = nil, libraryFailed: Bool = false) {
+    private func mark(_ stage: LaunchHistory.Stage, libraryItems: Int? = nil, libraryFailed: Bool = false, firstScreenOnly: Bool = false) {
         guard let elapsed = LaunchHistory.elapsedMs(from: launchStart, to: now()) else { return }
-        history.mark(stage, elapsedMs: elapsed, libraryItems: libraryItems, libraryFailed: libraryFailed)
+        history.mark(stage, elapsedMs: elapsed, libraryItems: libraryItems, libraryFailed: libraryFailed, firstScreenOnly: firstScreenOnly)
         save()
         publishLines()
     }

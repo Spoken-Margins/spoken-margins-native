@@ -83,6 +83,34 @@ final class PlayQueueAppTests: XCTestCase {
         XCTAssertEqual(model.snapshot.itemId, third)
     }
 
+    /// #4227: permanent delete took the item's rows and files but left its id in the queue's file until the next reorder or
+    /// advance, so the same item imported again (a packet's id is deterministic) came back into the queue. Single and
+    /// bulk delete both take the id out of the queue and its file; an item that is not deleted keeps its place.
+    func testPermanentDeleteTakesTheItemOutOfTheQueueAndItsFile() throws {
+        let model = makeModel()
+        model.queueAppend(itemId: "item-pill")
+        model.queueAppend(itemId: Gate1AppModel.welcomeSampleItemId)
+        model.moveItemToTrash(id: "item-pill")
+        XCTAssertEqual(PlayQueueController.current(model).itemIds, ["item-pill", Gate1AppModel.welcomeSampleItemId])
+
+        model.permanentlyDeleteItem(id: "item-pill")
+
+        XCTAssertEqual(PlayQueueController.current(model).itemIds, [Gate1AppModel.welcomeSampleItemId])
+        let file = try model.applicationSupportDirectory().appending(path: "play-queue.json")
+        XCTAssertEqual(PlayQueueStore(fileURL: file).load().itemIds, [Gate1AppModel.welcomeSampleItemId])
+    }
+
+    func testEmptyRecentlyDeletedTakesEveryDeletedItemOutOfTheQueue() {
+        let model = makeModel()
+        model.queueAppend(itemId: "item-pill")
+        model.queueAppend(itemId: Gate1AppModel.welcomeSampleItemId)
+        model.moveItemToTrash(id: "item-pill")
+
+        model.permanentlyDeleteRecentlyDeletedItems()
+
+        XCTAssertEqual(PlayQueueController.current(model).itemIds, [Gate1AppModel.welcomeSampleItemId])
+    }
+
     /// The sleep timer ends the whole run (the Default taken on #1990): a finish while it runs starts nothing and the
     /// queue keeps its items.
     func testAFinishWhileTheSleepTimerRunsStartsNothingAndKeepsTheQueue() async throws {
@@ -153,5 +181,104 @@ final class PlayQueueAppTests: XCTestCase {
         model.playQueuedItemNow(itemId: Gate1AppModel.welcomeSampleItemId)
         XCTAssertEqual(model.snapshot.itemId, Gate1AppModel.welcomeSampleItemId)
         XCTAssertEqual(PlayQueueController.current(model).itemIds, ["item-pill"])
+    }
+    // Next in queue on the playback screen's chapter row (#3914).
+
+    /// A third real Library item, so the queue head after B is an item that can start (the race below needs that).
+    private func addThirdItem(_ model: Gate1AppModel) throws -> String {
+        let store = try model.requireStore()
+        try store.saveItem(Item(id: "item-third", title: "Third", mediaType: "text", text: "One.\n\nTwo.", externalReference: nil, status: "Ready"))
+        try model.refreshLibraryRows(store: store)
+        return "item-third"
+    }
+
+    /// A is playing with B then C queued. The tap starts B once, B leaves the queue, and A keeps its place: it is neither
+    /// finished nor put back on the queue.
+    func testNextInQueueStartsTheQueuedItemOnceAndLeavesTheOneLeftUnfinished() throws {
+        let model = makeModel()
+        model.addSampleItem()
+        let third = try addThirdItem(model)
+        let second = Gate1AppModel.welcomeSampleItemId
+        model.startItem(id: "item-pill")
+        model.queueAppend(itemId: second)
+        model.queueAppend(itemId: third)
+        XCTAssertEqual(model.chapterRowQueuedNextId, second)
+
+        model.playNextQueuedItem(expectedId: second)
+
+        XCTAssertEqual(model.snapshot.itemId, second)
+        XCTAssertEqual(PlayQueueController.current(model).itemIds, [third])
+        XCTAssertFalse(PlayQueueController.current(model).contains("item-pill"), "the skipped item is not queued again")
+        let left = try model.requireStore().loadSessions(itemId: "item-pill")
+        XCTAssertFalse(left.isEmpty)
+        XCTAssertTrue(left.allSatisfy { $0.phase != .finished && $0.completedAt == nil }, "the skipped item is not marked finished")
+    }
+
+    /// Two taps drawn for the same item start it once and pop the queue once: after the first, the head is the next one.
+    func testASecondTapOnNextInQueueDoesNothing() throws {
+        let model = makeModel()
+        model.addSampleItem()
+        let third = try addThirdItem(model)
+        let second = Gate1AppModel.welcomeSampleItemId
+        model.startItem(id: "item-pill")
+        model.queueAppend(itemId: second)
+        model.queueAppend(itemId: third)
+        model.playNextQueuedItem(expectedId: second)
+        let session = model.snapshot.sessionId
+        model.playNextQueuedItem(expectedId: second)
+        XCTAssertEqual(model.snapshot.itemId, second)
+        XCTAssertEqual(model.snapshot.sessionId, session, "no second session was started")
+        XCTAssertEqual(PlayQueueController.current(model).itemIds, [third], "the queue was popped once")
+    }
+
+    /// A tap in the moment the queue advances by itself. The advance has already taken B off the queue and starts it a
+    /// moment later; C is the new head and a real item. The button must not be offered for C then, and a tap drawn for
+    /// C starts nothing: B starts once and C is still queued.
+    func testATapAtTheQueuesOwnAdvanceStartsTheNextItemOnceAndLosesNothing() async throws {
+        let model = makeModel()
+        model.addSampleItem()
+        let second = Gate1AppModel.welcomeSampleItemId
+        let third = try addThirdItem(model)
+        model.startItem(id: "item-pill")
+        model.queueAppend(itemId: second)
+        model.queueAppend(itemId: third)
+        XCTAssertEqual(model.chapterRowQueuedNextId, second)
+
+        var playing = model.snapshot
+        playing.phase = .itemPlayback
+        model.snapshot = playing
+        var finished = playing
+        finished.phase = .finished
+        model.snapshot = finished // the edge: the advance pops B now and starts it after this change has settled
+        XCTAssertEqual(PlayQueueController.current(model).itemIds, [third], "the advance has popped B")
+        XCTAssertNil(model.chapterRowQueuedNextId, "the row does not offer C while the advance is pending")
+        model.playNextQueuedItem(expectedId: third)
+        await Task.yield()
+
+        XCTAssertEqual(model.snapshot.itemId, second)
+        XCTAssertEqual(PlayQueueController.current(model).itemIds, [third], "C was not started and not lost")
+        XCTAssertEqual(try model.requireStore().loadSessions(itemId: third).count, 0)
+    }
+
+    /// The tap is an explicit start, so it cancels a running sleep timer as starting a queued item from the queue screen does.
+    func testNextInQueueCancelsARunningSleepTimer() {
+        let model = makeModel()
+        model.addSampleItem()
+        model.startItem(id: "item-pill")
+        model.queueAppend(itemId: Gate1AppModel.welcomeSampleItemId)
+        model.armSleepTimer(.minutes15)
+        defer { model.cancelSleepTimer() }
+        model.playNextQueuedItem(expectedId: Gate1AppModel.welcomeSampleItemId)
+        XCTAssertFalse(model.sleepTimerIsActive)
+        XCTAssertEqual(model.snapshot.itemId, Gate1AppModel.welcomeSampleItemId)
+    }
+
+    /// With nothing queued, or only the playing item at the head, there is nothing to offer and a stale tap does nothing.
+    func testNextInQueueIsNotOfferedWithAnEmptyQueueOrOnlyThePlayingItem() {
+        let model = makeModel()
+        model.startItem(id: "item-pill")
+        XCTAssertNil(model.chapterRowQueuedNextId)
+        model.queueAppend(itemId: "item-pill")
+        XCTAssertNil(model.chapterRowQueuedNextId, "the head is the item already playing")
     }
 }

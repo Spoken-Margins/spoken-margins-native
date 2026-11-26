@@ -58,6 +58,11 @@ enum UITestingLaunchSeedWriter {
         guard UITestingHooks.importsCoopLayer else { return }
         let layer = UITestingLaunchSeed.coopLayer(importedAt: Date())
         guard try store.loadImportedCommentaryLayer(packageDigest: layer.packageDigest) == nil else { return }
+        // The written Margin that is never read aloud has no recording to make (#4934).
+        if UITestingHooks.importsSilentCoopMargin {
+            _ = try store.importCommentaryLayer(layer, interjections: [UITestingLaunchSeed.coopSilentInterjection(createdAt: layer.importedAt)])
+            return
+        }
         let support = try FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
         )
@@ -72,6 +77,17 @@ enum UITestingLaunchSeedWriter {
         let audioPath = try recorder.finishRecording(audioRef: nil)
         let margin = UITestingLaunchSeed.coopInterjection(audioPath: audioPath, createdAt: layer.importedAt)
         _ = try store.importCommentaryLayer(layer, interjections: [margin])
+    }
+
+    /// Follows one show with the Up next card's three entries and puts the episode it already has into the Library
+    /// (#3863), for the card's captures. Does nothing without `SPOKEN_MARGINS_UI_TEST_FOLLOWED_SHOW`. It saves the
+    /// same rows each launch, so a relaunch that keeps the Library changes nothing.
+    static func seedFollowedShowIfRequested(into store: SQLiteSessionStore) throws {
+        guard UITestingHooks.seedsFollowedShow else { return }
+        let show = UITestingLaunchSeed.followedShow(now: Date())
+        try store.saveFeedSubscription(show.subscription)
+        for entry in show.entries { try store.saveFeedEntry(entry) }
+        try store.saveItem(show.libraryItem)
     }
 
     /// A reply relaunch of the screen tour (#3237): records on the listener's Margin that it went out in the packet Sam's

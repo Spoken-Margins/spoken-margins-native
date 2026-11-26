@@ -16,7 +16,8 @@ import Foundation
 /// transcript), and on an article that plays its publisher's recording (#547). That article's session is stored in
 /// article form, at a text place, so the recording's time is turned into the text place the recording's map gives for
 /// it, and the engine resumes the session as the recording there, as it does when the listener opens the article. Any
-/// other item throws `unsupportedTarget`. The app runs it on the main actor, in order, a few milliseconds long.
+/// article read aloud with the on-device voice takes one only when the caller gives a `ReadAloudPlace` (#4561): the
+/// listener aimed a Watch Margin at it. Any other item throws `unsupportedTarget`. The app runs it on the main actor, in order, a few milliseconds long.
 public enum PlayerItemMargin {
     public enum Failure: Error, Equatable {
         case itemNotFound
@@ -27,6 +28,18 @@ public enum PlayerItemMargin {
         /// `placeSpoken` was given no recording; a Mark goes through `placeMark`.
         case noRecording
         case notWritten
+        /// A spoken note's place came with no file while the note has a Shorter pauses version, and not from a player
+        /// run, so its clock is not known: a guess would anchor it on the wrong words (#4779). It files elsewhere.
+        case clockUnknown
+    }
+
+    /// Where on an article read aloud with the on-device voice a Watch Margin aimed at it goes (#4561). That reading
+    /// keeps no media clock, so a media time means nothing there; the caller says the text place instead.
+    public enum ReadAloudPlace: Equatable, Sendable {
+        /// The text place the player was paused at when the Watch began recording.
+        case textOffset(Int)
+        /// No pause on record (the Watch could not reach the phone): the article's saved place.
+        case savedPlace
     }
 
     /// Saves a spoken Margin whose recording is `audioPath`, taken at `markedAt`, at `mediaTimeMs` on `itemId`.
@@ -36,10 +49,15 @@ public enum PlayerItemMargin {
         atMediaTimeMs mediaTimeMs: Int,
         markedAt: Date,
         itemId: String,
-        repository: SessionRepository & StructuredDocumentRepository
+        repository: SessionRepository & StructuredDocumentRepository,
+        readAloudPlace: ReadAloudPlace? = nil,
+        playedOnMediaURL: String? = nil,
+        playedFromRun: Bool = false
     ) throws -> Interjection {
         guard let audioPath, !audioPath.isEmpty else { throw Failure.noRecording }
-        let target = try Target(itemId: itemId, mediaTimeMs: mediaTimeMs, repository: repository)
+        let target = try Target(
+            itemId: itemId, mediaTimeMs: mediaTimeMs, repository: repository, readAloudPlace: readAloudPlace, playedOnMediaURL: playedOnMediaURL,
+            playedFromRun: playedFromRun)
         // A retry after the first try got as far as the store: the Margin is already there, so never write a second copy.
         if let existing = (try? repository.loadInterjections(sessionId: target.original.id))?.first(where: { $0.audioPath == audioPath }) {
             return existing
@@ -74,9 +92,12 @@ public enum PlayerItemMargin {
         markedAt: Date,
         itemId: String,
         repository: SessionRepository & StructuredDocumentRepository,
-        timeZone: TimeZone = .current
+        timeZone: TimeZone = .current,
+        playedOnMediaURL: String? = nil,
+        playedFromRun: Bool = false
     ) throws -> Interjection {
-        let target = try Target(itemId: itemId, mediaTimeMs: mediaTimeMs, repository: repository)
+        let target = try Target(
+            itemId: itemId, mediaTimeMs: mediaTimeMs, repository: repository, playedOnMediaURL: playedOnMediaURL, playedFromRun: playedFromRun)
         let words = markWords(
             mediaTimeMs: target.isArticle ? nil : target.timeMs, itemTitle: target.item.title, markedAt: markedAt, timeZone: timeZone
         )
@@ -130,6 +151,22 @@ public enum PlayerItemMargin {
         return text
     }
 
+    /// Whether a Margin moved onto `itemId` from a live session can have a place there (#4233 Design 2.9.2): the item is in
+    /// the Library, has a session to write on, and that session keeps a media clock (an episode, an audio file, a narrated
+    /// article with a transcript). An article read aloud has no media time to put a stored position on, so it never can,
+    /// and neither can an item with no known length, where "inside the item" can't be checked.
+    public static func canPlace(itemId: String, repository: SessionRepository & StructuredDocumentRepository) -> Bool {
+        guard let item = try? repository.loadItem(id: itemId), item.deletedAt == nil,
+              let durationMs = item.media?.durationMs, durationMs > 0,
+              let session = StoredSessionMargin.targetSession(in: (try? repository.loadSessions(itemId: itemId)) ?? []) else { return false }
+        return hasMediaClock(session)
+    }
+
+    /// The session types whose place is a media time (`Target`'s first case).
+    static func hasMediaClock(_ session: Session) -> Bool {
+        session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia
+    }
+
     /// Whether `session` can hold a Margin placed by media time: an item with a media clock, or an article (whose
     /// publisher recording may have been playing). `withdraw` looks only in these.
     static func takesPlacedMargins(_ session: Session) -> Bool {
@@ -162,6 +199,24 @@ public enum PlayerItemMargin {
         return touched
     }
 
+    /// A time taken on `playedOn` as a time on the file `item` names now, which the engine converts from when it
+    /// saves (#4779). A spoken note can move between its recording and its Shorter pauses version while a Watch
+    /// Margin records, and their clocks differ; the saved place must be the words that played. Any other item keeps its
+    /// time. A note's time with no file is on the recording's clock when that is the only one it can be on
+    /// (`SpokenNoteCleanClock.placeWithNoFileIsOnRecording`); otherwise it throws `clockUnknown`, never a guess.
+    static func timeOnAttachedFile(_ playedMs: Int, playedOn: String?, fromRun: Bool = false, item: Item) throws -> Int {
+        guard SpokenNoteItem.isSpokenNote(mediaType: item.mediaType) else { return playedMs }
+        guard let playedOn else {
+            guard SpokenNoteCleanClock.placeWithNoFileIsOnRecording(fromRun: fromRun, noteMediaURL: item.media?.url) else {
+                throw Failure.clockUnknown
+            }
+            return SpokenNoteCleanClock.playingMs(recordedMs: playedMs, mediaURL: item.media?.url)
+        }
+        guard playedOn != item.media?.url else { return playedMs }
+        let recordedMs = SpokenNoteCleanClock.recordedMs(playingMs: playedMs, mediaURL: playedOn)
+        return SpokenNoteCleanClock.playingMs(recordedMs: recordedMs, mediaURL: item.media?.url)
+    }
+
     // MARK: Where the Margin goes
 
     /// The item, its session as it was, and that session moved to the Margin's place.
@@ -174,11 +229,15 @@ public enum PlayerItemMargin {
         /// True for an article playing its publisher's recording: the place is a text place.
         let isArticle: Bool
 
-        init(itemId: String, mediaTimeMs: Int, repository: SessionRepository & StructuredDocumentRepository) throws {
+        init(
+            itemId: String, mediaTimeMs playedMs: Int, repository: SessionRepository & StructuredDocumentRepository,
+            readAloudPlace: ReadAloudPlace? = nil, playedOnMediaURL: String? = nil, playedFromRun: Bool = false
+        ) throws {
             guard let item = try? repository.loadItem(id: itemId), item.deletedAt == nil else { throw Failure.itemNotFound }
             guard let original = StoredSessionMargin.targetSession(in: try repository.loadSessions(itemId: itemId)) else {
                 throw Failure.noSession
             }
+            let mediaTimeMs = try PlayerItemMargin.timeOnAttachedFile(playedMs, playedOn: playedOnMediaURL, fromRun: playedFromRun, item: item)
             func clamped(_ durationMs: Int?) -> Int {
                 durationMs.map { min(max(0, mediaTimeMs), max(0, $0 - 1)) } ?? max(0, mediaTimeMs)
             }
@@ -191,12 +250,26 @@ public enum PlayerItemMargin {
             case .itemTextTTS:
                 // Only an article playing its publisher's recording has a media time; one read with on-device speech
                 // reports none, so the player keeps no run for it (`PlayerRunRecorder`).
-                guard original.phase == .itemPlayback,
-                      let record = try? (repository as? any PublisherAudioRepository)?.loadPublisherAudio(itemId: itemId),
-                      let plan = PublisherAudioPlayback.plan(for: item, record: record) else { throw Failure.unsupportedTarget }
-                timeMs = clamped(plan.playingMedia.durationMs)
-                let offset = PreparedNarrationFallback.textOffset(mediaTimeMs: timeMs, timeline: plan.timeline)
-                moved.position = Position(charOffset: max(0, min(offset, item.text?.count ?? 0)), chapterId: nil)
+                let textLength = item.text?.count ?? 0
+                if original.phase == .itemPlayback,
+                   let store = repository as? any PublisherAudioRepository,
+                   let record = try? store.loadPublisherAudio(itemId: itemId),
+                   let plan = PublisherAudioPlayback.plan(for: item, record: record, choice: try? store.loadPublisherAudioChoice(itemId: itemId)) {
+                    timeMs = clamped(plan.playingMedia.durationMs)
+                    let offset = PreparedNarrationFallback.textOffset(mediaTimeMs: timeMs, timeline: plan.timeline)
+                    moved.position = Position(charOffset: max(0, min(offset, textLength)), chapterId: nil)
+                } else if let readAloudPlace {
+                    // Read with on-device speech: no media time, so the place is the text place the caller gives (#4561).
+                    let offset: Int
+                    switch readAloudPlace {
+                    case .textOffset(let char): offset = char
+                    case .savedPlace: offset = original.position.charOffset
+                    }
+                    timeMs = 0
+                    moved.position = Position(charOffset: max(0, min(offset, textLength)), chapterId: original.position.chapterId)
+                } else {
+                    throw Failure.unsupportedTarget
+                }
                 isArticle = true
             default:
                 throw Failure.unsupportedTarget

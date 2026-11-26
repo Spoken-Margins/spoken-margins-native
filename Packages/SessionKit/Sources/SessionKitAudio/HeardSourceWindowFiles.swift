@@ -42,10 +42,7 @@ public final class HeardSourceWindowFiles {
     /// it, nor can a written one or one with no media time (the app only recovers context for spoken Margins at a
     /// time in the item), and a ready context isn't replaced by it.
     public static func isStillNeeded(by margin: Interjection?) -> Bool {
-        guard let margin, margin.status != "deleted",
-              margin.captureKind != .written,
-              margin.targetType == .item,
-              margin.anchor.mediaTimeMs != nil else { return false }
+        guard let margin, margin.status != "deleted", margin.canHaveSourceContext else { return false }
         return margin.anchorContextStatus != .ready
     }
 
@@ -105,6 +102,15 @@ public final class HeardSourceWindowFiles {
     /// Hands the window to a transcription, which must `delete` it when done. It is no longer kept here.
     public func take(_ key: String) -> [Segment]? {
         windows.removeValue(forKey: key)
+    }
+
+    /// A transcription that `take`s a window ended with `outcome`. Returns the files the caller deletes. One the Speech
+    /// Recognition hold stopped gives its window back, so the retry Allow runs finds it (#4715); a newer hand-over kept for
+    /// the Margin meanwhile wins, and the taken files go instead.
+    public func finishTranscription(of taken: [Segment], key: String, outcome: SourceWindowTranscriptionOutcome) -> [Segment] {
+        guard outcome.keepsAudio, !taken.isEmpty, windows[key] == nil else { return taken }
+        windows[key] = taken
+        return []
     }
 
     /// Drops a window nothing will use, and its files.

@@ -25,7 +25,7 @@ final class MarginThreadPresentationTests: XCTestCase {
                 imported("a1", layer: "layer-a", scoped: "a-1", time: 30_000, offset: 3),
             ]
         )
-        XCTAssertEqual(rows.map(\.reference), [.local("mine"), .imported("a1"), .imported("b1"), .imported("a2")])
+        XCTAssertEqual(rows.map(\.reference), [.local("session::mine"), .imported("a1"), .imported("b1"), .imported("a2")])
         XCTAssertEqual(rows.map(\.depth), [0, 0, 1, 0])
         XCTAssertEqual(rows.map(\.senderLabel), ["you", "Ana", "Ben", "Ana"])
         XCTAssertEqual(rows.map(\.note), [nil, nil, nil, nil])
@@ -39,7 +39,7 @@ final class MarginThreadPresentationTests: XCTestCase {
         )
         XCTAssertEqual(rows.count, 1)
         XCTAssertEqual(rows[0].depth, 0)
-        XCTAssertEqual(rows[0].note, "reply to a Margin you don't have")
+        XCTAssertEqual(rows[0].note, "Reply to a Margin that isn't on this phone")
     }
 
     func testRepliesToRepliesNestAndSiblingsGoOldestFirst() {
@@ -70,7 +70,7 @@ final class MarginThreadPresentationTests: XCTestCase {
             itemId: "item", localMargins: [mine], layers: [layerA],
             importedMargins: [imported("a1", layer: "layer-a", scoped: "a-1", time: 30_000, offset: 1)]
         )
-        XCTAssertEqual(rows.map(\.reference), [.imported("a1"), .local("mine")])
+        XCTAssertEqual(rows.map(\.reference), [.imported("a1"), .local("session::mine")])
         XCTAssertEqual(rows.map(\.depth), [0, 1])
     }
 
@@ -86,7 +86,7 @@ final class MarginThreadPresentationTests: XCTestCase {
         )
         XCTAssertEqual(Set(rows.map(\.reference)), [.imported("a1"), .imported("b1")])
         XCTAssertEqual(rows.count, 2)
-        XCTAssertEqual(rows.map(\.note), [nil, nil], "each parent is here, so neither is a reply to a Margin you don't have")
+        XCTAssertEqual(rows.map(\.note), [nil, nil], "each parent is here, so neither is a Reply to a Margin that isn't on this phone")
     }
 
     func testDeletedMarginsAndLayersAndOtherItemsStayOut() {

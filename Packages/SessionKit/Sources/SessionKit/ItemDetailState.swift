@@ -27,6 +27,11 @@ public struct ItemDetailState: Equatable, Sendable {
     /// The same scenes with their end times and summaries, for the podcast Now view (#1629).
     public var listeningMapSummarySpans: [SceneSummarySpan] = []
     public var mediaDurationMs: Int?
+    /// The recorded audio's own length for the item's length pill and the Library's words (#4186): the media's
+    /// `durationMs`, never the transcript timeline's (that stays in `mediaDurationMs` for the rail). Nil when unknown.
+    public var lengthMs: Int?
+    /// A text item's character count for its "about N min" estimate; nil for recorded audio (#4186).
+    public var lengthTextCharacterCount: Int?
     /// The scenes came from the server's community map (#553), not this phone or the publisher.
     public var listeningMapIsCommunity: Bool { listeningMapScenes.first.map { CommunityMapConverter.isCommunitySceneId($0.id) } ?? false }
     public var listeningMapAvailabilityDescription: String {
@@ -44,8 +49,15 @@ public struct ItemDetailState: Equatable, Sendable {
         id == itemId ? text : nil
     }
     public var isNativeAudio = false
+    /// The listener's own spoken note (#4782): its Export offers the whole transcript, which other native audio doesn't.
+    public var isSpokenNote = false
     public var timelineSource = TimelineSourceContent(text: "")
     public var documentStructure: PDFDocumentStructure?
+    /// What the Now tab needs to place a PDF's table and figure cards (#4588): the document's floats and where its
+    /// segments are, with no copy of the text. Set with `includingTimelineSource`; nil for anything that is not a PDF
+    /// with located floats, and for a document whose text is not the item's, so Now draws no cards. Kept out of the
+    /// memberwise init: only `includingTimelineSource` sets it.
+    public internal(set) var pdfClipSource: PDFClipSource?
     public var sessions: [Session] = []
     /// When the listener last added the item again (`Item.addedAgainAt`, #4178), read with the item when the detail loads.
     public var addedAgainAt: Date?
@@ -56,6 +68,9 @@ public struct ItemDetailState: Equatable, Sendable {
     }
     public var sessionRows: [SessionPresentation] = []
     public var interjections: [Interjection] = []
+    /// Every session's active own Margins for the item (#4910), for the rule that leaves the listener's own copies out
+    /// of a friend's Margins. `interjections` is the active session's only.
+    public var itemOwnMargins: [Interjection] = []
     public var importedCommentaryLayers: [ImportedCommentaryLayer] = []
     public var importedCommentaryInterjections: [String: [ImportedCommentaryInterjection]] = [:]
     public var sharedMarginPlacement: SharedMarginPlacementPasses.Pass?
@@ -70,6 +85,9 @@ public struct ItemDetailState: Equatable, Sendable {
     /// the same stored facts the Library row reads, so the screen's title and sentences never say "item" and `body`
     /// never scans the Library for it.
     public var sourceNoun: SourceNoun = .text
+    /// For a meeting transcript: "Meeting on Thu 12 Nov, 15:00 · 48 min · Priya Patel and Sam Lee" (#2997). Worked out when
+    /// the detail loads, from the item's times record. Nil for every other item.
+    public var meetingLine: String?
 
     public init(
         id: String = "",
@@ -89,19 +107,24 @@ public struct ItemDetailState: Equatable, Sendable {
         listeningMapSummarySpans: [SceneSummarySpan] = [],
         mediaDurationMs: Int? = nil,
         isNativeAudio: Bool = false,
+        isSpokenNote: Bool = false,
+        lengthMs: Int? = nil,
+        lengthTextCharacterCount: Int? = nil,
         timelineSource: TimelineSourceContent = TimelineSourceContent(text: ""),
         documentStructure: PDFDocumentStructure? = nil,
         sessions: [Session] = [],
         addedAgainAt: Date? = nil,
         sessionRows: [SessionPresentation] = [],
         interjections: [Interjection] = [],
+        itemOwnMargins: [Interjection] = [],
         importedCommentaryLayers: [ImportedCommentaryLayer] = [],
         importedCommentaryInterjections: [String: [ImportedCommentaryInterjection]] = [:],
         sharedMarginPlacement: SharedMarginPlacementPasses.Pass? = nil,
         sharedMapRefusalReason: String? = nil,
         textSceneSummaries: TextSceneSummaryProgress.State = .notApplicable,
         turns: [ConversationTurn] = [],
-        sourceNoun: SourceNoun = .text
+        sourceNoun: SourceNoun = .text,
+        meetingLine: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -120,12 +143,16 @@ public struct ItemDetailState: Equatable, Sendable {
         self.listeningMapSummarySpans = listeningMapSummarySpans
         self.mediaDurationMs = mediaDurationMs
         self.isNativeAudio = isNativeAudio
+        self.isSpokenNote = isSpokenNote
+        self.lengthMs = lengthMs
+        self.lengthTextCharacterCount = lengthTextCharacterCount
         self.timelineSource = timelineSource
         self.documentStructure = documentStructure
         self.sessions = sessions
         self.addedAgainAt = addedAgainAt
         self.sessionRows = sessionRows
         self.interjections = interjections
+        self.itemOwnMargins = itemOwnMargins
         self.importedCommentaryLayers = importedCommentaryLayers
         self.importedCommentaryInterjections = importedCommentaryInterjections
         self.sharedMarginPlacement = sharedMarginPlacement
@@ -133,6 +160,7 @@ public struct ItemDetailState: Equatable, Sendable {
         self.textSceneSummaries = textSceneSummaries
         self.turns = turns
         self.sourceNoun = sourceNoun
+        self.meetingLine = meetingLine
     }
 }
 

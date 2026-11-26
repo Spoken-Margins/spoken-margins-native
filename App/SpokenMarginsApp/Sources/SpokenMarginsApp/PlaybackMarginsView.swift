@@ -8,6 +8,8 @@ struct PlaybackMarginsView: View {
     @State private var filter: PlaybackMarginsList.Filter = .all
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
+    /// Saved live-session photos on own rows (#4180), observed so they appear once the launch load finishes.
+    @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
 
     var body: some View {
         let own = model.marginRows
@@ -42,18 +44,24 @@ struct PlaybackMarginsView: View {
                     if entry.origin == .own, let row = ownByID[entry.id] {
                         PlaybackMarginRowView(title: row.preview, detail: row.placeDescription(),
                             isShared: false, identifier: "margins.row.\(row.id)",
+                            canPlay: MarginPlacePresentation.offersPlay(row.interjection),
+                            goesTo: SilentMarginWords.ownWrittenGoesTo(row.interjection), sourceNoun: model.sourceNoun,
+                            thumbnail: photoThumbnail(photoIndex, for: row),
+                            star: .ownMargin(row.interjection, place: .playerMargins, model: model),
                             showDetails: { selectedMargin = row }, play: { MarginMomentTap.start(row, model: model) })
                     } else if entry.origin == .shared, let row = sharedByID[entry.id] {
                         PlaybackMarginRowView(title: row.interjection.approvedTranscript,
-                            detail: "\(row.collectionLabel) · \(row.positionDescription)",
+                            detail: SilentMarginWords.detail("\(row.collectionLabel) · \(row.positionDescription)", goesTo: row.goesToFromList),
                             isShared: true, identifier: "margins.shared.row.\(row.id)",
-                            canPlay: row.canPlayFromMarginsList,
-                            showDetails: { selectedSharedMargin = row }, play: { model.playSharedMarginMoment(row) })
+                            canPlay: row.canPlayFromMarginsList || row.goesToFromList,
+                            goesTo: row.goesToFromList, sourceNoun: model.sourceNoun,
+                            showDetails: { selectedSharedMargin = row }, play: { model.goToSharedMargin(row) })
                     }
                 }
                 Button(action: model.openMargins) {
                     Label("All Margins and export", systemImage: "quote.bubble").frame(minHeight: 44).contentShape(Rectangle())
                 }
+                    .tint(AppColors.listeningAccent)
                     .accessibilityIdentifier("playback.margins.collection.button")
             }
             .padding(.horizontal, 22)
@@ -63,10 +71,10 @@ struct PlaybackMarginsView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("margins.screen")
-        .sheet(item: $selectedMargin) { row in
+        .trackedSheet(item: $selectedMargin) { row in
             ExperienceMarginDetailView(row: row).environmentObject(model)
         }
-        .sheet(item: $selectedSharedMargin) { row in
+        .trackedSheet(item: $selectedSharedMargin) { row in
             SharedMarginDetailView(row: row).environmentObject(model)
         }
     }

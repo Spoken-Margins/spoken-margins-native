@@ -13,6 +13,8 @@ import UIKit
 final class ArtworkThumbnailLoader: @unchecked Sendable {
     /// 3× a 56 pt cell.
     static let maxPixelSize = 168
+    /// The Lock Screen and Control Center card shows the picture far larger than a row does (#3864).
+    static let nowPlayingPixelSize = 600
 
     static let shared = ArtworkThumbnailLoader(
         diskDirectory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
@@ -20,7 +22,7 @@ final class ArtworkThumbnailLoader: @unchecked Sendable {
         fetch: { try await ArtworkThumbnailLoader.download($0) }
     )
 
-    private let memory = NSCache<NSURL, UIImage>()
+    private let memory = NSCache<NSString, UIImage>()
     private let diskDirectory: URL?
     private let fetch: @Sendable (URL) async throws -> Data
     private let inFlight = InFlight()
@@ -33,29 +35,33 @@ final class ArtworkThumbnailLoader: @unchecked Sendable {
 
     /// The thumbnail if it's already in memory, so a row scrolled back into view shows its
     /// artwork on its first frame.
-    func cachedThumbnail(for url: URL) -> UIImage? {
-        memory.object(forKey: url as NSURL)
+    func cachedThumbnail(for url: URL, maxPixelSize: Int = ArtworkThumbnailLoader.maxPixelSize) -> UIImage? {
+        memory.object(forKey: Self.memoryKey(url, maxPixelSize))
     }
 
     /// The thumbnail from memory, then disk, then the network. Nil when the image can't be
-    /// fetched or decoded; the cell keeps its placeholder.
-    func thumbnail(for url: URL) async -> UIImage? {
-        if let cached = cachedThumbnail(for: url) { return cached }
-        let task = await inFlight.task(for: url) { [self] in
-            await load(url)
+    /// fetched or decoded; the cell keeps its placeholder. `maxPixelSize` is the long side: a row's 168 by
+    /// default, a larger one for the Now Playing card. Each size is cached apart.
+    func thumbnail(for url: URL, maxPixelSize: Int = ArtworkThumbnailLoader.maxPixelSize) async -> UIImage? {
+        if let cached = cachedThumbnail(for: url, maxPixelSize: maxPixelSize) { return cached }
+        let task = await inFlight.task(for: InFlight.Key(url: url, size: maxPixelSize)) { [self] in
+            await load(url, maxPixelSize: maxPixelSize)
         }
         return await task.value
     }
 
-    private func load(_ url: URL) async -> UIImage? {
-        if let cached = cachedThumbnail(for: url) { return cached }
-        let diskURL = diskFileURL(for: url)
-        if let diskURL, let data = try? Data(contentsOf: diskURL), let image = Self.downsample(data) {
-            memory.setObject(image, forKey: url as NSURL)
+    private static func memoryKey(_ url: URL, _ size: Int) -> NSString { "\(size)|\(url.absoluteString)" as NSString }
+
+    private func load(_ url: URL, maxPixelSize: Int) async -> UIImage? {
+        if let cached = cachedThumbnail(for: url, maxPixelSize: maxPixelSize) { return cached }
+        let diskURL = diskFileURL(for: url, maxPixelSize: maxPixelSize)
+        let memoryKey = Self.memoryKey(url, maxPixelSize)
+        if let diskURL, let data = try? Data(contentsOf: diskURL), let image = Self.downsample(data, maxPixelSize: maxPixelSize) {
+            memory.setObject(image, forKey: memoryKey)
             return image
         }
-        guard let data = try? await fetch(url), let image = Self.downsample(data) else { return nil }
-        memory.setObject(image, forKey: url as NSURL)
+        guard let data = try? await fetch(url), let image = Self.downsample(data, maxPixelSize: maxPixelSize) else { return nil }
+        memory.setObject(image, forKey: memoryKey)
         if let diskURL, let small = image.jpegData(compressionQuality: 0.85) {
             try? FileManager.default.createDirectory(at: diskURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? small.write(to: diskURL, options: .atomic)
@@ -63,16 +69,18 @@ final class ArtworkThumbnailLoader: @unchecked Sendable {
         return image
     }
 
-    private func diskFileURL(for url: URL) -> URL? {
+    /// The row size keeps its file name from before, so thumbnails already on disk stay valid.
+    private func diskFileURL(for url: URL, maxPixelSize: Int) -> URL? {
         guard let diskDirectory else { return nil }
         let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
         let name = digest.map { String(format: "%02x", $0) }.joined()
-        return diskDirectory.appending(path: "\(name).jpg", directoryHint: .notDirectory)
+        let suffix = maxPixelSize == Self.maxPixelSize ? "" : "-\(maxPixelSize)"
+        return diskDirectory.appending(path: "\(name)\(suffix).jpg", directoryHint: .notDirectory)
     }
 
     /// Decodes straight to a thumbnail no larger than `maxPixelSize` on its long side, without
     /// decoding the full-size image first.
-    static func downsample(_ data: Data) -> UIImage? {
+    static func downsample(_ data: Data, maxPixelSize: Int = ArtworkThumbnailLoader.maxPixelSize) -> UIImage? {
         let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else { return nil }
         let options = [
@@ -103,21 +111,22 @@ final class ArtworkThumbnailLoader: @unchecked Sendable {
 
     /// One load per URL at a time: rows that ask for the same artwork share it.
     private actor InFlight {
-        private var tasks: [URL: Task<UIImage?, Never>] = [:]
+        struct Key: Hashable { let url: URL; let size: Int }
+        private var tasks: [Key: Task<UIImage?, Never>] = [:]
 
-        func task(for url: URL, _ work: @escaping @Sendable () async -> UIImage?) -> Task<UIImage?, Never> {
-            if let task = tasks[url] { return task }
+        func task(for key: Key, _ work: @escaping @Sendable () async -> UIImage?) -> Task<UIImage?, Never> {
+            if let task = tasks[key] { return task }
             let task = Task.detached(priority: .utility) { await work() }
-            tasks[url] = task
+            tasks[key] = task
             Task { [weak self] in
                 _ = await task.value
-                await self?.finish(url)
+                await self?.finish(key)
             }
             return task
         }
 
-        private func finish(_ url: URL) {
-            tasks[url] = nil
+        private func finish(_ key: Key) {
+            tasks[key] = nil
         }
     }
 }
@@ -132,7 +141,7 @@ final class ArtworkThumbnailState: ObservableObject {
     private var imageURL: URL?
 
     init(url: URL?, loader: ArtworkThumbnailLoader) {
-        image = url.flatMap(loader.cachedThumbnail(for:))
+        image = url.flatMap { loader.cachedThumbnail(for: $0) }
         imageURL = image == nil ? nil : url
     }
 
@@ -144,7 +153,7 @@ final class ArtworkThumbnailState: ObservableObject {
     /// picture), then the loaded image. A cancelled call, which means the cell moved to another url, leaves the
     /// image to the call that replaced it.
     func show(_ url: URL?, loader: ArtworkThumbnailLoader) async {
-        image = url.flatMap(loader.cachedThumbnail(for:))
+        image = url.flatMap { loader.cachedThumbnail(for: $0) }
         imageURL = image == nil ? nil : url
         guard let url else { return }
         let loaded = await loader.thumbnail(for: url)

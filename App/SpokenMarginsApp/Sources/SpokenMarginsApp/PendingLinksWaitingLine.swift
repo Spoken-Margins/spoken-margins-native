@@ -11,6 +11,7 @@ struct PendingLinksWaitingLine: View {
             Label(line, systemImage: "wifi.slash")
                 .font(.subheadline)
                 .foregroundStyle(AppColors.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("library.linksWaitingForConnection")
         }
     }

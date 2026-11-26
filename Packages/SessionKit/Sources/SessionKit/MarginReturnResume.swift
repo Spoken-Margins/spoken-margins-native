@@ -66,7 +66,7 @@ public final class MarginReturnResume {
                 case .resumed(let n): report(.resumedOnRetry(attempt: n))
                 case .retryFailed(let n, let reason): report(.retryFailed(attempt: n, reason: reason))
                 case .gaveUp(let n, let reason): report(.gaveUp(attempts: n, reason: reason))
-                case .abandoned(let n): report(.abandoned(attempts: n))
+                case .abandoned(let n), .deferred(let n): report(.abandoned(attempts: n)) // no handOver is passed here, so only .abandoned occurs
                 }
             }
             return false

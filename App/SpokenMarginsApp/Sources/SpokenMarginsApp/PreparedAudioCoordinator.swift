@@ -2,40 +2,30 @@ import AVFoundation
 import CryptoKit
 import Foundation
 import SessionKit
+import SessionKitPersistence
 import SessionKitSupertonic
-
-struct PreparedChunkPlan: Equatable, Sendable {
-    var index: Int
-    var startOffset: Int
-    var sourceLength: Int
-    var text: String
-
-    /// Background preparation's plan for an article: the article plan the player's lookups use too
-    /// (#312). Production and the tests both call this, so they can't drift apart.
-    static func articlePlan(_ articleText: String) -> [PreparedChunkPlan] {
-        NarrationChunkPlanner.articlePlan(articleText).chunks.map {
-            PreparedChunkPlan(index: $0.index, startOffset: $0.startOffset, sourceLength: $0.sourceLength, text: $0.text)
-        }
-    }
-}
 
 /// Single-entry cache: bounds retained text/plans while reusing a document
 /// across successive chunk jobs. Changed source always requires a new plan.
 final class PreparedChunkPlanCache: @unchecked Sendable {
     private let lock = NSLock()
     private var source: String?
+    private var sourceHasAsides = false
     private var plan: [PreparedChunkPlan] = []
 
     func removeAll() {
         lock.lock()
         source = nil
+        sourceHasAsides = false
         plan.removeAll()
         lock.unlock()
     }
 
-    func value(for text: String, build: () -> [PreparedChunkPlan]) -> [PreparedChunkPlan] {
+    /// The plan for `text` of one kind: the plain plan and the plan with note chunks are different plans of one text,
+    /// so the kind is part of what the entry is for (#3777).
+    func value(for text: String, asides: Bool = false, build: () -> [PreparedChunkPlan]) -> [PreparedChunkPlan] {
         lock.lock()
-        if source == text {
+        if source == text, sourceHasAsides == asides {
             let result = plan
             lock.unlock()
             return result
@@ -44,6 +34,7 @@ final class PreparedChunkPlanCache: @unchecked Sendable {
         let result = build()
         lock.lock()
         source = text
+        sourceHasAsides = asides
         plan = result
         lock.unlock()
         return result
@@ -120,11 +111,18 @@ actor PreparedAudioCoordinator {
     private let repository: any SessionRepository
     private let rootDirectory: URL
     private let fileManager: FileManager
+    /// Called, with a Diagnostics key and a short value, wherever saved chunks are dropped or a manifest is started over,
+    /// so an export says which one happened to a listener's audio and why (#4383).
+    private let report: @Sendable (String, String) -> Void
 
-    init(repository: any SessionRepository, rootDirectory: URL, fileManager: FileManager = .default) {
+    init(
+        repository: any SessionRepository, rootDirectory: URL, fileManager: FileManager = .default,
+        report: @escaping @Sendable (String, String) -> Void = { _, _ in }
+    ) {
         self.repository = repository
         self.rootDirectory = rootDirectory
         self.fileManager = fileManager
+        self.report = report
     }
 
     func begin(
@@ -132,16 +130,19 @@ actor PreparedAudioCoordinator {
         sourceText: String,
         signature: TTSRenderSignature,
         plan: [PreparedChunkPlan],
-        schedulesJob: Bool = true
+        schedulesJob: Bool = true,
+        asides: Bool = false
     ) throws -> PreparedAudioManifest {
         try PreparedAudioEnqueue.withValidatedSource(itemId: itemId, sourceText: sourceText, repository: repository) {
-            try beginValidated(itemId: itemId, sourceText: sourceText, signature: signature, plan: plan, schedulesJob: schedulesJob)
+            try beginValidated(itemId: itemId, sourceText: sourceText, signature: signature, plan: plan, schedulesJob: schedulesJob, asides: asides)
         }
     }
 
+    /// `asides` is the plan kind `plan` was made with. A saved preparation of the other kind is never resumed: its chunks
+    /// are another plan's (#3777).
     private func beginValidated(
         itemId: String, sourceText: String, signature: TTSRenderSignature,
-        plan: [PreparedChunkPlan], schedulesJob: Bool
+        plan: [PreparedChunkPlan], schedulesJob: Bool, asides: Bool
     ) throws -> PreparedAudioManifest {
         try fileManager.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
         let manifestId = Self.manifestId(itemId: itemId, signature: signature)
@@ -163,10 +164,11 @@ actor PreparedAudioCoordinator {
                 segments: [SpeakableSegment(id: locator.segmentId, text: sourceText, locator: locator)]
             ))
         }
-        if var existing = try repository.loadPreparedAudioManifest(id: manifestId),
+        let stored = try repository.loadPreparedAudioManifest(id: manifestId)
+        if var existing = stored,
            existing.signature == signature,
            existing.plannedChunkCount == plan.count,
-           Self.isMade(from: sourceText, existing) {
+           Self.isMade(from: sourceText, existing, asides: asides) {
             // Eligibility/Stop is separate from artifact identity. Resume a
             // compatible partial representation without discarding its chunks.
             if existing.state == .notPrepared || existing.state == .stopped {
@@ -177,7 +179,11 @@ actor PreparedAudioCoordinator {
             } else if existing.state == .needsRepreparation {
                 // Its narration was detached or a chunk failed its checksum (#278). Keep only the
                 // chunks whose files are still intact, render the rest, and assemble again.
+                let before = existing.chunks.count
                 existing.chunks = existing.chunks.filter(isIntact)
+                if existing.chunks.count != before {
+                    report("preparedAudio.chunksDropped:\(itemId)", "not_intact kept=\(existing.chunks.count) of=\(before) planned=\(plan.count)")
+                }
                 existing.artifact = nil
                 existing.state = .preparing
                 existing.failureCode = nil
@@ -191,6 +197,19 @@ actor PreparedAudioCoordinator {
             invalid.state = .needsRepreparation
             invalid.updatedAt = Date()
             try repository.savePreparedAudioManifest(invalid)
+            report("preparedAudio.retired:\(itemId)", "other_signature chunks=\(old.chunks.count) was=\(old.state.rawValue) engine=\(old.signature.engine)")
+        }
+        // The same words under the same voice, saved for a plan of another size: the chunks whose own stretch of the text
+        // still matches the new plan are still this item's audio, so they are kept rather than started over (#4383). Words
+        // that changed (`isMade` false) or another voice (a different manifest id) never carry over.
+        var carried: [PreparedAudioChunk] = []
+        // Audio of the other plan kind (notes read where cited, or at the end) is never carried: its chunks are another plan's.
+        if let stored, stored.signature == signature, Self.isMade(from: sourceText, stored, asides: asides) {
+            carried = Self.matchingChunks(in: stored, plan: plan, sourceText: sourceText, asides: asides).filter(isIntact)
+        }
+        if let stored {
+            let reason = Self.isMade(from: sourceText, stored) ? (Self.isMade(from: sourceText, stored, asides: asides) ? "plan_size" : "plan_kind") : "source_text"
+            report("preparedAudio.restarted:\(itemId)", "\(reason) kept=\(carried.count) of=\(stored.chunks.count) planned=\(stored.plannedChunkCount)->\(plan.count) was=\(stored.state.rawValue)")
         }
         let manifest = PreparedAudioManifest(
             id: manifestId,
@@ -199,7 +218,8 @@ actor PreparedAudioCoordinator {
             signature: signature,
             state: .preparing,
             plannedChunkCount: plan.count,
-            articleIdentity: NarrationChunkPlanner.identity(ofArticle: sourceText)
+            chunks: carried,
+            articleIdentity: NarrationChunkPlanner.identity(ofArticle: sourceText, asides: asides)
         )
         try repository.savePreparedAudioManifest(manifest)
         if schedulesJob {
@@ -220,13 +240,14 @@ actor PreparedAudioCoordinator {
         sourceText: String,
         audioURL: URL,
         durationMs: Int,
-        engine: String? = nil
+        engine: String? = nil,
+        asides: Bool = false
     ) throws {
         let manifestId = Self.manifestId(itemId: itemId, signature: signature)
         guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId),
               manifest.signature == signature,
               manifest.state == .preparing || manifest.state == .pausedForThermal,
-              Self.isMade(from: sourceText, manifest) else { return }
+              Self.isMade(from: sourceText, manifest, asides: asides) else { return }
         let madeByManifestEngine = engine == nil || engine == manifest.signature.engine
         if let existing = manifest.chunks.first(where: { $0.index == plan.index }) {
             // Saved for the same words: keep it, unless it's a stand-in and this is the manifest's
@@ -241,7 +262,7 @@ actor PreparedAudioCoordinator {
             .appending(path: signature.digest, directoryHint: .isDirectory)
             .appending(path: "chunks", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let articleIdentity = NarrationChunkPlanner.identity(ofArticle: sourceText)
+        let articleIdentity = NarrationChunkPlanner.identity(ofArticle: sourceText, asides: asides)
         // Keep the legacy directory layout; source-specific names spare files still used by another item.
         let name = articleIdentity + "-" + String(format: "%05d.wav", plan.index)
         let destination = directory.appending(path: name)
@@ -444,10 +465,10 @@ actor PreparedAudioCoordinator {
     /// if the stand-in comes back, the job records that and doesn't try again (#363 audit).
     static func completedIndexes(
         _ manifest: PreparedAudioManifest, plan: [PreparedChunkPlan], sourceText: String,
-        retryingStandInsFor job: AudioPreparationJob
+        retryingStandInsFor job: AudioPreparationJob, asides: Bool = false
     ) -> Set<Int> {
         let retries = job.policy == .explicit && job.lastFailureCode != standInRetried
-        return Set(matchingChunks(in: manifest, plan: plan, sourceText: sourceText).filter { !retries || $0.engine == nil }.map(\.index))
+        return Set(matchingChunks(in: manifest, plan: plan, sourceText: sourceText, asides: asides).filter { !retries || $0.engine == nil }.map(\.index))
     }
 
     /// Whether any committed chunk is a stand-in. Such a manifest isn't assembled into the item's
@@ -461,13 +482,14 @@ actor PreparedAudioCoordinator {
     /// `engine` nil asks for the manifest's own engine's audio; another engine (the bundled Kitten voice) asks for
     /// that engine's stand-in, which the player plays while that voice holds narration (#1680).
     func committedChunk(
-        itemId: String, signature: TTSRenderSignature, plan: PreparedChunkPlan, sourceText: String, engine: String? = nil
+        itemId: String, signature: TTSRenderSignature, plan: PreparedChunkPlan, sourceText: String, engine: String? = nil,
+        asides: Bool = false
     ) throws -> PreparedChunkLookupResult? {
         let manifestId = Self.manifestId(itemId: itemId, signature: signature)
         guard let manifest = try repository.loadPreparedAudioManifest(id: manifestId),
               manifest.signature == signature,
               manifest.state == .preparing || manifest.state == .pausedForThermal || manifest.state == .readyOffline,
-              Self.isMade(from: sourceText, manifest),
+              Self.isMade(from: sourceText, manifest, asides: asides),
               let chunk = manifest.chunks.first(where: { $0.index == plan.index }),
               chunk.sourceRange == Self.sourceRange(of: plan, manifest: manifest, sourceText: sourceText),
               // A stand-in isn't this manifest's audio: asked for the manifest's own, the player tries its engine
@@ -492,9 +514,9 @@ actor PreparedAudioCoordinator {
     /// The committed chunks saved for the same stretch of `sourceText` as `plan` plans. Background
     /// preparation and assembly count only these, as the player's lookups do (#312).
     static func matchingChunks(
-        in manifest: PreparedAudioManifest, plan: [PreparedChunkPlan], sourceText: String
+        in manifest: PreparedAudioManifest, plan: [PreparedChunkPlan], sourceText: String, asides: Bool = false
     ) -> [PreparedAudioChunk] {
-        guard isMade(from: sourceText, manifest) else { return [] }
+        guard isMade(from: sourceText, manifest, asides: asides) else { return [] }
         let planned = Dictionary(plan.map { ($0.index, $0) }, uniquingKeysWith: { first, _ in first })
         return manifest.chunks.filter { chunk in
             planned[chunk.index].map { chunk.sourceRange == sourceRange(of: $0, manifest: manifest, sourceText: sourceText) } ?? false
@@ -505,11 +527,18 @@ actor PreparedAudioCoordinator {
     /// article plan's boundary. Only chunks saved for the same stretch of this text count (#312);
     /// a missing or stale one throws, and is rendered again first.
     static func assemblyChunks(
-        plan: [PreparedChunkPlan], manifest: PreparedAudioManifest, sourceText: String, preparedRoot: URL
+        plan: [PreparedChunkPlan], manifest: PreparedAudioManifest, sourceText: String, preparedRoot: URL,
+        asides: Bool = false
     ) throws -> [SupertonicPreparedChunk] {
-        let byIndex = Dictionary(uniqueKeysWithValues: matchingChunks(in: manifest, plan: plan, sourceText: sourceText).map { ($0.index, $0) })
-        let articleChunks = NarrationChunkPlanner.articlePlan(sourceText).chunks
-        return try plan.map { entry in
+        let byIndex = Dictionary(uniqueKeysWithValues: matchingChunks(in: manifest, plan: plan, sourceText: sourceText, asides: asides).map { ($0.index, $0) })
+        let articleChunks = NarrationChunkPlanner.articlePlan(sourceText, asides: asides).chunks
+        // The whole audio reads each note where it is cited. A matched note's definition in the notes section would read
+        // it a second time, and nobody can skip it in a file, so it stays out (#3777). Every chunk still had to be
+        // rendered and checked above, so the manifest is complete before it is assembled.
+        return try plan.filter { entry in
+            if case .definition? = entry.footnote { return false }
+            return true
+        }.map { entry in
             guard let committed = byIndex[entry.index], articleChunks.indices.contains(entry.index) else {
                 throw SessionKitError.persistenceFailed("prepared_chunk_missing")
             }
@@ -524,14 +553,25 @@ actor PreparedAudioCoordinator {
     /// Whether the manifest's audio was made from this article text. Saved ranges hold offsets, not
     /// words, so an edit that keeps the offsets would otherwise match old audio (#375 audit).
     /// Manifests from before #312 carry no identity and keep the range check alone.
+    ///
+    /// This asks only whether the manifest belongs to the text, of either plan kind: the callers that hold only the manifest
+    /// (a finished assembly, a retirement check) follow its own kind. A caller that holds a plan names the kind with
+    /// `isMade(from:_:asides:)`, so a plain plan is never matched to the audio of a plan with note chunks (#3777).
     static func isMade(from sourceText: String, _ manifest: PreparedAudioManifest) -> Bool {
-        manifest.articleIdentity.map { $0 == NarrationChunkPlanner.identity(ofArticle: sourceText) } ?? true
+        manifest.articleIdentity.map { NarrationChunkPlanner.isIdentity($0, ofArticle: sourceText) } ?? true
+    }
+
+    /// As `isMade(from:_:)`, for the plan kind the caller's plan was made with. A manifest from before #312 has no
+    /// identity and holds a plain plan.
+    static func isMade(from sourceText: String, _ manifest: PreparedAudioManifest, asides: Bool) -> Bool {
+        guard let identity = manifest.articleIdentity else { return !asides }
+        return identity == NarrationChunkPlanner.identity(ofArticle: sourceText, asides: asides)
     }
 
     /// Whether every planned chunk has matching committed audio, as a demand window needs before
     /// its job is done. A chunk saved for other words doesn't count (#375 audit).
-    static func isPrepared(_ plan: [PreparedChunkPlan], in manifest: PreparedAudioManifest, sourceText: String) -> Bool {
-        let matching = Set(matchingChunks(in: manifest, plan: plan, sourceText: sourceText).map(\.index))
+    static func isPrepared(_ plan: [PreparedChunkPlan], in manifest: PreparedAudioManifest, sourceText: String, asides: Bool = false) -> Bool {
+        let matching = Set(matchingChunks(in: manifest, plan: plan, sourceText: sourceText, asides: asides).map(\.index))
         return plan.allSatisfy { matching.contains($0.index) }
     }
 
@@ -551,7 +591,8 @@ actor PreparedAudioCoordinator {
         return String(path.dropFirst(root.count + 1))
     }
 
+    /// The folder name the purge on permanent delete (`ItemOwnedFiles`, #4227) removes by, so the two cannot drift.
     private func safePath(_ value: String) -> String {
-        String(value.map { $0.isLetter || $0.isNumber ? $0 : "-" }.prefix(80))
+        ItemOwnedFiles.preparedAudioDirectoryName(itemId: value)
     }
 }

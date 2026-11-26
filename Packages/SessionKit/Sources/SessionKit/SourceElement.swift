@@ -5,7 +5,7 @@ import Crypto
 #endif
 import Foundation
 
-/// A picture, embed or link an imported article carries, anchored to its place in the item's text (#2032).
+/// A picture, embed, link or table an imported article carries, anchored to its place in the item's text (#2032).
 ///
 /// The import used to drop all three: a picture line was removed and a link kept only its words. Timeline
 /// shows these as rows (#1624), so the import keeps them here, apart from the text. `start` indexes the item's
@@ -14,6 +14,9 @@ import Foundation
 public struct SourceElement: Codable, Equatable, Sendable, Identifiable {
     public enum Kind: String, Codable, Sendable {
         case picture, embed, link
+        /// A Markdown table. Its lines stay in the text as they always were; `rows` keeps its cells so Timeline can
+        /// draw it as a table. A build from before tables skips this kind (`SourceElementsRecord` reads lossily).
+        case table
     }
 
     public var id: String
@@ -21,19 +24,31 @@ public struct SourceElement: Codable, Equatable, Sendable, Identifiable {
     /// Where the element sits in the item's text: the start of the passage it belongs to, or of the words of a link.
     public var start: Int
     /// What the Timeline row says: a picture's caption (else its alt text, else "Picture"), an embed's service
-    /// ("YouTube video"), or a link's own words.
+    /// ("YouTube video"), a link's own words, or a table's column headings.
     public var label: String
     /// The picture's alt text, kept apart from its caption for screen readers.
     public var altText: String?
+    /// The picture, embed or link address. Empty for a table, which has none.
     public var url: String
+    /// A table's cells, header row first. Nil for every other kind.
+    public var rows: [[String]]?
 
-    public init(id: String, kind: Kind, start: Int, label: String, altText: String? = nil, url: String) {
+    public init(id: String, kind: Kind, start: Int, label: String, altText: String? = nil, url: String, rows: [[String]]? = nil) {
         self.id = id
         self.kind = kind
         self.start = start
         self.label = label
         self.altText = altText
         self.url = url
+        self.rows = rows
+    }
+
+    /// Where a link goes, for its Timeline row's kind line ("Link · x.com", #4778): the host, lowercased, with one leading
+    /// "www." removed. Nil for every kind but a link, and for a link with no host (a `mailto:`, a relative path, nothing).
+    public var timelineLinkHost: String? {
+        guard kind == .link, let host = URL(string: url)?.host, !host.isEmpty else { return nil }
+        let lowered = host.lowercased()
+        return lowered.hasPrefix("www.") && lowered.count > 4 ? String(lowered.dropFirst(4)) : lowered
     }
 }
 
@@ -81,7 +96,7 @@ public protocol SourceElementsRepository {
     func loadSourceElements(itemId: String) throws -> SourceElementsRecord?
 }
 
-/// Finds the pictures, embeds and links in the Markdown a readable page was captured as. The parser calls this
+/// Finds the pictures, embeds, links and tables in the Markdown a readable page was captured as. The parser calls this
 /// line by line while it cleans the text, so each element lands on the cleaned text it belongs to.
 enum SourceElementCapture {
     struct Image: Equatable {
@@ -227,14 +242,160 @@ enum SourceElementCapture {
         }?.name
     }
 
-    /// Whether the page is a Substack post: its own address, or pictures served from Substack's image host,
-    /// which a publication on its own domain still uses. Phase 1 of #2032 covers these only.
-    static func isSubstackPage(sourceURL: String, markdown: String) -> Bool {
-        if let host = URLComponents(string: sourceURL)?.host?.lowercased(),
-           host == "substack.com" || host.hasSuffix(".substack.com") {
+    /// Whether a page's Markdown is read for its pictures, embeds, links and tables: any web page. Phase 1 of #2032
+    /// read Substack pages only; the owner asked for every article (2026-11-14).
+    static func capturesElements(sourceURL: String) -> Bool {
+        webURL(sourceURL) != nil
+    }
+
+    /// Whether `line` opens a GFM table: a row with a pipe in it, then a divider (`| --- | :-: |`, outer pipes
+    /// optional, one dash or more) with as many cells. A divider needs a pipe, so a pipe line over a `---` break or
+    /// Setext underline is not a table.
+    static func opensTable(at index: Int, in lines: [String]) -> Bool {
+        guard index + 1 < lines.count, isTableRow(lines[index]), let columns = dividerColumns(lines[index + 1]) else {
+            return false
+        }
+        return tableCells(lines[index]).count == columns
+    }
+
+    /// Whether `line` has a pipe that isn't escaped. A header row needs one; a body row does not (`continuesTable`).
+    static func isTableRow(_ line: String) -> Bool {
+        var previous: Character?
+        for character in line where !character.isWhitespace {
+            if character == "|", previous != "\\" { return true }
+            previous = character
+        }
+        return false
+    }
+
+    /// The lines of the table that opens at `index` (`opensTable` is true there): the header, the divider, then every
+    /// line GFM keeps as a body row. A body row needn't have a pipe in it; the table ends at a blank line, a code
+    /// fence, or the start of another block (`startsAnotherBlock`). `fenced` marks the lines inside code fences.
+    static func tableLines(from index: Int, in lines: [String], fenced: [Bool]) -> ArraySlice<String> {
+        var end = index + 2
+        while end < lines.count, !fenced[end], continuesTable(lines[end]) { end += 1 }
+        return lines[index..<end]
+    }
+
+    /// Whether a line after a table's divider is one of its body rows. A picture on a line of its own is not: the
+    /// page text drops that line and Timeline draws the picture, so it can't also be a row of cells.
+    static func continuesTable(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        return !trimmed.isEmpty && !startsAnotherBlock(line) && standaloneImage(trimmed) == nil && linkedImage(trimmed) == nil
+    }
+
+    /// HTML block names GFM lets interrupt a table (CommonMark HTML block type 6).
+    private static let htmlBlockNames = [
+        "address", "article", "aside", "base", "basefont", "blockquote", "body", "caption", "center", "col", "colgroup", "dd",
+        "details", "dialog", "dir", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "frame",
+        "frameset", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hr", "html", "iframe", "legend", "li", "link",
+        "main", "menu", "menuitem", "nav", "noframes", "ol", "optgroup", "option", "p", "param", "search", "section",
+        "summary", "table", "tbody", "td", "tfoot", "th", "thead", "title", "tr", "track", "ul", "pre", "script", "style",
+        "textarea"
+    ]
+
+    /// Whether `line` opens a block that ends a table above it (GFM: "the table is broken at the first empty line,
+    /// or beginning of another block-level structure"): a quote, a heading, a list item, a thematic break, a code
+    /// fence or an HTML block. A line indented four spaces or more is indented code, which is no block start, so it
+    /// stays a row; and a line that only begins with an inline tag (`<em>x</em> | y`) is still a row.
+    static func startsAnotherBlock(_ line: String) -> Bool {
+        if fenceMarker(line) != nil { return true }
+        guard line.prefix(while: { $0 == " " }).count < 4, !line.hasPrefix("\t") else { return false }
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.range(
+            of: #"^(?:>|#{1,6}(?:\s|$)|[-*+](?:\s|$)|\d{1,9}[.)](?:\s|$)|(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$)"#,
+            options: .regularExpression) != nil { return true }
+        guard trimmed.hasPrefix("<") else { return false }
+        if trimmed.hasPrefix("<!--") || trimmed.hasPrefix("<?") || trimmed.range(of: #"^<![A-Za-z]"#, options: .regularExpression) != nil {
             return true
         }
-        return markdown.contains("substackcdn.com") || markdown.contains("substack-post-media")
+        if let name = trimmed.range(of: #"^</?([A-Za-z][A-Za-z0-9-]*)(?=\s|/?>|$)"#, options: .regularExpression) {
+            let tag = trimmed[name].drop { $0 == "<" || $0 == "/" }.lowercased()
+            if htmlBlockNames.contains(tag) { return true }
+        }
+        // A lone complete tag on its own line opens an HTML block (type 7).
+        return trimmed.range(of: #"^(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[^<>]*)?/?>|</[A-Za-z][A-Za-z0-9-]*\s*>)\s*$"#,
+                             options: .regularExpression) != nil
+    }
+
+    /// Which lines are inside a fenced code block (CommonMark: three or more backticks or tildes, indented up to three
+    /// spaces, closed by a fence of the same kind at least as long; an unclosed fence runs to the end). The fence
+    /// lines count. Text in a fence is shown as the page's code, so it holds no picture, link or table.
+    static func fencedLines(in lines: [String]) -> [Bool] {
+        var fenced = [Bool](repeating: false, count: lines.count)
+        var open: (character: Character, length: Int)?
+        for (index, line) in lines.enumerated() {
+            let marker = fenceMarker(line)
+            if let current = open {
+                fenced[index] = true
+                if let marker, marker.character == current.character, marker.length >= current.length, marker.info.isEmpty {
+                    open = nil
+                }
+            } else if let marker {
+                fenced[index] = true
+                open = (marker.character, marker.length)
+            }
+        }
+        return fenced
+    }
+
+    private static func fenceMarker(_ line: String) -> (character: Character, length: Int, info: String)? {
+        let indent = line.prefix { $0 == " " }.count
+        guard indent <= 3 else { return nil }
+        let rest = line.dropFirst(indent)
+        guard let first = rest.first, first == "`" || first == "~" else { return nil }
+        let length = rest.prefix { $0 == first }.count
+        guard length >= 3 else { return nil }
+        let info = rest.dropFirst(length).trimmingCharacters(in: .whitespaces)
+        // A backtick fence's info string can't hold a backtick, so "```code```" is inline code, not a fence.
+        guard first != "`" || !info.contains("`") else { return nil }
+        return (first, length, info)
+    }
+
+    /// How many columns a divider line has, or nil when it isn't one.
+    static func dividerColumns(_ line: String) -> Int? {
+        var trimmed = Substring(line.trimmingCharacters(in: .whitespaces))
+        guard trimmed.contains("|") else { return nil }
+        if trimmed.hasPrefix("|") { trimmed.removeFirst() }
+        if trimmed.hasSuffix("|") { trimmed.removeLast() }
+        let cells = trimmed.split(separator: "|", omittingEmptySubsequences: false)
+        let isDividerCell = { (cell: Substring) in
+            cell.trimmingCharacters(in: .whitespaces).range(of: #"^:?-+:?$"#, options: .regularExpression) != nil
+        }
+        return cells.allSatisfy(isDividerCell) ? cells.count : nil
+    }
+
+    /// The cells of a table row, cleaned the way the text is. An escaped pipe (`\|`) stays inside its cell.
+    static func tableCells(_ line: String) -> [String] {
+        var trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("|") { trimmed.removeFirst() }
+        if trimmed.hasSuffix("|"), !trimmed.hasSuffix("\\|") { trimmed.removeLast() }
+        var cells: [String] = []
+        var current = ""
+        var previous: Character?
+        for character in trimmed {
+            if character == "|", previous != "\\" {
+                cells.append(current)
+                current = ""
+            } else {
+                current.append(character)
+            }
+            previous = character
+        }
+        cells.append(current)
+        return cells.map { cleanedLabel($0.replacingOccurrences(of: "\\|", with: "|")) }
+    }
+
+    /// A table: its rows (the divider line dropped, short rows padded to the header's width) and a label made of its
+    /// column headings. Nil when the header has no words.
+    static func table(_ rawRows: [String]) -> (label: String, rows: [[String]])? {
+        // The second line is the divider; a later line of dashes is a body row.
+        let rows = rawRows.enumerated().filter { $0.offset != 1 }.map { tableCells($0.element) }
+        guard let header = rows.first, header.contains(where: { !$0.isEmpty }) else { return nil }
+        let width = rows.map(\.count).max() ?? header.count
+        let padded = rows.map { $0 + Array(repeating: "", count: width - $0.count) }
+        let headings = header.filter { !$0.isEmpty }
+        return (shortened(headings.joined(separator: " · ")), padded)
     }
 
     static func shortened(_ text: String) -> String {
@@ -273,6 +434,8 @@ enum SourceElementCapture {
                 guard seenLinks.insert(element.url).inserted else { continue }
             case .picture, .embed:
                 guard seenPictures.insert(element.url).inserted else { continue }
+            case .table:
+                break
             }
             var copy = element
             copy.start = min(max(0, element.start), textLength)

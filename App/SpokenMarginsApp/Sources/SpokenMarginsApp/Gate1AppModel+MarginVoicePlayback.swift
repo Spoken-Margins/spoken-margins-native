@@ -105,6 +105,31 @@ extension Gate1AppModel {
         }
     }
 
+    /// The listener skipped the card: it goes, and the next Margin that waits for the end is offered (#4347).
+    func skipPendingImportedCommentary() {
+        dismissPendingImportedCommentary()
+        offerNextMarginWaitingForTheEnd()
+    }
+
+    /// The episode has ended and no tick will come: the Margins that wait for the end are offered one after another,
+    /// the next one when the one before has been heard or skipped (#4347). `SharedMarginOfferQueue` decides whether
+    /// anything is due; this only says whether the slot is free.
+    ///
+    /// Called only where the listener is done with a Margin and stays at the end: its voice ending
+    /// (`marginVoiceSharedPlaybackEnded`), Return to source, the card's own Skip and the card timing out. Never from
+    /// `stopImportedCommentaryPlayback` or `dismissPendingImportedCommentary` themselves: more than a dozen callers
+    /// use those to clear the slot before hiding a sender, going to a Skim stop, replying or jumping, and a Margin
+    /// offered then would be one the listener didn't ask for (a hidden friend's) or one lost on the way (#4347 audit).
+    func offerNextMarginWaitingForTheEnd() {
+        let slotIsFree = pendingImportedCommentary == nil && playingImportedCommentary == nil && !snapshot.isRecording
+            && marginMomentConductor?.sequence.isReview != true && marginMomentConductor?.isPlayingVoice != true
+        guard let prompt = sharedMarginOffers.nextWaitingAtEpisodeEnd(
+            snapshot: snapshot, selectedItemID: selectedItem.id, slotIsFree: slotIsFree,
+            offerable: importedCommentaryPrompts(includeAnnounced: true).filter { $0.layer.revealMode != .fresh }
+        ) else { return }
+        presentImportedCommentaryPrompt(prompt, sourceWasPlaying: false)
+    }
+
     func listenToImportedCommentary(layerID: String, interjectionID: String) {
         guard let layer = selectedItem.importedCommentaryLayers.first(where: { $0.id == layerID }),
               let records = selectedItem.importedCommentaryInterjections[layerID],
@@ -113,12 +138,14 @@ extension Gate1AppModel {
             layer: layer,
             interjection: records[offset],
             index: offset + 1,
-            count: records.count
+            count: records.count,
+            durationMs: selectedItem.mediaDurationMs
         ))
     }
 
     func returnToSourceFromImportedCommentary() {
         stopImportedCommentaryPlayback(resumeSource: true)
+        offerNextMarginWaitingForTheEnd()
     }
 
     func listenToImportedCommentary(_ prompt: ImportedCommentaryPrompt) {
@@ -131,8 +158,8 @@ extension Gate1AppModel {
         case .voiceFile(let url), .readingReady(_, let url): audioURL = url
         case .readingRendering: return WrittenMarginReadings.waitThenListen(prompt, model: self) // not rendered yet
         case .cannotBeRead:
-            dismissPendingImportedCommentary()
             reportFailure(SharedMarginAudio.unavailableWords(for: prompt.interjection))
+            skipPendingImportedCommentary() // finished with, and the listener stays: the next waiting Margin is offered (#4347)
             return
         }
         importedCommentaryAutoPlayTask?.cancel()
@@ -165,6 +192,7 @@ extension Gate1AppModel {
         } catch {
             stopImportedCommentaryPlayback(resumeSource: false)
             reportFailure(error, context: "Shared Margin playback failed")
+            offerNextMarginWaitingForTheEnd() // as above: a Margin that can't play is finished with (#4347)
         }
         #else
         reportFailure("Shared Margin playback is unavailable on this device.")
@@ -242,10 +270,13 @@ extension Gate1AppModel {
         // and to nothing else (#3720). Read before the queue is modified: the call below holds the queue.
         let toneOnlyCardID = sharedMarginOffers.toneOnlyCardID
         let cardWithNoTimerIsUp = pendingImportedCommentary != nil && pendingImportedCommentary?.id == toneOnlyCardID
+        let canOffer = pendingImportedCommentary == nil && nothingElseIsGoing
+        let canReplaceCard = cardWithNoTimerIsUp && nothingElseIsGoing
+        if !canOffer, !canReplaceCard { noteSharedMarginsCrossedWhileSlotBusy(previous: previous, current: current) }
         guard let prompt = sharedMarginOffers.nextOffer(
             previous: previous, current: current, selectedItemID: selectedItem.id,
-            canOffer: pendingImportedCommentary == nil && nothingElseIsGoing,
-            canReplaceCard: cardWithNoTimerIsUp && nothingElseIsGoing,
+            canOffer: canOffer,
+            canReplaceCard: canReplaceCard,
             prompts: importedCommentaryPrompts(includeAnnounced: true)
         ) else { return }
         if cardWithNoTimerIsUp { dismissPendingImportedCommentary() } // the same clean-up as a timed card going away
@@ -269,6 +300,7 @@ extension Gate1AppModel {
         sharedMarginReturn.promptShown(sourceWasPlaying: pausesSource)
         if pausesSource, snapshot.status.isPlaybackActive { pause() }
         if !prompt.layer.isMuted { playImportedCommentaryCue() }
+        silentMarginLanding = nil // a Margin that sounds, or waits to, takes the silent one's card (#4934)
         pendingImportedCommentary = prompt
         importedCommentaryAutoPlayTask?.cancel()
         importedCommentaryAutoPlayTask = nil
@@ -285,7 +317,7 @@ extension Gate1AppModel {
                     // A listener still touching the card, or with focus on it, keeps it (#3720).
                     try? await FeedbackBannerHold.marginCard.waitWhileHeld()
                     guard !Task.isCancelled, self.pendingImportedCommentary?.id == prompt.id else { return }
-                    self.dismissPendingImportedCommentary()
+                    self.skipPendingImportedCommentary()
                 }
             }
         }
@@ -301,10 +333,12 @@ extension Gate1AppModel {
         sharedMarginOffers.markAnnounced(prompt.id)
         if sourceWasPlaying { pause() }
         // A Margin still waiting for its placement pass is at the sender's time (#3059), as it is when the episode reaches it.
-        if let mediaTimeMs = SharedMarginPrompts.mediaTimeMs(prompt.interjection, in: prompt.layer) {
+        if let mediaTimeMs = prompt.mediaTimeMs {
             seekMedia(toMediaTimeMs: mediaTimeMs)
         } else if let charOffset = prompt.interjection.resolution.localStartChar {
             seekText(toCharOffset: charOffset)
+        } else if prompt.plan == .afterOthers {
+            // No usable time in this copy (#3789): a tap plays the Margin where the listener is, never at a made-up place.
         } else {
             reportFailure("The selected Shared Margin does not have a verified local position.")
             return false
@@ -342,6 +376,13 @@ extension Gate1AppModel {
     /// every route that ends it, so the log shows which players overlapped (#1671).
     func recordMarginMomentVoiceEnded() {
         if momentVoiceIsOpenInLog { recordMarginVoiceEvent("stop", player: "moment") }
+    }
+
+    /// The Margin moment is being ended (`endMarginMoment`): its voice's stop is logged, and a hear-it-land playback that
+    /// never reported its end is forgotten, so it can't leave its card line behind (#4713).
+    func recordMarginMomentEnded() {
+        recordMarginMomentVoiceEnded()
+        hearItLandPlaybackCancelled()
     }
 
     /// The log's last moment entry is a start with no stop after it.
@@ -403,6 +444,7 @@ extension Gate1AppModel: MarginVoicePlayerHost {
         let playedID = playingInterjectionAudioId, playedSessionID = playingInterjectionAudioSessionID
         let recordedOver = marginVoicePlayer.ownRecordedOverMarginIdentities
         let returnsSource = sharedMarginReturn.returnsSourceWhenVoiceEnds(resumeSource: true)
+        noteMarginHeard(MarginHearing(isListenersOwn: true, kind: .spoken, outcome: .reachedEnd))
         stopInterjectionAudioPlayback()
         guard returnsSource, snapshot.status == .paused else { return }
         resumePlayback(returningFromMargin: true)
@@ -414,13 +456,19 @@ extension Gate1AppModel: MarginVoicePlayerHost {
     /// A podcast has no later Margins to wait for unless the listener recorded some. An article just resumes.
     private func continueWithLaterMargins(afterOwnMarginID id: String, sessionID: String, skipping recordedOver: Set<String>) {
         guard let store, let itemID = snapshot.itemId, let position = snapshot.currentMediaTimeMs,
-              let played = (try? store.loadInterjections(sessionId: sessionID))?.first(where: { $0.id == id }),
-              played.itemId == itemID,
-              played.isInlineSpokenMargin, let playedMs = played.anchor.mediaTimeMs else { return }
-        let spoken = inlineSpokenMargins(itemId: itemID, store: store)
+              let saved = (try? store.loadInterjections(sessionId: sessionID))?.first(where: { $0.id == id }),
+              saved.itemId == itemID else { return }
+        // Compared with `position`, so on the clock of the file playing: a note's Shorter pauses version runs on its own (#4779).
+        let onClock = SpokenNoteCleanClock.onPlayingClock([saved] + inlineSpokenMargins(itemId: itemID, store: store), mediaURL: openSessionMediaURL)
+        let played = onClock[0], spoken = Array(onClock.dropFirst())
+        guard played.isInlineSpokenMargin, played.hasPlace, let playedMs = played.anchor.mediaTimeMs else { return }
         let playedIdentity = Self.marginIdentity(played)
         // The Margin just recorded over this one (#1672) sits at its place; the listener just made it, so it doesn't play next.
-        let anchors = spoken.map { MarginMomentAnchor(marginId: Self.marginIdentity($0), mediaTimeMs: $0.anchor.mediaTimeMs ?? 0) }
+        // Only Margins with a place and a time can follow (#4233): a missing time is never read as 0:00.
+        let anchors = spoken.compactMap { margin -> MarginMomentAnchor? in
+            guard margin.hasPlace, let ms = margin.anchor.mediaTimeMs else { return nil }
+            return MarginMomentAnchor(marginId: Self.marginIdentity(margin), mediaTimeMs: ms)
+        }
             .filter { !recordedOver.contains($0.marginId) }
         guard anchors.contains(where: { $0.marginId != playedIdentity && $0.mediaTimeMs > position }) else { return }
         var voiceURLs: [String: URL] = [:]
@@ -453,6 +501,7 @@ extension Gate1AppModel: MarginVoicePlayerHost {
 
     func marginVoiceSharedPlaybackEnded() {
         stopImportedCommentaryPlayback(resumeSource: true)
+        offerNextMarginWaitingForTheEnd()
     }
 
     func marginVoiceRemoteCommand(_ command: CompactControlCommand) {
@@ -468,10 +517,14 @@ extension Gate1AppModel {
     func startMarginMomentIfSpoken(_ interjection: Interjection, store: SQLiteSessionStore) {
         guard interjection.isSpokenItemMargin else { return }
         let clock: MarginMomentClock = snapshot.targetType == TargetType.itemTextTTS.rawValue ? .liveNarration : .media
-        let spoken = spokenItemMargins(itemId: interjection.itemId, store: store)
+        // The moment seeks the source and waits for it on the clock of the file playing: a note's Shorter pauses version
+        // runs on its own, while Margins are saved on the recording's (#4779).
+        let onClock = SpokenNoteCleanClock.onPlayingClock(
+            [interjection] + spokenItemMargins(itemId: interjection.itemId, store: store), mediaURL: openSessionMediaURL)
+        let played = onClock[0], spoken = Array(onClock.dropFirst())
         let text = clock.isNarratedText ? narratedMomentText(itemId: interjection.itemId) : ""
         guard let anchors = MarginMomentPlanner.anchors(
-            played: interjection, among: spoken, clock: clock, targetMediaTimeMs: snapshot.currentMediaTimeMs, text: text
+            played: played, among: spoken, clock: clock, targetMediaTimeMs: snapshot.currentMediaTimeMs, text: text
         ) else { return }
         var voiceURLs: [String: URL] = [:]
         for margin in spoken + [interjection] {
@@ -526,6 +579,7 @@ extension Gate1AppModel {
 
     /// The conductor's seek (to the Margin on "Play it now", or back to the start of the lead-in).
     func seekMarginMomentSource(toPosition position: Int) {
+        marginCapture.forgetSharedReply() // every conductor jump ends the reply window (#5238)
         if marginMomentClock.isNarratedText {
             seekText(toCharOffset: marginMomentClock.textOffset(forPosition: position))
         } else {
@@ -547,5 +601,59 @@ extension Gate1AppModel {
         } else {
             conductor.start()
         }
+    }
+}
+
+// Moved out of Gate1AppModel.swift unchanged (#3961), to make room for the one counter that change adds there.
+extension Gate1AppModel {
+    /// One `margin.tap` line for a tap on a Margin's play button, so a tap that did nothing leaves a trace (#4447).
+    func recordMarginTap(_ origin: MarginTapOrigin, _ outcome: MarginTapOutcome) {
+        recordDeveloperDiagnostic("margin.tap", outcome.diagnosticFields(origin: origin))
+    }
+
+    /// Tapping a shared Margin in the Timeline plays its moment (#158): a lead-in, their voice, then the item.
+    /// Position is the best the app has: a verified or interpolated match, else the sender's own time.
+    func playSharedMarginMoment(_ row: SharedMarginRow) {
+        noteCatchUp(.play) // playing a Margin puts the caught-up card away (#4785)
+        recordMarginTap(.shared, startSharedMarginMoment(row))
+    }
+
+    private func startSharedMarginMoment(_ row: SharedMarginRow) -> MarginTapOutcome {
+        guard !rejectNavigationOrSessionMutationWhileRecording("play_shared_margin_moment") else { return .refused(.recordingInProgress) }
+        guard let itemID = row.layer.itemId else {
+            reportFailure("The source for this shared Margin isn't in your Library.")
+            return .refused(.sourceNotInLibrary)
+        }
+        guard let position = SharedMarginPlaybackPosition(row.interjection) else {
+            reportFailure("This shared Margin has no position in the episode.")
+            return .refused(.noPosition)
+        }
+        let audio = WrittenMarginReadings.audio(for: row.interjection, in: row.layer, voiceFile: resolvedApplicationSupportAssetURL(for:)) // a recording or a written Margin's reading, as every way to play one asks (#3412)
+        if WrittenMarginReadings.waitsThenPlays(audio, row: row, model: self) { return .waiting(.readingNotReady) } // the chosen voice's reading isn't made yet
+        guard let voiceURL = WrittenMarginReadings.startingRender(audio) else {
+            reportFailure(SharedMarginAudio.unavailableWords(for: row.interjection))
+            return .refused(.noAudio)
+        }
+        endMarginMoment(); stopInterjectionAudioPlayback() // one Margin voice at a time: a paused one of yours mustn't take the resume below (#1672)
+        if snapshot.itemId != itemID || !hasActiveSession { startItem(id: itemID) }
+        guard snapshot.itemId == itemID else { return .refused(.itemDidNotOpen) } // startItem reported why
+        // The moment plays this voice; the automatic shared-Margin prompt mustn't play it again.
+        sharedMarginOffers.markAnnounced(row.interjection.id)
+        let targetID = "shared::\(row.layer.id)::\(row.interjection.id)"
+        startMarginMoment(
+            sequence: MarginMomentSequence(itemId: itemID, target: MarginMomentAnchor(marginId: targetID, mediaTimeMs: position.mediaTimeMs, label: row.collectionLabel, leadInMs: row.interjection.senderLeadInMs), otherMargins: []),
+            voiceURLs: [targetID: voiceURL],
+            title: "\(row.collectionLabel)'s Margin",
+            isApproximate: position.isApproximate
+        )
+        let earlier = marginMomentConductor?.onVoiceStarted // the reply window's hook (#5238)
+        marginMomentConductor?.onVoiceStarted = { [weak self] in earlier?($0); if $0 == targetID { self?.markSharedMarginHeard(row.interjection) } }
+        // Their voice gets the same chime as the automatic prompt, unless the layer is muted (#932).
+        marginMomentConductor?.chimedMarginIds = row.layer.isMuted ? [] : [targetID]
+        marginMomentConductor?.onChimeStarted = { [weak self] in self?.diagnostics["marginMoment.chime"] = "played:\($0)" }
+        WrittenMarginReadings.rewordUnavailable(on: marginMomentConductor, marginId: targetID, audio: audio, model: self) // a reading that isn't there at its turn
+        if !snapshot.status.isPlaybackActive { resumePlayback() }
+        screen = .playback
+        return .started
     }
 }

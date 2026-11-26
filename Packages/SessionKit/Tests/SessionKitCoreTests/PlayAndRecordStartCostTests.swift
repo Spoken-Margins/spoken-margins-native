@@ -48,6 +48,7 @@ final class PlayAndRecordStartCostTests: XCTestCase {
         for (name, itemId) in [("podcast", LibraryFixture.mappedItemId), ("article", fixture.articleItemId), ("long text", longTextId)] {
             var firstStart = 0.0
             var starts: [Double] = [], begins: [Double] = [], cancels: [Double] = [], pauses: [Double] = [], rates: [Double] = []
+            var pausedOnTap = true
             var startReads = 0, beginReads = 0, startRows = 0, beginRows = 0
             for run in 0..<7 {
                 let engine = SessionEngine(profile: Self.profile, repository: store)
@@ -56,6 +57,9 @@ final class PlayAndRecordStartCostTests: XCTestCase {
                 let startTotals = meter.totals().values
                 let rate = try milliseconds { _ = try engine.setPlaybackRate(1) }
                 let pause = milliseconds { _ = engine.pauseSourceForInterjection(request: MarginCaptureRequest()) }
+                // A pause that returns at its first guard costs nothing and proves nothing (#4221): the figure only
+                // counts when the playing source was paused by the tap.
+                pausedOnTap = pausedOnTap && engine.isSourcePausedOnTap
                 meter.reset()
                 let begin = try milliseconds { _ = try engine.beginInterjection() }
                 let beginTotals = meter.totals().values
@@ -66,7 +70,8 @@ final class PlayAndRecordStartCostTests: XCTestCase {
                 startReads = startTotals.reduce(0) { $0 + $1.calls }; startRows = startTotals.reduce(0) { $0 + $1.rows }
                 beginReads = beginTotals.reduce(0) { $0 + $1.calls }; beginRows = beginTotals.reduce(0) { $0 + $1.rows }
             }
-            print("START-COST \(name): first start \(firstStart) ms, repeat start \(median(starts)) ms (\(startReads) reads, \(startRows) rows), setPlaybackRate \(median(rates)) ms, pauseSource \(median(pauses)) ms, beginInterjection \(median(begins)) ms (\(beginReads) reads, \(beginRows) rows), cancel \(median(cancels)) ms")
+            XCTAssertTrue(pausedOnTap, "\(name): the source was not playing when the tap paused it, so the pause figure measures nothing")
+            print("START-COST \(name): first start \(firstStart) ms, repeat start \(median(starts)) ms (\(startReads) reads, \(startRows) rows), setPlaybackRate \(median(rates)) ms, pauseSource of a playing source (paused on the tap: \(pausedOnTap)) \(median(pauses)) ms, beginInterjection \(median(begins)) ms (\(beginReads) reads, \(beginRows) rows), cancel \(median(cancels)) ms")
         }
 
         var detail: [Double] = []

@@ -53,6 +53,22 @@ final class BatchExportRowsTests: XCTestCase {
         XCTAssertFalse(after.contains { $0.id == "session-orphan" })
     }
 
+    /// Export Sessions shows the note's own text switch only when a picked session is on a spoken note (#4782).
+    func testARowSaysWhetherItsSessionIsOnASpokenNote() throws {
+        let store = try openFixtureStore()
+        let template = try XCTUnwrap(try store.loadBatchExportRows().first).session
+        let note = SpokenNoteItem.makeItem(note: SpokenNote(id: "batch-note"), title: "A note", createdAt: Date())
+        try store.saveItem(note)
+        var session = template
+        session.id = "session-on-note"
+        session.itemId = note.id
+        try store.saveSession(session)
+
+        let rows = try store.loadBatchExportRows()
+
+        XCTAssertEqual(rows.filter(\.isSpokenNote).map(\.id), ["session-on-note"])
+    }
+
     /// The boundary (#2507): while the rows are being built, the main actor keeps running. The slow store is a
     /// blocked read in the same `StoreReader` closure, standing in for a Library-size read.
     @MainActor
@@ -71,6 +87,8 @@ final class BatchExportRowsTests: XCTestCase {
         }
         ticker.cancel()
         XCTAssertFalse(rows.isEmpty)
-        XCTAssertGreaterThan(ticks, 5, "the main actor kept running while the read was slow (a blocked read gives 1)")
+        // A blocked main actor gives 0 or 1 tick; a free one gives about 30. A loaded machine can starve the
+        // ticker down to a handful (4 seen), so the bar is the smallest count that still separates the two (#4292).
+        XCTAssertGreaterThanOrEqual(ticks, 2, "the main actor kept running while the read was slow (a blocked read gives 0 or 1)")
     }
 }

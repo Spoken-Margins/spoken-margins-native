@@ -45,7 +45,7 @@ final class ReplyBackRoundTripTests: XCTestCase {
 
         // B's Share offers the reply (selected) and the other new Margins (not selected). Nothing of A's, nothing older.
         let offer = try XCTUnwrap(try bensOffer())
-        XCTAssertEqual(offer.title, "Send replies to Ana")
+        XCTAssertEqual(offer.title, "Share replies with Ana")
         XCTAssertEqual(offer.candidates.map(\.id), ["b-reply", "b-extra", "b-written"])
         XCTAssertEqual(offer.candidates.filter(offer.isPreselected).map(\.id), ["b-reply"])
         let importedFromAna = try ben.importedMargins().map(\.id)
@@ -70,7 +70,7 @@ final class ReplyBackRoundTripTests: XCTestCase {
         XCTAssertEqual(entries.map(\.interjection.packageScopedId), ["b-reply"], "the review holds the reply and nothing else")
         let entry = try XCTUnwrap(entries.first)
         XCTAssertEqual(entry.mediaTimeMs, 755_000)
-        XCTAssertEqual(entry.replyContext?.parent, .yours(interjectionId: "a-1", mediaTimeMs: 754_000))
+        XCTAssertEqual(entry.replyContext?.parent, .yours(interjectionId: Interjection.sessionScopedId(sessionId: ana.sessionId, id: "a-1"), mediaTimeMs: 754_000))
         XCTAssertEqual(entry.replyContext?.caption, "Reply to your Margin at 12:34")
 
         // The parent link resolves to A's own Margin.
@@ -80,7 +80,7 @@ final class ReplyBackRoundTripTests: XCTestCase {
         guard case .linked(let link)? = graph.states[.imported(entry.interjection.id)] else {
             return XCTFail("the reply should link to its parent: \(String(describing: graph.states))")
         }
-        XCTAssertEqual(link.parent, .local("a-1"))
+        XCTAssertEqual(link.parent, .local(Interjection.sessionScopedId(sessionId: ana.sessionId, id: "a-1")))
 
         // One tap plays the lead-in, then A's own Margin, then the reply.
         let steps = SharedMarginReview.playlist(for: entries, ownMargins: own)
@@ -125,7 +125,7 @@ final class ReplyBackRoundTripTests: XCTestCase {
 
         // The item screen says these are replies to A's Margin, from Ben, and does not explain what a Margin is to the
         // person who made it (#3889). Worked out from the saved links, so it holds after a relaunch.
-        XCTAssertEqual(entries.map { $0.waitingMargin.replyToYouParentId }, ["a-1", "a-1"])
+        XCTAssertEqual(entries.map { $0.waitingMargin.replyToYouParentId }, Array(repeating: Interjection.sessionScopedId(sessionId: ana.sessionId, id: "a-1"), count: 2))
         let intro = try XCTUnwrap(FriendMarginsIntro(unheardFriendMargins: entries.map(\.waitingMargin)))
         XCTAssertEqual(intro.senderLine, "Replies from Ben")
         XCTAssertEqual(intro.countLine.prefix(30), "2 replies to your Margin · abo")
@@ -181,115 +181,6 @@ final class ReplyBackRoundTripTests: XCTestCase {
         try ben.record("b-reply", madeAt: 200, atMs: 801_000, replyingTo: "a-2")
         let offer = try XCTUnwrap(ReplyBackOffer.make(localMargins: ben.margins(), layers: ben.store.loadImportedCommentaryLayers(itemId: ben.itemId)))
         XCTAssertEqual(offer.replies.map(\.id), ["b-reply"])
-        XCTAssertEqual(offer.title, "Send replies to Ana")
-    }
-}
-
-/// One listener with their own SQLite Library, and a local copy of the same recording.
-private final class Person {
-    let name: String
-    let store: SQLiteSessionStore
-    let itemId = "episode"
-    var sessionId: String { "session-\(name)" }
-    private let folder: URL
-    private let episode: SharedItemIdentity
-    private var imports = 0
-
-    init(name: String, root: URL, episode: SharedItemIdentity) throws {
-        self.name = name
-        self.episode = episode
-        folder = root.appendingPathComponent(name, isDirectory: true)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        store = try SQLiteSessionStore(path: folder.appendingPathComponent("library.sqlite").path)
-    }
-
-    private func date(_ seconds: Double) -> Date { Date(timeIntervalSince1970: 1_777_000_000 + seconds) }
-
-    @discardableResult
-    func record(_ id: String, madeAt: Double, atMs: Int, replyingTo parentScopedId: String? = nil, written: Bool = false) throws -> Interjection {
-        var audioPath: String?
-        if !written {
-            let clip = folder.appendingPathComponent("\(id).m4a")
-            try Self.writeClip(to: clip)
-            audioPath = clip.path
-        }
-        let margin = Interjection(
-            id: id, itemId: itemId, sessionId: sessionId, targetType: .item, targetId: itemId, createdAt: date(madeAt),
-            roughPercent: 10,
-            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: atMs),
-            audioPath: audioPath, audioStatus: written ? "none" : "ready", transcriptionStatus: "complete",
-            transcript: "Words from \(name).", cleanedTranscript: nil, displayText: "Words from \(name).", status: "active",
-            captureKind: written ? .written : nil, replyTo: try parentScopedId.map(replyLink(to:))
-        )
-        try store.saveInterjection(margin)
-        return margin
-    }
-
-    func margins() throws -> [Interjection] { try store.loadInterjections(sessionId: sessionId) }
-
-    func importedMargins() throws -> [ImportedCommentaryInterjection] {
-        try store.loadImportedCommentaryLayers(itemId: itemId).flatMap { try store.loadImportedCommentaryInterjections(layerId: $0.id) }
-    }
-
-    private func replyLink(to parentScopedId: String) throws -> MarginReplyLink {
-        for layer in try store.loadImportedCommentaryLayers(itemId: itemId) {
-            if let parent = try store.loadImportedCommentaryInterjections(layerId: layer.id).first(where: { $0.packageScopedId == parentScopedId }) {
-                return parent.replyLink(in: layer)
-            }
-        }
-        throw SessionKitError.persistenceFailed("\(name) has no imported Margin \(parentScopedId)")
-    }
-
-    /// Writes a packet that the last shipped build's reader also opens (`exportPacket`), and records what went out.
-    func send(_ margins: [Interjection], packageId: String, in directory: URL) throws -> (URL, SpokenMarginsPackageManifest) {
-        let selections = margins.map { margin in
-            ReviewedInterjectionSelection(
-                packageScopedId: margin.id,
-                revision: InterjectionShareRevision(
-                    id: "revision-\(margin.id)", interjectionId: margin.id, itemId: margin.itemId, sessionId: margin.sessionId,
-                    createdAt: margin.createdAt, approvedTranscript: margin.displayText ?? "", anchorBefore: "", anchorAfter: "",
-                    status: .senderApproved
-                ),
-                anchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: margin.anchor.mediaTimeMs),
-                representation: margin.audioPath.map { ReviewedRepresentationSelection.originalAudio(sourceURL: URL(fileURLWithPath: $0), durationMs: 600) } ?? .textOnly,
-                replyTo: margin.replyTo
-            )
-        }
-        let prepared = try SpokenMarginsPackageBuilder.prepare(
-            packageId: packageId, createdAt: date(5), item: episode, itemTransportSelection: .recipientSupplied,
-            selections: selections, senderDisplayLabel: name, suggestedRevealMode: .companion
-        )
-        let url = directory.appendingPathComponent("\(packageId).spokenmargins")
-        let manifest = try exportPacket(prepared, to: url)
-        try SpokenMarginsPackageExportRecord.recordExport(manifest: manifest, selections: selections, repository: store)
-        return (url, manifest)
-    }
-
-    @discardableResult
-    func importPacket(_ url: URL, at seconds: Double) throws -> ImportedCommentaryImportDisposition {
-        imports += 1
-        let contents = try SpokenMarginsPackageArchive.read(
-            from: url, extractingAssetsTo: folder.appendingPathComponent("import-\(imports)", isDirectory: true))
-        return try SpokenMarginsPackageImporter.importPackage(
-            contents, itemId: itemId, localItem: episode, importedAt: date(seconds), repository: store)
-    }
-
-    /// A short voice clip: real AAC on a Mac (the reader decodes it), an `ftyp` header elsewhere.
-    static func writeClip(to url: URL) throws {
-        #if canImport(AVFoundation)
-        let sampleRate = 44_100.0
-        let audioFile = try AVAudioFile(forWriting: url, settings: [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: sampleRate,
-            AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000
-        ])
-        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
-        let frames = AVAudioFrameCount(sampleRate / 10) * 6
-        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
-        buffer.frameLength = frames
-        try audioFile.write(from: buffer)
-        #else
-        let header: [UInt8] = [0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x4D, 0x34, 0x41, 0x20, 0, 0, 0, 0]
-        try (Data(header) + Data(repeating: 6, count: 600)).write(to: url)
-        #endif
+        XCTAssertEqual(offer.title, "Share replies with Ana")
     }
 }

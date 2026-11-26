@@ -28,11 +28,13 @@ import lane_conditions
 import lane_sim
 import sm_build_cache
 import sessionkit_pass
+import slow_tier
+import swift_scan_tests
 import lane_sim_pool
 import node_modules_drift
 import third_party_notices
 import xcodebuild_finish
-from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
+from lane_slots import (acquire_simulator_slot, acquire_test_runner, build_slot, host_test_slot, release_handle,
                         state_dir, SIMULATOR_SLOTS)
 
 from test_inventory import ROOT, plan_tests, swift_tests, target_tests, validate
@@ -54,6 +56,12 @@ PLANS = {
 SCREENSHOT_PLANS = {'tour'}
 
 PLAN_TIMEOUT_ENV = 'SM_PLAN_TIMEOUT_SECONDS'
+
+
+def node_modules_installed() -> bool:
+    """Whether this checkout has its npm packages. A function so a test of the host steps can say yes: a hosted Mac's
+    checkout has none, and the steps' own commands are what those tests replace (#4643)."""
+    return (ROOT / 'node_modules').exists()
 
 
 def plan_timeout(default: int) -> int:
@@ -136,6 +144,15 @@ def compilation_cache_settings(root=None):
             'SWIFT_ENABLE_PREFIX_MAPPING=YES', 'SWIFT_ENABLE_PROJECT_PREFIX_MAPPING=YES',
             'CLANG_ENABLE_PREFIX_MAPPING=YES', 'CLANG_ENABLE_PROJECT_PREFIX_MAPPING=YES',
             f'SWIFT_OTHER_PREFIX_MAPPINGS={mapping}', f'CLANG_OTHER_PREFIX_MAPPINGS={mapping}']
+
+
+def package_cache_settings(environ=None):
+    """`-clonedSourcePackagesDirPath` for the build when SM_SPM_DIR names a folder, else nothing (#4664). A hosted run
+    restores the packages it fetched before (main-t3.yml, as hosted-app-macos.yml does), so a build never waits on the
+    binary-target hosts (download.onnxruntime.ai served an invalid certificate on 2026-11-21 and stopped main-t3's
+    build). Xcode's own default, a SourcePackages folder inside the derived data, is what it was before."""
+    folder = (os.environ if environ is None else environ).get('SM_SPM_DIR', '').strip()
+    return ['-clonedSourcePackagesDirPath', folder] if folder else []
 
 
 def compilation_cache_hits(log):
@@ -341,6 +358,17 @@ def refuse_unsafe(chosen, unsafe):
                            'Boot a fresh device with scripts/lane-sim-boot --fresh and pass it with --device.')
 
 
+def refuse_borrowed(chosen, device, simulator_slot_fd):
+    """Never install onto our own Test Runner while someone else is using it (2026-11-20). A run that found the Test
+    Runner already booted used to take it without a simulator slot, because "a device someone else booted is theirs,
+    and so is the slot". So a second run installed its build over a journeys run holding the slot, and every launch
+    crashed. A device the caller names with --device is the caller's own, and a lane job passes its slot down."""
+    if chosen['state'] == 'Booted' and device is None and simulator_slot_fd is None:
+        raise RuntimeError(f'{chosen.get("name")} ({chosen["udid"]}) is already booted and this run holds no simulator '
+                           'slot, so another run is probably using it. Wait for it to shut down, or boot your own with '
+                           'scripts/lane-sim-boot --fresh and pass it with --device.')
+
+
 def capture(command):
     return subprocess.check_output(command, cwd=ROOT, text=True).strip()
 
@@ -348,8 +376,8 @@ def capture(command):
 def inherited_simulator_slot(fd):
     """Borrow a parent's real locked simulator-slot descriptor; never trust an env flag.
 
-    The parent keeps the decision lock too, excluding a second simulator job for
-    an unattended integration run. Closing this duplicate preserves its lock.
+    The parent keeps the slot for the whole job; closing this duplicate preserves its lock. The shared Test Runner is
+    guarded by its own lock, which xcode() takes for every run without --device (#4736).
     """
     try:
         info = os.fstat(fd)
@@ -458,14 +486,14 @@ RETRY_FAILURES_KEPT = 2
 RETRY_FAILURE_WIDTH = 240
 # A path, wherever it sits in the text: a file URL, or one under the places a runner's files live. `[^\s"'),;\]]*`
 # stops at the quote or bracket a message wraps it in, so the closing `")` of `("path")` survives.
-FAILURE_PATH = re.compile(r'(?:file://)?(?:/Users/[^/\n"\']{1,40}/[^\s"\'),;\]]*|/(?:Users|private|var|tmp|Volumes|home|Library|Applications|System|opt)\b|~/)'
+FAILURE_PATH = re.compile(r'(?:file://)?(?:/Users/[^/\n"\']{1,40}/[^\s"\'),;\]]*|/(?:Users|private|var|tmp|Volumes|home|Library|Applications|System|opt)\b|/(?:w|__w)(?=/)|~/)'
                           r'[^\s"\'),;\]]*')
 # The runner's own account and host names, wherever they sit outside a path (a message can say "runner" or the Mac's name).
 FAILURE_OWN_NAMES = tuple(sorted({n for n in (getpass.getuser(), socket.gethostname().split('.')[0]) if len(n) > 2},
                                  key=len, reverse=True))
 FAILURE_HOST = re.compile(r'\b[\w-]+\.local\b')
 FAILURE_UUID = re.compile(r'\b[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}\b')
-FAILURE_SOURCE_PREFIX = re.compile(r'^(?:\S*?[\w+.-]+\.(?:swift|m|mm|h):\d+:\s*)?(?:error:\s*)?')
+FAILURE_SOURCE_PREFIX = re.compile(r'^(?:\S*?[\w+.-]+\.(?:swift|m|mm|h):\d+(?::|\s)\s*)?(?:error:\s*)?')
 
 
 def clean_failure_message(text):
@@ -523,11 +551,18 @@ def xunit_records(path):
             seconds = float(case.get('time', 0))
         except ValueError:
             seconds = 0.0
+        said = []
         if identifier in records:  # a repeated case keeps its worst result
             previous = records[identifier]
             status = next(s for s in ('failed', 'skipped', 'passed') if s in (previous['status'], status))
             seconds += previous['seconds']
+            said = previous.get('retry_failures', [])
         records[identifier] = {'status': status, 'seconds': seconds}
+        if said:
+            records[identifier]['retry_failures'] = said
+        for element in [*case.findall('failure'), *case.findall('error')]:
+            # The `message` of each failure element, so a `Failed:` line can say why (#3534).
+            keep_failure_message(records[identifier], element.get('message') or element.text or '')
     return records
 
 
@@ -634,10 +669,23 @@ def reconcile(expected, records, allowed_skips=(), probation=()):
             errors.append(f'Unexpected {len(extra)} tests; first ten: {sorted(extra)[:10]}')
     for name, result in records.items():
         if result['status'] == 'failed' and name not in probation:
-            errors.append(f'Failed: {name}')
+            errors.append(f'Failed: {name}{failure_reason(result)}')
         if result['status'] == 'skipped' and name not in allowed_skips and name not in probation:
             errors.append(f'Unexpected skip: {name}')
     return errors
+
+
+FAILURE_REASON_WIDTH = 300
+
+
+def failure_reason(result):
+    """` — <what the failed attempts said>` for a failed test's `Failed:` line, or '' when no message was kept (#3534).
+
+    CI shows a red step as `Failed: <test>` and nothing else: the assertion that tripped is in `package.log` on the
+    runner, and the artifact holding it expires after 7 days. The messages are the cleaned ones the record already
+    keeps (`keep_failure_message`: no runner paths, ids or host names), so they are as safe to print as the name."""
+    messages = [message for message in result.get('retry_failures') or () if message]
+    return f' — {" | ".join(messages)[:FAILURE_REASON_WIDTH]}' if messages else ''
 
 
 def log_errors(text, limit=3, width=300):
@@ -727,14 +775,15 @@ RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 # run on next, which keep every step, are what catch a missed reader.
 RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels', 'test_verification',
                        'test_validate_contracts', 'test_hot_file_ratchet', 'test_research_tests',
-                       'test_lane_runner.OnlyTestingTests', 'test_lane_runner.ScopeClassTests',
-                       'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
+                       'test_lane_t3.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
                        'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
                        'test_building_md', 'test_third_party_notices', 'test_main_thread_reads', 'test_journey_runs',
                        'test_device_conditions',
                        'test_repeat_trigger_scan', 'test_ordered_store_requests', 'test_system_callback_isolation',
                        'test_listener_words', 'test_recorder_failed_start',
                        'test_starter_catalog',
+                       # The quiz page's tests read Contracts/quiz/, Contracts/fixtures/find-something/ and Site/quiz/ (#4707).
+                       'test_quiz_page',
                        # The accessibility source scans read App/ Swift files (#2041).
                        'test_screen_change_cue', 'test_selected_trait', 'test_screen_title_heading',
                        'test_row_accessibility_actions', 'test_voiceover_label_nits',
@@ -758,14 +807,23 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_map_text_gate',
                        # The public-source caller scan reads App/ and SessionKit Swift files (#3449).
                        'test_public_source_check_callers',
+                       # The search-field keyboard guard scans App/ Swift files (#4636).
+                       'test_search_field_keyboard',
                        # The server-contact guard scans App/ and SessionKit Swift files (#2842).
                        'test_server_contact_consent',
                        # The benchmark's filter must name a test in SharingTests.swift (#2133).
                        'test_podcast_anchor_benchmark.FilterNameTests',
                        # The poll-loop guard scans the app test sources (#4131).
-                       'test_app_test_poll_loops')
+                       'test_app_test_poll_loops',
+                       # The negative-sleep guard scans the app and UI test sources (#4313).
+                       'test_app_test_negative_sleeps',
+                       # The tracked-presentation guard scans App/ Swift files for a raw sheet or cover (#4337).
+                       'test_tracked_presentations')
+# Every test that reads App/ or Packages/ is in scripts/swift_scan_tests.py (#5220), which test_swift_scan_tests keeps
+# complete; the readers scope runs those too, so a new scan needs only that one line.
+RUNNER_TEST_READERS += tuple(module for module in swift_scan_tests.SCANS if module not in RUNNER_TEST_READERS)
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
-                      'docs/sharing-test-kit/', 'docs/task-cost-map.json', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
+                      'docs/sharing-test-kit/', 'docs/task-cost-map.json', 'docs/overview/', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes',
                       # test_third_party_notices reads the dependency manifests and its own list (#1823).
                       'docs/legal/', 'THIRD_PARTY_NOTICES.md', 'requirements-dev.txt', 'Site/', 'Tools/',
                       'Config/', 'fixtures/', 'traces/', 'schemas/',
@@ -791,7 +849,7 @@ def on_hosted_runner(environ=None):
     return environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
 
 
-PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'system-callback-isolation', 'listener-words', 'recorder-failed-start', 'browser', 'share-link', 'web', 'research')
+PORTABLE_STEPS = ('runner-tests', 'ops', 'contracts', 'public-tree', 'surfaces', 'inventory', 'main-thread-reads', 'repeat-trigger-scan', 'ordered-store-requests', 'system-callback-isolation', 'listener-words', 'flow-map', 'recorder-failed-start', 'browser', 'share-link', 'web', 'research')
 PORTABLE_LEFT_OUT = {
     'package-build': 'needs the Swift toolchain on macOS; hosted-portable.yml builds the Foundation-only modules on Linux, outside this plan',
     'package-core': 'needs the Swift toolchain on macOS (hosted-portable.yml also runs SessionKitCoreTests on Linux, #3529, outside this plan)',
@@ -812,14 +870,28 @@ PORTABLE_RUNNER_TESTS_LEFT_OUT = {
     'test_phone_build.PhoneBuildTests.test_a_merge_check_that_says_fail_does_not_count_so_the_host_checks_run': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_a_safe_remerge_builds_release_without_repeating_host_or_simulator_checks': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_builds_writes_plan_and_points_latest': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_lane_tested_commit_without_a_green_slow_tier_runs_it_first': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_green_slow_tier_on_the_commit_is_not_run_again': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_red_main_slow_on_the_commit_stops_the_build_without_a_local_plan': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_failing_local_main_slow_plan_stops_the_build': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_commit_with_main_mac_runs_every_test_main_slow_runs_first': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_commit_from_before_the_slow_tier_is_built_without_it': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_if_changed_skips_when_latest_is_the_tip': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_plan_starts_at_the_installed_build': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_release_cache_and_source_survive_and_are_reused_for_the_next_tip': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_untested_commit_runs_host_checks_first': PHONE_BUILD_NEEDS_MAC,
     'test_lane_slots.VerifyTestsSlotTests.test_runner_xcodebuild_steps_take_a_slot_and_record_it': 'runs xcodebuild',
     'test_sim_builds.': 'packs and unpacks app builds with macOS ditto',
-    # The runner (lane-runner.py) runs only on the Mac; Ubuntu 22.04's git 2.34 on the VPS runner is too old (#2160).
-    'test_lane_hosted_fast.HostedChecksStandTests.': 'needs git merge-tree --write-tree (git 2.38 or later)',
+}
+# --plan fast-portable --pr-quick (2026-11-20): a PR's first signal. In the merge queue (MERGE_QUEUE_MAC=queue-only)
+# the long suites run once per merge group, where batching shares their cost; on a PR push the portable job ran
+# them too, and its runner-tests took 1,180 s of the job's 28 minutes. With --pr-quick the plan leaves runner-tests to
+# the merge group and runs every other portable step (about 90 s together). Since 2026-11-24 (#5281) no workflow passes
+# it: PRs run the whole plan again, because the queue was the first place runner-tests ran and dropped PRs for it. It
+# stays for a quick hand run.
+PR_QUICK_LEFT_OUT = {
+    'runner-tests': 'the PR quick tier leaves it to the merge group, which runs the whole fast-portable plan '
+                    '(hosted-portable.yml; for an early run, dispatch it on the branch)',
 }
 PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snapshots and the Mac-only caches'}
 # --plan fast-hosted-sessionkit and --plan fast-mac-rest (#1389): the fast plan split three ways once the repo is
@@ -830,21 +902,45 @@ PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snaps
 # SessionKitTraceTests targets, whose real-time AVFoundation tests need a sound output (PORTABLE_LEFT_OUT 'package').
 # Between them the three plans run every fast-plan step (test_fast_split.py checks it).
 FAST_SPLIT_PLANS = ('fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest')
+# Plans that run only host steps (no Xcode scheme).
+HOST_ONLY_PLANS = ('slow', 'mac-build', 'main-mac')
+# --plan mac-build's reason for every test step it leaves out (#5281).
+# The shipped-build guards (#5281 audit): SessionKitTests classes that decode this build's stored rows or packets with
+# the last shipped build's frozen model. They protect listener data and packet compatibility, so every merge group
+# runs them, even the build-only Mac job. A class is one when its file uses the frozen module (ShippedSessionKit) or is
+# named for a shipped build or reader; test_slow_tier keeps the rule honest against the files.
+SHIPPED_GUARD_DIR = 'Packages/SessionKit/Tests/SessionKitTests'
+SHIPPED_GUARD_FILE_NAME = re.compile(r'Build\d+|Shipped|PacketExpectations')
+SHIPPED_GUARD_CLASS = re.compile(r'^\s*(?:@\w+\s+)*(?:final\s+)?class\s+(\w+)\s*:[^{]*\bXCTestCase\b', re.M)
+
+
+def shipped_guard_classes(root=None):
+    """Sorted names of the SessionKitTests classes that guard the shipped build's packets and database."""
+    names = set()
+    for path in sorted((Path(root or ROOT) / SHIPPED_GUARD_DIR).glob('*.swift')):
+        text = path.read_text()
+        if SHIPPED_GUARD_FILE_NAME.search(path.stem) or 'ShippedSessionKit' in text:
+            names.update(SHIPPED_GUARD_CLASS.findall(text))
+    return sorted(names)
+
+
+def shipped_guard_regex(classes):
+    """A SwiftPM --filter regex (matched against "Module.Class/test") for exactly these SessionKitTests classes."""
+    if not classes:
+        raise RuntimeError(f'no shipped-build guard classes found in {SHIPPED_GUARD_DIR}')
+    return r'^SessionKitTests\.(?:' + '|'.join(re.escape(name) for name in classes) + ')/'
+
+
+MAC_BUILD_LEFT_OUT = ('the merge queue builds on the Mac and runs no Mac tests (#5281); --plan main-mac runs them on main '
+                      '(main-slow.yml), and the Linux job runs the core tests the two platforms share')
 HOSTED_SESSIONKIT_STEPS = ('package-build', 'package-core', 'package-core-serial')
 MAC_REST_STEPS = ('hot-file-ratchet', 'runner-tests', 'ops', 'package-build', 'package', 'tools', 'shipped-compat')
-# runner-tests without the tests above: discover scripts/tests as the plain step does, then drop the listed ids.
-PORTABLE_RUNNER_LOADER = '''
-import sys, unittest
-sys.path.insert(0, "scripts/tests")
-left_out = tuple(sys.argv[1:])
-def tests(suite):
-    for item in suite:
-        yield from tests(item) if isinstance(item, unittest.TestSuite) else [item]
-kept = unittest.TestSuite(t for t in tests(unittest.defaultTestLoader.discover("scripts/tests"))
-                          if not t.id().startswith(left_out))
-sys.exit(not unittest.TextTestRunner().run(kept).wasSuccessful())
-'''
-# fast-mac-rest's runner-tests: only the tests PORTABLE_RUNNER_TESTS_LEFT_OUT names, the inverse of the loader above.
+# The whole runner-tests step, here and on the Mac, runs one test module per process, four at a time, slowest first
+# (scripts/parallel_unittest.py, #4769): in one process it took 963 s on the owner's Mac and 996 s at p50 on the hosted
+# portable job, 236 tests over a second each holding 65% of that. It prints the same "Ran N tests" and FAIL/ERROR
+# blocks, so the zero-tests check and unittest_failures read it as they read unittest's own output.
+PARALLEL_RUNNER = [sys.executable, 'scripts/parallel_unittest.py']
+# fast-mac-rest's runner-tests: only the tests PORTABLE_RUNNER_TESTS_LEFT_OUT names, the inverse of parallel_unittest.py --leave-out.
 MAC_REST_RUNNER_LOADER = '''
 import sys, unittest
 sys.path.insert(0, "scripts/tests")
@@ -986,16 +1082,18 @@ HANG_PROBE_TIMING_TESTS = frozenset(f'SessionKitCoreTests/MainThreadHangProbeTes
     'testAStoppedProbeRecordsNothingAndASecondHangAfterAFirstIsCounted',
 ))
 
-# StoreReadMeterTests skip by design (#2258): the Library list is a known-oversized read that skips with its measured
-# bytes until #2102's fix fails it on purpose, and the cost table builds the large fixtures only when asked for.
+# StoreReadMeterTests skip by design (#2258): the cost table builds the large fixtures only when asked for. The Library
+# list read no longer skips (#4307): it passes while the known-oversized read stays under its ceiling, and fails once
+# #2102's fix brings it under the budget.
 READ_METER_SKIPS = frozenset(f'SessionKitCoreTests/StoreReadMeterTests/{test}' for test in (
-    'testTheLibraryListDoesNotDecodeEveryArticleText',
     'testReadCostTableAtEveryScale',
 ))
 # Measurements that build Library-sized fixtures only when asked for, by an environment variable (#2509, #2256).
 MEASURE_ON_REQUEST_SKIPS = frozenset({
     'SessionKitCoreTests/EngineCompletionCostTests/testTheCostOfEachCompletionCall',
     'SessionKitCoreTests/PlayAndRecordStartCostTests/testPrintTheStartCostsAtLibrarySize',
+    # Writes the transcript fixture files for the journey only when WRITE_TRANSCRIPT_FIXTURES=1 (#2997).
+    'SessionKitCoreTests/TranscriptFixtureFilesTests/testWriteTheFixtureFilesForTheJourney',
 })
 CORE_ALLOWED_SKIPS = HANG_PROBE_TIMING_TESTS | READ_METER_SKIPS | MEASURE_ON_REQUEST_SKIPS
 
@@ -1027,6 +1125,14 @@ SUPERTONIC_MODEL_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
 # The real speech recognizer needs SpeechTranscriber and a model for the host's locale. GitHub's hosted macOS image
 # has neither, so the test skips there, naming why; the owner's call is that this skip "is expected" (#2469, 2026-10-23).
 SPEECH_MODEL_TESTS = frozenset({'SessionKitTests/RealSpeechTranscriberTests/testRealTranscriberHearsSynthesizedSpeech'})
+
+# Probes run only by hand: each skips unless an environment variable points it at data the repository doesn't hold, so
+# they skip on every lane and main-slow run. The held-out anchor corpus runs from scripts/run-podcast-anchor-benchmark.sh;
+# the filler probe needs the AMI corpus fetched into artifacts/ami (#4779), and its skip turned main-slow red (#5347).
+ON_REQUEST_PROBE_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
+    'SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus',
+    'FillerTranscriptionProbeTests/testFillerTranscriptionProbe',
+))
 
 
 # The one app-hosted test that runs Supertonic's real model, in the adapters plan. The model is a download since #1820,
@@ -1123,13 +1229,19 @@ def feed_new_lines(path, offset, watch):
     return offset + end
 
 
+# The step ceilings below come from scripts/ci_step_budgets.json, which scripts/ci_step_budgets.py writes from measured
+# step durations: 1.5 x the p95 of the last 30 passing hosted runs, rounded up to a minute, never below a floor. Each
+# entry lists the run IDs its number came from. Hand-set ceilings were raised three times on 2026-11-20 (runner-tests
+# 600, 1200, 1800 s) as the step drifted toward each one; the scheduled ci-step-drift.yml job now says when a step's
+# p95 passes 75% of its ceiling, and a PR regenerates the table.
+STEP_BUDGETS = json.loads((Path(__file__).resolve().parent / 'ci_step_budgets.json').read_text())['limits']
 PACKAGE_BUILD_TIMEOUT = 900  # SessionKit build with tests; cold, under load
 PACKAGE_TEST_TIMEOUT = 600  # the SessionKit tests alone (#844)
 # #1767: on a busy Mac the same tests run two to three times slower than the 230 s they take on a quiet one, and
 # three PRs were failed ("Process exit 124", hundreds of tests missing, no failing test) while the suite was still
 # working through its classes. The limit above stays the budget; a step that is still printing results when it
 # runs out may go on until the ceiling, and one that has printed nothing for the stall time is a hang and stops.
-PACKAGE_TEST_CEILING = 1500
+PACKAGE_TEST_CEILING = STEP_BUDGETS['PACKAGE_TEST_CEILING']['seconds']
 PACKAGE_STALL_SECONDS = 240
 # The lane (scripts/lane-runner.py FAST_TIMEOUT, 2400 s) starts its clock before this process, so the plan's wait for
 # a host-test slot counts there. A step's ceiling is cut to fit what is left of it, so the step ends itself with its
@@ -1141,7 +1253,7 @@ PARALLEL_CORE_TIMEOUT = 300
 # #1767: on the three timed-out runs this step was killed at 62-76% done, its results (written at the end) were lost, and
 # the serial rerun took another 364-379 s. Its progress lines stream as it goes, so it gets the same rule as the
 # serial steps: a run still printing at 300 s goes on, one silent for the stall time is a hang and is rerun serially.
-PARALLEL_CORE_CEILING = 900
+PARALLEL_CORE_CEILING = STEP_BUDGETS['PARALLEL_CORE_CEILING']['seconds']
 PARALLEL_CORE_STALL_SECONDS = 120
 PACKAGE_RUNNER = ['bash', 'scripts/run-sessionkit-tests.sh']
 # The runner's own 631 tests took 164.5 s on a quiet Mac (PR #1103's 0c940ba, 2026-10-08) and 172.3 s in a
@@ -1152,7 +1264,10 @@ RUNNER_TESTS_TIMEOUT = 600
 # #2488: by 2026-10-22 the step took 482-519 s on a busy day and was killed at 600 s at load 138-150, its log still a
 # stream of passing dots, so two runs of #2409 failed with "executed zero tests". It gets #1767's rule: a run still
 # printing at its budget goes on until the ceiling; one silent for the stall time is a hang and stops.
-RUNNER_TESTS_CEILING = 1200
+# #4763 set 1800 by hand on 2026-11-20 after passing hosted runs took up to 1180 s and two PRs were killed at 1200 s;
+# the table derived the same 1800 from the last 30 passing runs (1.5 x p95, ci_step_budgets.json). Since the slow tier
+# left PR runs (#5145) the samples give 900 s, but the table never lowers a limit (#5009), so 1800 stays.
+RUNNER_TESTS_CEILING = STEP_BUDGETS['RUNNER_TESTS_CEILING']['seconds']
 RUNNER_TESTS_STALL_SECONDS = PACKAGE_STALL_SECONDS  # one test compiles Swift, silent for minutes at high load
 RUNNER_TESTS_LIMITS = {'timeout': RUNNER_TESTS_TIMEOUT, 'ceiling': RUNNER_TESTS_CEILING,
                        'stall_seconds': RUNNER_TESTS_STALL_SECONDS}
@@ -1806,8 +1921,9 @@ class Run:
             errors.extend(f'hot-file ratchet — {line[len("FAIL "):]}' for line in text.splitlines()
                           if line.startswith('FAIL '))
         if name in ('runner-tests', 'ops') or name.startswith('ops-'):
-            match = re.search(r'Ran (\d+) tests? in ', text)
-            entry['executed_count'] = int(match[1]) if match else 0
+            # The last summary: parallel_unittest.py prints a failing module's own "Ran" line before its total.
+            ran = re.findall(r'Ran (\d+) tests? in ', text)
+            entry['executed_count'] = int(ran[-1]) if ran else 0
             if not entry['executed_count']:
                 errors.append('Infrastructure runner executed zero tests' if name == 'runner-tests'
                               else f'{name} executed zero tests')
@@ -1987,19 +2103,23 @@ class Run:
     def portable(self):
         """The fast plan's steps that run anywhere (#1847), then every step it leaves out, named as skipped.
         No host-test slot: that is the Mac's shared pool, and a hosted job is alone on its machine."""
-        self.host_steps(portable=True)
-        print('fast-portable runner-tests left out ' + ', '.join(PORTABLE_RUNNER_TESTS_LEFT_OUT), flush=True)
+        pr_quick = self.manifest.get('pr_quick', False)
+        self.host_steps(portable=True, pr_quick=pr_quick)
+        if not pr_quick:  # with --pr-quick runner-tests did not run at all, so it left nothing out
+            print('fast-portable runner-tests left out ' + ', '.join(PORTABLE_RUNNER_TESTS_LEFT_OUT), flush=True)
         for name, reason in PORTABLE_LEFT_OUT.items():
             self.skip(name, reason)
         print('fast-portable left out ' + ', '.join(PORTABLE_LEFT_OUT) + '; the fast plan on the Mac runs them.', flush=True)
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError(inputs_changed_message('Inputs changed during portable verification', self.input_files))
 
-    def host_steps(self, portable=False):
+    def host_steps(self, portable=False, pr_quick=False):
         scope, why = runner_test_scope(self.changed)
-        if portable:
-            self.command('runner-tests', [sys.executable, '-c', PORTABLE_RUNNER_LOADER, *PORTABLE_RUNNER_TESTS_LEFT_OUT],
-                         **RUNNER_TESTS_LIMITS)
+        if pr_quick:
+            self.skip('runner-tests', PR_QUICK_LEFT_OUT['runner-tests'])
+        elif portable:
+            self.command('runner-tests', [*PARALLEL_RUNNER, '--leave-out', *PORTABLE_RUNNER_TESTS_LEFT_OUT,
+                                          *self.runner_leave_out()], **RUNNER_TESTS_LIMITS)
         elif in_codex_sandbox():
             self.skip('runner-tests')
         elif scope == 'none':
@@ -2013,8 +2133,7 @@ class Run:
             self.command('runner-tests', [sys.executable, '-c', loader, *RUNNER_TEST_READERS],
                          **RUNNER_TESTS_LIMITS)
         else:
-            self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'],
-                         **RUNNER_TESTS_LIMITS)
+            self.command('runner-tests', PARALLEL_RUNNER, **RUNNER_TESTS_LIMITS)
         needed, why = ops_tests_needed(self.changed)
         if portable:
             self.ops_steps(left_out=PORTABLE_OPS_LEFT_OUT)
@@ -2038,9 +2157,12 @@ class Run:
         self.command('system-callback-isolation', [sys.executable, 'scripts/system_callback_isolation.py'])
         # A listener-facing string that says "item" fails here, in seconds, instead of on the phone (#3599).
         self.command('listener-words', [sys.executable, 'scripts/listener_words.py'])
+        # A sharing control removed, renamed or re-routed without the flow map changing fails here, and the run names
+        # the sharing screens the diff touches with their neighbours and the owner's rulings on them (#5280).
+        self.command('flow-map', [sys.executable, 'scripts/flow-map-check.py', '--pr'])
         # A recorder freed while its audio queue runs, after a failed start, crashes the app (#3633).
         self.command('recorder-failed-start', [sys.executable, 'scripts/recorder_failed_start.py'])
-        if not (ROOT / 'node_modules').exists():
+        if not node_modules_installed():
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         # A lockfile that moved since node_modules was installed can fail the bundle check with "is stale". The
         # lane links a shared node_modules that only moves to the trunk, so drift alone must not fail a run: name
@@ -2106,11 +2228,15 @@ class Run:
         try:
             if split and not core_elsewhere:
                 self.package_core(core)
-            self.command('package', [*PACKAGE_RUNNER, '--rest' if split else '--skip-build'],
+            rest_skip = []
+            if split:
+                rest_expected, rest_skip = self.slow_left_out(expected - core, ('SessionKitTests', 'SessionKitTraceTests'))
+                expected = rest_expected | core
+            self.command('package', [*PACKAGE_RUNNER, '--rest' if split else '--skip-build', *rest_skip],
                          timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
                          expected=expected - core if split else expected, tests=True,
-                         allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus',
-                                        *POCKET_WEIGHT_TESTS, *SUPERTONIC_MODEL_TESTS, *SPEECH_MODEL_TESTS},
+                         allowed_skips={*ON_REQUEST_PROBE_TESTS, *POCKET_WEIGHT_TESTS, *SUPERTONIC_MODEL_TESTS,
+                                        *SPEECH_MODEL_TESTS},
                          probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
         except RuntimeError as error:
             step = self.manifest['steps'][-1]
@@ -2142,8 +2268,9 @@ class Run:
         or unreadable result file, a timeout) is run again serially, and the serial run decides: parallel
         tests can fail on shared state that serial runs never meet, and the result file's format is SwiftPM's."""
         xunit = self.output / 'package-core.xunit.xml'
+        expected, skip = self.slow_left_out(expected, ('SessionKitCoreTests',))
         try:
-            self.command('package-core', [*PACKAGE_RUNNER, '--core-parallel', str(xunit)],
+            self.command('package-core', [*PACKAGE_RUNNER, '--core-parallel', str(xunit), *skip],
                          timeout=PARALLEL_CORE_TIMEOUT, ceiling=PARALLEL_CORE_CEILING,
                          stall_seconds=PARALLEL_CORE_STALL_SECONDS, expected=expected, tests=True,
                          allowed_skips=CORE_ALLOWED_SKIPS, record_source=lambda: xunit_records(xunit))
@@ -2157,9 +2284,90 @@ class Run:
                 f'SessionKitCoreTests: the parallel run failed, so they ran again serially ({str(error)[:300]})')
             self.save()
             print('package-core: parallel run failed; running SessionKitCoreTests serially', flush=True)
-        self.command('package-core-serial', [*PACKAGE_RUNNER, '--core-serial'],
+        self.command('package-core-serial', [*PACKAGE_RUNNER, '--core-serial', *skip],
                      timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
                      expected=expected, tests=True, allowed_skips=CORE_ALLOWED_SKIPS)
+
+    def slow_left_out(self, expected, targets):
+        """(expected, extra runner args) with the slow tier's tests of these targets left out (#5145), when this run
+        was asked to (--leave-out-slow). Each left-out test is named in the run and its manifest."""
+        if not self.manifest.get('leave_out_slow'):
+            return expected, []
+        moved = slow_tier.swift_tests_in(targets) & set(expected)
+        if not moved:
+            return expected, []
+        self.manifest.setdefault('slow_tier_left_out', []).extend(sorted(moved))
+        self.save()
+        print('left out to the nightly slow tier (scripts/slow_tier.py, #5145): ' + ', '.join(sorted(moved)), flush=True)
+        return set(expected) - moved, ['--skip', slow_tier.swift_regex(moved)]
+
+    def runner_leave_out(self):
+        """parallel_unittest.py --leave-out names for the slow tier's runner modules, under --leave-out-slow."""
+        if not self.manifest.get('leave_out_slow'):
+            return []
+        modules = sorted(slow_tier.SLOW_RUNNER_MODULES)
+        self.manifest.setdefault('slow_tier_left_out', []).extend(modules)
+        self.save()
+        print('runner-tests left out to the nightly slow tier (scripts/slow_tier.py, #5145): ' + ', '.join(modules),
+              flush=True)
+        # With the dot: parallel_unittest.py matches by prefix, and a future test_sm_status_x must not leave too.
+        return [f'{module}.' for module in modules]
+
+    def mac_build(self):
+        """--plan mac-build (#5281): the merge queue's Mac job, build only. It compiles SessionKit and every one of
+        its test targets with the Mac's Swift (the Linux job builds with another Swift and cannot see Apple-only code),
+        then runs the shipped-build guard classes (shipped_guard_classes) on every merge, and the shipped build's
+        packet and database checks when the diff reaches them: those are guards, which stay on every merge. The Mac tests themselves (SessionKitCoreTests on the Mac, SessionKitTests, the runner
+        tests that drive Apple tools, ops) run on main instead, in --plan main-mac. Linux runs the 9,950 core tests the
+        two share on every merge group."""
+        self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
+        # The shipped-build guards run on every merge group whatever the diff (#5281 audit): shipped_compat below
+        # runs only for watched paths and only the classes that export packets.
+        self.command('shipped-guards', [*PACKAGE_RUNNER, '--only', shipped_guard_regex(shipped_guard_classes())],
+                     timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
+                     tests=True)
+        self.shipped_compat()
+        for name in ('package-core', 'package', 'runner-tests', 'ops', 'tools'):
+            self.skip(name, MAC_BUILD_LEFT_OUT)
+        if input_identity() != self.manifest['input_sha256']:
+            raise RuntimeError(inputs_changed_message('Inputs changed during the Mac build', self.input_files))
+
+    def main_mac(self):
+        """--plan main-mac (#5281): every Mac test the merge queue's build-only job leaves out, plus the slow tier,
+        on main for main-slow.yml: fast-hosted-sessionkit and fast-mac-rest in full (no diff, nothing left out),
+        then the slow tier's runner module."""
+        with host_test_slot(f'verify-tests main-mac in {ROOT}', out=sys.stdout,
+                            max_wait=BUILD_SLOT_WAIT_SECONDS) as held:
+            self.manifest['host_test_slot'] = held
+            self.save()
+            self.hosted_sessionkit()
+            self.mac_rest()
+            modules = sorted(slow_tier.SLOW_RUNNER_MODULES)
+            if modules:
+                self.command('slow-runner-tests', [sys.executable, '-c', MAC_REST_RUNNER_LOADER,
+                                                   *(f'{m}.' for m in modules)], **RUNNER_TESTS_LIMITS)
+
+    def slow(self):
+        """--plan slow (#5145): exactly the tests --leave-out-slow leaves out, for main-slow.yml and phone-build."""
+        modules = sorted(slow_tier.SLOW_RUNNER_MODULES)
+        if modules:
+            self.command('slow-runner-tests', [sys.executable, '-c', MAC_REST_RUNNER_LOADER,
+                                               *(f'{m}.' for m in modules)], **RUNNER_TESTS_LIMITS)
+        tests = set(slow_tier.SLOW_SWIFT_TESTS)
+        if not tests:
+            return
+        if sys.platform != 'darwin':
+            raise RuntimeError('--plan slow runs SessionKit tests with the Swift toolchain on macOS')
+        # KittenRendererTests renders real audio: a Mac whose output won't start is a runner fault, not main (#909, #1956).
+        audio = self.manifest['audio_output'] = host_audio.audio_output()
+        if audio.get('stuck') and not in_codex_sandbox():
+            self.manifest['lane_fault'] = f'no audio output: {audio["why"]}'
+            self.save()
+            raise RuntimeError(f'lane fault, not the code: {self.manifest["lane_fault"]}')
+        self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
+        self.command('slow-swift', [*PACKAGE_RUNNER, '--only', slow_tier.swift_regex(tests)],
+                     timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
+                     expected=tests, tests=True)
 
     def skip(self, name, reason=None):
         reason = reason or CODEX_SANDBOX_SKIPS[name]
@@ -2240,7 +2448,7 @@ class Run:
             if require_build:
                 raise RuntimeError('Prepared Xcode build is missing or stale; refusing to build on a booted T3 device')
             stamp.unlink(missing_ok=True)
-            self.command('build-for-testing', base + compilation_cache_settings() + ['build-for-testing'], timeout=900)
+            self.command('build-for-testing', base + package_cache_settings() + compilation_cache_settings() + ['build-for-testing'], timeout=900)
             log = self.output / 'build-for-testing.log'
             self.manifest['compilation_cache'] = compilation_cache_hits(log.read_text(errors='replace')) \
                 if log.is_file() else None
@@ -2279,20 +2487,35 @@ class Run:
         if any(test.endswith(SUPERTONIC_APP_MODEL_TEST)
                for test in planned if not selectors or any(selected(test, s) for s in selectors)):
             self.provide_supertonic_model()
-        chosen, created = self.simulator(device, ios)
-        refuse_unsafe(chosen, lane_sim.unsafe_devices())
-        self.manifest['destination'] = chosen
-        derived, identity = self.xcode_build(plan, chosen['runtime'], rebuild, require_build)
-        base = ['xcodebuild', '-configuration', 'Debug', '-project', 'SpokenMarginsNative.xcodeproj', '-scheme', scheme,
-                '-testPlan', name, '-destination', f'id={chosen["udid"]}', '-derivedDataPath', str(derived)]
-        booted_here = chosen['state'] != 'Booted'
-        # A run that boots its own simulator holds a Mac-wide simulator slot until it shuts it down
-        # (16 GB Mac: a second simulator job only while memory pressure is normal, #184). A device
-        # someone else booted is theirs, and so is the slot.
-        slot = inherited_simulator_slot(simulator_slot_fd) if simulator_slot_fd is not None else (
-            acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS)
-            if booted_here else None)
+        # Our own Test Runner is shared by every checkout's run without --device, so such a run locks it Mac-wide
+        # (#4736): from before it chooses, replaces or creates the device until it has shut it down. The integration
+        # job used to guard it by keeping the simulator decision lock for its whole run, which made every Test Desk
+        # boot wait out the job. The slot always comes first and a holder of the lock waits for no slot, so the two
+        # can't deadlock. A device given with --device is the caller's own and never takes the lock.
+        chosen, booted_here, slot, runner_lock, reached_device = None, False, None, None, False
         try:
+            if device is None:
+                slot = inherited_simulator_slot(simulator_slot_fd) if simulator_slot_fd is not None else \
+                    acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS)
+                runner_lock = acquire_test_runner(f'verify-tests {plan}', out=sys.stdout,
+                                                  max_wait=max(BUILD_SLOT_WAIT_SECONDS, timeout))
+            chosen, created = self.simulator(device, ios)
+            refuse_unsafe(chosen, lane_sim.unsafe_devices())
+            refuse_borrowed(chosen, device, simulator_slot_fd)
+            self.manifest['destination'] = chosen
+            derived, identity = self.xcode_build(plan, chosen['runtime'], rebuild, require_build)
+            base = ['xcodebuild', '-configuration', 'Debug', '-project', 'SpokenMarginsNative.xcodeproj', '-scheme',
+                    scheme, '-testPlan', name, '-destination', f'id={chosen["udid"]}', '-derivedDataPath', str(derived)
+                    ] + package_cache_settings()  # the build's package folder: xcodebuild resolves packages again (#4664)
+            # A run that boots its own simulator holds a Mac-wide simulator slot until it shuts it down
+            # (16 GB Mac: a second simulator job only while memory pressure is normal, #184). A given device
+            # someone else booted is theirs, and so is the slot.
+            if device is not None:
+                slot = inherited_simulator_slot(simulator_slot_fd) if simulator_slot_fd is not None else (
+                    acquire_simulator_slot(f'verify-tests {plan}', out=sys.stdout, max_wait=BUILD_SLOT_WAIT_SECONDS)
+                    if chosen['state'] != 'Booted' else None)
+            booted_here = chosen['state'] != 'Booted'  # set only now: the finally shuts down only what this run boots
+            reached_device = True
             if booted_here:
                 # Lane boot rules (scripts/lane_sim.py): one boot at a time, no builds meanwhile, no retry
                 # after a failed boot, stop at the first crash. Two crash floods followed boots (#184).
@@ -2416,17 +2639,19 @@ class Run:
                     if lane_audio_window.record_not_run(self.manifest['steps']):
                         self.save()
         finally:
-            if scheme == 'SpokenMarginsAppBehavior':
+            if reached_device and scheme == 'SpokenMarginsAppBehavior':
                 lane_sim.mark_quiet(chosen['udid'])
             if booted_here:
                 # Don't leave an idle simulator holding memory after the run.
                 shut_down_without_hiding_the_error(chosen['udid'])
+            if runner_lock:
+                release_handle(runner_lock)
             if slot:
                 if simulator_slot_fd is not None:
                     slot.close()
                 else:
                     release_handle(slot)
-            if plan in SCREENSHOT_PLANS:
+            if reached_device and plan in SCREENSHOT_PLANS:
                 # A tour test that stops partway still hands over what the run took (#3237): from 11-02 the tour failed
                 # at one moved control on every run, and exported nothing at all. The tests' own failure stays the error.
                 self.export_screenshots(tests_failed=sys.exc_info()[1] is not None)
@@ -2477,7 +2702,7 @@ def read_changed_files(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--plan', choices=['fast', 'fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest', *PLANS],
+    parser.add_argument('--plan', choices=['fast', 'fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest', 'slow', 'mac-build', 'main-mac', *PLANS],
                         default='fast')
     parser.add_argument('--device', help='Supported simulator UDID (including iPad); overrides phone preference')
     parser.add_argument('--ios', type=int, help='Required iOS major version, e.g. 26 or 27; never falls back to another OS')
@@ -2490,6 +2715,11 @@ def main():
     parser.add_argument('--changed-files', type=Path, metavar='FILE',
                         help='Lane runs: the PR\'s changed paths, one per line (renames name both sides). --plan fast then '
                              'skips the runner and ops tests nothing in the diff can affect; without it every step runs')
+    parser.add_argument('--pr-quick', action='store_true',
+                        help='--plan fast-portable on a PR: leave runner-tests to the merge group (PR_QUICK_LEFT_OUT)')
+    parser.add_argument('--leave-out-slow', action='store_true',
+                        help='PR and merge-group runs of the split plans: leave out the slow tier (scripts/slow_tier.py, '
+                             '#5145), which --plan slow runs nightly and before builds')
     parser.add_argument('--list', action='store_true', help='Inspect selection without running tests')
     parser.add_argument('--only-testing', action='append', default=[], metavar='CLASS[/METHOD]',
                         help='Xcode plans: run only these tests of the plan (repeatable); unknown ones fail the run')
@@ -2498,6 +2728,10 @@ def main():
         parser.error('--build-only needs an Xcode --plan and --runtime')
     if args.build_only and (args.device or args.require_build or args.only_testing):
         parser.error('--build-only takes no --device, --require-build or --only-testing')
+    if args.pr_quick and args.plan != 'fast-portable':
+        parser.error('--pr-quick goes with --plan fast-portable only')
+    if args.leave_out_slow and args.plan not in FAST_SPLIT_PLANS:
+        parser.error('--leave-out-slow goes with ' + ', '.join(f'--plan {p}' for p in FAST_SPLIT_PLANS) + ' only')
     if errors := validate():
         parser.error('; '.join(errors))
     from test_inventory import probation_batches, scripted_journeys  # only the journeys plan reads the list
@@ -2507,8 +2741,12 @@ def main():
     if args.list:
         print('\n'.join(f'{t} ({status})' for status, tests in journeys.items() for t in tests) if journeys
               else '\n'.join(sorted(plan_tests(ROOT, PLANS[args.plan][1]))) if args.plan in PLANS
-              else ('fast-portable runs ' + ', '.join(PORTABLE_STEPS) + '; it leaves out ' + ', '.join(PORTABLE_LEFT_OUT)
+              else ('fast-portable runs ' + ', '.join(s for s in PORTABLE_STEPS if not (args.pr_quick and s in PR_QUICK_LEFT_OUT))
+                    + '; it leaves out ' + ', '.join([*PORTABLE_LEFT_OUT, *(PR_QUICK_LEFT_OUT if args.pr_quick else ())])
                     if args.plan == 'fast-portable'
+                    else 'slow tier (scripts/slow_tier.py): ' + ', '.join([*sorted(slow_tier.SLOW_RUNNER_MODULES),
+                                                                           *sorted(slow_tier.SLOW_SWIFT_TESTS)])
+                    if args.plan == 'slow'
                     else 'hot-file ratchet, runner-tests, ops tests, contracts, surfaces, inventory, browser, all SessionKit tests'))
         return 0
     if journeys is not None and not any(journeys.values()):
@@ -2523,13 +2761,25 @@ def main():
         output = args.output or ROOT / 'artifacts/test-runs' / (
             datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '-' + args.plan)
         run = Run(output.resolve(), args.plan,
-                  read_changed_files(args.changed_files) if args.plan in ('fast', 'fast-mac-rest') else None)
+                  read_changed_files(args.changed_files) if args.plan in ('fast', 'fast-mac-rest', 'mac-build') else None)
+        if args.pr_quick:
+            run.manifest['pr_quick'] = True
+            run.save()  # in the evidence from the start, not only from the first step's save
+        if args.leave_out_slow:
+            run.manifest['leave_out_slow'] = True
+            run.save()
         try:
             if args.build_only:
                 run.xcode_build(args.plan, args.runtime, args.rebuild)
             elif args.plan in ('fast', *FAST_SPLIT_PLANS, 'release'):
                 run.fast()
-            if args.plan not in ('fast', *FAST_SPLIT_PLANS) and not args.build_only:
+            elif args.plan == 'slow':
+                run.slow()
+            elif args.plan == 'mac-build':
+                run.mac_build()
+            elif args.plan == 'main-mac':
+                run.main_mac()
+            if args.plan not in ('fast', *FAST_SPLIT_PLANS, *HOST_ONLY_PLANS) and not args.build_only:
                 if journeys:
                     run.manifest['scripted_journeys'] = journeys
                     run.xcode(args.plan, args.device, args.rebuild, args.ios,

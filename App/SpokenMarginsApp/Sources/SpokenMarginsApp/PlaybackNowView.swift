@@ -7,12 +7,26 @@ struct PlaybackNowView: View {
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var playbackTick = 0 // bumped by each progress tick: the rows count down on the playhead (#2074)
+    /// Saved live-session photos on own rows (#4180), for a session saved with its recording.
+    @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
+    /// For a spoken note playing its Shorter pauses version, the map onto that file's clock, read off the main thread
+    /// (#5288). Own Margins are saved on the recording's clock (#4779); the playhead is on the file's.
+    @State private var noteClock: NoteClock?
+    private struct NoteClock: Equatable {
+        let mediaURL: String
+        let map: SpokenNoteCleanMap?
+    }
 
     var body: some View {
         let _ = playbackTick
         let own = model.marginRows
         let shared = model.sharedMarginRows
-        let candidates = own.compactMap { PlaybackNowMargins.Margin(own: $0.interjection, itemID: model.selectedItem.id) }
+        let playingURL = model.openSessionMediaURL
+        let clockRead = noteClock?.mediaURL == playingURL
+        let clock = clockRead ? noteClock?.map : nil
+        // Until the Shorter pauses file's clock is read, own rows wait rather than count down on the recording's clock.
+        let ownOnPlayingClock = clockRead || !SpokenNoteCleanFiles.namesCleanAudio(playingURL) ? own : []
+        let candidates = ownOnPlayingClock.compactMap { PlaybackNowMargins.Margin(own: $0.interjection, itemID: model.selectedItem.id, clock: clock) }
             + shared.compactMap { PlaybackNowMargins.Margin(shared: $0.interjection, layer: $0.layer, itemID: model.selectedItem.id) }
         // A generated response has its own clock. Never count down episode Margins against it.
         let isSourceClock = model.snapshot.itemId == model.selectedItem.id
@@ -56,13 +70,19 @@ struct PlaybackNowView: View {
                         transcriptionStatus: row.interjection.transcriptionStatus, captureKind: row.interjection.captureKind),
                         detail: row.placeDescription(), countdown: entry.countdown,
                         isShared: false, identifier: "playback.now.margin.\(row.id)",
+                        canPlay: MarginPlacePresentation.offersPlay(row.interjection),
+                        goesTo: SilentMarginWords.ownWrittenGoesTo(row.interjection), sourceNoun: model.sourceNoun,
+                        thumbnail: photoThumbnail(photoIndex, for: row),
+                        star: .ownMargin(row.interjection, place: .now, model: model),
                         showDetails: { selectedMargin = row }, play: { MarginMomentTap.start(row, model: model) })
                 } else if let row = shared.first(where: { $0.id == entry.id }), entry.origin == .shared {
                     PlaybackMarginRowView(title: row.interjection.approvedTranscript,
-                        detail: "\(row.collectionLabel) · \(entry.isApproximate ? SharedMarginPlacementWording.approximate : row.positionDescription)",
+                        detail: SilentMarginWords.detail("\(row.collectionLabel) · \(entry.isApproximate && row.layer.itemIdentity.itemType != .podcast ? SharedMarginPlacementWording.approximate : row.positionDescription)", goesTo: row.goesToFromList),
                         countdown: entry.countdown, isShared: true, identifier: "playback.now.margin.\(row.id)",
-                        canPlay: row.canPlayFromNearbyList,
-                        showDetails: { selectedSharedMargin = row }, play: { model.playSharedMarginMoment(row) })
+                        canPlay: row.canPlayFromNearbyList || row.goesToFromList,
+                        goesTo: row.goesToFromList, sourceNoun: model.sourceNoun,
+                        showDetails: { selectedSharedMargin = row },
+                        play: { row.goesToFromList ? model.goToSharedMargin(row) : model.playSharedMarginMoment(row) }) // a voiced Margin keeps its moment
                 }
             }
         }
@@ -71,12 +91,25 @@ struct PlaybackNowView: View {
         .foregroundStyle(.white)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("playback.now.margins")
-        .sheet(item: $selectedMargin) { row in
+        .trackedSheet(item: $selectedMargin) { row in
             ExperienceMarginDetailView(row: row).environmentObject(model)
         }
-        .sheet(item: $selectedSharedMargin) { row in
+        .trackedSheet(item: $selectedSharedMargin) { row in
             SharedMarginDetailView(row: row).environmentObject(model)
         }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
+        .task(id: model.openSessionMediaURL) { await readNoteClock(for: model.openSessionMediaURL) }
+    }
+
+    /// Reads the clock map of the file playing when it is a spoken note's Shorter pauses version. Any other file needs
+    /// none, and no file is touched for it (a string check first).
+    private func readNoteClock(for mediaURL: String?) async {
+        guard let mediaURL, SpokenNoteCleanFiles.namesCleanAudio(mediaURL) else {
+            if noteClock != nil { noteClock = nil }
+            return
+        }
+        let map = await Task.detached(priority: .userInitiated) { SpokenNoteCleanClock.map(forMediaURL: mediaURL) }.value
+        guard model.openSessionMediaURL == mediaURL else { return } // the note moved to the other file while it was read
+        noteClock = NoteClock(mediaURL: mediaURL, map: map)
     }
 }

@@ -29,7 +29,8 @@ final class OnboardingProgressTests: XCTestCase {
         XCTAssertEqual(OnboardingStep.allCases.map(\.rawValue), [
             "first_interjection", "reviewed_timeline", "exported_session",
             "added_own_source", "added_from_safari", "added_from_files", "added_podcast",
-            "saw_first_margin_prompt" // added by #2852; earlier builds drop the name
+            "saw_first_margin_prompt", // added by #2852; earlier builds drop the name
+            "heard_first_margin" // added by #4711; earlier builds drop the name
         ])
         XCTAssertEqual(OnboardingStep.core, [.firstInterjection, .reviewedTimeline, .exportedSession])
         XCTAssertEqual(OnboardingStep.sourceExploration, [.addedOwnSource, .addedFromSafari, .addedFromFiles, .addedPodcast])
@@ -261,6 +262,10 @@ final class OnboardingProgressTests: XCTestCase {
         XCTAssertEqual(OnboardingEvidenceClassifier.sourceSteps(items: [pasted]), [.addedOwnSource])
         XCTAssertEqual(OnboardingEvidenceClassifier.sourceSteps(items: [webpage]), [.addedOwnSource, .addedFromSafari])
         XCTAssertEqual(OnboardingEvidenceClassifier.sourceSteps(items: [file]), [.addedOwnSource, .addedFromFiles])
+        let transcript = item(id: "transcript", mediaType: "text", externalReferenceType: TranscriptItemText.referenceType)
+        XCTAssertEqual(
+            OnboardingEvidenceClassifier.sourceSteps(items: [transcript]), [.addedOwnSource, .addedFromFiles],
+            "a transcript picked from Files counts as added from Files (#2997)")
     }
 
     /// Neighbours of the cases above: what makes an item count as "added from Safari" or "from Files".

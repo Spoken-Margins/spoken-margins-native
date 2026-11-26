@@ -50,7 +50,7 @@ https://hpr.nyc3.cdn.digitaloceanspaces.com/eps/hpr4737/hpr4737.mp3
 6. Tap play. Leave it playing for two minutes with the app open. It takes that long because the app saves fingerprints of a streaming episode only after about 70 seconds of playing.
 7. Drag the scrubber back to about 1:00. Let it play for 15 seconds.
 8. Record a Margin. Tap the record button on the mini player, or **Add a Margin** on Now Playing. Say one short sentence. Tap **Save & resume**.
-9. Open the **Margins** tab. Find "hpr4737" and tap **Share** next to its name. The **Share Margins** sheet opens. Tap **Review 1**, at the bottom. If it asks "Clean selected Margins automatically?", tap **Not now**. Tap **Share 1**.
+9. Open the **Margins** tab. Find "hpr4737" and tap **Share** next to its name. The **Share Margins** sheet opens. Tap **Review 1**, at the bottom. If it asks "Remove ums and long pauses?", tap **Not now**. Tap **Share 1**.
 
 **You should see:** the iOS share sheet opens. Cancel it. That is the pass for #536.
 
@@ -210,8 +210,8 @@ Dee, the article, `kit-4-article.spokenmargins`:
 ## If something goes wrong
 
 1. In Spoken Margins, tap the **Settings** tab at the bottom right.
-2. Scroll to **Help & Privacy**. Tap **Share Diagnostics**.
-3. Send the file in the project thread and say which step it was. The file holds the titles and links of items in your Library, but no audio.
+2. Tap **Share Diagnostics**, the first row under **Help & Diagnostics**.
+3. Send the file in the project thread and say which step it was. Links and file paths in it are replaced with placeholders, and episodes, articles and PDFs in your Library appear as codes, not by their titles. It holds no Margin text, recordings or audio.
 
 ## Not covered
 

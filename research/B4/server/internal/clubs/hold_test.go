@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"spokenmargins.dev/bridge/internal/links"
 )
@@ -238,14 +239,25 @@ func TestTheYearEndsTheHoldAndTheOwnerCanEndItEarly(t *testing.T) {
 		}
 	}
 	// A crashed hold leaves a temp folder; it goes once an hour old.
+	// A hold in progress is one too, minutes old: it holds evidence and must stay (#4318).
+	sweepAt := t0.AddDate(0, 11, 0)
 	crashed := filepath.Join(s.heldDir(), ".hold-crash")
-	os.MkdirAll(filepath.Join(crashed, "posts"), 0o700)
-	os.WriteFile(filepath.Join(crashed, "reported-link"), inviteFor(a), 0o600)
-	if n, err := s.SweepHeld(t0.AddDate(0, 11, 0)); err != nil || n != 0 {
+	active := filepath.Join(s.heldDir(), ".hold-active")
+	for folder, age := range map[string]time.Duration{crashed: 2 * time.Hour, active: 10 * time.Minute} {
+		os.MkdirAll(filepath.Join(folder, "posts"), 0o700)
+		os.WriteFile(filepath.Join(folder, "reported-link"), inviteFor(a), 0o600)
+		if err := os.Chtimes(folder, sweepAt.Add(-age), sweepAt.Add(-age)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := s.SweepHeld(sweepAt); err != nil || n != 0 {
 		t.Fatalf("sweep at eleven months: %d %v", n, err)
 	}
 	if _, err := os.Stat(crashed); err == nil {
 		t.Error("the crashed hold's copy was kept")
+	}
+	if _, err := os.Stat(active); err != nil {
+		t.Error("a hold copy ten minutes old, still being written, was swept")
 	}
 	if err := s.ReleaseHeld(a.id, "", t0); !errors.Is(err, ErrNoReason) {
 		t.Errorf("release with no reason: %v", err)

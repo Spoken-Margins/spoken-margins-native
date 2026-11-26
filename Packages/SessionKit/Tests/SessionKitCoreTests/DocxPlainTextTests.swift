@@ -41,6 +41,29 @@ final class DocxPlainTextTests: XCTestCase {
         XCTAssertEqual(transcript.absoluteStart, ISO8601DateFormatter().date(from: "2026-03-04T10:00:00Z"))
     }
 
+    func testDocxReadFromDataMatchesTheSameFileFromItsURL() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "docx-data-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appending(path: "transcript.docx")
+        let archive = try Archive(url: url, accessMode: .create)
+        let xml = documentXML(["Budget sync", "Alice Example\t0 minutes 3 seconds", "Welcome, Zoë.", "", "Ben Sample\t1 hour 2 minutes 3 seconds", "Thanks."])
+        try archive.addEntry(with: "word/document.xml", type: .file, uncompressedSize: Int64(xml.count)) { position, size in
+            xml.subdata(in: Int(position)..<Int(position) + size)
+        }
+        let fromURL = try DocxPlainText.text(from: url)
+        let fromData = try DocxPlainText.text(from: try Data(contentsOf: url))
+        XCTAssertEqual(fromData, fromURL)
+        XCTAssertTrue(fromData.contains("Welcome, Zoë."))
+    }
+
+    func testNonDocxDataAndATruncatedDocxFail() throws {
+        XCTAssertThrowsError(try DocxPlainText.text(from: Data("hello".utf8))) { XCTAssertEqual($0 as? DocxPlainText.Failure, .notADocx) }
+        XCTAssertThrowsError(try DocxPlainText.text(from: Data())) { XCTAssertEqual($0 as? DocxPlainText.Failure, .notADocx) }
+        let zipHeaderOnly = Data([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00])
+        XCTAssertThrowsError(try DocxPlainText.text(from: zipHeaderOnly)) { XCTAssertEqual($0 as? DocxPlainText.Failure, .notADocx) }
+    }
+
     func testNonDocxFails() throws {
         let url = FileManager.default.temporaryDirectory.appending(path: "not-\(UUID().uuidString).docx")
         try Data("hello".utf8).write(to: url)

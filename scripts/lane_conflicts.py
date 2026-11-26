@@ -9,7 +9,18 @@ in a throwaway worktree. A clean merge changes nothing. A conflict
 
 1. posts one comment per head/base pair, naming the files, in the Mac finisher's hand-off format;
 2. adds `needs-mac`, and removes `lane:queued` and `automerge`, so nothing re-queues it;
-3. cancels the PR's lane.yml runs whose Mac job has not started, so the queued slot is freed too.
+3. cancels the PR's lane.yml runs whose Mac job has not started, so the queued slot is freed too;
+4. takes it out of GitHub's merge queue (#5302). A queued PR can't be pushed to ("Branches that are queued for
+   merging cannot be updated"), so the finisher could not push the fix, and a label removed with this job's
+   GITHUB_TOKEN wakes no merge-queue-label-bridge run to dequeue it (#5276 sat queued 5 hours). So when GitHub says
+   the PR is queued or set to auto-merge, this dispatches merge-queue-label-bridge.yml for that one PR; the bridge
+   runs as the App, and takes a `needs-mac` PR with no arming label out. A PR that is not queued gets no dispatch.
+
+A second case (#4538): git merges the PR cleanly but GitHub reports it as not mergeable (`mergeable: false`, state
+`dirty`; seen with a history that has more than one merge base). GitHub builds no merge ref for such a PR and so
+starts no `pull_request` workflow for it: removing and re-adding `automerge` does nothing, and the PR sits armed
+and silent. The sweep treats it as a hand-off of its own, with a comment that says to merge the base into the
+branch, unless a lane run for that head, its own or one dispatched for it, is already waiting or running.
 
 It never pushes to a branch and never force-pushes. Any doubt (a fetch or merge error, a head that moved since
 the PR list, an API failure) changes nothing: the Mac's own merge check (lane-runner.py) still catches it.
@@ -58,6 +69,12 @@ class GitHubApi:
 
     def delete(self, path):
         self._run(['-X', 'DELETE', f'repos/{self.repo}/{path}'])
+
+    def graphql(self, query, **variables):
+        args = ['graphql', '-f', f'query={query}']
+        for key, value in variables.items():
+            args += ['-F' if isinstance(value, int) else '-f', f'{key}={value}']
+        return json.loads(self._run(args))
 
 
 def git(cwd, *args, check=True, auth=None, timeout=300):
@@ -141,8 +158,11 @@ def conflicts_with(workdir, base_sha, head_sha):
         git(workdir, 'worktree', 'prune', check=False)
 
 
-def marker(head, base_sha):
-    return f'<!-- lane-conflict head={head[:7]} base={base_sha[:7]} -->'
+def marker(head, base_sha, kind='conflict'):
+    """One comment per head/base pair and kind. `conflict` is git's; `no-merge-ref` is GitHub's alone (#4538)."""
+    if kind == 'conflict':
+        return f'<!-- lane-conflict head={head[:7]} base={base_sha[:7]} -->'
+    return f'<!-- lane-conflict-{kind} head={head[:7]} base={base_sha[:7]} -->'
 
 
 def comment_body(pr_base, base_sha, head, files):
@@ -156,6 +176,53 @@ def comment_body(pr_base, base_sha, head, files):
             f'Hosted conflict check (#683): `lane:queued` and `automerge` were removed and this PR\'s queued lane '
             f'runs cancelled, so the Mac spends no slot on it. Nothing was pushed to the branch.\n'
             f'{marker(head, base_sha)}')
+
+
+def no_merge_ref_body(pr_base, base_sha, head):
+    return (f'{HANDOFF} GitHub reports this PR as not mergeable into `{pr_base}` (`{base_sha[:7]}`) at its head '
+            f'`{head[:7]}`, although git merges it cleanly (usually a history with more than one merge base). '
+            f'GitHub builds no merge ref for it, so it starts no lane run when a label is added or removed: '
+            f'`automerge` and `lane:queued` would do nothing.\n\n'
+            f'Done when: `{pr_base}` is merged into the branch (no force-push) and pushed, so GitHub can merge it '
+            f'again. Then add `automerge` again (and a `/lane` request with `lane:queued` if the diff needs one).\n\n'
+            f'Hosted conflict check (#4538): `lane:queued` and `automerge` were removed so the PR does not look '
+            f'armed while nothing can run. Nothing was pushed to the branch.\n'
+            f'{marker(head, base_sha, "no-merge-ref")}')
+
+
+def live_lane_runs(api):
+    """Queued or running lane.yml runs of both kinds: a PR's own, and the ones dispatched for it (release hand-off, audit).
+
+    `lane_dedupe.active_runs` sees only `pull_request` runs, on purpose; a PR GitHub can't merge gets its run by
+    `workflow_dispatch`, and that run must not lose its label under it. More than a page, or an API error, raises.
+    """
+    import lane_dedupe
+    runs = dict(lane_dedupe.active_runs(api))
+    for status in lane_dedupe.ACTIVE:
+        page = api.get(f'actions/workflows/lane.yml/runs?event=workflow_dispatch&status={status}&per_page=100')
+        if page['total_count'] > len(page['workflow_runs']):
+            raise ValueError(f'more than one page of dispatched {status} runs')
+        for found in page['workflow_runs']:
+            runs[found['id']] = found
+    return runs
+
+
+def github_cannot_merge(api, pr, head):
+    """True when GitHub says the PR can't be merged (`mergeable: false`) and no lane run for this head is live.
+
+    `mergeable` is null while GitHub works it out; null, and any doubt, is not a yes. A live run for the head
+    means the PR got its run before GitHub's state changed, so it is left to finish.
+    """
+    import lane_dedupe
+    current = api.get(f'pulls/{pr}')
+    if (current.get('state') != 'open' or current['head']['sha'] != head or current.get('mergeable') is not False
+            or current.get('mergeable_state') not in (None, 'dirty')):
+        return False
+    for found in live_lane_runs(api).values():
+        info = lane_dedupe.parse_run_name(found.get('display_title'))
+        if info and info['pr'] == pr and info['head'] == head:
+            return False
+    return True
 
 
 def cancel_queued_runs(api, pr, head):
@@ -173,6 +240,36 @@ def cancel_queued_runs(api, pr, head):
     return cancelled
 
 
+QUEUE_STATE = '''query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) { autoMergeRequest { enabledAt } mergeQueueEntry { id } } }
+}'''
+BRIDGE = 'merge-queue-label-bridge.yml'
+
+
+def set_to_merge(api, pr):
+    """True when GitHub has the PR in the merge queue or set to auto-merge; None when that can't be read."""
+    owner, name = api.repo.split('/', 1)
+    try:
+        found = api.graphql(QUEUE_STATE, owner=owner, name=name, number=int(pr))['data']['repository']['pullRequest']
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return None
+    return bool(found and (found.get('autoMergeRequest') or found.get('mergeQueueEntry')))
+
+
+def release_queue(api, pr, trunk, log=print):
+    """Ask the label bridge to take a handed-off PR out of the merge queue (#5302). Returns what was done.
+
+    Only a PR GitHub has queued or set to merge gets the dispatch. When that can't be read the dispatch goes anyway:
+    the bridge reads the PR itself and does nothing to one that isn't set to merge. The dispatch is on the trunk,
+    the only ref the bridge's `agent-identity` environment admits.
+    """
+    state = set_to_merge(api, pr)
+    if state is False:
+        return []
+    api.post(f'actions/workflows/{BRIDGE}/dispatches', {'ref': trunk, 'inputs[pr]': str(pr)})
+    return ['asked the merge-queue bridge to dequeue' + (' (queue state unread)' if state is None else '')]
+
+
 def remove_label(api, pr, name):
     """Remove a label; one that is already gone (404) counts as removed. Returns True when it is gone."""
     try:
@@ -183,7 +280,7 @@ def remove_label(api, pr, name):
     return True
 
 
-def act_on_conflict(api, pr, base, base_sha, head, files, log=print):
+def act_on_conflict(api, pr, base, base_sha, head, files, log=print, kind='conflict'):
     """Comment once, move the labels, then cancel queued runs. Returns what was done.
 
     The queued runs are cancelled only after both lane labels are off the PR: a PR that kept its labels but lost
@@ -199,9 +296,21 @@ def act_on_conflict(api, pr, base, base_sha, head, files, log=print):
         if not labels & set(ARMED):
             log(f'#{pr}: no longer armed; nothing changed.')
             return done
-        if not any(marker(head, base_sha) in (c.get('body') or '') for c in api.get_all(f'issues/{pr}/comments?per_page=100')):
-            api.post(f'issues/{pr}/comments', {'body': comment_body(base, base_sha, head, files)})
+        if kind != 'conflict' and current.get('mergeable') is not False:
+            # The sweep's git merge takes minutes with many PRs; GitHub may have settled since (#4538 review).
+            log(f'#{pr}: GitHub no longer reports it as not mergeable; nothing changed.')
+            return done
+        already = any(marker(head, base_sha, kind) in (c.get('body') or '') for c in api.get_all(f'issues/{pr}/comments?per_page=100'))
+        if not already:
+            body = comment_body(base, base_sha, head, files) if kind == 'conflict' else no_merge_ref_body(base, base_sha, head)
+            api.post(f'issues/{pr}/comments', {'body': body})
             done.append('comment')
+        elif kind != 'conflict':
+            # Re-armed at the same head and base: say why it came off again rather than do it silently.
+            api.post(f'issues/{pr}/comments', {'body': (
+                f'{HANDOFF} still not mergeable on GitHub at `{head[:7]}`, so no run can start; `automerge` and '
+                f'`lane:queued` came off again. Merge `{base}` into the branch and push, then arm it.')})
+            done.append('comment (re-armed)')
         # The labels that start a Mac job go first; needs-mac is the hand-off and goes on last.
         for name in REMOVE:
             if name in labels and remove_label(api, pr, name):
@@ -212,6 +321,8 @@ def act_on_conflict(api, pr, base, base_sha, head, files, log=print):
         cancelled = cancel_queued_runs(api, pr, head)
         if cancelled:
             done.append('cancelled ' + ', '.join(str(run) for run in cancelled))
+        # Last: the bridge takes out only a PR that already carries `needs-mac` and no arming label.
+        done += release_queue(api, pr, ((current.get('base') or {}).get('repo') or {}).get('default_branch') or 'main', log)
     except (ImportError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         log(f'::warning::#{pr}: the conflict hand-off stopped ({describe(error)}); the Mac check still catches it.')
     return done
@@ -231,7 +342,7 @@ def armed_pulls(api, base, only=None):
 
 
 def sweep(api, remote, base, workdir, token=None, only=None, log=print):
-    """Check every armed PR. Returns {pr: [files]} for the PRs that conflicted."""
+    """Check every armed PR. Returns {pr: [files]} for the PRs that conflicted; [] for a PR git merges but GitHub can't."""
     pulls = armed_pulls(api, base, only)
     if not pulls:
         log('No armed PRs into ' + base + '.')
@@ -251,7 +362,17 @@ def sweep(api, remote, base, workdir, token=None, only=None, log=print):
             log(f'::warning::#{pr}: could not check ({describe(error)}); the Mac check still catches it.')
             continue
         if not files:
-            log(f'#{pr}: merges cleanly into {base} ({base_sha[:7]}).')
+            try:
+                blind = github_cannot_merge(api, pr, head)
+            except (ImportError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+                log(f'::warning::#{pr}: could not read GitHub\'s mergeable state ({describe(error)}); left as is.')
+                blind = False
+            if not blind:
+                log(f'#{pr}: merges cleanly into {base} ({base_sha[:7]}).')
+                continue
+            log(f'#{pr}: merges cleanly by git, but GitHub reports it as not mergeable, so no label event can start a run.')
+            found[pr] = []
+            log(f'#{pr}: ' + (', '.join(act_on_conflict(api, pr, base, base_sha, head, [], log, kind='no-merge-ref')) or 'nothing changed'))
             continue
         log(f'#{pr}: CONFLICT with {base} ({base_sha[:7]}): {", ".join(files[:10])}')
         found[pr] = files

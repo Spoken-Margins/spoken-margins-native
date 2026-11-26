@@ -26,6 +26,13 @@ public enum DiagnosticsExport {
         public var sessionPhase: String
         public var targetType: String?
         public var pendingAIJobs: Int
+        /// `PresentationLedger.summaryText`: how many sheets and covers were built again while open (#4337).
+        public var screenRebuilds: String
+        /// `DiskWriteLedger.summaryText`: bytes the app wrote, by source and day (#4389).
+        public var diskWritesBySource: String
+        /// How many followed shows sit in two or more lists (#4046). Only a count, no names. `nil` (the lists couldn't be
+        /// read) leaves the key out.
+        public var listsShowsInTwoOrMore: Int?
 
         public init(
             developerBuild: String,
@@ -35,7 +42,10 @@ public enum DiagnosticsExport {
             playbackStatus: String,
             sessionPhase: String,
             targetType: String?,
-            pendingAIJobs: Int
+            pendingAIJobs: Int,
+            screenRebuilds: String = PresentationLedger().summaryText,
+            diskWritesBySource: String = DiskWriteLedger().summaryText,
+            listsShowsInTwoOrMore: Int? = nil
         ) {
             self.developerBuild = developerBuild
             self.developerRecording = developerRecording
@@ -45,6 +55,9 @@ public enum DiagnosticsExport {
             self.sessionPhase = sessionPhase
             self.targetType = targetType
             self.pendingAIJobs = pendingAIJobs
+            self.screenRebuilds = screenRebuilds
+            self.diskWritesBySource = diskWritesBySource
+            self.listsShowsInTwoOrMore = listsShowsInTwoOrMore
         }
     }
 
@@ -211,6 +224,12 @@ public enum DiagnosticsExport {
         safe["sessionPhase"] = fixed.sessionPhase
         safe["targetType"] = fixed.targetType ?? "none"
         safe["pendingAIJobs"] = "\(fixed.pendingAIJobs)"
+        // Places in the app's own source and counts, so nothing the listener chose; set last so no live entry stands in for it (#4337).
+        safe["screenRebuilds"] = fixed.screenRebuilds
+        // Source names, UTC days and megabytes, so nothing the listener chose; set last so no live entry stands in for it (#4389).
+        safe["diskWritesBySource"] = fixed.diskWritesBySource
+        // A count of shows in two or more lists, nothing the listener typed; set last so no live entry stands in for it (#4046).
+        safe["lists.showsInTwoOrMore"] = fixed.listsShowsInTwoOrMore.map(String.init)
         return safe
     }
 

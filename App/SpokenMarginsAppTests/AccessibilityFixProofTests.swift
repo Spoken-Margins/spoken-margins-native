@@ -153,26 +153,6 @@ final class AccessibilityFixProofTests: XCTestCase {
 
     // MARK: - #3723 share-review button rows stack at accessibility sizes
 
-    /// The batch-preparation card's progress line and its Cancel button share one row. Side by side by default, the
-    /// button sits under the words at accessibility sizes (the other rows of #3723 use the same `AdaptiveStack`).
-    func testBatchPreparationCancelSitsUnderItsProgressAtAccessibilitySizes() async throws {
-        for (size, stacked) in [(DynamicTypeSize.large, false), (.accessibility5, true)] {
-            let mounted = try mount(AnyView(Build23BatchPreparationCard(
-                isPreparing: true, completed: 1, total: 3, failures: 0, canPrepare: false, onPrepare: {}, onCancel: {})),
-                textSize: size)
-            defer { mounted.close() }
-            let progress = try await mounted.waitForNode("the progress line") { $0.label?.contains("1 of 3 prepared") == true }
-            let cancel = try await mounted.waitForNode("the Cancel button") {
-                $0.identifier == "build23.sender.preparation.cancel" || $0.label == "Cancel preparation"
-            }
-            if stacked {
-                XCTAssertGreaterThanOrEqual(cancel.frame.minY, progress.frame.maxY - 1, "\(size): Cancel is beside the progress line, not under it")
-            } else {
-                XCTAssertGreaterThanOrEqual(cancel.frame.minX, progress.frame.maxX - 1, "\(size): Cancel is not beside the progress line")
-            }
-        }
-    }
-
     /// The Library's Live row: a session that can be resumed shows its line and a Resume button. Side by side by default,
     /// the button sits under the line at accessibility sizes, so the title keeps the whole row's width (#3723 item 1).
     func testTheLiveRowsResumeButtonSitsUnderItsLineAtAccessibilitySizes() async throws {
@@ -286,7 +266,7 @@ final class AccessibilityFixProofTests: XCTestCase {
 
     private func inboxRowHeight(title: String, textSize: DynamicTypeSize) -> CGFloat {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
-        model.quickAccess.recentFiles = []
+        model.quickAccess.followingPool = []
         model.libraryItems = []
         model.feedSubscriptions = []
         model.followedSourceEntries = [FeedEntry(id: "episode", subscriptionId: "show", canonicalURL: "https://example.com/e/1",
@@ -450,6 +430,8 @@ struct AccessibilityNode {
     let identifier: String?
     let traits: UIAccessibilityTraits
     let frame: CGRect
+    /// What Voice Control matches a spoken name against (#4312).
+    let inputLabels: [String]
 }
 
 @MainActor
@@ -493,14 +475,24 @@ struct MountedTree {
 
     private struct NodeNotFound: Error {}
 
-    private static func collect(_ node: NSObject, into found: inout [AccessibilityNode], visited: inout Set<ObjectIdentifier>) {
-        guard visited.insert(ObjectIdentifier(node)).inserted else { return }
-        let identifier = Self.identifier(of: node)
-        let label = node.accessibilityLabel
-        if label?.isEmpty == false || identifier?.isEmpty == false {
-            found.append(AccessibilityNode(label: label, identifier: identifier, traits: node.accessibilityTraits,
-                                           frame: node.accessibilityFrame))
-        }
+    /// Activates the first node `matches` picks, as a VoiceOver double tap does. False when none matched or the element
+    /// refused the activation.
+    func activate(_ matches: (AccessibilityNode) -> Bool) -> Bool {
+        window.layoutIfNeeded()
+        var visited = Set<ObjectIdentifier>()
+        guard let element = Self.firstElement(in: window, matching: matches, visited: &visited) else { return false }
+        return element.accessibilityActivate()
+    }
+
+    private static func node(for element: NSObject) -> AccessibilityNode? {
+        let identifier = Self.identifier(of: element)
+        let label = element.accessibilityLabel
+        guard label?.isEmpty == false || identifier?.isEmpty == false else { return nil }
+        return AccessibilityNode(label: label, identifier: identifier, traits: element.accessibilityTraits,
+                                 frame: element.accessibilityFrame, inputLabels: element.accessibilityUserInputLabels ?? [])
+    }
+
+    private static func children(of node: NSObject) -> [NSObject] {
         var children: [NSObject] = []
         if let view = node as? UIView { children += view.subviews }
         children += (node.accessibilityElements ?? []).compactMap { $0 as? NSObject }
@@ -508,7 +500,23 @@ struct MountedTree {
         if count != NSNotFound, count > 0 {
             children += (0..<count).compactMap { node.accessibilityElement(at: $0) as? NSObject }
         }
-        for child in children { collect(child, into: &found, visited: &visited) }
+        return children
+    }
+
+    private static func collect(_ node: NSObject, into found: inout [AccessibilityNode], visited: inout Set<ObjectIdentifier>) {
+        guard visited.insert(ObjectIdentifier(node)).inserted else { return }
+        if let described = Self.node(for: node) { found.append(described) }
+        for child in children(of: node) { collect(child, into: &found, visited: &visited) }
+    }
+
+    private static func firstElement(in node: NSObject, matching matches: (AccessibilityNode) -> Bool,
+                                     visited: inout Set<ObjectIdentifier>) -> NSObject? {
+        guard visited.insert(ObjectIdentifier(node)).inserted else { return nil }
+        if let described = Self.node(for: node), matches(described) { return node }
+        for child in children(of: node) {
+            if let found = firstElement(in: child, matching: matches, visited: &visited) { return found }
+        }
+        return nil
     }
 
     /// SwiftUI's vended elements answer `accessibilityIdentifier` without declaring `UIAccessibilityIdentification`,

@@ -3,6 +3,7 @@
 // "Back up all Margins" saves a file this web app and the iPhone app open.
 import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
+import { packetsInBackup } from '../src/app/logic/backup.ts';
 import { readPacket } from '../src/packet/read.ts';
 import { FEED_ORIGIN, SHOTS_DIR, seconds, serveFixtures, shot } from './fixtures.ts';
 
@@ -111,7 +112,7 @@ test('a write the browser refuses is named, keeps the words, and is never a sile
   await shot(page, info, '31-settings-storage-note');
 });
 
-test('Back up all Margins saves one file that opens here and in a fresh browser, and says when', async ({ page, browser, baseURL }, info) => {
+test('Back up all Margins saves one .zip that opens here and in a fresh browser, and says when', async ({ page, browser, baseURL }, info) => {
   const nowPlaying = await followAndPlay(page);
   await nowPlaying.getByRole('button', { name: 'Write a Margin' }).click();
   await nowPlaying.getByLabel(/Your Margin at/).fill('Back me up.');
@@ -134,8 +135,8 @@ test('Back up all Margins saves one file that opens here and in a fresh browser,
   await page.getByRole('button', { name: 'Back up all Margins' }).click();
   const download = await downloading;
   const fileName = download.suggestedFilename();
-  // One episode, so the backup is its one packet.
-  expect(fileName).toMatch(/\.spokenmargins$/);
+  // Always a .zip, even for one episode: it is how a restored backup is told from a friend's packet (#4226).
+  expect(fileName).toMatch(/\.zip$/);
   const filePath = `${SHOTS_DIR}/storage-${fileName}`;
   await download.saveAs(filePath);
   await expect(page.getByRole('status')).toContainText(`Backed up 2 Margins from 1 episode as ${fileName}.`);
@@ -144,7 +145,9 @@ test('Back up all Margins saves one file that opens here and in a fresh browser,
 
   // What's in it: the episode's packet, which the packet reader (the iPhone app's rules) opens, with the voice
   // Margin's audio and the placeholder words the listener saw.
-  const packet = await readPacket(new Uint8Array(readFileSync(filePath)));
+  const inBackup = await packetsInBackup(new Uint8Array(readFileSync(filePath)));
+  expect(inBackup).toHaveLength(1);
+  const packet = await readPacket(inBackup[0]!.bytes);
   expect(packet.episode.title).toBe(EPISODE_3);
   expect(packet.margins.map((m) => m.text).sort()).toEqual(['Back me up.', placeholder].sort());
   expect(packet.margins.find((m) => m.text === placeholder)?.voice).toBeTruthy();
@@ -165,6 +168,13 @@ test('Back up all Margins saves one file that opens here and in a fresh browser,
   await expect(freshPage.getByText(new RegExp(`Opened 2 Margins .*${EPISODE_3}`))).toBeVisible();
   await freshPage.getByRole('dialog', { name: EPISODE_3 }).getByRole('button', { name: 'Close Now Playing' }).click();
   await expect(freshPage.getByRole('button', { name: /Back me up\./ })).toBeVisible();
+  // The listener's own Margin, not a friend's (#4226): no "Your friend" on its row, and it has the star only the
+  // listener's own Margins get.
+  await tab(freshPage, 'Margins');
+  const restored = freshPage.locator('li.margin').filter({ hasText: 'Back me up.' });
+  await expect(restored).toHaveCount(1);
+  await expect(restored).not.toContainText('Your friend');
+  await expect(restored.getByRole('button', { name: 'Star for sharing' })).toBeVisible();
   await shot(freshPage, info, '33-restored');
   await fresh.close();
 });

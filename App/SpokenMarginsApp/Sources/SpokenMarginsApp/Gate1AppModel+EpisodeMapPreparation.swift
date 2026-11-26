@@ -185,7 +185,8 @@ extension Gate1AppModel {
                 byteCount: bytes,
                 isReproducible: true
             )
-            try await ledger.commit(reservationId: reservation.id, asset: asset)
+            // Only while the item still has a row (#4227); a permanent delete asked during the render leaves nothing.
+            guard try await ledger.commitIfItemExists(reservationId: reservation.id, asset: asset) else { return nil }
             return asset
         } catch {
             try? await ledger.release(reservationId: reservation.id)
@@ -324,10 +325,6 @@ extension Gate1AppModel: EpisodeMapPreparerHost {
 
     func episodeMapDeviceConditions() -> SpeechEngineConditions {
         preparationSeams.deviceConditions()
-    }
-
-    func episodeMapTranscribed(itemId: String, timeline: TranscriptTimeline, store: SQLiteSessionStore) {
-        CommunityMapUploadService.shared.episodeTranscribed(itemId: itemId, timeline: timeline, store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 }
     }
 
     func episodeMapWarn(_ message: String) {

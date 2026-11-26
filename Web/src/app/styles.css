@@ -272,6 +272,71 @@ button:disabled {
   border-top: 1px solid var(--rule);
 }
 
+.rows > li.show-episode {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.show-episode .row {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.library-state {
+  flex: none;
+  white-space: nowrap;
+}
+
+.library-add {
+  flex: none;
+}
+
+.show-episode > .icon-button {
+  flex: none;
+  margin-right: -10px;
+}
+
+/* A show's Dismissed episodes (#4426): a full-width disclosure at the foot of its list, like a Margins group's title. */
+.dismissed-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 0 10px;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+/* What the one-time move left on Following (#4425): a card in the page flow, no timer, so nobody reads it against a clock. */
+.library-notice {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--panel-radius);
+}
+
+.library-notice p {
+  margin: 0;
+}
+
+.library-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -546,6 +611,11 @@ button:disabled {
   background: var(--surface);
   border-radius: 4px var(--panel-radius) var(--panel-radius) 4px;
   box-shadow: inset 0 0 0 1px var(--rule);
+}
+
+/* A reply listed under the Margin it answers on the Margins screen (#4174): one step in. */
+.margin.is-reply {
+  margin-left: 20px;
 }
 
 .margin::before {
@@ -1328,7 +1398,7 @@ button:disabled {
   padding-top: 6px;
 }
 
-/* "Send replies to <friend>": the listener's Margins to pick from (#2168). */
+/* "Share replies with <friend>": the listener's Margins to pick from (#2168). */
 .reply-back {
   margin: 0;
   padding: 0;
@@ -1384,6 +1454,34 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+/* The one invitation to the iPhone app after the first reply (#4671): a status-blue edge, with a heading and a × so the
+   words carry it, never the colour alone. */
+.app-invite {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 2px solid var(--status);
+  border-radius: var(--panel-radius);
+  background: var(--status-soft);
+  color: var(--ink);
+}
+
+.app-invite-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.app-invite h3,
+.app-invite p {
+  margin: 0;
+}
+
+.app-invite .button {
+  justify-self: start;
 }
 
 /* A `.spokenmargins` file dragged over the app. Pointer events stay on, so the drop lands here. */
@@ -1555,6 +1653,22 @@ button:disabled {
 }
 
 .toast-close {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -10px -8px -10px 4px;
+  border-radius: 10px;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+/* An info toast with a button (Undo) takes taps, so the listener can reach it. */
+.toast-with-action {
+  pointer-events: auto;
+  align-items: center;
+}
+
+.toast-action {
   flex: none;
   min-width: 44px;
   min-height: 44px;
@@ -1827,4 +1941,729 @@ body:not(:has(.mini-player)) .toasts {
   min-height: 44px;
   line-height: 44px;
   color: var(--tint);
+}
+
+/* ---------- Search (one box on every tab: #4422, #4018) ---------- */
+
+.search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+  padding: 0 0 12px;
+}
+
+.search-label {
+  font-weight: 650;
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 4px 0 12px;
+  border: 1px solid var(--field);
+  border-radius: var(--control-radius);
+  background: var(--surface);
+}
+
+.search-box:focus-within {
+  outline: 2px solid var(--tint);
+  outline-offset: 2px;
+}
+
+.search-icon {
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.search-box input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.search-clear {
+  flex: none;
+}
+
+/* The browser's own clear button would be a second ×; the field has one of its own. */
+.search-box input::-webkit-search-cancel-button,
+.search-box input::-webkit-search-decoration {
+  display: none;
+  -webkit-appearance: none;
+}
+
+.empty {
+  overflow-wrap: anywhere;
+}
+
+/* A Margins group's title folds its Margins away (#4423). */
+.margin-group-header {
+  display: block;
+  padding: 0;
+}
+
+.margin-group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 0 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.margin-group-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.margin-group-chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--muted);
+  transition: transform 120ms ease;
+}
+
+.margin-group-chevron.is-open {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .margin-group-chevron {
+    transition: none;
+  }
+}
+
+.margin-list[hidden] {
+  display: none;
+}
+
+/* ---------- The Margins tab and the arrival preview (owner's prototype v3, part of #3216) ----------
+   The iPhone's listening screen is a fixed dark green plate in both appearances (listeningBackground and listeningAccent
+   in ExperienceColorContrast.swift are `fixed`), so these screens are too. Unheard is Okabe-Ito sky blue, marked by a bar,
+   a dot and a spoken "Unheard", never by weight or size; heard is greyed with a check and "Heard". */
+.np-on-margins,
+.arrival-preview {
+  --listening-bg: #173a2f;
+  --listening-accent: #dbed8d;
+  --listening-secondary: #b0bfb3;
+  --star: #ffd14d;
+  --unheard: #56b4e9;
+  --tray: rgb(255 255 255 / 0.06);
+  --listening-rule: rgb(255 255 255 / 0.16);
+  background: var(--listening-bg);
+  color: #fff;
+}
+
+.np-on-margins .np-header-label,
+.np-on-margins .row-kicker {
+  color: var(--listening-secondary);
+}
+
+.np-on-margins .np-header .icon-button {
+  color: #fff;
+}
+
+.np-on-margins :focus-visible,
+.arrival-preview :focus-visible {
+  outline: 2px solid var(--listening-accent);
+  outline-offset: 2px;
+}
+
+/* Room for the dock (and the Next Margin pill) that sits over the bottom of both tabs. */
+.now-playing {
+  padding-bottom: calc(var(--np-dock-h, 76px) + 56px + env(safe-area-inset-bottom));
+}
+
+.np-on-margins {
+  --np-dock-h: 124px;
+}
+
+.np-body-margins {
+  gap: 10px;
+}
+
+.np-title-compact {
+  font-size: 1.25rem;
+}
+
+.np-dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 31;
+  display: grid;
+  gap: 4px;
+  padding: 6px var(--gutter) calc(8px + env(safe-area-inset-bottom));
+  background: var(--page);
+  border-top: 1px solid var(--rule);
+}
+
+.np-on-margins .np-dock {
+  background: var(--listening-bg);
+  border-top-color: rgb(255 255 255 / 0.18);
+}
+
+.np-tabs {
+  display: flex;
+  gap: 4px;
+  max-width: 560px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--tint-soft);
+}
+
+.np-on-margins .np-tabs {
+  background: var(--tray);
+}
+
+.np-tabs button {
+  flex: 1;
+  min-height: 44px;
+  border-radius: 10px;
+  font-weight: 650;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: inherit;
+}
+
+.np-tabs button[aria-selected='true'] {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+
+.np-on-margins .np-tabs button[aria-selected='true'] {
+  background: rgb(255 255 255 / 0.18);
+  box-shadow: none;
+}
+
+.np-tab-count {
+  min-width: 22px;
+  padding: 0 6px;
+  border-radius: 11px;
+  background: var(--status);
+  color: #fff;
+  font-size: 0.8125rem;
+  line-height: 22px;
+}
+
+.np-on-margins .np-tab-count {
+  background: var(--unheard);
+  color: #0b1f2b;
+}
+
+.mc-dock-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 560px;
+  width: 100%;
+  margin: 0 auto;
+  min-height: 44px;
+}
+
+.mc-dock-time {
+  color: var(--listening-secondary);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-dock-play {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--listening-accent);
+  color: #141a14;
+}
+
+/* Next Margin: a small pill floating just above the dock, on whichever tab shows. */
+.mc-next {
+  position: absolute;
+  right: var(--gutter);
+  bottom: calc(100% + 10px);
+  min-height: 44px;
+  padding: 0 14px 0 10px;
+  border-radius: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 650;
+  background: rgb(46 61 54 / 0.94);
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.22), 0 4px 14px rgb(0 0 0 / 0.35);
+  backdrop-filter: blur(8px);
+}
+
+.mc-next .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.mc-next-clock {
+  font-variant-numeric: tabular-nums;
+  color: #dbed8d;
+}
+
+/* The list: filters and Autoplay on one line, then threads. */
+.mc-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.mc-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.mc-filter {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--tray);
+}
+
+.mc-filter button {
+  min-height: 36px;
+  padding: 0 11px;
+  border-radius: 10px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #fff;
+}
+
+.mc-filter button[aria-pressed='true'] {
+  background: rgb(255 255 255 / 0.4);
+}
+
+.mc-filter .icon,
+.mc-menu .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.mc-autoplay {
+  position: relative;
+  margin-left: auto;
+}
+
+.mc-autoplay-button {
+  min-height: 44px;
+  padding: 0 2px 0 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8125rem;
+  color: var(--listening-secondary);
+  white-space: nowrap;
+}
+
+.mc-autoplay-button b {
+  color: #fff;
+  font-weight: 600;
+}
+
+.mc-autoplay-button .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.mc-menu {
+  position: absolute;
+  right: 0;
+  top: 44px;
+  z-index: 20;
+  min-width: 220px;
+  padding: 6px 0;
+  border-radius: 13px;
+  background: #2a3a33;
+  color: #fff;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+}
+
+.mc-menu-title {
+  margin: 0;
+  padding: 6px 16px 4px;
+  font-size: 0.8125rem;
+  color: var(--listening-secondary);
+}
+
+.mc-menu button {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  font-size: 1.0625rem;
+  text-align: left;
+  color: #fff;
+}
+
+.mc-menu-check {
+  display: inline-grid;
+  width: 18px;
+  color: var(--listening-accent);
+}
+
+.mc-empty {
+  color: var(--listening-secondary);
+  text-align: center;
+  padding: 32px 0;
+  margin: 0;
+}
+
+.mc-thread {
+  border-bottom: 1px solid var(--listening-rule);
+  padding: 4px 0 6px;
+}
+
+.mc-row {
+  position: relative;
+  padding: 10px 0 8px 14px;
+  border-radius: 10px;
+}
+
+.mc-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 2px;
+  background: transparent;
+}
+
+.mc-unheard::before {
+  background: var(--unheard);
+}
+
+.mc-playing {
+  background: rgb(219 237 141 / 0.1);
+  box-shadow: inset 0 0 0 1px rgb(219 237 141 / 0.55);
+  padding-right: 8px;
+}
+
+.mc-playing::before {
+  background: var(--listening-accent);
+}
+
+.mc-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--listening-secondary);
+}
+
+.mc-who {
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+.mc-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--unheard);
+  flex: none;
+}
+
+.mc-heardtag,
+.mc-playtag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.mc-playtag {
+  color: var(--listening-accent);
+  font-weight: 600;
+}
+
+.mc-spacer {
+  flex: 1;
+}
+
+.mc-star {
+  width: 44px;
+  height: 44px;
+  margin: -11px 0;
+  display: grid;
+  place-items: center;
+  color: var(--listening-secondary);
+}
+
+.mc-star[aria-pressed='true'] {
+  color: var(--star);
+}
+
+.mc-star .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.mc-note {
+  margin: 4px 0 0;
+  font-size: 0.8125rem;
+  color: var(--listening-secondary);
+}
+
+.mc-leadin {
+  margin: 4px 0;
+  font-size: 0.8125rem;
+  line-height: 1.3;
+  font-style: italic;
+  color: var(--listening-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mc-leadin-after {
+  font-style: normal;
+  opacity: 0.8;
+}
+
+.mc-text {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.0625rem;
+  line-height: 1.32;
+  color: #fff;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.mc-text.is-expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+}
+
+/* Heard: greyed and a little smaller. Unheard keeps the same weight and size as any row. */
+.mc-heard .mc-text {
+  font-size: 0.9375rem;
+  color: rgb(255 255 255 / 0.62);
+}
+
+.mc-heard .mc-who {
+  color: rgb(255 255 255 / 0.7);
+  font-size: 0.875rem;
+}
+
+.mc-heard .mc-leadin {
+  opacity: 0.8;
+}
+
+.mc-placeholder {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border: 1px dashed rgb(255 255 255 / 0.35);
+  border-radius: 10px;
+  font-size: 0.9375rem;
+  color: var(--listening-secondary);
+}
+
+.mc-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.mc-acts button {
+  min-height: 40px;
+  padding: 0 8px 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--listening-accent);
+  font-size: 0.9375rem;
+}
+
+.mc-acts .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.mc-acts .mc-more {
+  color: var(--listening-secondary);
+}
+
+.mc-acts .mc-start {
+  margin-left: auto;
+}
+
+.mc-replies {
+  margin-left: 14px;
+  padding-left: 10px;
+  border-left: 1px solid rgb(255 255 255 / 0.22);
+}
+
+.mc-replies .mc-row {
+  padding-top: 8px;
+}
+
+.mc-all {
+  margin: 8px 0 0;
+}
+
+.np-on-margins .mc-all .button {
+  background: var(--tray);
+  color: var(--listening-accent);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.22);
+}
+
+/* The arrival preview: its own screen, no player; the list scrolls and the two starts stay pinned at the bottom. */
+.arrival-preview {
+  padding-bottom: calc(150px + env(safe-area-inset-bottom));
+}
+
+.arrival-preview .arrival-from,
+.arrival-preview .arrival-count {
+  color: var(--listening-accent);
+}
+
+.arrival-preview .arrival-avatar {
+  background: var(--listening-accent);
+  color: #141a14;
+}
+
+.arrival-preview .arrival-sub,
+.arrival-preview .arrival-foot {
+  color: var(--listening-secondary);
+}
+
+.arrival-preview .arrival-foot a {
+  color: var(--listening-accent);
+}
+
+.arrival-preview .arrival-explain {
+  background: var(--tray);
+  color: var(--listening-secondary);
+}
+
+.arrival-welcome {
+  margin: 4px 0 0;
+  font-family: var(--display);
+  font-size: 1.25rem;
+  line-height: 1.2;
+  font-weight: 600;
+}
+
+.arrival-starts {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  gap: 6px;
+  padding: 10px var(--gutter) calc(10px + env(safe-area-inset-bottom));
+  background: var(--listening-bg);
+  border-top: 1px solid rgb(255 255 255 / 0.18);
+}
+
+.arrival-starts .arrival-play {
+  max-width: 480px;
+  width: 100%;
+  margin: 0 auto;
+  min-height: 48px;
+  border-radius: 12px;
+  background: var(--tray);
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.22);
+}
+
+.arrival-starts .arrival-play.button-primary {
+  background: var(--listening-accent);
+  color: #141a14;
+  box-shadow: none;
+}
+
+/* A 375-point phone fits the filters and Autoplay on one line, as the prototype does. */
+@media (max-width: 380px) {
+  .mc-filter button {
+    padding: 0 9px;
+  }
+}
+
+/* ---------- Library row's More button and the Remove sheet (#4424) ---------- */
+
+.library-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.library-row > .row {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.library-row > .icon-button {
+  margin-right: -10px;
+}
+
+.remove-sheet-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.remove-sheet-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* Following search (#4427): the Shows and Episodes headings, and a Look for button that wraps a long query. */
+.section-heading {
+  font-size: 1.1rem;
+  color: var(--ink);
+}
+
+.look-for {
+  overflow-wrap: anywhere;
+  text-align: start;
 }

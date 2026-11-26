@@ -203,10 +203,16 @@ final class KittenRendererTests: XCTestCase {
         print(String(format: "SOAK %d min article: %.0f s of audio from %d chunks in %.0f s of compute (%.1fx; %.0f s on the clock, %.1fx), first audio after %.2f s, longest pause %.2f s, memory %.0f MB after the first chunk, peak %.0f MB; %@, %d cores, bar %.0fx",
                      minutes, audio, renderedChunks, rendered, audio / rendered, wall, audio / wall, firstReady, longestPause, memoryAfterFirst, peak,
                      cpuBrand(), ProcessInfo.processInfo.activeProcessorCount, speedBar))
-        XCTAssertGreaterThan(rendered, 0, "the process CPU clock could not be read")
-        XCTAssertGreaterThanOrEqual(audio, Double(minutes) * 60 * 0.95)
-        XCTAssertLessThanOrEqual(longestPause, 1.0)
-        XCTAssertGreaterThan(audio / rendered, speedBar, "the \(speedBar)x bar (4x from C2 M2, 3x on a hosted runner, #3534)")
-        XCTAssertLessThan(peak - memoryAfterFirst, 500, "memory must not climb across a long article")
+        // Each assertion carries the numbers that decide it, because CI shows a red step as `Failed: <test>` plus the
+        // first assertion messages, and the SOAK line above stays in a log that expires (#3534). The speed bar is 4x
+        // (C2 M2) and 3x on a hosted runner. Kept short: a failure message is cut at 240 characters.
+        let context = String(format: "SOAK %.1fx/%.0fx bar, pause %.2f s, mem +%.0f MB, %@, %d cores",
+                             audio / rendered, speedBar, longestPause, peak - memoryAfterFirst,
+                             cpuBrand(), ProcessInfo.processInfo.activeProcessorCount)
+        XCTAssertGreaterThan(rendered, 0, "CPU clock unreadable; \(context)")
+        XCTAssertGreaterThanOrEqual(audio, Double(minutes) * 60 * 0.95, "audio short; \(context)")
+        XCTAssertLessThanOrEqual(longestPause, 1.0, "pause bar 1 s; \(context)")
+        XCTAssertGreaterThan(audio / rendered, speedBar, "speed bar; \(context)")
+        XCTAssertLessThan(peak - memoryAfterFirst, 500, "memory climb; \(context)")
     }
 }

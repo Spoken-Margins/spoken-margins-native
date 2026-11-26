@@ -58,9 +58,19 @@ enum UITestingHooks {
         UITestingLaunchSeed.fetchesGuidedTour(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
     }
 
+    /// The launch also follows one show, with the Up next card's three entries (#3863).
+    static var seedsFollowedShow: Bool {
+        UITestingLaunchSeed.seedsFollowedShow(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
+    }
+
     /// A keep-library relaunch also imports one friend's Margin onto the seeded podcast (#474).
     static var importsCoopLayer: Bool {
         UITestingLaunchSeed.importsCoopLayer(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
+    }
+
+    /// The Margin that relaunch imports is the written one that is never read aloud (J9, #4934).
+    static var importsSilentCoopMargin: Bool {
+        UITestingLaunchSeed.importsSilentCoopMargin(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
     }
 
     /// A fresh podcast launch starts with the listener part way, or at the end, of the episode (J14, #4100).
@@ -98,6 +108,11 @@ enum UITestingHooks {
         return environment("SPOKEN_MARGINS_UI_TEST_SPEECH_RATE").flatMap(Double.init)
     }
 
+    /// Filler articles a fixture launch adds below the fixture article, so the Library scrolls (#4314).
+    static var libraryFillerCount: Int {
+        UITestingLaunchSeed.libraryFillerCount(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment)
+    }
+
     /// The script exercises Supertonic narration instead of system speech.
     static var usesSupertonic: Bool {
         isActive && environment("SPOKEN_MARGINS_UI_TEST_SUPERTONIC") == "1"
@@ -107,6 +122,12 @@ enum UITestingHooks {
     static var summaryInterjectionNote: String? {
         guard isActive else { return nil }
         return environment("SPOKEN_MARGINS_UI_TEST_INTERJECTION")
+    }
+
+    /// Five spoken Margins with fillers and long pauses for the Share Margins list (#4647 PR 0), added to the first
+    /// session of a summary route, so the Test Desk can show and time the cleanup and the wait.
+    static var seedsShareBatch: Bool {
+        isActive && environment("SPOKEN_MARGINS_UI_TEST_SHARE_BATCH") == "1"
     }
 
     /// A keep-library relaunch marks the listener's Margin as sent in the packet Sam's reply fixture answers (#3237).
@@ -158,6 +179,8 @@ enum UITestingHooks {
     static let seed = UITestingLaunchSeed.none
     static var usesStandInAudioServices: Bool { false }
     static var importsCoopLayer: Bool { false }
+    static var importsSilentCoopMargin: Bool { false }
+    static var seedsFollowedShow: Bool { false }
     static var podcastPlaceSeconds: Int? { nil }
     static var podcastStartsCompleted: Bool { false }
     static var fetchesGuidedTour: Bool { true }
@@ -166,7 +189,9 @@ enum UITestingHooks {
     static var localFoundationModelClient: (any LocalFoundationModelClient)? { nil }
     static var speechRate: Double? { nil }
     static var usesSupertonic: Bool { false }
+    static var libraryFillerCount: Int { 0 }
     static var summaryInterjectionNote: String? { nil }
+    static var seedsShareBatch: Bool { false }
     static var liveActivityPreviewTextSize: String? { nil }
     static var appearanceRequest: String? { nil }
     static var marksListenerMarginShared: Bool { false }

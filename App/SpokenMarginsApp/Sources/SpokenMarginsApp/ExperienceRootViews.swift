@@ -55,7 +55,7 @@ struct ExperienceRootTabs: View {
         }
         .tabViewStyle(.sidebarAdaptable)
         .tint(AppColors.evergreen)
-        .sheet(item: addSourceRoute, onDismiss: {
+        .trackedSheet(item: addSourceRoute, onDismiss: {
             if navigation.takeCatalogRequest() { catalogDrawer.present() }
         }) { route in
             ExperienceAddSourceFlow(initialRoute: route, onSearchPodcasts: {

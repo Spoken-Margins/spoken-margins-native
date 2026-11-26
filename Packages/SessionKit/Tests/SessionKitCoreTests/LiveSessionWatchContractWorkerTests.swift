@@ -195,6 +195,29 @@ final class LiveSessionWatchContractWorkerTests: XCTestCase {
         XCTAssertEqual(running?.id, "live-w")
     }
 
+    /// #3847, the `burst` sibling of the test above for the Watch's End: Save lands as the End reaches the store, before the
+    /// screen has taken the End in. The screen saves its running copy with one new Margin; the store keeps both the End and
+    /// the Margin. This passes on `main` today: it guards the rule the writing screen relies on, it is not regression proof.
+    func testAWatchEndAndAStaleScreenSaveOfAWrittenMarginKeepBothTheEndAndTheMargin() async throws {
+        let worker = LiveSessionFileWorker(root: root)
+        let phone = LiveSession(id: "live-p", title: "Budget meeting", startedAt: t0)
+        try await worker.save(phone, generation: 1)
+        _ = await worker.applyWatch(envelope(.sessionEnd(id: "live-p", endedAt: t0.addingTimeInterval(300)), sentAt: 300), now: t0.addingTimeInterval(301))
+        // The phone's screen still holds its running copy and saves it with the Margin the listener just wrote.
+        var stale = phone
+        stale.margins.append(stale.margin(id: "typed", text: "a note", markedAt: t0.addingTimeInterval(310)))
+        try await worker.save(stale, generation: 2)
+        let read = await worker.session(id: "live-p")
+        let stored = try XCTUnwrap(read)
+        XCTAssertEqual(stored.endedAt, t0.addingTimeInterval(300), "still ended")
+        XCTAssertEqual(stored.margins.map(\.id), ["typed"], "the screen's Margin is kept")
+        // In this race the store keeps the End and the Margin but does not label the Margin (Design, Defaults 14): the label
+        // is information only, and the screen's own save through `LiveSessionBegunMargin.add` sets it when it saw the End.
+        XCTAssertNil(stored.margins.first?.filingNote)
+        let running = await worker.runningSession()
+        XCTAssertNil(running, "saving the Margin did not reopen the session")
+    }
+
     // MARK: Hello
 
     func testHelloAnswersWhatThePhoneAlreadyFiledAndLeavesTheRestToBeSentAgain() async throws {

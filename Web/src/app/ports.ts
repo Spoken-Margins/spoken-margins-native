@@ -1,7 +1,7 @@
 // The UI's view of the logic modules: `src/sources/` (#2983: podcast search, feed reading, Substack voice, the
 // relay path) and `src/packet/` (#2984: `.spokenmargins` read and write, voice recording to AAC). The UI talks only
 // to these interfaces; `services.ts` binds them to the real modules (#2979).
-import type { AudioOrigin, Episode, Margin, Show } from '../shared/model.ts';
+import type { AudioOrigin, Episode, Margin, PercentMargin, Show } from '../shared/model.ts';
 
 /**
  * Thrown when a feed can't be read straight from the browser and the listener hasn't allowed the relay. It is the
@@ -30,6 +30,14 @@ export interface SourcesPort {
    * which is why the reason is part of the call.
    */
   findPostVoice(pageUrl: string, options: { relayAllowed: boolean; reason: 'listener-tap' }): Promise<PostVoice | null>;
+  /**
+   * Finds the audio of the Apple Podcasts episode a page names, through Apple's public lookup (#4783). Only for an
+   * address `episodeVoice` calls `apple-lookup`, and only when the listener has opened the link or tapped the episode.
+   * Null when Apple doesn't list that episode with audio and the show's own feed has no one item with `title` (Apple lists a
+   * show's newest 200, so an older episode is found in the feed). Throws `NeedsRelayConsent` when the feed can't be read by
+   * the browser and `relayAllowed` is false, and another error when the lookup or the feed couldn't be asked or answered.
+   */
+  findAppleEpisodeAudio(pageUrl: string, options: { relayAllowed: boolean; title: string }): Promise<PostVoice | null>;
 }
 
 export interface RecordedVoice {
@@ -60,15 +68,19 @@ export interface PacketRead {
   episode: PacketEpisode;
   /** Margins placed by time. Their `episodeId` is a placeholder until the importer places them. */
   margins: Margin[];
-  /** Margins on an article's text, which the web app can't place yet. */
+  /** Margins on an article's text, whether or not they can be placed. */
   textMarginCount: number;
+  /** The article-text Margins that say how far through the article they sit, so they can be placed on its voice (#4421). */
+  percentMargins: PercentMargin[];
 }
 
 export interface PacketWritten {
   bytes: Uint8Array;
   fileName: string;
   mimeType: string;
-  /** Ids of the Margins in the file. */
+  /** The packet's content digest: the `<digest>` in the `packet:<digest>:margin-000N` id its Margins have in a reply. */
+  contentDigest: string;
+  /** Ids of the Margins in the file, in the order the writer named them `margin-0001`, `margin-0002`, ... */
   included: string[];
   /** The app's words for Margins left out (no words to share), when any were. */
   notice?: string;
@@ -98,9 +110,11 @@ export interface TranscriberPort {
   /** Loads the model, downloading it the first time; progress is bytes of the known total. */
   prepare(onProgress?: (loaded: number, total: number) => void): Promise<'webgpu' | 'wasm'>;
   /** The words in a recording, or '' when none were heard. */
-  transcribe(voice: Blob): Promise<{ text: string; ms: number; device: 'webgpu' | 'wasm' }>;
+  transcribe(voice: Blob, onSegment?: (done: number, total: number) => void): Promise<{ text: string; ms: number; device: 'webgpu' | 'wasm' }>;
   /** Forgets the downloaded model. */
   remove(): Promise<void>;
+  /** Stops a load or run that has gone quiet, keeping the downloaded model. */
+  abandon(): void;
 }
 
 export interface Services {

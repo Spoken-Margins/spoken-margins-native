@@ -14,11 +14,20 @@ extension Gate1AppModel {
     /// The same file, built off the main actor so the button can show "Preparing diagnostics…" meanwhile (#1191).
     /// The app state is copied first, on the main actor; only the store scan, the JSON and the file write move off it.
     func prepareDiagnosticsExportFileURL() async -> URL? {
+        do {
+            return diagnosticsExportOutcome(.success(try await writeDiagnosticsExportFileOffMain()))
+        } catch {
+            return diagnosticsExportOutcome(.failure(error))
+        }
+    }
+
+    /// The one off-main write, shared by the Settings button and the Export Diagnostics Shortcuts action (#5126).
+    /// It throws instead of showing a toast, so a Shortcut can show the error and never hand on an empty file.
+    func writeDiagnosticsExportFileOffMain() async throws -> URL {
         let inputs = diagnosticsExportInputs()
-        let outcome = await Task.detached(priority: .userInitiated) {
-            Result { try inputs.writeFile() }
+        return try await Task.detached(priority: .userInitiated) {
+            try inputs.writeFile()
         }.value
-        return diagnosticsExportOutcome(outcome)
     }
 
     private func diagnosticsExportOutcome(_ outcome: Result<URL, Error>) -> URL? {
@@ -61,7 +70,14 @@ struct DiagnosticsExportInputs: Sendable {
         if let watchDiagnosticsFile, let report = WatchDiagnosticsStore.exportJSON(fileURL: watchDiagnosticsFile) {
             stored[WatchDiagnosticsStore.exportKey] = report
         }
-        let text = try DiagnosticsExport.jsonText(DiagnosticsExport.entries(live: live, stored: stored, fixed: fixed))
+        // The tracker is thread-safe and holds only places and counts, so it is read here, not copied with the inputs (#4337).
+        var exported = self.fixed
+        exported.screenRebuilds = PresentationTracker.shared.summary
+        // Thread-safe and kept in a file, so a heavy day from an earlier launch is in this export too (#4389).
+        exported.diskWritesBySource = DiskWriteLedgerStore.shared.summaryText
+        // Only a count of shows in two or more lists, no names (#4046). Lists that can't be read leave the key out.
+        exported.listsShowsInTwoOrMore = store.flatMap { try? $0.loadFollowLists() }.map(FollowListScreens.showsInTwoOrMore)
+        let text = try DiagnosticsExport.jsonText(DiagnosticsExport.entries(live: live, stored: stored, fixed: exported))
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Diagnostics", isDirectory: true)
         return try DiagnosticsExportFile.write(text, build: fixed.developerBuild, exportedAt: fixed.exportedAt, to: directory)
     }

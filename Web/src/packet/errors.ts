@@ -13,6 +13,9 @@ export const PACKET_MESSAGES: Readonly<Record<PacketOutcome, string>> = Object.f
   cannotShare: "These Margins can't be shared yet.",
 });
 
+/** The `detail` of the refusal for a Listening Map packet, which only the iPhone app reads (read.ts). */
+export const LISTENING_MAP_DETAIL = 'Listening Map packet';
+
 export class PacketError extends Error {
   readonly outcome: PacketOutcome;
   readonly detail: string;

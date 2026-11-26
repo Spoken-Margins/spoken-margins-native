@@ -30,6 +30,8 @@ final class OpenDescriptorGuard: NSObject, XCTestObservation, @unchecked Sendabl
         Self.shared = self
         XCTestObservationCenter.shared.addTestObserver(self)
         TermsAnsweredBeforeEachTest.install() // the bundle has one principal class, so it also starts the Terms observer (#3329)
+        PresentationRebuildGuard.install() // and the observer that fails a test when a sheet or cover is built twice (#4337)
+        WrittenMarginReaderForTests.install() // and the reader whose renderer never reaches the system voice (#4664)
     }
 
     /// Both streams: the test app's stdout is not always forwarded into xcode-tests.log, and the unified log is.

@@ -98,7 +98,8 @@ struct ClipboardLinkOfferCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("library.clipboardLink.message")
                 } else if clipboard.isAdding {
-                    SourceLinkImportStatusView()
+                    // The card announces "Adding <site> to the Library" itself; the status view adds only the long-wait line.
+                    SourceLinkImportStatusView(announcesStart: false)
                 }
             }
         }
@@ -247,13 +248,21 @@ struct ClipboardLinkOfferCard: View {
     private func add(_ url: URL) {
         // Back to the Paste line: the import's progress or error shows above it, and a failed add is retried with another Paste.
         stage = .offered
-        switch model.pasteAndGo(url.absoluteString) {
+        // A copied link, never a reply from the listener's AI: link lists are read only by the Add sheet's Paste & go (#4683).
+        switch model.pasteAndGoWithoutLinkList(url.absoluteString) {
+        case .readingLinkList:
+            message = nil // not reachable from this call; a link list is never read here
         case .resolvingLink:
             message = nil
             clipboard.beganAdding()
             announce("Adding \(ClipboardLinkOffer.displayHost(of: url)) to the Library")
         case .addedText:
             clipboard.markHandled()
+        case .openingShareLink:
+            // The link's own import review (or its failure sheet) takes over; the card is done, as after any paste.
+            message = nil
+            clipboard.markHandled()
+            announce("Opening your friend's Margins")
         case .notAdded(let reason):
             message = reason
             announce(reason)

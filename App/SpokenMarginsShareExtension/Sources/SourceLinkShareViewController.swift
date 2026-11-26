@@ -41,12 +41,15 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         /// nothing else in the share yields a file, PDF, page or link.
         case sharedText(BrowserTextSharePayload)
         case spokenMarginsPackage
+        /// A meeting transcript file (`.vtt`, `.srt`, `.docx`), copied into the App Group unread with the name it was
+        /// shared under; the app imports it (#2997).
+        case transcriptFile(name: String)
 
         /// A link the app would download again, rather than content the share carried.
         var isLink: Bool {
             switch self {
             case .sourceLink, .remotePDF: true
-            case .localPDF, .browserText, .sharedText, .spokenMarginsPackage: false
+            case .localPDF, .browserText, .sharedText, .spokenMarginsPackage, .transcriptFile: false
             }
         }
     }
@@ -54,6 +57,8 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     private var didProcess = false
     /// Each attachment's registered types, for the share diagnostics (#271).
     private var sharedAttachmentTypes: [[String]] = []
+    /// What each tried representation yielded, for the share diagnostics (#5338).
+    private let candidateTrace = CandidateTrace()
     private var didCompleteRequest = false
     private typealias ExtractionCompletion = @Sendable (Result<SharedImport, Error>) -> Void
     private let cardView = UIView()
@@ -115,10 +120,16 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         // The walk is shared with the app's tests (#1049): it hands off the first content any candidate
         // yields, a link only once no file, PDF or page result is left to try (#271), and shared text
         // only once nothing else is left (#662).
+        let trace = candidateTrace
         ShareSheetCandidateWalk.run(
             ordered,
             identifier: \.identifier,
-            load: { candidate, report in Self.loadCandidate(candidate, report: report) },
+            load: { candidate, report in
+                Self.loadCandidate(candidate, detail: { trace.note(detail: $0, for: candidate.identifier) }) { outcome in
+                    trace.record(outcome, for: candidate.identifier)
+                    report(outcome)
+                }
+            },
             resume: { next in DispatchQueue.main.async(execute: next) },
             completion: { result in
                 guard let result else {
@@ -132,9 +143,44 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     }
 
     private typealias CandidateReport = @Sendable (ShareSheetCandidateOutcome<SharedImport>) -> Void
+    private typealias CandidateDetail = @Sendable (String) -> Void
+
+    /// The candidates the walk tried and what each yielded, in order (#5338). Loads report on any queue, one at a time.
+    private final class CandidateTrace: @unchecked Sendable {
+        private let lock = NSLock()
+        private var details: [String: String] = [:]
+        private var tried: [ShareExtensionShareRecord.Candidate] = []
+
+        func note(detail: String, for identifier: String) {
+            lock.lock(); defer { lock.unlock() }
+            details[identifier] = detail
+        }
+
+        func record(_ outcome: ShareSheetCandidateOutcome<SharedImport>, for identifier: String) {
+            let name: String
+            switch outcome {
+            case .content: name = "content"
+            case .link: name = "link"
+            case .sharedText: name = "shared_text"
+            case .nothing: name = "nothing"
+            case .failed: name = "failed"
+            }
+            lock.lock(); defer { lock.unlock() }
+            tried.append(.init(type: identifier, outcome: name, detail: details.removeValue(forKey: identifier)))
+        }
+
+        var candidates: [ShareExtensionShareRecord.Candidate] {
+            lock.lock(); defer { lock.unlock() }
+            return tried
+        }
+    }
 
     /// Loads one candidate and reports what it yielded, once.
-    nonisolated private static func loadCandidate(_ candidate: ProviderCandidate, report: @escaping CandidateReport) {
+    nonisolated private static func loadCandidate(
+        _ candidate: ProviderCandidate,
+        detail: @escaping CandidateDetail,
+        report: @escaping CandidateReport
+    ) {
         let candidateType = UTType(candidate.identifier)
         if isSpokenMarginsPackage(candidate) {
             candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { url, error in
@@ -170,7 +216,19 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                         report(.nothing)
                     }
                 } else {
-                    loadCandidateItem(candidate, report: report)
+                    loadCandidateItem(candidate, detail: detail, report: report)
+                }
+            }
+            return
+        }
+        // A meeting transcript file is copied as it is, never read here: the app parses it. A `.vtt`, `.srt` or `.docx`
+        // is named by the share, whatever type it is registered as (#2997).
+        if let name = transcriptFileName(of: candidate) {
+            candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { url, _ in
+                if let url {
+                    report(transcriptOutcome(copying: url, name: name))
+                } else {
+                    loadCandidateItem(candidate, detail: detail, report: report)
                 }
             }
             return
@@ -187,16 +245,30 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                    ) {
                     report(.content(.browserText(payload)))
                 } else {
-                    loadCandidateItem(candidate, report: report)
+                    loadCandidateItem(candidate, detail: detail, report: report)
                 }
             }
             return
         }
-        loadCandidateItem(candidate, report: report)
+        loadCandidateItem(candidate, detail: detail, report: report)
     }
 
-    nonisolated private static func loadCandidateItem(_ candidate: ProviderCandidate, report: @escaping CandidateReport) {
-        candidate.provider.loadItem(forTypeIdentifier: candidate.identifier, options: nil) { item, _ in
+    nonisolated private static func loadCandidateItem(
+        _ candidate: ProviderCandidate,
+        detail: @escaping CandidateDetail,
+        report: @escaping CandidateReport
+    ) {
+        candidate.provider.loadItem(forTypeIdentifier: candidate.identifier, options: nil) { item, loadError in
+            // Whether Safari's preprocessor results arrived at all, and with page text (#5338).
+            if candidate.identifier == UTType.propertyList.identifier {
+                detail(pagePropertyListDetail(item, loadError: loadError as NSError?))
+            }
+            // A file the provider hands over by address (`public.file-url`): a transcript is copied, not read (#2997).
+            if let url = SourceLinkShareRepresentation.url(from: item), url.isFileURL,
+               let name = transcriptFileName(suggestedName: candidate.provider.suggestedName, fileURL: url) {
+                report(transcriptOutcome(copying: url, name: name))
+                return
+            }
             let presentsPDF = candidate.provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier)
             // A PDF representation that loads as a web URL would send the link again (#271),
             // so for those only a file or bytes count; otherwise try the data representation.
@@ -239,7 +311,9 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     }
 
     private func handle(_ result: Result<SharedImport, Error>) {
-        recordShareDiagnostics(result)
+        var handoffId: String?
+        var failure: Error?
+        defer { recordShareDiagnostics(result, handoffId: handoffId, failure: failure) }
         do {
             switch result {
             case .success(.sourceLink(let inputURL)):
@@ -249,7 +323,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                     sourceSurface: "share_sheet",
                     startSession: false
                 )
-                _ = try SourceLinkHandoffStore.appGroup().save(handoff)
+                handoffId = try SourceLinkHandoffStore.appGroup().save(handoff)
                 showSaved("Sent link to Spoken Margins.")
             case .success(.remotePDF(let inputURL)):
                 let handoff = SourceLinkHandoff(
@@ -258,7 +332,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                     sourceSurface: "share_sheet_pdf",
                     startSession: false
                 )
-                _ = try SourceLinkHandoffStore.appGroup().save(handoff)
+                handoffId = try SourceLinkHandoffStore.appGroup().save(handoff)
                 showSaved("Sent PDF to Spoken Margins.")
             case .success(.localPDF(let inputURL)):
                 let handoff = SourceLinkHandoff(
@@ -267,25 +341,30 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                     sourceSurface: "share_sheet_pdf_file",
                     startSession: false
                 )
-                _ = try SourceLinkHandoffStore.appGroup().save(handoff)
+                handoffId = try SourceLinkHandoffStore.appGroup().save(handoff)
                 showSaved("Sent PDF to Spoken Margins.")
             case .success(.browserText(let payload)), .success(.sharedText(let payload)):
                 try saveBrowserText(payload)
+                handoffId = payload.id
                 showSaved("Sent \(payload.source.title) to Spoken Margins.")
             case .success(.spokenMarginsPackage):
                 showSaved("Sent shared session to Spoken Margins. Open Spoken Margins to import it.")
+            case .success(.transcriptFile(let name)):
+                showSaved("Sent \(Self.transcriptTitle(name)) to Spoken Margins.")
             case .failure(let error):
                 throw error
             }
         } catch {
+            failure = error
             completeWithError(error)
         }
     }
 
-    /// Writes what the share offered and which route won to the App Group, so a lane run
-    /// can tell which representations Safari sent (#271). Type identifiers and the route
-    /// only: no URLs, titles or text. Best effort; a failure never affects the share.
-    private func recordShareDiagnostics(_ result: Result<SharedImport, Error>) {
+    /// Writes what the share offered, what each tried representation yielded, which route won and the handoff it
+    /// wrote to the App Group, so a lane run (#271) and the app's Diagnostics (#5338) can tell where a share stopped.
+    /// Type identifiers, random ids and error codes only: no URLs, titles or text. Best effort; a failure never
+    /// affects the share.
+    private func recordShareDiagnostics(_ result: Result<SharedImport, Error>, handoffId: String?, failure: Error?) {
         let route: String
         switch result {
         case .success(.sourceLink): route = "share_sheet"
@@ -294,21 +373,22 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         case .success(.browserText): route = "browser_text"
         case .success(.sharedText): route = "shared_text"
         case .success(.spokenMarginsPackage): route = "spoken_margins_package"
+        case .success(.transcriptFile): route = "transcript_file"
         case .failure: route = "failed"
         }
-        let record: [String: Any] = [
-            "recordedAt": ISO8601DateFormatter().string(from: Date()),
-            "attachmentTypes": sharedAttachmentTypes,
-            "route": route
-        ]
+        var failureError = failure
+        if case .failure(let error) = result { failureError = error }
+        let record = ShareExtensionShareRecord(
+            attachmentTypes: sharedAttachmentTypes,
+            route: route,
+            candidates: candidateTrace.candidates,
+            handoffId: handoffId,
+            errorCode: failureError.map(ShareExtensionShareRecord.failureCode)
+        )
         guard let containerURL = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: SourceLinkHandoffStore.appGroupIdentifier
-        ), let data = try? JSONSerialization.data(withJSONObject: record, options: [.prettyPrinted, .sortedKeys]) else {
-            return
-        }
-        let directory = containerURL.appendingPathComponent("ShareExtensionDiagnostics", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? data.write(to: directory.appendingPathComponent("last-share.json"), options: [.atomic])
+        ) else { return }
+        try? record.save(inAppGroupRoot: containerURL)
     }
 
     private func saveBrowserText(_ payload: BrowserTextSharePayload) throws {
@@ -485,34 +565,35 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         if let data = item as? Data,
            let text = String(data: data, encoding: .utf8),
            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let url = firstURL(in: cleaned), cleaned == url.absoluteString || cleaned.count < url.absoluteString.count + 20 {
-                return sharedURLImport(url, forcePDF: presentsPDF)
-            }
-            return sharedTextImport(cleaned, identifier: identifier, presentsPDF: presentsPDF)
+            return sharedTextImport(text.trimmingCharacters(in: .whitespacesAndNewlines), identifier: identifier, presentsPDF: presentsPDF)
         }
         if let dictionary = item as? [String: Any] ?? item as? NSDictionary as? [String: Any],
            let url = firstWebURL(in: dictionary) {
             return sharedURLImport(url, forcePDF: presentsPDF)
         }
         if let text = item as? String {
-            let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let url = firstURL(in: cleaned), cleaned == url.absoluteString || cleaned.count < url.absoluteString.count + 20 {
-                return sharedURLImport(url, forcePDF: presentsPDF)
-            }
-            return sharedTextImport(cleaned, identifier: identifier, presentsPDF: presentsPDF)
+            return sharedTextImport(text.trimmingCharacters(in: .whitespacesAndNewlines), identifier: identifier, presentsPDF: presentsPDF)
         }
         return nil
     }
 
-    /// Plain text shared as a string (#662): a lone link goes as that link, as Paste & go decides,
-    /// and anything else becomes a text item holding the whole text.
+    /// A string shared as text (#662): a link, alone or with a short note around it ("Title" then the link), goes as that
+    /// link, as Paste & go decides (#4809), whatever type the share calls the string. Anything else becomes a text item
+    /// holding the whole text, but only for the plain-text types.
     nonisolated private static func sharedTextImport(_ text: String, identifier: String, presentsPDF: Bool) -> SharedImport? {
-        guard SharedTextIntake.isPlainText(identifier) else { return nil }
-        switch SharedTextIntake.route(text) {
-        case .link(let url):
+        let route = SharedTextIntake.route(text)
+        if case .link(let url) = route {
             return sharedURLImport(url, forcePDF: presentsPDF)
+        }
+        // A link with no space before it ("Listen:https://…") isn't a word of its own to the classifier; the detector finds it.
+        if let url = firstURL(in: text), text.count < url.absoluteString.count + 20 {
+            return sharedURLImport(url, forcePDF: presentsPDF)
+        }
+        switch route {
+        case .link:
+            return nil // handled above
         case .text(let title, let body):
+            guard SharedTextIntake.isPlainText(identifier) else { return nil }
             return .sharedText(BrowserTextSharePayload(
                 id: "browser-text-\(UUID().uuidString)",
                 itemId: SharedTextIntake.newItemID(),
@@ -524,6 +605,44 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         case nil:
             return nil
         }
+    }
+
+    /// The name a share gave a meeting transcript file, when the candidate is one to copy: a typed representation of a
+    /// file the share names `.vtt`, `.srt` or `.docx`. The address representations are read as items instead (below).
+    nonisolated private static func transcriptFileName(of candidate: ProviderCandidate) -> String? {
+        let addressIdentifiers = [
+            ShareSheetRepresentationOrder.fileURLIdentifier,
+            ShareSheetRepresentationOrder.urlIdentifier,
+            ShareSheetRepresentationOrder.propertyListIdentifier
+        ]
+        guard !addressIdentifiers.contains(candidate.identifier) else { return nil }
+        return TranscriptHandoffFolder.isTranscriptFile(named: candidate.provider.suggestedName) ? candidate.provider.suggestedName : nil
+    }
+
+    /// The same, for a file address: the share's own name for it, else the file's.
+    nonisolated private static func transcriptFileName(suggestedName: String?, fileURL: URL) -> String? {
+        if TranscriptHandoffFolder.isTranscriptFile(named: suggestedName) { return suggestedName }
+        return TranscriptHandoffFolder.isTranscriptFile(named: fileURL.lastPathComponent) ? fileURL.lastPathComponent : nil
+    }
+
+    /// Copies a transcript file into the App Group. Over 10 MB stops the share with its sentence; any other failure lets the next representation try.
+    nonisolated private static func transcriptOutcome(copying url: URL, name: String) -> ShareSheetCandidateOutcome<SharedImport> {
+        do {
+            let folder = TranscriptHandoffFolder(baseDirectory: try SourceLinkHandoffStore.appGroup().rootDirectory)
+            try folder.save(from: url, originalName: name)
+            return .content(.transcriptFile(name: name))
+        } catch let message as TranscriptImportMessage where message.kind == .tooLarge {
+            return .failed(message)
+        } catch {
+            // Another representation of the same file may still copy (a typed one after an address), so the walk goes on.
+            return .nothing
+        }
+    }
+
+    /// What the status line calls the file: its name without the extension, as the app titles the item.
+    private static func transcriptTitle(_ name: String) -> String {
+        let stem = (name as NSString).deletingPathExtension
+        return TranscriptImportMessage.displayName(for: stem.isEmpty ? name : stem)
     }
 
     /// A PDF representation's item: a copied file or bytes, never a link.
@@ -634,6 +753,24 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         )
     }
 
+    /// Safari's page property list as a diagnostic word (#5338): whether the preprocessor's results arrived, and
+    /// whether they carried page text.
+    /// `no_item` means the representation didn't load at all.
+    /// When nothing arrived, the load's error domain and code (never its text) say why: Safari couldn't turn the
+    /// preprocessor's result into a property list, say (#5338).
+    nonisolated private static func pagePropertyListDetail(_ item: Any?, loadError: NSError?) -> String {
+        guard let item else {
+            return loadError.map { "no_item(\($0.domain):\($0.code))" } ?? "no_item"
+        }
+        guard let dictionary = item as? [String: Any] ?? item as? NSDictionary as? [String: Any] else { return "not_a_dictionary" }
+        let rawResults = dictionary[NSExtensionJavaScriptPreprocessingResultsKey]
+            ?? dictionary["NSExtensionJavaScriptPreprocessingResultsKey"]
+        guard let results = rawResults as? [String: Any] ?? rawResults as? NSDictionary as? [String: Any] else {
+            return "results_missing"
+        }
+        return browserPayload(fromResults: results) == nil ? "no_text" : "text"
+    }
+
     nonisolated private static func browserResultsFromPropertyList(_ item: Any?) -> [String: Any]? {
         guard let dictionary = item as? [String: Any] ?? item as? NSDictionary as? [String: Any] else { return nil }
         let rawResults = dictionary[NSExtensionJavaScriptPreprocessingResultsKey]
@@ -659,6 +796,9 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             || ((suggestedName ?? "") as NSString).pathExtension.lowercased() == SpokenMarginsPackageHandoffStore.fileExtension {
             return true
         }
+        // A transcript file is accepted by its name: `.vtt` and `.srt` are text types, which the check below would pass
+        // over unless the share names a text file (#2997).
+        if TranscriptHandoffFolder.isTranscriptFile(named: suggestedName) { return true }
         guard let type = UTType(identifier), type.conforms(to: .text) else { return true }
         return SharedTextIntake.acceptsTextRepresentation(identifier: identifier, suggestedName: suggestedName)
     }
@@ -721,7 +861,7 @@ private enum SourceLinkShareError: Error, LocalizedError {
             return "No shared input was provided."
         case .unsupportedInput(let identifiers):
             let representationNote = identifiers.isEmpty ? "" : " The share offered: \(identifiers)."
-            return "Spoken Margins could not read this share, so nothing was added. Share a .spokenmargins session, web page, podcast link, PDF, text, or a Markdown or text file. Or copy the text and use Paste & go.\(representationNote)"
+            return "Spoken Margins could not read this share, so nothing was added. Share a .spokenmargins session, web page, podcast link, PDF, text, a Markdown or text file, or a meeting transcript (.vtt, .srt or .docx). Or copy the text and use Paste & go.\(representationNote)"
         }
     }
 }

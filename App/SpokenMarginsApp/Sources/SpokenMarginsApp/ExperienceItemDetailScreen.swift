@@ -14,8 +14,17 @@ struct ExperienceItemDetailScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @EnvironmentObject private var sharingCoordinator: Build23SharingCoordinator
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// Saved live-session photos for Recent Margins (#4180), observed directly so they appear once the launch load finishes.
+    @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
 
+    /// The followed show this item came from, for **Show less like this** (#4046 PR 12); nil for an item from no followed show.
+    @State private var showLessTarget: ShowLessTarget?
     @State private var confirmsTrash = false
+    /// Why Share has nothing to send, when it has none (#4229).
+    @State private var shareExplanation: ItemShareStart.Explanation?
+    /// Share is re-reading the item's Margins; a second tap meanwhile does nothing.
+    @State private var checksShare = false
     @State private var confirmsNewSession = false
     @State private var showsAdvanced = false
     /// Set while Continue waits on the "hear new Margins first?" question (#474). The item screen asks it only when no friend Margins wait (#3219).
@@ -27,7 +36,60 @@ struct ExperienceItemDetailScreen: View {
     @State private var episodeLinkText = ""
     @State private var showsReactions = false
     @State private var collectionItem: LibraryItemRow?
+    /// A Margin with no place, opened from Recent Margins (#4233): it has no moment to show in the Timeline.
+    @State private var unplacedMargin: MarginRow?
+    /// Whether the open item is a PDF, so the menu offers "Export PDF with Margins" (#4338). Looked up off the main thread
+    /// when the item opens, with the kept copy of its file when this iPhone holds one (`keptPDFOriginal`). With no copy
+    /// the sheet asks the listener to choose the file (PR 6).
+    @State private var isPDFItem = false
+    @State private var keptPDFOriginal: URL?
+    /// The kept copy of this item's Word document, when it was added as one and this iPhone holds its file: the only
+    /// case the menu offers "Export Word document with Margins" (#4595).
+    @State private var keptWordOriginal: URL?
+    @State private var pdfExport: PDFCommentExportModel?
+    /// A tap on Play or "Skip to …" made before its start is possible, kept until it can run (#3788).
+    @StateObject private var arrival = FriendArrivalPresenter()
+    /// "Keep Sam’s readings together" under the friend's intro, from the second packet from one sender (#5033).
+    @StateObject private var senderOffer = SenderCollectionOfferPresenter()
     private let episodeLinker = ImportedFileEpisodeLinker()
+
+    /// Finds whether the open item is a PDF, or a Word document with a kept original (#4338, #4595). A PDF needs only the
+    /// Library row: with no kept .pdf the sheet asks for the file. Word needs a kept .docx, and a kept .docx wins over a
+    /// row that reads as a PDF, so no row offers the wrong export.
+    private func refreshKeptOriginal() async {
+        let id = model.selectedItem.id
+        guard !id.isEmpty, let row = model.libraryItems.first(where: { $0.id == id }) else {
+            isPDFItem = false
+            keptPDFOriginal = nil
+            keptWordOriginal = nil
+            return
+        }
+        let isPDF = LibraryQueryEngine.isPDF(row)
+        let kept = await model.keptOriginal(itemId: id)
+        guard id == model.selectedItem.id else { return }
+        isPDFItem = isPDF && kept?.kind != .docx
+        keptPDFOriginal = isPDF && kept?.kind == .pdf ? kept?.url : nil
+        // The kept file's own kind is authoritative for Word: a file named "x.pdf.docx" reads as a PDF row by its name.
+        keptWordOriginal = kept?.kind == .docx ? kept?.url : nil
+    }
+
+    private func openPDFExport() {
+        guard isPDFItem else { return }
+        openCommentExport(original: keptPDFOriginal, document: .pdf)
+    }
+
+    private func openWordExport() {
+        guard let original = keptWordOriginal else { return }
+        openCommentExport(original: original, document: .word)
+    }
+
+    private func openCommentExport(original: URL?, document: PDFCommentExportState.Document) {
+        let id = model.selectedItem.id
+        pdfExport = PDFCommentExportModel(
+            itemId: id, itemTitle: model.selectedItem.title, original: original,
+            margins: model.ownMargins(itemId: id), store: model.store, originals: try? model.pdfOriginalStore(),
+            document: document)
+    }
 
     var body: some View {
         NavigationStack {
@@ -40,7 +102,17 @@ struct ExperienceItemDetailScreen: View {
                     let friendIntro = FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin))
                     if let friendIntro { FriendMarginsSenderLine(intro: friendIntro) }
                     hero
-                    if let friendIntro { FriendMarginsSummary(intro: friendIntro) }
+                    // At the accessibility text sizes the status lines and the second choice sit here, under the
+                    // title, and only the main button stays pinned, so the pinned area leaves room to read (#5110).
+                    // Below those sizes the layout pins every part, so the choices aren't worked out a second time.
+                    if ItemStartControlsLayout(accessibilityTextSize: dynamicTypeSize.isAccessibilitySize) != .allPinned {
+                        let inlineStart = startControls(.inline)
+                        if inlineStart.drawsAnything {
+                            VStack(alignment: .leading, spacing: 8) { inlineStart }
+                        }
+                    }
+                    if let friendIntro { FriendMarginsSummary(intro: friendIntro, receipt: sharingCoordinator.introReceipt) }
+                    SenderCollectionOfferRow(presenter: senderOffer)
                     if let description = model.selectedItem.descriptionText {
                         ItemDescriptionPreview(text: description).id(model.selectedItem.id)
                     }
@@ -49,12 +121,16 @@ struct ExperienceItemDetailScreen: View {
                     downloadRecovery
                     ItemLastFailureCard(itemId: model.selectedItem.id)
                     if !sharingCoordinator.importedLayers.isEmpty {
-                        Build23ImportedMarginPresentation(coordinator: sharingCoordinator)
+                        Build23ImportedMarginPresentation(
+                            coordinator: sharingCoordinator, hidesHeading: friendIntro != nil, friendIntroShowing: friendIntro != nil
+                        )
                     }
                     reactionsEntry
                     SourceFollowSuggestionCard()
                     ManualSourceFollowButton()
                     if !model.selectedItem.overview.isEmpty { overview }
+                    // A PDF's Paper note: purpose, findings and evidence from the listener's own Margins (#4340).
+                    if model.offersPaperNote(itemId: model.selectedItem.id) { PaperNoteSection() }
                     sessions
                     structure
                     if let edition = model.selectedListeningEdition { ListeningEditionScenes(edition: edition) }
@@ -70,7 +146,7 @@ struct ExperienceItemDetailScreen: View {
             }
             // The main listening button stays pinned at the bottom, within thumb reach, above the mini player (#149).
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                VStack(alignment: .leading, spacing: 8) { primaryPlaybackAction }
+                VStack(alignment: .leading, spacing: 8) { startControls(.pinned) }
                     .padding(.horizontal, horizontalSizeClass == .regular ? 30 : 18)
                     .padding(.vertical, 10)
                     .frame(maxWidth: 900)
@@ -93,13 +169,58 @@ struct ExperienceItemDetailScreen: View {
                     .accessibilityLabel("Back to \(backTitle)")
                     .accessibilityIdentifier("item.home.button")
                 }
+                // Share sits before the options menu, so the header reads back, title, Share, options (#4229). It is the
+                // friend sheet the player opens; Export, in the menu, takes text out for yourself.
+                if !model.selectedItem.id.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: share) {
+                            Label("Share Margins", systemImage: "square.and.arrow.up")
+                                .labelStyle(.iconOnly)
+                                .frame(width: 44, height: 44)
+                        }
+                        .accessibilityLabel("Share Margins")
+                        .accessibilityHint("Sends your Margins here to a friend")
+                        .accessibilityIdentifier("item.share.button")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                        if !model.selectedItem.id.isEmpty {
+                            Button("Share Margins", systemImage: "square.and.arrow.up", action: share)
+                                .accessibilityIdentifier("item.menu.share.button")
+                        }
                         Button("Export", systemImage: "doc.text") {
                             model.openExport(sessionId: model.selectedItem.sessions.first?.id)
                         }
                         .disabled(model.selectedItem.sessions.isEmpty)
+                        // A copy of the PDF with the listener's own Margins as comments (#4338). For every PDF item: with no
+                        // copy on this iPhone the sheet asks for the file. Off while the item has no Margin of the listener's own.
+                        if isPDFItem {
+                            Button(PDFCommentExportState.Document.pdf.menuTitle, systemImage: "doc.richtext", action: openPDFExport)
+                                .disabled(model.ownMargins(itemId: model.selectedItem.id).isEmpty)
+                                .accessibilityIdentifier("item.menu.exportPDF.button")
+                        }
+                        // The same for a Word document: a copy with the listener's own Margins as real Word comments (#4595).
+                        if keptWordOriginal != nil {
+                            Button(PDFCommentExportState.Document.word.menuTitle, systemImage: "doc.text", action: openWordExport)
+                                .disabled(model.ownMargins(itemId: model.selectedItem.id).isEmpty)
+                                .accessibilityIdentifier("item.menu.exportWord.button")
+                        }
                         quickActionButtons
+                        // An episode or post from a followed show (#4046 PR 12): the same mark the Show screen writes.
+                        if let target = showLessTarget {
+                            let marked = model.showLessMark(entryId: target.entryId, itemId: target.item.id) != nil
+                            Button(ShowLessWords.menuTitle(isMarked: marked), systemImage: ShowLessWords.symbol) {
+                                Task {
+                                    if marked {
+                                        await model.unmarkShowLess(entryId: target.entryId, itemId: target.item.id)
+                                    } else {
+                                        await model.markShowLess(target.mark)
+                                    }
+                                }
+                            }
+                            .accessibilityIdentifier("item.menu.showLess.button")
+                        }
                         if episodeLinkStatus.canLink && !episodeLinkStatus.canChange {
                             Button("Episode can't change: friends' Margins are on it", systemImage: "link") {}
                                 .disabled(true)
@@ -141,13 +262,34 @@ struct ExperienceItemDetailScreen: View {
                 }
             }
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
+            .task(id: "\(model.selectedItem.id)|\(model.feedSubscriptions.count)") {
+                showLessTarget = await model.showLessTarget(itemId: model.selectedItem.id)
+            }
+            // Runs again when the item's Library row arrives, so the entry is not missed on a screen opened before the row.
+            .task(id: "\(model.selectedItem.id)|\(model.libraryItems.contains { $0.id == model.selectedItem.id })") {
+                await refreshKeptOriginal()
+            }
             .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Skip to the Margins" (#3365)
-            .onDisappear { WrittenMarginReadings.leftItemScreen(model.selectedItem.id) }
-            .sheet(item: $collectionItem) { item in
+            .onAppear { senderOffer.refresh(model: model, arriving: !newSharedMargins.isEmpty) }
+            .onChange(of: senderOfferKey) { senderOffer.refresh(model: model, arriving: !newSharedMargins.isEmpty) }
+            .onDisappear {
+                WrittenMarginReadings.leftItemScreen(model.selectedItem.id)
+                arrival.cancel()
+            }
+            .trackedSheet(item: $pdfExport) { export in
+                PDFCommentExportSheet(export: export) { count in
+                    model.presentFeedback(UserFeedbackEvent(kind: .success, message: PDFCommentExportState.doneMessage(count: count)))
+                }
+                .environmentObject(model) // the Tidy version card it opens acts through the model (#4339)
+            }
+            .trackedSheet(item: $collectionItem) { item in
                 ItemCollectionSheet(item: item).environmentObject(model)
             }
-            .sheet(isPresented: $showsReactions) {
+            .trackedSheet(isPresented: $showsReactions) {
                 ExperienceReactionsScreen().environmentObject(model)
+            }
+            .trackedSheet(item: $unplacedMargin) { row in
+                ExperienceMarginDetailView(row: row).environmentObject(model)
             }
             .alert("Which episode is this?", isPresented: $asksForEpisodeLink) {
                 TextField("Episode link", text: $episodeLinkText)
@@ -158,6 +300,15 @@ struct ExperienceItemDetailScreen: View {
                 Button("Link") { linkEpisode() }
             } message: {
                 Text("Paste the link to this episode, like the one a friend shared. Margins a friend shares by link for it will then land on this file.")
+            }
+            .alert(
+                shareExplanation?.title ?? "",
+                isPresented: Binding(get: { shareExplanation != nil }, set: { if !$0 { shareExplanation = nil } }),
+                presenting: shareExplanation
+            ) { _ in
+                Button("OK", role: .cancel) {}
+            } message: { explanation in
+                Text(explanation.message)
             }
             .alert("Move to Recently Deleted?", isPresented: $confirmsTrash) {
                 Button("Cancel", role: .cancel) {}
@@ -185,6 +336,13 @@ struct ExperienceItemDetailScreen: View {
                 .screenTitle()
                 .foregroundStyle(AppColors.text)
                 .fixedSize(horizontal: false, vertical: true)
+            // A meeting transcript's start, length and speakers (#2997). Read in `ItemDetailLoader`, off the main actor.
+            if let meetingLine = model.selectedItem.meetingLine {
+                Text(meetingLine)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityIdentifier("item.meetingLine")
+            }
             if let published = model.selectedItem.publishedDateText {
                 Text("Published \(published)")
                     .font(.subheadline)
@@ -215,6 +373,25 @@ struct ExperienceItemDetailScreen: View {
         // The listener may have moved to another item while the read ran; that item's own refresh sets its status.
         guard let status = read, !Task.isCancelled, model.selectedItem.id == itemId else { return }
         episodeLinkStatus = status
+    }
+
+    /// The header's Share and the menu's Share Margins (#4229): the friend sheet when there are Margins to send, otherwise
+    /// an alert that says why. A second tap while the check runs or the sheet is up does nothing.
+    private func share() {
+        guard !checksShare, !model.isSharingInterjectionsPresented else { return }
+        checksShare = true
+        let itemId = model.selectedItem.id
+        Task {
+            defer { checksShare = false }
+            let start = await model.itemShareStart()
+            // The re-read can take a moment; if the listener has gone to another item, Share is for the one they tapped on.
+            guard model.selectedItem.id == itemId else { return }
+            switch start {
+            // The sheet's store reads run on this task; label them for the hang probe (#4229).
+            case .share: model.hangTelemetry.labels.scoped("itemShare") { model.openItemShareSheet() }
+            case .nothingYet(let explanation): shareExplanation = explanation
+            }
+        }
     }
 
     private func linkEpisode() {
@@ -255,6 +432,10 @@ struct ExperienceItemDetailScreen: View {
 
     @ViewBuilder
     private var metadataPills: some View {
+        // The item's total length, first (#4186): the same words the Library row uses, always the total, never the time left.
+        if let length = lengthPillWords {
+            metadataPill(length.visible, systemImage: "clock", accessibilityLabel: length.spoken)
+        }
         if let episodeTitle = episodeLinkStatus.episodeTitle {
             metadataPill("Episode: \(episodeTitle)", systemImage: "link")
         }
@@ -268,7 +449,8 @@ struct ExperienceItemDetailScreen: View {
                 systemImage: "map"
             )
         }
-        if !model.selectedItem.interjections.isEmpty {
+        // Only while a friend's intro shows does it count the Margins itself (#3788); otherwise the listener's count stays.
+        if !model.selectedItem.interjections.isEmpty, FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin)) == nil {
             let count = model.selectedItem.interjections.count
             metadataPill("\(count) Margin\(count == 1 ? "" : "s")", systemImage: "quote.bubble")
         }
@@ -279,6 +461,18 @@ struct ExperienceItemDetailScreen: View {
                 systemImage: "tablecells"
             )
         }
+    }
+
+    /// Nil for a meeting transcript (its meeting line gives the length) and for text with no character count.
+    private var lengthPillWords: (visible: String, spoken: String)? {
+        let item = model.selectedItem
+        return ItemLengthWords.pill(
+            isNativeAudio: item.isNativeAudio,
+            isMeetingTranscript: item.externalReferenceType == TranscriptItemText.referenceType,
+            textCharacterCount: item.lengthTextCharacterCount,
+            lengthMs: item.lengthMs,
+            playbackSpeed: model.speechPlaybackRateMultiplier
+        )
     }
 
     private var chapterCount: Int {
@@ -300,6 +494,9 @@ struct ExperienceItemDetailScreen: View {
                 case .markUnfinished:
                     Button("Mark Not Complete", systemImage: "arrow.uturn.backward.circle") { model.markItemUnfinished(id: row.id) }
                         .accessibilityIdentifier("item.markUnfinished.button")
+                case .markMarginsHeard:
+                    Button("Mark Margins Heard", systemImage: "checkmark.bubble") { model.markItemMarginsHeard(id: row.id) }
+                        .accessibilityIdentifier("item.markMarginsHeard.button")
                 case .playNext:
                     Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") { model.queuePlayNext(itemId: row.id) }
                         .accessibilityIdentifier("item.playNext.button")
@@ -323,18 +520,24 @@ struct ExperienceItemDetailScreen: View {
         if let row = model.libraryItems.first(where: { $0.id == model.selectedItem.id }),
            let action = ItemQuickAction.completionAction(for: row) {
             Button {
-                if action == .markComplete { model.markItemCompleted(id: row.id) } else { model.markItemUnfinished(id: row.id) }
+                switch action {
+                case .markComplete: model.markItemCompleted(id: row.id)
+                case .markMarginsHeard: model.markItemMarginsHeard(id: row.id)
+                default: model.markItemUnfinished(id: row.id)
+                }
             } label: {
                 Label(
-                    action == .markComplete ? "Mark complete" : "Mark not complete",
-                    systemImage: action == .markComplete ? "checkmark.circle" : "arrow.uturn.backward.circle"
+                    action == .markComplete ? "Mark complete" : action == .markMarginsHeard ? "Mark Margins heard" : "Mark not complete",
+                    systemImage: action == .markComplete ? "checkmark.circle" : action == .markMarginsHeard ? "checkmark.bubble" : "arrow.uturn.backward.circle"
                 )
                 .frame(maxWidth: .infinity, minHeight: 40)
                 .expandedHitArea(vertical: 2)
             }
             .buttonStyle(.bordered)
             .tint(AppColors.evergreen)
-            .accessibilityIdentifier(action == .markComplete ? "item.markCompleteVisible.button" : "item.markUnfinishedVisible.button")
+            .accessibilityIdentifier(
+                action == .markComplete ? "item.markCompleteVisible.button"
+                    : action == .markMarginsHeard ? "item.markMarginsHeardVisible.button" : "item.markUnfinishedVisible.button")
         }
     }
 
@@ -373,57 +576,90 @@ struct ExperienceItemDetailScreen: View {
         }
     }
 
-    @ViewBuilder
-    private var primaryPlaybackAction: some View {
-        if [.waiting, .preparing].contains(model.selectedItemStartupAudioState) {
-            HStack(spacing: 10) {
-                if model.selectedItemStartupAudioState == .preparing {
-                    ProgressView()
-                        .tint(AppColors.evergreen)
-                }
-                Text(model.selectedItemStartupAudioProgressDescription)
-                    .fontWeight(.semibold)
-            }
-            .foregroundStyle(AppColors.secondaryText)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(model.selectedItemStartupAudioProgressDescription)
-            .accessibilityIdentifier("item.start.preparing")
-        }
+    /// The start controls in one place on the screen (#5110): pinned at the bottom, or at the top of the scrolling
+    /// content. `ItemStartControlsLayout` says which parts each place draws at the listener's text size.
+    private func startControls(_ placement: ItemStartControls.Placement) -> ItemStartControls {
         let choices = listeningChoices
-        Button {
-            // Play on this screen asks nothing today: the friend's Margins play in place as the episode reaches them
-            // (#3219). `PlayRule.Surface.itemScreen` is where that is decided.
-            model.continueListening(itemId: model.selectedItem.id, surface: .itemScreen) { pendingNewMarginsOffer = $0 }
-        } label: {
-            Label(choices.primaryTitle, systemImage: "play.fill")
-                .frame(maxWidth: .infinity, minHeight: 52)
-        }
-        .filledActionButton()
-        .accessibilityIdentifier("item.start.button")
-        if let marginsOnlyTitle = choices.marginsOnlyTitle {
-            Button {
-                model.reviewNewMargins(itemId: model.selectedItem.id, thenContinue: false)
-            } label: {
-                // Words only, as on the screens the owner reviewed (#3247): the line already says whose Margins.
-                Text(marginsOnlyTitle)
-                    .fontWeight(.semibold)
-                    .frame(maxWidth: .infinity, minHeight: 44)
+        // While the friend's intro shows, a tap that can't start yet is kept (#3788). Otherwise the buttons act as before.
+        let holdsEarlyTap = FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin)) != nil
+        let startup = model.selectedItemStartupAudioState
+        return ItemStartControls(
+            placement: placement,
+            layout: ItemStartControlsLayout(accessibilityTextSize: dynamicTypeSize.isAccessibilitySize),
+            preparing: [.waiting, .preparing].contains(startup)
+                ? ItemStartControls.Preparing(showsSpinner: startup == .preparing, description: model.selectedItemStartupAudioProgressDescription)
+                : nil,
+            arrivalLine: arrival.line,
+            choices: choices,
+            onMainButton: { tapped(.play, holdsEarlyTap: holdsEarlyTap) },
+            // Only "Skip to …" waits on a Margin's audio; "Listen without them" and "Play from the start" need none.
+            onSecondChoice: {
+                tapped(.skip, holdsEarlyTap: holdsEarlyTap && choices.secondaryAction == .reviewNewMargins(thenContinue: false))
             }
-            .buttonStyle(.bordered)
-            .tint(AppColors.evergreen)
-            .accessibilityLabel(choices.marginsOnlyAccessibilityLabel ?? marginsOnlyTitle)
-            .accessibilityIdentifier("item.reviewNewMargins.button")
+        )
+    }
+
+    /// A tap on a pinned button. With the friend's intro showing it goes through the keeper, which runs it now or keeps it
+    /// until it can start (#3788); the rest of the time it runs as it always did.
+    private func tapped(_ choice: FriendArrivalStart.Choice, holdsEarlyTap: Bool) {
+        guard holdsEarlyTap else { return start(choice) }
+        arrival.tap(choice, model: model) { start($0) }
+    }
+
+    /// Plays or skips to the Margins, as the buttons are labelled now.
+    private func start(_ choice: FriendArrivalStart.Choice) {
+        let choices = listeningChoices
+        let behind = marginsBehindPlace
+        switch choice {
+        case .play: perform(choices.primaryAction, behind: behind)
+        case .skip: if let action = choices.secondaryAction { perform(action, behind: behind) }
         }
+    }
+
+    /// What a pinned button does. The choice is `ItemListeningChoices`'s; this only calls the model (#4125).
+    private func perform(_ action: ItemListeningChoices.Action, behind: [SharedMarginReview.Entry]) {
+        let itemId = model.selectedItem.id
+        switch action {
+        case .play:
+            // Friend Margins ahead of the place play in place as the episode reaches them (#3219).
+            model.continueListening(itemId: itemId, surface: .itemScreen) { pendingNewMarginsOffer = $0 }
+        case .reviewNewMargins(let thenContinue):
+            // In catch-up the big button plays only what is new and pauses after it (#4785).
+            model.reviewNewMargins(
+                itemId: itemId, thenContinue: thenContinue, entries: thenContinue ? behind : nil, catchUp: catchUp != nil)
+        case .continueWithout:
+            model.continueWithoutNewMargins(NewMarginsOfferRequest(itemId: itemId, entries: behind))
+        case .startFromBeginning:
+            model.startItemFromBeginning(itemId: itemId, entries: behind)
+        }
+    }
+
+    private var marginsBehindPlace: [SharedMarginReview.Entry] {
+        model.itemScreenMarginsBehindSavedPlace(itemId: model.selectedItem.id)
     }
 
     /// The start controls for this item: today's single button, or the two choices when a friend's Margins wait (#3219).
     private var listeningChoices: ItemListeningChoices {
-        ItemListeningChoices(
+        let catchUp = catchUp
+        return ItemListeningChoices(
             unheardFriendMargins: newSharedMargins.map(\.waitingMargin),
+            marginsBehindPlace: marginsBehindPlace.map(\.waitingMargin),
+            placeIsAtEnd: model.selectedItemSavedPlaceIsAtEnd(),
             hasFinishedSession: hasFinishedSession,
             hasContinuationSession: model.selectedItemPreferredContinuationSession != nil,
-            isPreparingAudio: [.waiting, .preparing].contains(model.selectedItemStartupAudioState)
+            isPreparingAudio: [.waiting, .preparing].contains(model.selectedItemStartupAudioState),
+            catchUp: catchUp,
+            resumesShortOfEnd: catchUp != nil && model.selectedItemCatchUpResumesARelisten(),
+            ownParentDurationsMs: catchUp.map { model.catchUpOwnParentLengthsMs($0) } ?? []
         )
+    }
+
+    /// Catch-up (#4785): the item is finished (the Library row's `isCompleted`, which is `ItemFinishedRule.isFinished`)
+    /// and a new Margin answers one of the listener's own. Built from the same list as the intro's "Replies from" line,
+    /// so the two can never disagree, with no read of its own.
+    private var catchUp: ConversationCatchUp? {
+        let finished = model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.isCompleted ?? false
+        return ConversationCatchUp.make(isFinished: finished, waiting: newSharedMargins.map(\.waitingMargin))
     }
 
     @ViewBuilder
@@ -432,12 +668,13 @@ struct ExperienceItemDetailScreen: View {
             Button {
                 confirmsNewSession = true
             } label: {
-                Label("New session", systemImage: "plus.circle")
+                Label("Start over", systemImage: "plus.circle")
                     .frame(minHeight: 40)
                     .expandedHitArea(vertical: 2)
             }
             .buttonStyle(.bordered)
             .tint(AppColors.evergreen)
+            .accessibilityHint("Begins a separate pass. Your current place and Margins stay where they are.")
             .accessibilityIdentifier("item.startNew.button")
         }
 
@@ -450,9 +687,9 @@ struct ExperienceItemDetailScreen: View {
                     .frame(minHeight: 40)
                     .expandedHitArea(vertical: 2)
             }
-            // Beside the two start choices it is a quiet link, not a third peer button (#3219).
-            .buttonStyle(.bordered)
-            .tint(quietMarginsLink ? AppColors.secondaryText : AppColors.evergreen)
+            // Beside the two start choices it is a quiet link, not a third peer button (#3219). Quiet means no fill,
+            // not grey: grey text on a grey fill is how iOS draws a disabled button (#3854).
+            .modifier(MarginsLinkStyleModifier(style: ItemMarginsLinkStyle.style(quiet: quietMarginsLink)))
             .accessibilityIdentifier("item.reviewMargins.button")
         }
     }
@@ -477,7 +714,7 @@ struct ExperienceItemDetailScreen: View {
 
     private var structure: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Chapters", detail: "Authored source structure")
+            sectionHeading("Chapters", detail: "The chapters and headings in the source itself")
             if !model.selectedItem.navigation.isEmpty {
                 ExperienceSurface {
                     ExperienceCanonicalNavigationTree(
@@ -553,9 +790,9 @@ struct ExperienceItemDetailScreen: View {
                 }
             } else {
                 ExperienceSurface {
-                    Label("No authored chapters", systemImage: "doc.text")
+                    Label("No chapters in this source", systemImage: "doc.text")
                         .font(.headline)
-                    Text("Listening is available from the beginning. A generated map is optional and lives under Advanced.")
+                    Text("You can listen from the beginning. A Listening Map, if you want one, is under Advanced.")
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .padding(.top, 4)
@@ -573,6 +810,14 @@ struct ExperienceItemDetailScreen: View {
             .equatable()
     }
 
+    /// A Margin with a place opens in the Timeline at that place; one with no place opens its details (#4233).
+    private func openRecentMargin(_ row: MarginRow) {
+        switch MarginRowTap.action(for: row.interjection) {
+        case .playMoment: model.openMarginInTimeline(row)
+        case .openDetails: unplacedMargin = row
+        }
+    }
+
     @ViewBuilder
     private var recentMargins: some View {
         if !model.selectedItem.interjections.isEmpty {
@@ -582,7 +827,10 @@ struct ExperienceItemDetailScreen: View {
                     VStack(spacing: 0) {
                         ForEach(Array(itemMargins.prefix(3).enumerated()), id: \.element.id) { index, row in
                             if index > 0 { Divider() }
-                            Button { model.openMarginInTimeline(row) } label: {
+                            // A live-session photo sits on the right at standard sizes and under the words at
+                            // accessibility sizes, so the words keep the row's width (#4180). No photo, no slot.
+                            let photo = photoIndex.photo(forMarginId: row.interjection.id)
+                            Button { openRecentMargin(row) } label: {
                                 HStack(alignment: .top, spacing: 12) {
                                     Image(systemName: "quote.bubble.fill")
                                         .foregroundStyle(AppColors.coral)
@@ -593,11 +841,17 @@ struct ExperienceItemDetailScreen: View {
                                             .foregroundStyle(AppColors.text)
                                             .multilineTextAlignment(.leading)
                                             .lineLimit(2)
-                                        Text("At \(row.interjection.roughPercent)%")
+                                        Text(MarginPlacePresentation.itemScreenLine(for: row.interjection))
                                             .font(.caption.monospacedDigit())
                                             .foregroundStyle(AppColors.secondaryText)
+                                        if let photo, dynamicTypeSize.isAccessibilitySize {
+                                            LiveSessionPhotoThumbnail(source: .kept(photo.photo), surface: .page)
+                                        }
                                     }
                                     Spacer()
+                                    if let photo, !dynamicTypeSize.isAccessibilitySize {
+                                        LiveSessionPhotoThumbnail(source: .kept(photo.photo), surface: .page)
+                                    }
                                     Image(systemName: "chevron.right")
                                         .foregroundStyle(AppColors.secondaryText)
                                         .accessibilityHidden(true)
@@ -605,6 +859,9 @@ struct ExperienceItemDetailScreen: View {
                                 .padding(.vertical, 12)
                             }
                             .buttonStyle(.plain)
+                            .modifier(OptionalAccessibilityValue(
+                                value: photo == nil ? nil : LiveSessionPhotoMargin.rowAccessibilityValue
+                            ))
                         }
                     }
                 }
@@ -624,7 +881,7 @@ struct ExperienceItemDetailScreen: View {
 
     private var sessions: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Listening sessions", detail: "Each pass keeps its own position and Margins")
+            sectionHeading("Listening sessions", detail: "Each one keeps its own place and Margins")
             if model.selectedItem.sessionRows.isEmpty {
                 ExperienceSurface { Text("No sessions yet.").foregroundStyle(AppColors.secondaryText) }
             } else {
@@ -828,11 +1085,17 @@ struct ExperienceItemDetailScreen: View {
         model.newSharedMargins(itemId: model.selectedItem.id)
     }
 
+    /// Changes when something the sender collection offer reads changes: the open item, the Library's rows (a Margin the
+    /// listener saved, a packet that arrived), the collections, or the friend's waiting Margins.
+    private var senderOfferKey: String {
+        "\(model.selectedItem.id)|\(model.libraryPresentationRevision)|\(model.libraryCollections.collections.count)|\(newSharedMargins.count)"
+    }
+
     private var itemMargins: [MarginRow] {
         model.selectedItem.interjections
             .filter { $0.status == "active" }
             .sorted { $0.createdAt > $1.createdAt }
-            .map { MarginRow(interjection: $0, itemTitle: model.selectedItem.title, sessionDate: nil) }
+            .map { MarginRow(interjection: $0, itemTitle: model.selectedItem.title, sessionDate: nil, transcriptWaitsForAnswer: MarginRow.waitsForAnswer($0)) }
     }
 
     private var readinessLabel: String {
@@ -864,8 +1127,9 @@ struct ExperienceItemDetailScreen: View {
         }
     }
 
-    private func metadataPill(_ text: String, systemImage: String) -> some View {
+    private func metadataPill(_ text: String, systemImage: String, accessibilityLabel: String? = nil) -> some View {
         Label(text, systemImage: systemImage)
+            .accessibilityLabel(accessibilityLabel ?? text)
             .font(.caption.weight(.semibold))
             .foregroundStyle(AppColors.secondaryText)
             .lineLimit(1)
@@ -1018,28 +1282,26 @@ private struct ItemLinksRow: View {
     }
 }
 
-/// The publisher's description under the title: its first three lines, with More to read the rest in place (#1322).
-/// The text is whole to VoiceOver either way; only the sighted preview is cut.
-private struct ItemDescriptionPreview: View {
-    let text: String
-    @State private var expanded = false
+/// "Review Margins" drawn as `ItemMarginsLinkStyle` says: an evergreen outline capsule with no fill, or the bordered
+/// evergreen button (#3854). The outline is at least 44 pt tall, and its stroke is a shape cue as well as a colour.
+private struct MarginsLinkStyleModifier: ViewModifier {
+    let style: ItemMarginsLinkStyle
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(text)
-                .font(.subheadline)
-                .foregroundStyle(AppColors.secondaryText)
-                .lineLimit(expanded ? nil : 3)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("item.description.text")
-            if ItemMetadata.needsExpansion(text) {
-                Button { expanded.toggle() } label: {
-                    Text(expanded ? "Less" : "More").frame(minHeight: 44, alignment: .leading).contentShape(Rectangle())
-                }
-                    .font(.subheadline.weight(.semibold))
-                    .accessibilityHint(expanded ? "Shows fewer lines of the description." : "Shows the whole description.")
-                    .accessibilityIdentifier("item.description.more")
-            }
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        switch style {
+        case .outline:
+            content
+                .buttonStyle(.plain)
+                .foregroundStyle(AppColors.evergreen)
+                .padding(.horizontal, 16)
+                .frame(minHeight: TapTarget.minimum)
+                .overlay { Capsule().stroke(AppColors.evergreen, lineWidth: 1) }
+                .contentShape(Capsule())
+        case .bordered:
+            content
+                .buttonStyle(.bordered)
+                .tint(AppColors.evergreen)
         }
     }
 }

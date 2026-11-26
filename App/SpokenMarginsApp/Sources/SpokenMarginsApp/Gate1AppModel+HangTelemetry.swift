@@ -7,6 +7,7 @@ extension Gate1AppModel {
     func startHangTelemetry() {
         guard !Self.isRunningUnitTests else { return }
         defer { hangTelemetry.setForeground(true) }
+        hangTelemetry.hangObserver = { LaunchRecorder.shared?.noteHang($0) } // a launch's first minute (#3752)
         hangTelemetry.start(
             record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) },
             context: { [weak self] in
@@ -40,6 +41,7 @@ extension Gate1AppModel {
         if marginVoiceIsHeldForRecording {
             recordDeveloperDiagnostic("transport.refused", ["command": CompactControlCommand.togglePlayPause.rawValue, "reason": "margin_recording"])
         }
+        noteCatchUp(.play) // Play after a catch-up run puts the caught-up card away (#4785)
         hangTelemetry.labels.scoped("playPauseTapped") { playPause() }
     }
 
@@ -76,9 +78,19 @@ extension Gate1AppModel {
         let labels = hangTelemetry.labels
         labels.scoped("snapshot.playbackEvents") { recordPlaybackEventState(previous: oldValue) }
         if oldValue.sessionId != snapshot.sessionId { resumeDeferredPodcastPlacements() }
+        if oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId {
+            NowPlayingArtworkFeeder.shared.playingItemChanged(activePlaybackItemId, coordinator: followedSourceCoordinator) // the card's picture (#3864)
+        }
+        compactBeginContext.snapshotChanged(from: oldValue, to: snapshot, at: Date())
         labels.scoped("snapshot.captureWatch") {
-            if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
-            if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
+            if oldValue.isRecording, !snapshot.isRecording {
+                endCaptureWatch()
+                endMarginEndPhraseListening() // every way a recording ends, not only the ones that clear its screen (#3940)
+            }
+            if !oldValue.isRecording, snapshot.isRecording {
+                startCaptureWatch()
+                beginMarginEndPhraseListening() // every way a recording starts (in-app, Lock Screen, headset, Live Activity), as the end above (#3940)
+            }
         }
         labels.scoped("snapshot.speechResume") { settleSpeechInterruptionResume() }
         labels.scoped("snapshot.cantPlayListening") { hearFriendMarginsIfStartFailed(from: oldValue) } // the episode can't play: a friend's Margins don't need it (#3392)

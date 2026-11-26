@@ -1,6 +1,7 @@
 // Ordering and grouping for the Library, Following and Margins tabs. Plain TypeScript with no DOM, so
 // `npm run test:web` covers it (library.test.ts).
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
+import { matchesSearch } from './search.ts';
 
 /** Seconds from the end at which an episode counts as finished. */
 export const FINISHED_WITHIN_SECONDS = 15;
@@ -73,10 +74,12 @@ export function libraryRows(
 export interface FollowingRow {
   show: Show;
   newest: Episode | undefined;
-  /** All of the show's episodes, newest first. */
+  /** The show's listed episodes (all of them with no `listed` predicate), newest first. */
   episodes: Episode[];
   /** Episodes the listener hasn't started. */
   newCount: number;
+  /** The show's episodes `listed` left out (dismissed, #4426). 0 with no predicate. */
+  dismissedCount: number;
 }
 
 /** One row per show, the show with the newest episode first (Four tabs: "sorted by newest"). */
@@ -84,17 +87,52 @@ export function followingRows(
   shows: readonly Show[],
   episodes: readonly Episode[],
   positions: readonly PlaybackPosition[],
+  listed?: (episode: Episode) => boolean,
 ): FollowingRow[] {
   const started = new Set(positions.filter((p) => p.seconds > 0).map((p) => p.episodeId));
+  // Grouped once, so a long feed costs one pass rather than one per show.
+  const byShow = new Map<string, Episode[]>();
+  for (const episode of episodes) {
+    const list = byShow.get(episode.showId);
+    if (list) list.push(episode);
+    else byShow.set(episode.showId, [episode]);
+  }
   const rows = shows.map((show) => {
-    const own = newestFirst(episodes.filter((e) => e.showId === show.id));
-    return { show, newest: own[0], episodes: own, newCount: own.filter((e) => !started.has(e.id)).length };
+    const all = byShow.get(show.id) ?? [];
+    const own = newestFirst(listed ? all.filter(listed) : all);
+    return { show, newest: own[0], episodes: own, newCount: own.filter((e) => !started.has(e.id)).length, dismissedCount: all.length - own.length };
   });
   return rows.sort((a, b) => {
     const d = time(b.newest?.publishedAt) - time(a.newest?.publishedAt);
     if (d !== 0 && !Number.isNaN(d)) return d;
     return a.show.title.localeCompare(b.show.title);
   });
+}
+
+/** What a Following search finds (#4427): the shows, in the list's order, and the episodes from every show, newest first. */
+export interface FollowingMatches {
+  shows: FollowingRow[];
+  episodes: Episode[];
+}
+
+/**
+ * A Following search (#4427 Design, 2026-11-22). A show matches on its title or its author. An episode matches on its own
+ * title only, so searching a show's name lists the show and not every one of its episodes. Episodes come from every row,
+ * each once. A blank query keeps every show and lists no episodes.
+ */
+export function followingMatches(query: string, rows: readonly FollowingRow[]): FollowingMatches {
+  if (query.trim() === '') return { shows: [...rows], episodes: [] };
+  const shows = rows.filter((row) => matchesSearch(query, [row.show.title, row.show.author]));
+  const seen = new Set<string>();
+  const episodes: Episode[] = [];
+  for (const row of rows) {
+    for (const episode of row.episodes) {
+      if (seen.has(episode.id)) continue;
+      seen.add(episode.id);
+      if (matchesSearch(query, [episode.title])) episodes.push(episode);
+    }
+  }
+  return { shows, episodes: newestFirst(episodes) };
 }
 
 export interface MarginGroup {
@@ -128,6 +166,39 @@ export function marginGroups(margins: readonly Margin[], episodes: readonly Epis
       };
     })
     .sort((a, b) => time(b.newestAt) - time(a.newestAt));
+}
+
+/** One Margins group as a search shows it (#4427): the Margins left, and whether the group's own title matched. */
+export interface MarginGroupMatch {
+  group: MarginGroup;
+  /** The Margins that show, in the group's order: all of them when `byTitle`. */
+  margins: Margin[];
+  /** The episode's or the show's title matched, so the whole group shows. */
+  byTitle: boolean;
+}
+
+/**
+ * A Margins search (#4427 Design, 2026-11-22). A group whose episode title or show title matches keeps all its Margins;
+ * any other group keeps the Margins whose text (written words or a voice Margin's transcript) or author matches, and is
+ * dropped when none do. The screen's stand-in titles for a missing episode or show are never searched: `showTitle` and
+ * `group.episode` give undefined for those. Group and Margin order are the input's. A blank query keeps everything.
+ */
+export function marginMatches(
+  query: string,
+  groups: readonly MarginGroup[],
+  showTitle: (showId: string | undefined) => string | undefined,
+): MarginGroupMatch[] {
+  if (query.trim() === '') return groups.map((group) => ({ group, margins: group.margins, byTitle: false }));
+  const found: MarginGroupMatch[] = [];
+  for (const group of groups) {
+    if (matchesSearch(query, [group.episode?.title, showTitle(group.episode?.showId)])) {
+      found.push({ group, margins: group.margins, byTitle: true });
+      continue;
+    }
+    const margins = group.margins.filter((m) => matchesSearch(query, [m.text, m.author]));
+    if (margins.length > 0) found.push({ group, margins, byTitle: false });
+  }
+  return found;
 }
 
 /** The id of the newest Margin overall, for the "Newest" label. */
@@ -173,4 +244,37 @@ export function timelinePosts(margins: readonly Margin[], durationSeconds: numbe
     else posts.push({ atSeconds: margin.atSeconds, fraction, margins: [margin] });
   }
   return posts;
+}
+
+/**
+ * Whether a Library row answers a search (#4422): the query is in the episode's title, its show or publication, or the
+ * name of someone who left a Margin on it, so a friend's items are found by the friend's name. Same rules as the app's.
+ */
+export function libraryRowMatches(query: string, row: LibraryRow, authors: ReadonlyMap<string, readonly string[]>): boolean {
+  if (query.trim() === '') return true;
+  return matchesSearch(query, [row.episode.title, row.show?.title, row.show?.author, ...(authors.get(row.episode.id) ?? [])]);
+}
+
+/** The names on each episode's Margins, by episode id: built once per change of Margins, not once per row per keystroke. */
+export function marginAuthors(margins: readonly Margin[]): Map<string, string[]> {
+  const byEpisode = new Map<string, string[]>();
+  for (const m of margins) {
+    if (!m.author) continue;
+    const names = byEpisode.get(m.episodeId) ?? [];
+    if (!names.includes(m.author)) names.push(m.author);
+    byEpisode.set(m.episodeId, names);
+  }
+  return byEpisode;
+}
+
+/** With this many groups or fewer, every group starts open; with more, only the one holding the newest Margin does (#4423). */
+export const GROUPS_OPEN_UP_TO = 3;
+
+/**
+ * Whether a Margins group starts collapsed (#4423): a few groups are all shown, but a long list opens on the newest
+ * group only, so reaching another item's Margins is a tap on its title, not a scroll past every Margin above it.
+ * `index` is the group's place in `marginGroups` order, newest first.
+ */
+export function startsCollapsed(index: number, total: number): boolean {
+  return total > GROUPS_OPEN_UP_TO && index > 0;
 }

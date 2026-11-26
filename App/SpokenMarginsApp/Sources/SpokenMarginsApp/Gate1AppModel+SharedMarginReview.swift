@@ -1,6 +1,7 @@
 import Foundation
 import SessionKit
 import SessionKitAudio
+import SessionKitFeeds
 
 /// The question Continue asks before it starts an item that has new shared Margins (#474): the item, and the Margins
 /// the question is about. Read once when Continue is tapped, so the dialog's message and its two answers don't read
@@ -8,6 +9,14 @@ import SessionKitAudio
 struct NewMarginsOfferRequest: Equatable {
     let itemId: String
     let entries: [SharedMarginReview.Entry]
+    /// The saved place is the very end of the episode, so the way past the question is "Play from the start", not
+    /// "Listen without them" (`PlayRule.askedPlaceIsAtEnd`, #4125). False for the item screen's own requests.
+    var placeIsAtEnd = false
+    /// The item is finished and a reply answers the listener (#4785): the question offers "Hear Cole's replies", which
+    /// plays only these and pauses after them.
+    var catchUp: ConversationCatchUp?
+    /// In catch-up, the second answer is "Continue" (a re-listen short of the end) rather than "Play from the start".
+    var catchUpContinues = false
 }
 
 /// "Review new Margins" (#474): plays an item's shared Margins that the listener hasn't heard, one after another,
@@ -28,7 +37,7 @@ extension Gate1AppModel {
         } else if selectedItem.id == itemId {
             entries = SharedMarginReview.entries(
                 layers: selectedItem.importedCommentaryLayers, records: selectedItem.importedCommentaryInterjections,
-                ownMargins: ownMargins(itemId: itemId)
+                ownMargins: ownMargins(itemId: itemId), durationMs: selectedItem.mediaDurationMs
             )
         } else if let store {
             // The listener's own Margins let a friend's reply say which of them it answers (#3221). They come from the
@@ -73,18 +82,34 @@ extension Gate1AppModel {
     /// into an episode they were partway through (owner's co-op test, #474). `offer` gets the item with only those
     /// Margins. An offer the listener already turned down isn't made again until another Margin arrives. This reads
     /// only what the model already holds (no store read on the main thread); `startItem` reads the sessions.
-    func continueListening(itemId: String, surface: PlayRule.Surface = .libraryRow, offer: (NewMarginsOfferRequest) -> Void) {
-        let outcome = PlayRule.decide(PlayRule.Context(
+    ///
+    /// `offersCatchUp` (#4785): only the Library row's play button passes it. A finished item with a reply to the listener
+    /// then asks "New replies to hear" at 100% and on the mark too, from the row and the entries already held.
+    func continueListening(
+        itemId: String, surface: PlayRule.Surface = .libraryRow, offersCatchUp: Bool = false, offer: (NewMarginsOfferRequest) -> Void
+    ) {
+        var context = PlayRule.Context(
             itemId: itemId, surface: surface,
             nowPlaying: hasActiveSession ? snapshot.itemId.map { PlayRule.NowPlaying(itemId: $0, mediaTimeMs: snapshot.currentMediaTimeMs) } : nil,
             openItem: PlayRule.OpenItem(id: selectedItem.id, sessions: selectedItem.sessions, addedAgainAt: addedAgainAt(forItem: selectedItem.id)),
             libraryRow: libraryItems.first(where: { $0.id == itemId }),
             // Only the Library row asks about Margins, so the item screen skips the read.
             newMargins: surface == .libraryRow ? newSharedMargins(itemId: itemId) : [],
-            declined: Self.declinedNewMargins))
-        switch outcome {
+            declined: Self.declinedNewMargins)
+        if offersCatchUp, surface == .libraryRow, let row = context.libraryRow {
+            context.catchUp = ConversationCatchUp.make(isFinished: row.isCompleted, entries: context.newMargins)
+        }
+        switch PlayRule.decide(context) {
         case .play: startItem(id: itemId)
-        case .askFirst(let entries): offer(NewMarginsOfferRequest(itemId: itemId, entries: entries))
+        case .askFirst(let entries):
+            var request = NewMarginsOfferRequest(itemId: itemId, entries: entries, placeIsAtEnd: PlayRule.askedPlaceIsAtEnd(context))
+            if let catchUp = context.catchUp {
+                request.catchUp = catchUp
+                let row = context.libraryRow
+                request.catchUpContinues = row?.hasContinuationSession == true
+                    && (row?.continuationProgressPercent ?? 100) < ItemFinishedRule.listenedPercent
+            }
+            offer(request)
         }
     }
 
@@ -94,19 +119,65 @@ extension Gate1AppModel {
         startItem(id: offer.itemId)
     }
 
+    /// The friend Margins behind the place Play would resume on the open item, for the item screen's two pinned buttons
+    /// (#4125). Empty when none is, or when the listener turned them down in this run. The rule is `PlayRule`'s.
+    func itemScreenMarginsBehindSavedPlace(itemId: String) -> [SharedMarginReview.Entry] {
+        guard selectedItem.id == itemId else { return [] }
+        return PlayRule.itemScreenMarginsBehind(
+            newSharedMargins(itemId: itemId), itemId: itemId, sessions: selectedItem.sessions,
+            addedAgainAt: addedAgainAt(forItem: itemId), declined: Self.declinedNewMargins)
+    }
+
+    /// Whether the open item's saved place is its very end, from `PlayRule` (#4125).
+    func selectedItemSavedPlaceIsAtEnd() -> Bool {
+        PlayRule.savedPlaceIsAtEnd(sessions: selectedItem.sessions, addedAgainAt: addedAgainAt(forItem: selectedItem.id))
+    }
+
+    /// What starting an item does before its session begins, for every way of starting it: the imported audio bridges, the
+    /// community map, the publisher voiceover lookup, and opening audio that is still being prepared. False when a
+    /// recording in progress blocks the start.
+    func prepareToStartItem(id: String, trigger: VoiceoverLookupDecision.Trigger = .play) -> Bool {
+        guard !rejectNavigationOrSessionMutationWhileRecording("start_item") else { return false }
+        prepareImportedLocalAudioBridges(itemId: id); listenerStartedItem(itemId: id, trigger: trigger)
+        if [.waiting, .preparing].contains(libraryItems.first(where: { $0.id == id })?.startupAudioState) {
+            scheduleStartupAudioPreparationIfNeeded(itemId: id)
+            diagnostics["startupAudioPlayback:\(id)"] = "started_without_waiting_for_opening_buffer"
+        }
+        return true
+    }
+
+    /// "Play from the start" on the item screen and the Library row's question: leaves these Margins new, doesn't ask about them again this run, and
+    /// begins a new session at 0, where they are ahead and play in place. The old session stays, so there is no
+    /// "Start a separate listening session?" question (#4125).
+    func startItemFromBeginning(itemId: String, entries: [SharedMarginReview.Entry]) {
+        // The Library row's question reaches here without the item ever having been opened, so it does what `startItem`
+        // does before a session starts, not only what opening the item screen did (#4125).
+        guard prepareToStartItem(id: itemId) else { return }
+        Self.declinedNewMargins.decline(itemId: itemId, margins: entries.map(\.marginId))
+        startNewSession(id: itemId)
+    }
+
     /// Plays the new shared Margins on `itemId` in turn. Afterwards the item goes back to where the listener left
     /// off: playing on with `thenContinue`, paused without it. `entries` are the Margins an offer already read; without
     /// them the review reads them.
-    func reviewNewMargins(itemId: String, thenContinue: Bool, entries offered: [SharedMarginReview.Entry]? = nil) {
+    ///
+    /// `catchUp` (#4785): the item is finished and a reply answers the listener. The run starts its own session
+    /// (`startCatchUpSession`), never in a finished one, and pauses after the last reply instead of playing on.
+    func reviewNewMargins(
+        itemId: String, thenContinue: Bool, entries offered: [SharedMarginReview.Entry]? = nil,
+        startingEarlier: StartEarlier.Plan? = nil, catchUp: Bool = false
+    ) {
         guard !rejectNavigationOrSessionMutationWhileRecording("review_new_margins") else { return }
+        if catchUp, catchUpRunIsPlaying(itemId: itemId) { return } // a second tap starts one run, not two
         let entries = offered ?? newSharedMargins(itemId: itemId)
         guard !entries.isEmpty else {
             reportWarning("There are no new Margins to review here.")
             return
         }
         if reviewFriendMarginsOfDeadEpisode(itemId: itemId, entries: entries) { return } // the episode can't play (#3392)
-        if WrittenMarginReadings.holdReview(itemId: itemId, thenContinue: thenContinue, entries: entries, model: self) { return } // readings not ready yet (#3365)
+        if WrittenMarginReadings.holdReview(itemId: itemId, thenContinue: thenContinue, entries: entries, catchUp: catchUp, model: self) { return } // readings not ready yet (#3365)
         endMarginMoment()
+        settleCatchUpPlace(trigger: "review") // a place a catch-up run kept comes back first, so this review returns there (#5238)
         // A Margin voice already playing (your own, #1538, or a friend's) or a shared-Margin card waiting gives way:
         // it would play over the review, and its end would resume the source mid-review.
         importedCommentaryAutoPlayTask?.cancel()
@@ -114,7 +185,14 @@ extension Gate1AppModel {
         pendingImportedCommentary = nil
         _ = sharedMarginReturn.promptDismissed()
         stopImportedCommentaryPlayback(resumeSource: false)
-        if snapshot.itemId != itemId || !hasActiveSession { startItem(id: itemId) }
+        var catchUpReturnTo: Int?
+        if catchUp {
+            guard let started = startCatchUpSession(itemId: itemId) else { return } // offline or refused: the replies stay new
+            catchUpReturnTo = started.returnToMediaTimeMs
+        } else {
+            noteCatchUp(.play) // an ordinary review puts an earlier caught-up card away (#4785)
+            if snapshot.itemId != itemId || !hasActiveSession { startItem(id: itemId) }
+        }
         // A friend's reply to one of the listener's own spoken Margins plays after that Margin (#3221): the lead-in,
         // the Margin, then the reply. Skip on the card goes past the Margin to the reply.
         var voiceURLs: [String: URL] = [:]
@@ -124,11 +202,19 @@ extension Gate1AppModel {
             voiceURLs[step.anchor.marginId] = url
             return true
         }
-        guard snapshot.itemId == itemId,
-              let sequence = MarginMomentSequence(
-                  itemId: itemId, reviewing: steps.map(\.anchor),
-                  returnToMediaTimeMs: snapshot.currentMediaTimeMs, resumesAtEnd: thenContinue
-              ) else { return }
+        // "Start a minute earlier" on a friend's Margin playing by itself (#4171) reviews that Margin with the longer run-up.
+        let reviewing = steps.map(\.anchor)
+        let built: MarginMomentSequence?
+        if let startingEarlier {
+            // No return place: Stop in the longer run-up pauses where it is, never a minute ahead at the Margin, and the
+            // episode plays on from the Margin after it (the Design's "Stop after a reached Margin").
+            built = StartEarlier.review(itemId: itemId, margins: reviewing, plan: startingEarlier)
+        } else {
+            built = MarginMomentSequence(
+                itemId: itemId, reviewing: reviewing, returnToMediaTimeMs: catchUp ? catchUpReturnTo : snapshot.currentMediaTimeMs,
+                resumesAtEnd: thenContinue && !catchUp, endsPaused: catchUp)
+        }
+        guard snapshot.itemId == itemId, let sequence = built else { return }
         // The review plays these voices; the automatic shared-Margin prompts mustn't play them again.
         entries.forEach { sharedMarginOffers.markAnnounced($0.interjection.id) }
         // Written down before the review first moves the source, for the endings it can't give the place back at.
@@ -138,8 +224,12 @@ extension Gate1AppModel {
         // Each Margin's recording, or its reading (rendered now if need be), from `SharedMarginAudio` (#3365, #3412).
         voiceURLs.merge(WrittenMarginReadings.startingReview(for: entries, voiceFile: resolvedApplicationSupportAssetURL(for:))) { voice, _ in voice }
         startMarginMoment(sequence: sequence, voiceURLs: voiceURLs, title: "New Margins", isApproximate: false)
+        if catchUp { beginCatchUpRun(itemId: itemId, entries: entries) }
+        let earlier = marginMomentConductor?.onVoiceStarted // the reply window's hook (#5238)
         marginMomentConductor?.onVoiceStarted = { [weak self] in
+            earlier?($0)
             if let margin = heard[$0] { self?.markSharedMarginHeard(margin) }
+            self?.noteCatchUpVoiceStarted($0)
         }
         settleReviewPlaceAsTheReviewProgresses(itemId: itemId)
         // Their voices get the same chime as the automatic prompt, except for a muted layer's (#932).
@@ -188,9 +278,15 @@ extension Gate1AppModel {
     /// The source only moves while it is still on the review's item: once another item has taken the player, the
     /// place belongs to the item that was left, not to the new one.
     func giveBackUnfinishedReview() {
+        if marginMomentConductor?.isPlayingVoice == true { closeMomentReplyWindow() } // a cut voice never reaches `onVoiceEnded` (#5238)
         guard let conductor = marginMomentConductor, conductor.sequence.isReview else { return }
         let itemId = conductor.sequence.itemId
-        guard conductor.sequence.isUnfinishedReview else { return reviewPlaces.clear(itemId: itemId) }
+        guard conductor.sequence.isUnfinishedReview else {
+            // A catch-up run's held place outlives the run until Play or a leave settles it (#5238).
+            if reviewPlaces.owed(itemId: itemId)?.heldAtMediaTimeMs == nil { reviewPlaces.clear(itemId: itemId) }
+            return
+        }
+        noteCatchUp(.stopped) // a catch-up run that ends early shows no card; the rest stay new (#4785)
         releaseUnplayedReviewMargins()
         if snapshot.itemId == itemId { conductor.stopReview() }
         reviewPlaces.clear(itemId: itemId)
@@ -205,6 +301,11 @@ extension Gate1AppModel {
         guard !snapshot.isRecording, marginMomentConductor == nil, let itemId = snapshot.itemId,
               let place = reviewPlaces.owed(itemId: itemId) else { return }
         reviewPlaces.clear(itemId: itemId)
+        if place.heldAtMediaTimeMs != nil { // a catch-up run's kept place: given back only if the source is still there (#5238)
+            guard case .giveBack(let placeMs) = CatchUpPlace.settle(place, itemId: itemId, sourceAtMediaTimeMs: snapshot.currentMediaTimeMs) else { return }
+            if seekMedia(toMediaTimeMs: placeMs) { diagnostics["catchUp.place"] = "given_back:launch" }
+            return
+        }
         guard place.needsRestoring(from: snapshot.currentMediaTimeMs) else { return }
         seekMedia(toMediaTimeMs: place.returnToMediaTimeMs)
     }
@@ -214,6 +315,7 @@ extension Gate1AppModel {
     /// saved at the listener's place. It runs before they clear the shared-Margin prompts, so the jump back doesn't
     /// count as passing a Margin the review already played.
     func endUnfinishedReview() {
+        settleCatchUpPlace(trigger: "session_start") // a catch-up run's kept place first: Continue, another item, a new run (#5238)
         if marginMomentConductor?.sequence.isUnfinishedReview == true { endMarginMoment() }
     }
 

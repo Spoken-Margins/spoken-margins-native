@@ -13,9 +13,9 @@ public enum PlayRule {
     public enum Surface: Equatable, Sendable {
         /// The Library row's Continue. Asks about Margins behind the place.
         case libraryRow
-        /// The item screen's Play, beside "Skip to <friend>'s Margins". It starts the episode in place with no
-        /// question (#3219), so a Margin behind a saved place is skipped. That is how `main` behaves and issue #4125
-        /// is about changing it; when it is decided, this is the case that changes.
+        /// The item screen's Play, beside "Skip to <friend>'s Margins". It never shows the question: with Margins
+        /// behind the saved place its pinned buttons are the two choices instead (`ItemListeningChoices`, #4125), and
+        /// otherwise Play starts the episode in place (#3219), friend Margins ahead playing as it reaches them.
         case itemScreen
 
         var asksAboutMarginsBehind: Bool { self == .libraryRow }
@@ -79,12 +79,16 @@ public enum PlayRule {
         /// The friend's Margins the listener hasn't heard and can hear, with their places in this copy.
         public var newMargins: [SharedMarginReview.Entry]
         public var declined: NewMarginsOfferMemory
+        /// The item is finished and a new Margin answers one of the listener's own (#4785): a surface that asks asks
+        /// about every new Margin, whatever the place, because Play would replay the episode from 0 or not at all.
+        public var catchUp: ConversationCatchUp?
 
         public init(
             itemId: String, surface: Surface, nowPlaying: NowPlaying? = nil, openItem: OpenItem? = nil,
             libraryRow: LibraryItemRow? = nil, newMargins: [SharedMarginReview.Entry] = [],
-            declined: NewMarginsOfferMemory = NewMarginsOfferMemory()
+            declined: NewMarginsOfferMemory = NewMarginsOfferMemory(), catchUp: ConversationCatchUp? = nil
         ) {
+            self.catchUp = catchUp
             self.itemId = itemId
             self.surface = surface
             self.nowPlaying = nowPlaying
@@ -104,7 +108,11 @@ public enum PlayRule {
     public static func decide(_ context: Context) -> Outcome {
         let start = start(for: context)
         guard context.surface.asksAboutMarginsBehind else { return .play(start) }
-        let behind = SharedMarginReview.entriesBehind(context.newMargins, placeMs: place(of: start))
+        if context.catchUp != nil, !context.newMargins.isEmpty,
+           !context.declined.isDeclined(itemId: context.itemId, margins: context.newMargins.map(\.marginId)) {
+            return .askFirst(marginsBehind: context.newMargins)
+        }
+        let behind = FriendMarginsPlan.behind(context.newMargins, place: place(of: start, in: context))
         if behind.isEmpty || context.declined.isDeclined(itemId: context.itemId, margins: behind.map(\.marginId)) {
             return .play(start)
         }
@@ -123,18 +131,47 @@ public enum PlayRule {
     ) -> [SharedMarginReview.Entry] {
         guard let session = resumedSession(in: ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt, sessions: sessions)) else { return [] }
         if let mediaTimeMs = session.position.mediaTimeMs {
-            return entries.filter { $0.mediaTimeMs < mediaTimeMs }
+            // Play at the end of the episode has nothing left to cross, so the Margins that play after the others
+            // are behind it too, not skipped (#3789). Short of the end they wait for it (#4347).
+            let atEnd = session.completionPercent >= ItemFinishedRule.listenedPercent
+            return FriendMarginsPlan.behind(entries, place: .known(mediaTimeMs: mediaTimeMs, isAtEnd: atEnd))
         }
         let charOffset = session.position.charOffset
         guard charOffset > 0 else { return [] }
         return entries.filter { ($0.interjection.resolution.localStartChar ?? .max) < charOffset }
     }
 
+    /// What the item screen's two pinned buttons are built from (#4125): the Margins behind the saved place, or none
+    /// when the listener already turned them down in this run (`NewMarginsOfferMemory`, the same memory the Library
+    /// row's question keeps). Empty means the screen shows today's Play and "Skip to <friend>'s Margins".
+    public static func itemScreenMarginsBehind(
+        _ entries: [SharedMarginReview.Entry], itemId: String, sessions: [Session], addedAgainAt: Date?,
+        declined: NewMarginsOfferMemory
+    ) -> [SharedMarginReview.Entry] {
+        let behind = marginsBehindSavedPlace(entries, sessions: sessions, addedAgainAt: addedAgainAt)
+        return declined.isDeclined(itemId: itemId, margins: behind.map(\.marginId)) ? [] : behind
+    }
+
     /// The saved place is at the very end: the session Play resumes is at 99% or more, but not at 100%, where Play
     /// begins again (`SessionContinuation.continueResumes`). Resuming there plays the last seconds and finishes, so
     /// "without the Margins" is better said as starting over (#4125).
     public static func savedPlaceIsAtEnd(sessions: [Session], addedAgainAt: Date?) -> Bool {
-        (resumedSession(in: ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt, sessions: sessions))?.completionPercent ?? 0) >= 99
+        (resumedSession(in: ItemFinishedRule.continuationSessions(addedAgainAt: addedAgainAt, sessions: sessions))?.completionPercent ?? 0) >= ItemFinishedRule.listenedPercent
+    }
+
+    /// Whether the question the Library row asks (`decide` returning `.askFirst`) is about a saved place at the very
+    /// end of the episode: 99% up to, not including, 100%. Then "Listen without them" would resume for the last few
+    /// seconds and finish, so the question offers "Play from the start" instead, as the item screen's second button
+    /// does (#4125, state D). The open item says it from its sessions; an item that is not open, from its Library row's
+    /// percentage (the row's own session already leaves out an item added again, #4183). Whether the item is loaded
+    /// or playing makes no difference: a relaunch restores the newest session as the loaded, paused one, so "now
+    /// playing" is also where a listener who heard it to the end finds it.
+    public static func askedPlaceIsAtEnd(_ context: Context) -> Bool {
+        if let open = context.openItem, open.id == context.itemId {
+            return savedPlaceIsAtEnd(sessions: open.sessions, addedAgainAt: open.addedAgainAt)
+        }
+        guard let row = context.libraryRow, row.hasContinuationSession, let percent = row.continuationProgressPercent else { return false }
+        return percent >= ItemFinishedRule.listenedPercent && percent < ItemFinishedRule.atEndPercent
     }
 
     private static func resumedSession(in sessions: [Session]) -> Session? {
@@ -159,6 +196,17 @@ public enum PlayRule {
         return .startNew
     }
 
+    /// Where a catch-up run starts (#4785): it resumes only a re-listen the listener left short of the end (under
+    /// `ItemFinishedRule.listenedPercent`), and otherwise begins a new session. A finished session, or one at 99% or
+    /// more, is never moved, so every fact that made the item finished survives the run.
+    public static func catchUpStart(sessions: [Session], addedAgainAt: Date?) -> StartAction {
+        if case .resume(let session) = startAction(sessions: sessions, addedAgainAt: addedAgainAt),
+           session.completionPercent < ItemFinishedRule.listenedPercent {
+            return .resume(session)
+        }
+        return .startNew
+    }
+
     static func start(for context: Context) -> Start {
         if let now = context.nowPlaying, now.itemId == context.itemId { return .savedPlace(mediaTimeMs: now.mediaTimeMs ?? 0) }
         if let open = context.openItem, open.id == context.itemId {
@@ -173,10 +221,19 @@ public enum PlayRule {
         return row.continuePlaceMs == 0 ? .beginning : .savedPlace(mediaTimeMs: nil) // a row holds no place
     }
 
-    private static func place(of start: Start) -> Int? {
+    private static func place(of start: Start, in context: Context) -> FriendMarginsPlan.Place {
         switch start {
-        case .beginning: return 0
-        case .savedPlace(let ms): return ms
+        case .beginning: return .known(mediaTimeMs: 0, isAtEnd: false)
+        case .savedPlace(let ms):
+            guard let ms else { return .unknown }
+            // The playhead of what is playing now is not at the end (the episode's end plays its own Margins); a saved
+            // session left at 99% is, and only the open item's sessions say so.
+            let playingNow = context.nowPlaying?.itemId == context.itemId
+            var isAtEnd = false
+            if !playingNow, let open = context.openItem, open.id == context.itemId {
+                isAtEnd = savedPlaceIsAtEnd(sessions: open.sessions, addedAgainAt: open.addedAgainAt)
+            }
+            return .known(mediaTimeMs: ms, isAtEnd: isAtEnd)
         }
     }
 }

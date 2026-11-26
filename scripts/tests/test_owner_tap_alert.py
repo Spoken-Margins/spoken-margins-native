@@ -14,7 +14,7 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import owner_tap_alert as alert  # noqa: E402
 
-spec = importlib.util.spec_from_file_location('lane_runner_for_tap_alert', SCRIPTS / 'lane-runner.py')
+spec = importlib.util.spec_from_file_location('lane_merge_rules_for_tap_alert', SCRIPTS / 'lane_merge_rules.py')
 lane = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(lane)
 
@@ -67,14 +67,19 @@ class ReadinessTable(unittest.TestCase):
             ('a rename out of .github counts', {'files': [{'filename': 'docs/x.yml',
                                                          'previous_filename': '.github/x.yml'}],
                                                 'comments': []}, True, 'ready'),
-            ('lane-runner.py itself', {'files': [{'filename': 'scripts/lane-runner.py'}]}, True, 'ready'),
+            ('the merge rules themselves', {'files': [{'filename': 'scripts/lane_merge_rules.py'}]}, True, 'ready'),
             ('draft', {'p': pr(draft=True)}, False, 'draft'),
             ('fork head', {'p': pr(head={'sha': HEAD, 'repo': {'full_name': 'eve/app'}})}, False, 'not in this'),
             ('fork deleted', {'p': pr(head={'sha': HEAD, 'repo': None})}, False, 'not in this'),
             ('mergeability unknown', {'p': pr(mergeable=None)}, False, 'not worked out'),
+            ('owner already tapped', {'p': pr(labels=[{'name': 'owner-tap'}])}, False, 'already tapped'),
+            ('another label', {'p': pr(labels=[{'name': 'needs-mac'}])}, True, 'ready'),
             ('conflict', {'p': pr(mergeable=False, mergeable_state='dirty')}, False, 'conflicts'),
             ('failing check', {'runs': GREEN + [run('host', conclusion='failure')]}, False, 'checks failed: host'),
-            ('cancelled check', {'runs': [run('lane', conclusion='cancelled')]}, False, 'checks failed'),
+            ('cancelled required check', {'runs': [run('hosted fast: portable', conclusion='cancelled')]},
+             False, 'checks failed: hosted fast: portable'),
+            ('cancelled lane-conflicts check (#5249)',
+             {'runs': GREEN + [run('check', conclusion='cancelled')]}, True, 'ready'),
             ('pending check', {'runs': GREEN + [run('lane-conflicts', status='queued', conclusion=None)]},
              False, 'checks pending'),
             ('in-progress check', {'runs': [run('lane', status='in_progress', conclusion=None)]}, False, 'pending'),
@@ -134,6 +139,39 @@ class ReadinessTable(unittest.TestCase):
                 self.assertIn(why, reason)
 
 
+class GateChecks(unittest.TestCase):
+    """#4693: a red "merge policy" waits for the audit and the tap, so it can't be what holds either of them back."""
+
+    def test_a_red_merge_policy_gate_is_not_a_failed_check(self):
+        self.assertEqual(alert.checks_state([run('hosted fast: portable'), run('merge policy', conclusion='failure')], []),
+                         ('ok', []))
+
+    def test_neither_is_the_job_that_writes_it_nor_a_pending_one(self):
+        # The job is `merge policy run`; the script writes the check `merge policy`, in progress while a PR waits (#4986).
+        # Each gate on its own, red or in progress, leaves the audit and the alert free to go ahead.
+        for name in ('merge policy', 'merge policy run'):
+            for kwargs in ({'conclusion': 'failure'}, {'status': 'in_progress', 'conclusion': None}):
+                with self.subTest(name=name, **kwargs):
+                    self.assertEqual(alert.checks_state([run('hosted fast: portable'), run(name, **kwargs)], []),
+                                     ('ok', []))
+
+    def test_a_real_failure_beside_it_still_fails(self):
+        state, names = alert.checks_state([run('hosted fast: portable', conclusion='failure'),
+                                           run('merge policy', conclusion='failure')], [])
+        self.assertEqual((state, names), ('failed', ['hosted fast: portable']))
+
+    def test_the_gate_as_a_commit_status_is_skipped_too(self):
+        # #5162: `merge policy` is a commit status now. A pending or failed one must not hold back the audit or the
+        # alert it waits for, or each waits on the other forever.
+        for state in ('pending', 'failure', 'error'):
+            with self.subTest(state=state):
+                self.assertEqual(alert.checks_state([run('hosted fast: portable')],
+                                                    [{'context': 'merge policy', 'state': state}]), ('ok', []))
+        self.assertEqual(alert.checks_state([run('hosted fast: portable')],
+                                            [{'context': 'merge policy', 'state': 'pending'},
+                                             {'context': 'main-t3', 'state': 'failure'}]), ('failed', ['main-t3']))
+
+
 class AlertBody(unittest.TestCase):
     def test_mentions_owner_and_carries_marker_for_the_full_head(self):
         body = alert.alert_body(pr(), ['.github/workflows/lane.yml'], 'uncomposed', audited=True)
@@ -147,13 +185,43 @@ class AlertBody(unittest.TestCase):
         self.assertEqual(ready(comments=CLEAN + [comment]), (False, f'already alerted on {HEAD[:7]}'))
 
 
-class SameRulesAsTheRunner(unittest.TestCase):
-    def test_constants_match_lane_runner(self):
+class SameRulesAsTheMergeRules(unittest.TestCase):
+    def test_constants_match_the_merge_rules(self):
         self.assertEqual(alert.OWNER_TAP_FILES, lane.OWNER_TAP_FILES)
         self.assertEqual(alert.OWNER_TAP_PREFIXES, lane.OWNER_TAP_PREFIXES)
         self.assertEqual(alert.AUDITS, lane.AUDITS)
         self.assertEqual(alert.AUDIT_SHA.pattern, lane.AUDIT_SHA.pattern)
         self.assertEqual(alert.CLEAN_AUDIT.pattern, lane.CLEAN_AUDIT.pattern)
+
+    def test_cancel_superseded_checks_are_lane_conflicts_jobs_and_not_required(self):
+        import required_checks
+        import yaml
+        jobs = yaml.safe_load((SCRIPTS.parent / '.github/workflows/lane-conflicts.yml').read_text())['jobs']
+        names = {job.get('name', job_id) for job_id, job in jobs.items()}
+        self.assertLessEqual(alert.CANCEL_SUPERSEDED_CHECKS, names)
+        self.assertFalse(alert.CANCEL_SUPERSEDED_CHECKS & set(required_checks.REQUIRED_CHECKS))
+
+
+class CancelledRuns(unittest.TestCase):
+    """#5249: lane-conflicts' one concurrency group cancels older runs by design; that grey `check` held #5161,
+    #5177, #5185 and #5186 out of the audit for 3 to 4 hours as "checks failed"."""
+
+    def test_a_cancelled_lane_conflicts_check_is_not_a_failure(self):
+        self.assertEqual(alert.checks_state([run('hosted fast: portable'), run('check', conclusion='cancelled')], []),
+                         ('ok', []))
+
+    def test_any_other_cancelled_check_still_fails(self):
+        # Required checks, and checks such as `compat` (packet and database compatibility) and `signoff` whose cancelled
+        # run checked nothing.
+        for name in ('hosted fast: portable', 'hosted fast: scope', 'hosted web: build and Playwright', 'compat',
+                     'signoff', 'workflow files parse'):
+            with self.subTest(name=name):
+                self.assertEqual(alert.checks_state([run(name, conclusion='cancelled')], []), ('failed', [name]))
+
+    def test_other_endings_of_a_check_that_is_not_required_still_fail(self):
+        for conclusion in sorted(alert.FAILED - {'cancelled'}):
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(alert.checks_state([run('check', conclusion=conclusion)], []), ('failed', ['check']))
 
 
 class FakeApi:
@@ -309,8 +377,27 @@ class PersistentLabel(unittest.TestCase):
         self.assertEqual(api.labels, [])
         api = FakeApi(labels=[self.TAP])
         api.get = lambda path: pr(mergeable=None, labels=[{'name': self.TAP}])
-        alert.check_pr(api, 7, 'uncomposed', dry_run=False)
+        with mock.patch.object(alert, 'MERGEABLE_WAIT', 0):
+            alert.check_pr(api, 7, 'uncomposed', dry_run=False)
         self.assertEqual(api.labels, [])
+
+    def test_a_pr_the_owner_has_tapped_loses_the_label_and_gets_no_alert(self):
+        api = self.check(labels=[self.TAP, 'owner-tap'])
+        self.assertEqual((api.labels, api.tap_ops, api.posted), ([('remove', 7, self.TAP)], [], []))
+        api = self.check(labels=['owner-tap'])
+        self.assertEqual((api.labels, api.tap_ops, api.posted), ([], [], []))
+
+    def test_unknown_mergeability_is_asked_again_before_giving_up(self):
+        answers = [pr(mergeable=None), pr(mergeable=None), pr()]
+        api = FakeApi()
+        api.get = lambda path: answers.pop(0)
+        with mock.patch.object(alert, 'MERGEABLE_WAIT', 0):
+            self.assertTrue(alert.get_pr(api, 7)['mergeable'])
+        self.assertEqual(answers, [])
+        answers[:] = [pr(mergeable=None)] * 9
+        with mock.patch.object(alert, 'MERGEABLE_WAIT', 0):
+            self.assertIsNone(alert.get_pr(api, 7)['mergeable'])
+        self.assertEqual(len(answers), 9 - alert.MERGEABLE_TRIES)
 
     def test_a_failing_label_write_does_not_stop_the_alert(self):
         api = FakeApi()
@@ -533,6 +620,16 @@ class Workflow(unittest.TestCase):
         self.assertIn(f"github.event.label.name == '{alert.LABEL}'", self.text)
         self.assertIn('--clear-label "$CLEAR"', self.text)
 
+    def test_the_token_may_write_labels_and_comments_on_a_pr(self):
+        # With `pull-requests: read` every label and comment write on a PR answered 403 (#4939).
+        self.assertIn('\n  pull-requests: write\n', self.text)
+        self.assertNotIn('pull-requests: read', self.text)
+
+    def test_the_owner_tap_label_and_a_schedule_start_a_check(self):
+        self.assertIn('types: [reopened, ready_for_review, labeled, unlabeled]', self.text)
+        self.assertIn('"owner-tap-check","owner-tap"', self.text)
+        self.assertRegex(self.text, r"(?m)^  schedule:\n    - cron: '\d+(,\d+)* \* \* \* \*'$")
+
     def test_concurrency_is_per_pr(self):
         self.assertIn("group: owner-tap-alert-${{ inputs.pr || github.event.pull_request.number || 'sweep' }}",
                       self.text)
@@ -545,12 +642,16 @@ class Workflow(unittest.TestCase):
                 text = (SCRIPTS.parent / '.github' / 'workflows' / name).read_text()
                 head, _, job = text.partition('\n  owner-tap-alert:\n')
                 self.assertTrue(job, 'no owner-tap-alert job')
+                # Read this job only. A job after it (the rearm job, which needs `actions: write`) is not the alert's.
+                job = re.split(r'\n  [A-Za-z0-9_-]+:\n', job, maxsplit=1)[0] + '\n'
                 self.assertIn('    name: owner-tap-alert\n', job)
                 self.assertIn(f'    needs: {needs}\n', job)
                 self.assertIn('    if: always() && github.event.pull_request.head.repo.full_name == github.repository\n',
                               job)
                 self.assertIn('    runs-on: ubuntu-latest\n', job)
                 self.assertIn('      issues: write\n', job)
+                self.assertIn('      pull-requests: write\n', job)  # a PR's label and comment need it (#4939)
+                self.assertNotIn('pull-requests: read', job)
                 self.assertNotIn('actions: write', job)
                 self.assertIn('      actions: read\n', job)  # the guard run's recorded base (#2714)
                 self.assertIn('ref: ${{ github.event.pull_request.base.sha }}', job)

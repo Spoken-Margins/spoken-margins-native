@@ -1,3 +1,4 @@
+import SessionKit
 import Speech
 
 /// Whether the listener has Speech Recognition turned off for the app (#268).
@@ -19,4 +20,16 @@ enum SpeechRecognitionAccess {
     /// instead of calling the transcriber, whose own authorization step shows iOS's prompt when the answer is still
     /// open (#2966: the "Just heard" peek runs while the microphone is live).
     static var isAuthorized: Bool { statusProvider() == .authorized }
+
+    /// The same answer in SessionKit's words, so the rule for listening for the end phrase can be tested on the host
+    /// (#3940). Reading it never asks.
+    static var state: SpeechRecognitionAccessState {
+        switch statusProvider() {
+        case .authorized: .authorized
+        case .denied: .denied
+        case .restricted: .restricted
+        case .notDetermined: .notDetermined
+        @unknown default: .notDetermined
+        }
+    }
 }

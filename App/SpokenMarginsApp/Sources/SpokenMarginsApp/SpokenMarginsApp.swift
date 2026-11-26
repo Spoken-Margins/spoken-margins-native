@@ -38,6 +38,9 @@ final class SpokenMarginsAppDelegate: NSObject, UIApplicationDelegate {
         // serialized with every filing; a screen can't open in the milliseconds before it. Unit tests have no launch to clean up after.
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
             Task.detached(priority: .utility) { await LiveSessionFileWorker.shared.sweepPhotos() }
+            // Saved live-session photos, keyed by saved Margin id, for the item's screens (#4180). The records are
+            // read off the main thread; app tests drive the lookup themselves.
+            Task { @MainActor in SavedMarginPhotoIndex.shared.load(from: Gate1AppModel.liveSessionDirectory) }
         }
         return true
     }
@@ -86,10 +89,16 @@ struct SpokenMarginsApp: App {
         if !runningTests {
             LaunchRecorder.shared = LaunchRecorder()
         }
+        // iOS's Speech Recognition prompt waits for the listener's Yes (#5016). Unit tests and scripted journeys have no card
+        // (it is hidden under the first-run suppression) and no way to say Yes, so they keep the gate open as before.
+        if !runningTests, !UITestingHooks.suppressesFirstRun { SpeechAskController.installGate() }
         let model = Gate1AppModel.makeApplicationModel()
         // Memory use and memory kills, in Diagnostics (#122). Unit tests keep nothing on disk.
         let pinnedDiagnostics = PinnedDiagnostics(diagnostics: model.runtimeDiagnostics)
         LaunchRecorder.shared?.attach { key, value in pinnedDiagnostics.set(key, value) }
+        // The hang probe starts when the root view appears, not only when the app turns active, so a slow cold
+        // launch's stall is reported (#3752). `startHangTelemetry` can run again at any time.
+        LaunchRecorder.shared?.onRootAppeared = { [weak model] in model?.startHangTelemetry() }
         let memoryFootprint = MemoryFootprintRecorder(diagnostics: pinnedDiagnostics,
                                                       fileURL: runningTests ? nil : MemoryFootprintRecorder.defaultFileURL)
         memoryFootprint.start(observing: model)
@@ -124,7 +133,7 @@ struct SpokenMarginsApp: App {
         #endif
         #if canImport(BackgroundTasks) && canImport(UIKit)
         // The same refresh as in the foreground, with the same six-hour staleness (#170).
-        FollowedSourceBackgroundRefreshController.shared.install { [weak model] in await model?.performFollowedSourceRefresh(force: false) }
+        FollowedSourceBackgroundRefreshController.shared.install { [weak model] in await model?.performFollowedSourceRefresh(force: false, trigger: .background) }
         #endif
         // A voice download iOS finished or woke the app for in the background carries on (#1819).
         BackgroundVoiceModelTransport.shared.onBackgroundEvents = { [weak model] in
@@ -140,7 +149,7 @@ struct SpokenMarginsApp: App {
         _sharingCoordinator = StateObject(
             wrappedValue: Build23SharingCoordinator(model: model)
         )
-        _catalogDrawer = StateObject(wrappedValue: CatalogDrawerModel(
+        let drawer = CatalogDrawerModel(
             store: CatalogDrawerModel.makeStore(),
             subscriptions: { [weak model] in model?.feedSubscriptions ?? [] },
             follow: { [weak model] feedURL in
@@ -148,20 +157,74 @@ struct SpokenMarginsApp: App {
                 return try await model.followCatalogFeed(feedURL)
             },
             makeOPMLImport: { [weak model] in
-                OPMLImportModel(
+                let importer = OPMLImportModel(
                     subscriptions: { model?.feedSubscriptions ?? [] },
                     follow: { feedURL in
                         guard let model else { throw CancellationError() }
                         _ = try await model.followCatalogFeed(feedURL, refreshAfter: false)
                     },
-                    didFollow: { model?.refreshFollowedSources(force: false) }
+                    didFollow: { model?.refreshFollowedSources(force: false, trigger: .afterFollow) }
                 )
+                // A show followed from any list leaves the AI's suggestions (#4683).
+                importer.onFollowed = { model?.aiFollowSuggestionsModel.remove(urls: $0) }
+                // A file's lists, includes and rules (#4046 PR 5, 8, 13).
+                importer.existingLists = { FollowListsState.shared.lists }
+                importer.saveExtras = { extras in await model?.saveOPMLImportExtras(extras) }
+                return importer
             },
             searcher: CatalogDrawerModel.makeSearcher(),
             startFirstListen: { [weak model] sourceIds, allowsWelcome in
                 await model?.startFirstListen(pickedSourceIds: sourceIds, allowsWelcomeSample: allowsWelcome)
-            }
-        ))
+            },
+            libraryHoldsFriendPacket: { [weak model] in await model?.libraryHoldsFriendPacket() ?? true },
+            openFriendLink: { [weak model] url in model?.openShareLink(url) },
+            packetOpenFailures: model.packetOpenFailures,
+            packs: CatalogDrawerPackActions(
+                // Follow all (#4285): the first source fetches its episodes at once, the rest wait for one refresh.
+                followQuietly: { [weak model] feedURL in
+                    guard let model else { throw CancellationError() }
+                    return try await model.followCatalogFeed(feedURL, refreshAfter: false)
+                },
+                refreshAfterBatch: { [weak model] in
+                    _ = await model?.performFollowedSourceRefresh(force: false, trigger: .afterFollow)
+                },
+                notForMe: { [weak model] in
+                    await model?.loadNotForMe()
+                    return model?.notForMeSnapshot ?? .empty
+                },
+                currentNotForMe: { [weak model] in model?.notForMeSnapshot ?? .empty },
+                hiddenSources: { [weak model] in await model?.notForMeHiddenSources() ?? [] },
+                hide: { [weak model] entry, sourceId in
+                    await model?.hideNotForMeSource(feedURL: entry.feedURL, title: entry.title, artworkURL: entry.artworkURL, sourceId: sourceId)
+                },
+                showAgain: { [weak model] feedURL in await model?.showNotForMeSourceAgain(feedURL: feedURL) },
+                unfollow: { [weak model] feedURL, sourceId in await model?.unfollowCatalogFeed(feedURL, sourceId: sourceId) ?? false }
+            )
+        )
+        model.notForMe.catalog = { [weak drawer] in drawer?.catalog }
+        // A closed "Suggested by your AI" preview drops what it settled: what it followed, and what it couldn't offer.
+        drawer.importClosed = { [weak model] importer in
+            guard importer.origin == .assistant else { return }
+            model?.aiFollowSuggestionsModel.remove(urls: importer.settledFeedLinks())
+        }
+        _catalogDrawer = StateObject(wrappedValue: drawer)
+        // Where the presenter is wired to the drawer, before any failure can exist (#4834): the one place the drawer is told.
+        model.packetOpenFailures.onCloseNotice = { [weak model, weak drawer] in
+            guard let model, let drawer else { return }
+            drawer.friendFileFailed(at: drawer.isPresented ? .elsewhere : FirstLaunchWelcomeOrder.Place(model))
+        }
+        #if !SPOKEN_MARGINS_LEGACY
+        FollowPodcastsShortcutBridge.catalogDrawer = drawer
+        FollowPodcastsShortcutBridge.prepare = { [weak model] in
+            // The root view's own bootstrap, which then does nothing when it appears.
+            MainThreadOperationLabels.shared.scoped("shortcut.followPodcasts.bootstrap") { model?.bootstrapLibraryIfNeeded() }
+            await model?.publishFeedSubscriptionsAfterChange()
+        }
+        FollowPodcastsShortcutBridge.sheetIsOpen = { [weak model] in
+            guard let model else { return false }
+            return model.isTermsOfUsePresented || model.isHelpPresented || model.isSharingInterjectionsPresented
+        }
+        #endif
     }
 
     private func open(_ url: URL) {
@@ -171,6 +234,8 @@ struct SpokenMarginsApp: App {
             for: url, appScheme: Gate2CompactCommandURL.scheme, compactHost: Gate2CompactCommandURL.host))
         let url = UITestingHooks.handedOffShareLink(url) ?? url
         if LiveSessionLinkRouter.shared.handle(url) { return }
+        // A list of shows opened from Files or Mail (#4046 PR 5): its import preview, never the Library.
+        if OPMLOpenRouter.opens(url), catalogDrawer.openFileImport(url) { return }
         // A friend's file comes before the first-run drawer (#3291).
         if ShareLinkURL.isOnShareHost(url)
             || (url.isFileURL && url.pathExtension.lowercased() == SpokenMarginsPackageArchive.fileExtension) {
@@ -182,6 +247,10 @@ struct SpokenMarginsApp: App {
     var body: some Scene {
         WindowGroup {
             Gate1RootView()
+                // The app's one tint (#3733): toggles follow SwiftUI's tint, not the asset catalog's accent, so both read the same token.
+                // Set here rather than in Gate1RootView, a hot file at its line ceiling; the effect is the same, this is the root.
+                .tint(AppColors.evergreen)
+                .presentationSceneToken()
                 .environmentObject(model)
                 .environmentObject(sharingCoordinator)
                 .environmentObject(catalogDrawer)
@@ -193,6 +262,8 @@ struct SpokenMarginsApp: App {
                 .onCompatibleChange(of: scenePhase) { phase in
                     if phase == .active {
                         MainThreadOperationLabels.shared.scoped("scene.active") { model.handleAppBecameActive() }
+                        // A decision made in iOS Settings, or Margins that waited through a relaunch, are settled wherever the listener is (#4715).
+                        SpeechAskController.shared.reconcile(model: model)
                     } else if phase == .inactive || phase == .background {
                         MainThreadOperationLabels.shared.scoped("scene.inactiveOrBackground") { model.handleAppBecameInactiveOrBackground(entersBackground: phase == .background) }
                         #if canImport(BackgroundTasks) && canImport(UIKit)
@@ -213,6 +284,7 @@ struct SpokenMarginsApp: App {
                 #endif
                 .task {
                     MainThreadOperationLabels.shared.scoped("launch.sourceLinkHandoffs") { model.importPendingSourceLinkHandoffs() }
+                    SpeechAskController.shared.reconcile(model: model)
                     #if DEBUG
                     // The screen tour's packets (#3237) open the way a listener's tap does.
                     if let packet = UITestingHooks.packetToOpen() { open(packet) }

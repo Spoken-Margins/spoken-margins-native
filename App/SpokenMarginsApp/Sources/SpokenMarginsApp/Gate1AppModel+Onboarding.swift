@@ -33,17 +33,53 @@ extension Gate1AppModel {
         )
     }
 
+    /// The coach waits for the prompt even while a friend listen hides it (#3790): hiding the prompt there must not
+    /// bring the coach up under the friend's Margin. The coach is otherwise as it was.
     var shouldShowGuidedOnboardingCoach: Bool {
-        !isFirstMarginPromptShowing
+        !isFirstMarginPromptDue
             && onboardingProgress.shouldShowCoach(guidedItemIsSelected: selectedItem.id == Self.guidedOnboardingItemId)
     }
 
     /// One thing asks for attention at a time (#2852): the prompt and the coach share the Now Playing screen, so the
-    /// coach waits for the prompt. The Library strip is on another screen and is never up with the prompt.
+    /// coach waits for the prompt. The Library strip is on another screen and is never up with the prompt. A friend
+    /// listen on this item gives the screen to the friend's Margin, so the prompt is not drawn then (#3790).
     var isFirstMarginPromptShowing: Bool {
+        isFirstMarginPromptDue && !friendListenState.isInProgress
+    }
+
+    /// The prompt's own rule, before a friend listen is taken into account.
+    private var isFirstMarginPromptDue: Bool {
         onboardingProgress.shouldShowFirstMarginPrompt(
-            hasActiveSession: hasActiveSession, suppressed: Self.isRunningUnitTests || UITestingHooks.suppressesFirstRun
+            hasActiveSession: hasActiveSession, suppressed: isFirstRunSuppressed
         )
+    }
+
+    private var isFirstRunSuppressed: Bool { Self.isRunningUnitTests || UITestingHooks.suppressesFirstRun }
+
+    /// Whether a friend's Margins are playing, or about to, on the item the Now screen shows, read from what the model
+    /// already holds (the open item's layers, the pinned card): no store read. The words and rule are `FriendListenState`.
+    var friendListenState: FriendListenState {
+        // A friend's Margins come from the item's layers and play on the item that is playing, so any other case is no
+        // friend listen. This runs on every playback tick, so the cheap answers come before the card is built.
+        let layers = selectedItem.importedCommentaryLayers
+        guard !layers.isEmpty, selectedItem.id == snapshot.itemId else { return .none }
+        let entries = SharedMarginReview.entriesInMemory(
+            layers: layers, records: selectedItem.importedCommentaryInterjections, durationMs: selectedItem.mediaDurationMs)
+        let entryCount = FriendListenState.aheadCount(
+            entries, mediaTimeMs: isMediaPlaybackSnapshot ? (snapshot.currentMediaTimeMs ?? 0) : nil,
+            textStart: snapshot.currentTextStart,
+            isAtEnd: snapshot.currentPlaybackProgressPercent >= ItemFinishedRule.atEndPercent)
+        return FriendListenState(
+            selectedItemId: selectedItem.id, playingItemId: snapshot.itemId,
+            entryCount: entryCount, pinnedCard: pinnedMarginCard)
+    }
+
+    /// The end card asks for a Margin of the listener's own, so it counts as the first-Margin prompt: once it shows, the
+    /// prompt does not come back (#3790). The Now screen calls this when the friend-listen state changes.
+    func noteFriendListen() {
+        guard !isFirstRunSuppressed else { return }
+        let state = friendListenState
+        changeOnboardingProgress { $0.noteFriendListen(state) }
     }
 
     /// Either way the prompt has been seen: it does not come back.
@@ -89,13 +125,17 @@ extension Gate1AppModel {
         }
     }
 
-    /// `items` are the Library's live items, taken from the read the caller already made (#2507).
-    func reconcileOnboardingEvidence(items: [LibraryItemSummary], store: SQLiteSessionStore) throws {
+    /// `items` are the Library's live items, taken from the read the caller already made (#2507). Returns whether the
+    /// Library holds a Margin, from the one read this already makes (the Watch card's "a Margin at launch", #4563).
+    @discardableResult
+    func reconcileOnboardingEvidence(items: [LibraryItemSummary], store: SQLiteSessionStore) throws -> Bool {
         var evidence = OnboardingEvidenceClassifier.sourceSteps(items: items)
-        if try store.hasActiveInterjection() {
+        let hasMargin = try store.hasActiveInterjection()
+        if hasMargin {
             evidence.insert(.firstInterjection)
         }
         markOnboardingSteps(evidence)
+        return hasMargin
     }
 
     func dismissOnboardingCard() {

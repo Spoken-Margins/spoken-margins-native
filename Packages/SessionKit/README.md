@@ -19,7 +19,7 @@ SessionKit is the domain logic of Spoken Margins: listening sessions, Margins, s
 
 The executables (`speech-bench`, `tour-render`, `substack-canary`) are developer tools. The app never links them. `coop-packet` and `phone-plan` are in their own package, [`Packages/SessionKitTools`](../SessionKitTools/Package.swift), which depends on this one by path, so a project depending on SessionKit doesn't resolve them (#1873).
 
-Outside dependencies are pinned exactly in `Package.swift`: ZIPFoundation 0.9.20 and onnxruntime 1.24.2 (on Linux, swift-crypto 3.15.1 stands in for CryptoKit). `Package.resolved` is committed.
+Outside dependencies are pinned exactly in `Package.swift`: ZIPFoundation 0.9.21 and onnxruntime-swift-package-manager 1.24.3, which carries ONNX Runtime 1.24.2 (on Linux, swift-crypto 3.15.1 stands in for CryptoKit). `Package.resolved` is committed.
 
 ## Building and testing
 
@@ -45,7 +45,7 @@ Inside the spoken-margins-native checkout all of them are found. In a package ch
 
 The Kitten tests (`KittenFrontEndTests`, `KittenRendererTests`) read the voice and the reference vectors through these inputs. `speech-bench` takes `--kitten <folder>` and `--supertonic <folder>` and has no default.
 
-Not converted yet: the Pocket tests still find their model in `research/C2/` on their own. They move to the download registry with #1392, and `scripts/tests/test_sessionkit_pass.py` lists them until then.
+`PocketRendererTests` reads its weights (`pocketModel`, `POCKET_TTS_MODEL_DIR`), its scoring Python (`POCKET_TTS_PYTHON`) and its fixtures through the same inputs. Without the weights, or in a package checked out alone, they skip and name the input. The weights are still fetched by `research/C2/pocket/fetch_weights.sh` into `research/C2/models/pocket`; moving them to the download registry is #1392.
 
 ## Versions
 

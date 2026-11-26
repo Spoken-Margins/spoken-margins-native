@@ -104,7 +104,9 @@ struct SpokenNoteRecordingView: View {
         .task { recorder.attach(model.makeSpokenNoteRecorderEnvironment(), opening: opening) }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
         .onChange(of: recorder.snapshot?.note) { _, _ in refreshWholeTimeline() }
-        .onChange(of: wholePlay.timeline) { _, _ in refreshMargins() }
+        .onChange(of: wholePlay.recordedTimeline) { _, _ in refreshMargins() }
+        // A version change restarts the note in a new session on the other file: the lit sentence follows its clock (#4779).
+        .onChange(of: model.snapshot.sessionId) { _, _ in refreshWholeTimeline() }
         // Add a Margin from here, the Lock Screen or the headphones starts the app's own Margin screens, which sit under this
         // one. This screen closes, the note plays on, and the Margin screen shows (#3664). A take being recorded stays.
         .onChange(of: isMarginCaptureActive) { _, active in
@@ -113,12 +115,14 @@ struct SpokenNoteRecordingView: View {
         }
         // A Margin that began while a take was still being saved closes this screen once the take is done.
         .onChange(of: recorder.phase) { _, phase in
+            model.spokenNoteClean.takeIsRecording = phase != .idle // holds a version change (#4779)
             guard phase == .idle, isMarginCaptureActive else { return }
             dismiss()
         }
         .onChange(of: recorder.noteFolder) { _, _ in refreshWholeTimeline() }
         // Anything other than Done that removes this screen still closes a take that is running, so it is saved.
         .onDisappear {
+            model.spokenNoteClean.takeIsRecording = false
             player.stop()
             wholePlay.abandon()
             noteExport.abandon()
@@ -209,6 +213,9 @@ struct SpokenNoteRecordingView: View {
                     ProgressView()
                     Text("Writing this down…").foregroundStyle(AppColors.secondaryText)
                 }
+            } else if recorder.snapshot?.heldTranscriptTakeIds.contains(take.id) == true {
+                // Waiting for the listener's answer on Speech Recognition, worded as a waiting spoken Margin; no Try again.
+                Text(TranscriptionFailureWording.transcriptNotYetAsked).foregroundStyle(AppColors.secondaryText)
             } else if recorder.snapshot?.failedTranscriptTakeIds.contains(take.id) == true {
                 Text("Couldn't write this take down. The audio is saved. It may have been silent, or speech recognition may be off.")
                     .foregroundStyle(AppColors.secondaryText)
@@ -291,6 +298,10 @@ struct SpokenNoteRecordingView: View {
         VStack(spacing: 10) {
             if isThisNoteOpen, recorder.phase == .idle { marginRow }
             if !takes.isEmpty { playNoteButton }
+            if !takes.isEmpty, let noteId = recorder.snapshot?.note.id {
+                SpokenNoteAudioVersionControl(clean: model.spokenNoteClean, noteId: noteId, placement: .noteScreen)
+                    .disabled(recorder.phase != .idle) // a take being recorded holds the version as it is
+            }
             recordButton
         }
         .padding(.horizontal, 20)
@@ -348,12 +359,13 @@ struct SpokenNoteRecordingView: View {
 
     private func refreshMargins() {
         guard let note = recorder.snapshot?.note else { return }
-        noteMargins.refresh(noteId: note.id, timeline: wholePlay.timeline, app: model)
+        // Margins are saved on the recording's clock, whichever version plays (#4779).
+        noteMargins.refresh(noteId: note.id, timeline: wholePlay.recordedTimeline, app: model)
     }
 
     private func refreshWholeTimeline() {
         guard let note = recorder.snapshot?.note, let folder = recorder.noteFolder else { return }
-        wholePlay.refreshTimeline(note: note, noteFolder: folder)
+        wholePlay.refreshTimeline(note: note, noteFolder: folder, playingMediaURL: isThisNoteOpen ? model.openSessionMediaURL : nil)
     }
 
     private var recordButton: some View {

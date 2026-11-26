@@ -33,9 +33,16 @@ final class LiveSessionController: ObservableObject {
     private let spokenCapture: LiveSessionSpokenCapture
     private var captureObservers: Set<AnyCancellable> = []
     private var diskObserver: NSObjectProtocol?
+    /// Photo Margins whose picture has been handed to the page-number reader by this screen, so each is read once here
+    /// even while the read has not finished or could not be done (#2708).
+    private var pageReadsStarted: Set<String> = []
+    private var pageReadChain: Task<Void, Never>?
     /// Finish tapped on the Lock Screen card while a spoken Margin records (#3499); lives only while one records.
 
     init(sessionId: String? = nil, files: LiveSessionFileWorker = .shared, spokenCapture: LiveSessionSpokenCapture = .shared) {
+        #if DEBUG
+        ScreenRedrawProbe.record("liveSessionController.init") // one per screen built: a rebuilt screen shows here (#4091)
+        #endif
         requestedSessionId = sessionId
         self.files = files
         self.spokenCapture = spokenCapture
@@ -64,6 +71,7 @@ final class LiveSessionController: ObservableObject {
             // A session started or discarded while the file was read is newer than the file.
             if saveGeneration == generation { session = stored }
             didLoad = true
+            readPagesFromPhotos()
             // A card left on "Recording" by an earlier screen or run goes back to Mark (#3499).
             if let id = session?.id { spokenCapture.syncCard(for: id) }
             WatchMarginReceiver.shared.fileWaitingMarks()
@@ -155,7 +163,8 @@ final class LiveSessionController: ObservableObject {
 
     func setKind(_ kind: ElsewhereKind) { edit { LiveSessionEdit.setKind(kind, on: &$0) } }
 
-    func setTitle(_ title: String) { edit { LiveSessionEdit.setTitle(title, on: &$0) } }
+    /// The name, while it runs and after it ends, until the session is saved (#4079): a field that shows words must keep them.
+    func setTitle(_ title: String) { editUnsaved { LiveSessionEdit.setTitle(title, on: &$0) } }
 
     func setStartWhere(_ text: String) { edit { LiveSessionEdit.setStartWhere(text, on: &$0) } }
 
@@ -220,15 +229,32 @@ final class LiveSessionController: ObservableObject {
         sessionChanged()
     }
 
+    /// Whether a Margin the listener began on this screen would be kept if saved now (#3847): it is, unless the session
+    /// was saved to the Library or is gone. The writing screen asks before it closes, so a refusal keeps the draft.
+    func checkBegunMargin(markedAt: Date) -> LiveSessionBegunMargin.Check {
+        LiveSessionBegunMargin.check(markedAt: markedAt, in: session)
+    }
+
+    /// What the writing screen says once the session ended while it was open; nil while the session runs.
+    var endedLine: String? { session.flatMap { LiveSessionBegunMargin.endedLine(for: $0) } }
+
     /// Adds a Margin now. `adjustmentMs` is the listener's slide of the predicted position; nonzero stores it as
-    /// their own position.
-    func addMargin(text: String, whereNote: String?, adjustmentMs: Int, markedAt: Date = Date()) {
+    /// their own position. A Margin begun while the session ran is kept even if the session ended somewhere else since
+    /// (the Watch's End, #3847): it goes into the ended session, labelled "after the session ended" when it is later
+    /// than the stop time. Only a session saved to the Library, or gone, refuses it.
+    @discardableResult
+    func addMargin(
+        text: String, whereNote: String?, adjustmentMs: Int, markedAt: Date = Date()
+    ) -> LiveSessionBegunMargin.Check {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isRunning, let current = session, !trimmed.isEmpty else { return }
+        guard let current = session, !trimmed.isEmpty else { return .refused }
         let margin = writtenMargin(trimmed, whereNote: whereNote, adjustmentMs: adjustmentMs, markedAt: markedAt, in: current)
-        session?.margins.append(margin)
-        session?.margins.sort { $0.markedAt < $1.markedAt }
+        guard var edited = session else { return .refused }
+        let result = LiveSessionBegunMargin.add(margin, to: &edited)
+        guard result != .refused else { return result }
+        session = edited
         save()
+        return result
     }
 
     /// Adds a written Margin that was taken with a photo (#2708). The photo's file is moved into place first and the Margin
@@ -238,7 +264,7 @@ final class LiveSessionController: ObservableObject {
         text: String, whereNote: String?, adjustmentMs: Int, markedAt: Date, photo staged: LiveSessionPhotoStore.Staged
     ) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isRunning, let current = session, !trimmed.isEmpty else {
+        guard let current = session, !trimmed.isEmpty, checkBegunMargin(markedAt: markedAt) != .refused else {
             await files.discardStaged(staged)
             return
         }
@@ -249,12 +275,12 @@ final class LiveSessionController: ObservableObject {
             errorMessage = LiveSessionPhotoMargin.couldNotKeepLine
         }
         // The session may have ended its screen, or been discarded, while the file moved.
-        guard session?.id == current.id else {
+        guard session?.id == current.id, var edited = session,
+              LiveSessionBegunMargin.add(margin, to: &edited) != .refused else {
             if let photo = margin.photo { await files.removePhoto(photo) }
             return
         }
-        session?.margins.append(margin)
-        session?.margins.sort { $0.markedAt < $1.markedAt }
+        session = edited
         save()
     }
 
@@ -275,6 +301,36 @@ final class LiveSessionController: ObservableObject {
     /// Throws away a photo that never became part of a Margin (Cancel on the recording or the writing screen).
     func discardPhoto(_ staged: LiveSessionPhotoStore.Staged) {
         Task { [files] in await files.discardStaged(staged) }
+    }
+
+    /// Reads each photo Margin's picture once for a page number, off the main actor (#2708). What it finds is only
+    /// recorded as an offer, which the Margin screen shows with Keep and No; the words on the page are not kept.
+    private func readPagesFromPhotos() {
+        guard let current = session else { return }
+        var waiting: [(photo: LiveSessionPhoto, sessionId: String, marginId: String)] = []
+        for margin in current.margins {
+            guard let photo = margin.validPhoto, !pageReadsStarted.contains(margin.id),
+                  current.needsPageRead(forMarginId: margin.id) else { continue }
+            pageReadsStarted.insert(margin.id)
+            waiting.append((photo, current.id, margin.id))
+        }
+        guard !waiting.isEmpty else { return }
+        // One picture at a time, after any read already running: a session with many photos must not recognise them all at once.
+        let earlier = pageReadChain
+        pageReadChain = Task { [weak self] in
+            await earlier?.value
+            for item in waiting {
+                let outcome = await LiveSessionPagePhotoReader.read(item.photo)
+                self?.finishPageRead(outcome, sessionId: item.sessionId, marginId: item.marginId)
+            }
+        }
+    }
+
+    private func finishPageRead(_ outcome: LiveSessionPagePhotoReader.Outcome, sessionId: String, marginId: String) {
+        // The session may have been closed, discarded or replaced, or the Margin deleted, while the picture was read.
+        guard case let .read(page) = outcome, session?.id == sessionId,
+              session?.recordPageRead(page, forMarginId: marginId) == true else { return }
+        save()
     }
 
     /// Keeps the page, percent or chapter heard in a Margin's words as that Margin's checkpoint (#2707).
@@ -314,6 +370,22 @@ final class LiveSessionController: ObservableObject {
         }
     }
 
+    /// Margins moved onto an item (#4233): the file worker has already taken them out of the stored session (and removed a
+    /// Quick session the move emptied), so this only drops them from the copy in memory, with no save of its own. The
+    /// Live Activity then counts what is left, and a removed session lets go as a discard would.
+    func takeOutMoved(ids: Set<String>, removedSession: Bool) {
+        guard session != nil else { return }
+        if removedSession {
+            if isRecordingSpoken { stopSpokenMargin() }
+            endActivities()
+            session = nil
+        } else {
+            session?.margins.removeAll { ids.contains($0.id) }
+            refreshActivities()
+        }
+        sessionChanged()
+    }
+
     /// Lets go of a session that was saved as a Library item (`Gate1AppModel.saveLiveSession` marks it saved).
     func close() {
         if isRecordingSpoken { stopSpokenMargin() }
@@ -333,6 +405,12 @@ final class LiveSessionController: ObservableObject {
             lastWrite = Task { [files] in await files.discard(sessionId: discarded, generation: generation) }
         }
         sessionChanged()
+    }
+
+    /// Picks watching up again for a screen that comes back (from under its own cover) without a reload (#3847).
+    func resumeWatching() {
+        observeDisk()
+        if pollTask == nil { startPolling() }
     }
 
     func stopPolling() {
@@ -460,6 +538,7 @@ final class LiveSessionController: ObservableObject {
     private func save() {
         guard let session else { return }
         let generation = nextGeneration()
+        defer { readPagesFromPhotos() }
         lastWrite = Task { [weak self, files] in
             do {
                 try await files.save(session, generation: generation)

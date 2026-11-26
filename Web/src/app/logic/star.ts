@@ -12,6 +12,15 @@ export function toggleStar(current: boolean): boolean {
   return !current;
 }
 
+/** What the star button shows: the flip not yet stored, when there is one, else the stored star. */
+export const shownStar = (pending: boolean | undefined, stored: boolean): boolean => pending ?? stored;
+
+/**
+ * What a tap writes: the opposite of what the button shows now, which is the pending flip while an earlier tap is still
+ * being written. So a double tap is two writes in order and ends where it began (#4172, #4319).
+ */
+export const starTapWrites = (pending: boolean | undefined, stored: boolean): boolean => toggleStar(shownStar(pending, stored));
+
 /** Whether the Margin is starred. */
 export const isStarred = (margin: Margin): boolean => margin.starred === true;
 
@@ -30,6 +39,14 @@ export function withStar(margin: Margin, on: boolean): Margin {
  * older copy must not take the star off. A Margin that says nothing about a star takes the stored one; starring or
  * unstarring is `withStar` through the store's own write, never this.
  */
+/**
+ * A rewritten friend's Margin keeps the heard mark the stored one has (part of #3216): opening the same packet again, or
+ * any older copy written back, never makes a Margin the listener has heard read as unheard.
+ */
+export function keepingHeard(margin: Margin, stored: Margin | undefined): Margin {
+  return stored?.heard === true && margin.heard !== true ? { ...margin, heard: true } : margin;
+}
+
 export function keepingStar(margin: Margin, stored: Margin | undefined): Margin {
   return stored !== undefined && isStarred(stored) && !isStarred(margin) ? withStar(margin, true) : margin;
 }

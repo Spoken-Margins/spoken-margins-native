@@ -1,6 +1,6 @@
 // Sending replies back to the friend who shared (#2168 phase 2, after the iPhone app's #3221). The rules mirror
 // Packages/SessionKit/Sources/SessionKit/ReplyBack.swift (`ReplyBackOffer`): Share on an episode that holds a friend's
-// Margins offers "Send replies to <friend>", the listener's replies pre-picked and their other new Margins offered
+// Margins offers "Share replies with <friend>" (#3906), the listener's replies pre-picked and their other new Margins offered
 // unpicked, and nothing the friend sent goes back. Plain TypeScript with no DOM, so `npm run test:web` covers it.
 // One more difference (#3784): with no reply in the list, it starts the listener's Margins made since the page opened
 // picked, because every Margin made before replies were recorded carries no link (`preselected`).
@@ -20,6 +20,16 @@ import { TOO_MANY_MARGINS } from '../../packet/write.ts';
 import { senderName, type MarginCue } from './arrival.ts';
 import { canStar, isStarred } from './star.ts';
 
+/** The legend and offer title on an introduction link, for replies and for new Margins alike (#4784, amendment 2026-11-21). */
+export const INTRO_SHARE_TITLE = 'Share your Margins';
+
+/** The caption under the Share list: what Share does. An introduction link says the Margins stay here and may go to anyone (#4784). */
+export function shareCaption(offer: Pick<ReplyBackOffer, 'intro'> | undefined): string {
+  return offer?.intro
+    ? 'Your Margins stay in this browser. Share them as a file with anyone you like. They open it in Spoken Margins and hear each one at its moment.'
+    : 'Share them as a file. Your friend opens it in Spoken Margins and hears each one at its moment.';
+}
+
 export interface ReplyBackOffer {
   /** The listener's replies to a friend's Margins. */
   replies: Margin[];
@@ -27,8 +37,13 @@ export interface ReplyBackOffer {
   others: Margin[];
   /** Whose Margins the replies answer; with no replies, every friend on the episode. */
   friendLabels: string[];
-  /** "Send replies to Ana" (Swift :16, :20). */
+  /** "Share replies with Ana" when a Margin answers a friend's, "Share your Margins with Ana" when none does (Swift `title`, #3906). */
   title: string;
+  /**
+   * True when every friend's Margin on the episode came in through an introduction link (#4784): the offer names no
+   * one, its title is "Share your Margins", and the words around it say the Margins stay in this browser.
+   */
+  intro: boolean;
   /** Every Margin the list shows, in the order they were made (Swift :18). */
   candidates: Margin[];
 }
@@ -72,11 +87,13 @@ export function replyBackOffer(margins: readonly Margin[]): ReplyBackOffer | und
   const firstOpen = Math.min(...friends.map(time));
 
   // One layer per packet; a friend's Margin whose id names no packet stands alone.
-  const layers = new Map<string, string>();
+  // A layer is an introduction layer (#4784) when its first Margin came in through an introduction link.
+  const layers = new Map<string, { author: string; intro: boolean }>();
   for (const friend of [...friends].sort(madeBefore)) {
     const key = digestOf(friend.id) ?? friend.id;
-    if (!layers.has(key)) layers.set(key, friend.author as string);
+    if (!layers.has(key)) layers.set(key, { author: friend.author as string, intro: friend.fromIntro === true });
   }
+  const introOnly = [...layers.values()].every((layer) => layer.intro);
 
   const replies: Margin[] = [];
   const others: Margin[] = [];
@@ -94,17 +111,22 @@ export function replyBackOffer(margins: readonly Margin[]): ReplyBackOffer | und
   if (replies.length === 0 && others.length === 0) return undefined;
 
   // Swift :58-65: a friend with no name is "your friend", never a label.
-  const ordered = answered.length > 0 ? answered : [...layers.keys()];
+  // Introduction layers are never named (#4784). With a real friend on the episode too, the words name only the real
+  // friend, and a reply to the introduction alone reads as the listener's own Margins.
+  const realKeys = [...layers].filter(([, layer]) => !layer.intro).map(([key]) => key);
+  const answeredReal = answered.filter((key) => realKeys.includes(key));
+  const ordered = introOnly ? [] : answeredReal.length > 0 ? answeredReal : realKeys;
   const friendLabels: string[] = [];
   for (const key of ordered) {
-    const name = senderName(layers.get(key));
+    const name = senderName(layers.get(key)?.author);
     if (name !== 'your friend' && !friendLabels.includes(name)) friendLabels.push(name);
   }
   return {
     replies,
     others,
     friendLabels,
-    title: `Send replies to ${friendNames(friendLabels)}`,
+    intro: introOnly,
+    title: introOnly ? INTRO_SHARE_TITLE : `${answeredReal.length > 0 ? 'Share replies with' : 'Share your Margins with'} ${friendNames(friendLabels)}`,
     candidates: [...replies, ...others].sort(madeBefore),
   };
 }
@@ -182,6 +204,28 @@ export function pickAll(candidates: readonly Margin[], value: boolean): Record<s
   return Object.fromEntries(candidates.map((m) => [m.id, value]));
 }
 
+/** The ticks the panel shows: the listener's own changes laid over the starting picks (#4093). */
+export function currentPicks(
+  candidates: readonly Margin[],
+  changed: Readonly<Record<string, boolean>>,
+  starting: ReadonlySet<string>,
+): Set<string> {
+  return new Set(candidates.map((m) => m.id).filter((id) => changed[id] ?? starting.has(id)));
+}
+
+/**
+ * What a tap on "Select all" / "Select none" does to the listener's changes: the label says what the next tap does, so
+ * it sets every listed Margin to the opposite of "all ticked" as the panel shows it now. The panel and its tests both
+ * call this, so a double tap is two calls in order (#4319).
+ */
+export function selectAllTap(
+  candidates: readonly Margin[],
+  changed: Readonly<Record<string, boolean>>,
+  starting: ReadonlySet<string>,
+): Record<string, boolean> {
+  return { ...changed, ...pickAll(candidates, !allPicked(candidates, currentPicks(candidates, changed, starting))) };
+}
+
 /** The writer's limit, said before the tap: undefined up to `LIMITS.margins` ticked. */
 export function tooManyReason(pickedCount: number): string | undefined {
   return pickedCount > LIMITS.margins ? TOO_MANY_MARGINS : undefined;
@@ -200,7 +244,8 @@ export function whyNotShared(offer: SharedList | undefined, toWriteCount: number
  * the listener sends it. With a friend's Margins on the episode it names them (#3784). Nothing else is promised: the
  * sharer is never told when the file arrives.
  */
-export function savedFileNextStep(offer: ReplyBackOffer): string {
+export function savedFileNextStep(offer: ReplyBackOffer): string | undefined {
+  if (offer.intro) return undefined; // an introduction link names no one to send it to (#4784): today's toast says enough
   return `Send this file to ${friendNames(offer.friendLabels)} in a message.`;
 }
 
@@ -230,6 +275,7 @@ export function savedMarginCard(margins: readonly Margin[], cue: MarginCue | und
   if (cue && (cue.kind === 'unplayable' || cue.kind === 'unplayable-done')) return undefined;
   const offer = replyBackOffer(margins);
   if (!offer) return undefined;
+  if (offer.intro) return { sentence: 'Your Margin is saved in this browser. It stays here unless you share it.' };
   return { sentence: `Your Margin is saved. Share sends it to ${friendNames(offer.friendLabels)}. You pick which of your Margins go.` };
 }
 

@@ -40,8 +40,28 @@ enum PDFStructuredTextExtractor {
         /// The size most of the line's visible characters are set in. `pointSize` is the
         /// first character's, which a leading marker or subscript skews (#592).
         var mainPointSize: CGFloat = 0
-        /// Character ranges of `text` set as superscripts (v2 only).
+        /// Character ranges of `text` that are citation or footnote markers (v2 only): the
+        /// `smallRuns` that `PDFSmallRunClassifier` calls markers. Set by `markerRanges` once
+        /// the text has its word spaces and the layout is known.
         var superscripts: [Range<Int>] = []
+        /// Character ranges of `text` that may be a footnote's number or letter on this
+        /// page (v2 only): the markers under the cautious reading, where a digit after a
+        /// lone letter may be one whatever the document does. `footnoteLineIndices` links a
+        /// footnote's text by these. They are the wider set because a missed link reads the
+        /// footnote aloud as body text (#4254).
+        var noteCues: [Range<Int>] = []
+        /// Short runs of smaller type set after other text (v2 only): markers, math indices
+        /// and exponents, ordinals.
+        var smallRuns: [SmallRun] = []
+    }
+
+    private struct SmallRun {
+        /// Characters of the cleaned line.
+        var range: Range<Int>
+        /// The run's bottom less the bottom of the letter before it, in units of the
+        /// line's main type size: 0 is level, negative is lower. Nil when PDFKit gives
+        /// no box for either.
+        var baselineShift: Double?
     }
 
     static func markdown(from url: URL) throws -> String {
@@ -341,6 +361,29 @@ enum PDFStructuredTextExtractor {
         let firstContentsPage = pages.firstIndex { $0.contains { isTableOfContentsTitle($0.text) } }
         let bodySize = inferredBodyPointSize(from: allLines)
         let layout = BodyLayout(lines: allLines, bodySize: bodySize)
+        // Which small runs are markers (#4194). Settled here, not as each line is read: a
+        // run in a display equation is an index, and only the layout says which lines
+        // those are. And a digit after a lone letter ("X0") is a citation or an index by
+        // how the whole document cites (#4254), so that is counted first, over the lines set
+        // in the body's size: a byline's affiliation numbers and a table's notes aren't
+        // citations.
+        var citationStyle = PDFCitationStyle()
+        for line in allLines where abs(line.mainPointSize - bodySize) <= 0.5 {
+            let runs = line.smallRuns.isEmpty ? [] : classifierRuns(in: line, isDisplayMath: layout.looksLikeDisplayMath(line)).map(\.run)
+            citationStyle.count(line: line.text, runs: runs)
+        }
+        let raisedNumbersCite = citationStyle.citesWithRaisedNumbers
+        for pageIndex in pages.indices {
+            for lineIndex in pages[pageIndex].indices where !pages[pageIndex][lineIndex].smallRuns.isEmpty {
+                let line = pages[pageIndex][lineIndex]
+                let isDisplayMath = layout.looksLikeDisplayMath(line)
+                let cues = markerRanges(in: line, isDisplayMath: isDisplayMath, raisedNumbersCite: true)
+                pages[pageIndex][lineIndex].noteCues = cues
+                pages[pageIndex][lineIndex].superscripts = raisedNumbersCite
+                    ? cues
+                    : markerRanges(in: line, isDisplayMath: isDisplayMath, raisedNumbersCite: false)
+            }
+        }
         let cover = titleOnlyCover(pages: pages, bodySize: bodySize)
         var result: [StructuredDocumentLine] = []
         // Outline entries on a page with no text start their chapter on the next page.
@@ -461,9 +504,11 @@ enum PDFStructuredTextExtractor {
                 } else if footnotes.contains(lineIndex) {
                     result.append(StructuredDocumentLine(text: line.text, role: .footnote, pageIndex: pageIndex))
                 } else if tableLines.contains(lineIndex) {
-                    result.append(StructuredDocumentLine(text: line.text, role: .table, pageIndex: pageIndex))
+                    result.append(StructuredDocumentLine(text: line.text, role: .table, pageIndex: pageIndex,
+                                                         bounds: normalizedBounds(line.bounds, on: page)))
                 } else if figureLines.contains(lineIndex) {
-                    result.append(StructuredDocumentLine(text: line.text, role: .figureText, pageIndex: pageIndex))
+                    result.append(StructuredDocumentLine(text: line.text, role: .figureText, pageIndex: pageIndex,
+                                                         bounds: normalizedBounds(line.bounds, on: page)))
                 } else if layout.looksLikeDisplayMath(line) {
                     result.append(StructuredDocumentLine(text: line.text, role: .equation, pageIndex: pageIndex))
                 } else if outline.isEmpty
@@ -507,6 +552,23 @@ enum PDFStructuredTextExtractor {
         return result
     }
 
+    /// Where a line sits on its page, as fractions of the crop box with the origin at the bottom left (#3895).
+    /// Nil when PDFKit gave no box, the page is rotated (its boxes are not in the unrotated space the
+    /// fractions mean), or the box lies off the page: a clip is cut from this, so a doubtful rectangle is none.
+    static func normalizedBounds(_ bounds: CGRect?, on page: PDFPage) -> PDFNormalizedRect? {
+        guard let bounds, page.rotation % 360 == 0 else { return nil }
+        let crop = page.bounds(for: .cropBox)
+        guard crop.width > 0, crop.height > 0, !bounds.isNull, !bounds.isInfinite else { return nil }
+        let clipped = bounds.intersection(crop)
+        guard !clipped.isNull, clipped.width > 0, clipped.height > 0 else { return nil }
+        return PDFNormalizedRect(
+            x: Double((clipped.minX - crop.minX) / crop.width),
+            y: Double((clipped.minY - crop.minY) / crop.height),
+            width: Double(clipped.width / crop.width),
+            height: Double(clipped.height / crop.height)
+        )
+    }
+
     /// Marks line-end hyphens that only split a word for layout: "agree-" + "ment"
     /// makes "agreement", a dictionary word, so it is spoken whole (#220 T4). A
     /// compound broken at its hyphen ("open-" + "ended", "chain-of-" + "thought")
@@ -537,7 +599,7 @@ enum PDFStructuredTextExtractor {
     /// Puts back word spaces a PDF's text layer lost ("Amodelofbottleneck pressure"), before
     /// any rule reads the lines: the citation, footnote and heading rules all need them (#2370).
     /// Only a document `PDFWordSpacer.isGlued` flags changes, and the word list is opened only
-    /// when some line holds a long letter run. Superscript ranges move with the text.
+    /// when some line holds a long letter run. Small-run ranges move with the text.
     private static func respaceGluedText(_ pages: inout [[TextLine]], wordListURL: URL?) {
         let run = "\\p{L}{\(PDFWordSpacer.gluedRunLength),}"
         guard pages.contains(where: { $0.contains { $0.text.range(of: run, options: .regularExpression) != nil } }),
@@ -556,10 +618,21 @@ enum PDFStructuredTextExtractor {
             let carried = previous.hasSuffix("-") ? String(previous.dropLast().reversed().prefix(while: \.isLetter).reversed()) : ""
             let next = position + 1 < texts.count ? texts[position + 1] : ""
             let continued = line.text.hasSuffix("-") ? String(next.prefix(while: \.isLowercase)) : ""
-            let insertions = spacer.spaceInsertions(in: line.text, protected: line.superscripts, carried: carried, continued: continued)
+            // The layout isn't known yet, and a display equation's letters aren't glued prose.
+            // How the document cites isn't either: its words aren't apart yet to count by.
+            let runs = smallRunKinds(in: line, isDisplayMath: false)
+            let insertions = spacer.spaceInsertions(
+                in: line.text,
+                protected: runs.filter { $0.kind == .footnoteMarker }.map(\.range),
+                unbroken: runs.filter { $0.kind == .mathIndex }.map(\.range),
+                carried: carried,
+                continued: continued
+            )
             guard !insertions.isEmpty else { continue }
             pages[pageIndex][lineIndex].text = PDFWordSpacer.applying(insertions, to: line.text)
-            pages[pageIndex][lineIndex].superscripts = line.superscripts.map { PDFWordSpacer.shifted($0, by: insertions) }
+            for index in line.smallRuns.indices {
+                pages[pageIndex][lineIndex].smallRuns[index].range = PDFWordSpacer.shifted(line.smallRuns[index].range, by: insertions)
+            }
         }
     }
 
@@ -705,6 +778,17 @@ enum PDFStructuredTextExtractor {
             return bounds.width < lineWidth * 0.8 && offColumn && narrow && tokens.count <= 12
         }
 
+        /// A short label printed in a figure that doesn't pass for a table cell
+        /// ("Base Model EA-3B", "(b) Supervised Finetuning"): at most eight words,
+        /// not a sentence or a section heading, narrower than the text column (#4588).
+        func looksLikeFigureLabel(_ line: TextLine) -> Bool {
+            if looksLikeTableCell(line) { return true }
+            guard let bounds = line.bounds, lineWidth > 0, bounds.width < lineWidth * 0.8 else { return false }
+            let tokens = line.text.split(separator: " ")
+            return !tokens.isEmpty && tokens.count <= 8 && !PDFStructuredTextExtractor.looksLikeProse(line.text)
+                && !PDFStructuredTextExtractor.looksLikeSectionHeading(line.text)
+        }
+
         /// A display equation: math set apart from the text column (centred or
         /// narrow), not a sentence with some symbols in it.
         func looksLikeDisplayMath(_ line: TextLine) -> Bool {
@@ -748,9 +832,10 @@ enum PDFStructuredTextExtractor {
     /// needs three lines; any other run needs five, so a short list or a
     /// paragraph's last line is never taken for a table. An uncaptioned run is a
     /// table only when a table caption is on this page, the next, or the three
-    /// before (long tables run on). Failing that, a run of three or more near a
-    /// figure caption is text printed inside the figure: axis ticks, panel
-    /// labels, screenshots.
+    /// before (long tables run on), unless a figure caption sits right below it.
+    /// Failing that, a run of three or more near a figure caption is text printed
+    /// inside the figure: axis ticks, panel labels, screenshots. The rule is
+    /// `PDFCellRunRole` in SessionKit (#4588).
     private static func tableAndFigureLineIndices(
         in lines: [TextLine],
         layout: BodyLayout,
@@ -760,6 +845,7 @@ enum PDFStructuredTextExtractor {
         let cells = lines.map(layout.looksLikeTableCell)
         let captions = lines.indices.filter { isTableCaption(lines[$0].text) || isFigureCaption(lines[$0].text) }
         let tableCaptions = captions.filter { isTableCaption(lines[$0].text) }
+        let figureCaptions = captions.filter { !isTableCaption(lines[$0].text) }
         var result = captionedTableLines(in: lines, captions: tableCaptions, layout: layout)
         var figure = Set<Int>()
         var index = 0
@@ -779,21 +865,37 @@ enum PDFStructuredTextExtractor {
                 if cells[probe] { end = probe }
                 probe += 1
             }
-            let length = end - index + 1
-            let captioned = tableCaptions.contains { $0 >= index - 3 && $0 <= end + 3 }
             let run = (index...end).filter { !captions.contains($0) && !result.contains($0) }
-            if captioned ? length >= 3 : (nearTableCaption && length >= 5) {
-                result.formUnion(run)
-            } else if nearFigureCaption && length >= 3 {
+            // The run's own figure caption, with the label lines before it, if it sits just under the figure.
+            var own = PDFCellRunRole.ownFigureCaption(
+                start: index, end: end, tableCaptions: tableCaptions, figureCaptions: figureCaptions,
+                lineCount: lines.count,
+                isLabel: { layout.looksLikeFigureLabel(lines[$0]) && !captions.contains($0) })
+            if let caption = own {
+                let figureLines = (index...end).filter { !captions.contains($0) } + caption.labels
+                let lowest = figureLines.compactMap { lines[$0].bounds?.minY }.min()
+                let top = lines[caption.line].bounds?.maxY
+                let justBelow = lowest.flatMap { lowest in top.map { Double(lowest - $0) } }
+                    .map { PDFCellRunRole.isJustBelow(gap: $0, bodySize: Double(layout.bodySize)) } ?? false
+                if !justBelow { own = nil }
+            }
+            switch PDFCellRunRole.role(start: index, end: end, tableCaptions: tableCaptions,
+                                       hasOwnFigureCaption: own != nil, nearTableCaption: nearTableCaption,
+                                       nearFigureCaption: nearFigureCaption) {
+            case .table: result.formUnion(run)
+            case .figure:
                 figure.formUnion(run)
+                figure.formUnion((own?.labels ?? []).filter { !result.contains($0) })
+            case nil: break
             }
             index = end + 1
         }
         return (result, figure)
     }
 
+    /// One rule for what opens a figure caption, shared with `PDFFigureCaptionLocator` (#4587).
     static func isFigureCaption(_ text: String) -> Bool {
-        text.range(of: #"^(?:Fig(?:ure)?\.?|FIG(?:URE)?\.?)\s*[0-9S]+[0-9.]*(?:[.:|]|\s*$|\s+\p{Lu}|\s*\()"#, options: .regularExpression) != nil
+        PDFFigureCaption.isCaptionStart(text)
     }
 
     /// Title-page matter (owner, #191): author names are read, the rest is not.
@@ -988,7 +1090,7 @@ enum PDFStructuredTextExtractor {
         var bodyMarkers = Set<String>()
         for line in lines where !isSmall(line) {
             let characters = Array(line.text)
-            for range in line.superscripts where range.lowerBound >= 0 && range.upperBound <= characters.count {
+            for range in line.noteCues where range.lowerBound >= 0 && range.upperBound <= characters.count {
                 let label = digits(String(characters[range]))
                 for piece in label.split(whereSeparator: { ",–- ".contains($0) }) where !piece.isEmpty {
                     bodyMarkers.insert(String(piece))
@@ -1051,8 +1153,9 @@ enum PDFStructuredTextExtractor {
         return names.count >= 2 && lower.count <= max(0, words.count / 5)
     }
 
+    /// One rule for what opens a table caption, shared with the Now tab's card placement (#4588).
     static func isTableCaption(_ text: String) -> Bool {
-        text.range(of: #"^(?:Table|TABLE)\s+[0-9IVXS]+[0-9.]*(?:[.:|]|\s*$|\s+\p{Lu})"#, options: .regularExpression) != nil
+        PDFCaptionPattern.isCaption(text, kind: .table)
     }
 
     /// Lines that follow a "Table N" caption in smaller type than the body: the
@@ -1148,14 +1251,31 @@ enum PDFStructuredTextExtractor {
                 if !text.isEmpty {
                     let visibleLocation = firstVisibleLocation(in: source, range: range)
                     let font = attributed.attribute(.font, at: visibleLocation, effectiveRange: nil) as? UIFont
+                    // A raised number PDFKit returns as a line of its own is a small run of the
+                    // line it is printed against, for the classifier to judge like any other
+                    // (#4256). Left as a line it was read aloud, and its footnote had no marker.
+                    if detectSuperscripts, let bounds, let last = result.indices.last, let lineBounds = result[last].bounds,
+                       PDFStrayMarkerLine.isMarker(
+                           .init(text: text, bounds: bounds,
+                                 pointSize: Double(mainPointSize(in: attributed, range: range) ?? font?.pointSize ?? 0)),
+                           atEndOf: .init(text: result[last].text, bounds: lineBounds, pointSize: Double(result[last].mainPointSize))
+                       ) {
+                        let start = result[last].text.count
+                        result[last].text += text
+                        result[last].smallRuns.append(SmallRun(
+                            range: start..<(start + text.count),
+                            baselineShift: Double((bounds.minY - lineBounds.minY) / result[last].mainPointSize)
+                        ))
+                        continue
+                    }
                     result.append(TextLine(
                         text: text,
                         pointSize: font?.pointSize ?? 0,
                         isBold: font?.fontDescriptor.symbolicTraits.contains(.traitBold) == true,
                         bounds: bounds,
                         mainPointSize: mainPointSize(in: attributed, range: range) ?? font?.pointSize ?? 0,
-                        superscripts: detectSuperscripts
-                            ? superscriptRanges(in: attributed, lineRange: range, page: page, lineBounds: bounds, cleanedText: text)
+                        smallRuns: detectSuperscripts
+                            ? smallRuns(in: attributed, lineRange: range, page: page, lineBounds: bounds, cleanedText: text)
                             : []
                     ))
                 }
@@ -1198,18 +1318,19 @@ enum PDFStructuredTextExtractor {
         }
     }
 
-    /// Citation and footnote markers set as superscripts ("aptitude,¹", "effects¹²,¹⁴"):
-    /// short runs in smaller type, attached to the text before them and not lowered
-    /// (a subscript, as in "CO2", isn't one). Ordinals ("20th") and
-    /// exponents after a digit ("10⁵") are left alone. PDFKit gives no superscript
-    /// attribute, only the size and position. Returns ranges of the cleaned line.
-    private static func superscriptRanges(
+    /// Short runs of smaller type set after other text on a line, each with how far it
+    /// sits above or below the letter before it. PDFKit gives no superscript or subscript
+    /// attribute, only the size and position. Some are citation and footnote markers
+    /// ("aptitude,¹", "effects¹²,¹⁴"); many are math indices and exponents ("xₙ", "10⁵",
+    /// "CO₂") or ordinals ("20th"). `markerRanges` tells them apart. Ranges are of the
+    /// cleaned line.
+    private static func smallRuns(
         in attributed: NSAttributedString,
         lineRange: NSRange,
         page: PDFPage,
         lineBounds: CGRect?,
         cleanedText: String
-    ) -> [Range<Int>] {
+    ) -> [SmallRun] {
         guard lineBounds != nil else { return [] }
         var lengthBySize: [CGFloat: Int] = [:]
         var runs: [(range: NSRange, size: CGFloat)] = []
@@ -1226,33 +1347,30 @@ enum PDFStructuredTextExtractor {
               let main = lengthBySize.max(by: { lhs, rhs in lhs.value == rhs.value ? lhs.key > rhs.key : lhs.value < rhs.value })?.key,
               main > 0 else { return [] }
         let source = attributed.string as NSString
-        var raised: [NSRange] = []
+        var small: [(range: NSRange, baselineShift: Double?)] = []
         for run in runs where run.size > 0 && run.size <= main * 0.8 && run.range.location > lineRange.location {
             var range = run.range
             while range.length > 0, let scalar = UnicodeScalar(source.character(at: NSMaxRange(range) - 1)),
                   CharacterSet.whitespacesAndNewlines.contains(scalar) {
                 range.length -= 1
             }
+            // No marker or index is longer; a longer run is small print, and the
+            // classifier would call it text.
             guard range.length > 0, range.length <= 12 else { continue }
-            let text = source.substring(with: range)
-            guard text.range(of: #"^[0-9,–\-*†‡§¶a-z]+$"#, options: .regularExpression) != nil,
-                  !["st", "nd", "rd", "th"].contains(text),
-                  let before = UnicodeScalar(source.character(at: range.location - 1)),
-                  !CharacterSet.whitespacesAndNewlines.contains(before),
-                  !(CharacterSet.decimalDigits.contains(before) && text.allSatisfy(\.isNumber)) else { continue }
-            // Level with or above the letters before it; a subscript ("CO2") sits lower.
-            // (Some PDFs set citation numbers small but on the baseline.)
+            // Against the nearest letter or digit before it: level with or above it is a
+            // marker's place, lower a subscript's ("CO2"). (Some PDFs set citation numbers
+            // small but on the baseline.)
             var reference = range.location - 1
             while reference > lineRange.location, let scalar = UnicodeScalar(source.character(at: reference)),
                   !CharacterSet.alphanumerics.contains(scalar) {
                 reference -= 1
             }
-            let markerBottom = page.characterBounds(at: range.location).minY
-            let letterBottom = page.characterBounds(at: reference).minY
-            guard markerBottom >= letterBottom - main * 0.15 else { continue }
-            raised.append(range)
+            let marker = page.characterBounds(at: range.location)
+            let letter = page.characterBounds(at: reference)
+            let known = !marker.isNull && !marker.isEmpty && !letter.isNull && !letter.isEmpty
+            small.append((range, known ? Double((marker.minY - letter.minY) / main) : nil))
         }
-        guard !raised.isEmpty else { return [] }
+        guard !small.isEmpty else { return [] }
         // Map raw UTF-16 offsets to Characters of the cleaned line, cleaning the way
         // `cleaned` does: drop control characters, collapse whitespace, trim.
         let raw = source.substring(with: lineRange)
@@ -1273,10 +1391,45 @@ enum PDFStructuredTextExtractor {
         while output.first == " " { output.removeFirst(); rawOffsets.removeFirst() }
         while output.last == " " { output.removeLast(); rawOffsets.removeLast() }
         guard String(output) == cleanedText else { return [] }
-        return raised.compactMap { range in
-            let kept = rawOffsets.indices.filter { rawOffsets[$0] >= range.location && rawOffsets[$0] < NSMaxRange(range) }
+        return small.compactMap { run in
+            let kept = rawOffsets.indices.filter { rawOffsets[$0] >= run.range.location && rawOffsets[$0] < NSMaxRange(run.range) }
             guard let first = kept.first, let last = kept.last else { return nil }
-            return first..<(last + 1)
+            return SmallRun(range: first..<(last + 1), baselineShift: run.baselineShift)
+        }
+    }
+
+    /// The line's small runs that are citation or footnote markers, which the listener
+    /// doesn't hear. A math index or exponent ("xₙ", "10⁵", "CO₂") and an ordinal ("20th")
+    /// are spoken: silencing every level run read "Fᵢ = vᵢ" as "F = v" (#4074, #4194).
+    private static func markerRanges(in line: TextLine, isDisplayMath: Bool, raisedNumbersCite: Bool) -> [Range<Int>] {
+        smallRunKinds(in: line, isDisplayMath: isDisplayMath, raisedNumbersCite: raisedNumbersCite).filter(\.kind.isSilenced).map(\.range)
+    }
+
+    /// What `PDFSmallRunClassifier` makes of each small run, from the line's text as it
+    /// now reads. `raisedNumbersCite` is the cautious reading until the document is counted.
+    private static func smallRunKinds(
+        in line: TextLine, isDisplayMath: Bool, raisedNumbersCite: Bool = true
+    ) -> [(range: Range<Int>, kind: PDFSmallRunClassifier.Kind)] {
+        classifierRuns(in: line, isDisplayMath: isDisplayMath, raisedNumbersCite: raisedNumbersCite).map {
+            ($0.range, PDFSmallRunClassifier.classify($0.run))
+        }
+    }
+
+    /// The line's small runs as the classifier takes them: each with the text around it.
+    private static func classifierRuns(
+        in line: TextLine, isDisplayMath: Bool, raisedNumbersCite: Bool = true
+    ) -> [(range: Range<Int>, run: PDFSmallRunClassifier.Run)] {
+        let characters = Array(line.text)
+        return line.smallRuns.compactMap { run in
+            guard run.range.lowerBound > 0, run.range.upperBound <= characters.count else { return nil }
+            return (run.range, PDFSmallRunClassifier.Run(
+                text: String(characters[run.range]),
+                before: String(characters[..<run.range.lowerBound]),
+                after: String(characters[run.range.upperBound...]),
+                baselineShift: run.baselineShift,
+                lineLooksLikeMath: isDisplayMath,
+                raisedNumbersCite: raisedNumbersCite
+            ))
         }
     }
 

@@ -92,12 +92,26 @@ final class ShareLinkUploadTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(ShareLinkPreview.self, from: opened.preview), preview)
     }
 
+    /// #4784: an introduction link's preview carries `answers: "none"`, made on the Mac. Every shipped build decodes it as
+    /// the preview it always did (Codable ignores unknown keys), so the new field breaks no reader.
+    func testAPreviewWithTheIntroductionMarkDecodesAsToday() throws {
+        let plain = try preview()
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: ShareLinkPreviewBuilder.encoded(plain)) as? [String: Any])
+        object["answers"] = "none"
+        let marked = try JSONSerialization.data(withJSONObject: object)
+        XCTAssertEqual(try JSONDecoder().decode(ShareLinkPreview.self, from: marked), plain)
+        object["answers"] = "box"
+        XCTAssertEqual(try JSONDecoder().decode(ShareLinkPreview.self, from: JSONSerialization.data(withJSONObject: object)), plain)
+    }
+
     func testNothingIsSealedOrSentWhileTheLinksSwitchIsNotOn() async throws {
         let reasons: [ServerFeatureOffReason] = [.noConfig, .malformedConfig, .switchedOff, .staleConfig, .buildTooOld(minimumBuild: 99)]
         for reason in reasons {
             let recorder = Recorder()
             let result = await client(recorder: recorder).makeLink(packet: Data([1, 2, 3]), preview: try preview(), linksState: .off(reason))
-            XCTAssertEqual(result, .useFile(.unavailable), "\(reason)")
+            // Below the minimum build, the line says to update (#4134); every other off reason is "not available".
+            let expected: ShareLinkFallback = if case .buildTooOld = reason { .updateNeeded } else { .unavailable }
+            XCTAssertEqual(result, .useFile(expected), "\(reason)")
             XCTAssertTrue(recorder.requests.isEmpty, "\(reason)")
         }
     }
@@ -186,6 +200,44 @@ final class ShareLinkUploadTests: XCTestCase {
         XCTAssertNil(try url("   "))
         XCTAssertNil(try url(nil))
         XCTAssertNil(try url("https://example.com/" + String(repeating: "a", count: 2_100)))
+    }
+
+    /// An Apple Podcasts episode page names its episode in the query (`?i=`), so "any query is left out" dropped every
+    /// episode shared from Apple Podcasts and sent the file along as if it had no public page. A known episode page
+    /// keeps only its episode key; everything else in the query, and any other site's query, is still left out.
+    func testAKnownEpisodePageKeepsOnlyItsEpisodeKey() throws {
+        func url(_ page: String) throws -> String? {
+            try ShareLinkPreviewBuilder.make(title: "T", show: nil, pageURL: page, enclosureURL: nil, marginTexts: ["x"]).source.url
+        }
+        let apple = "https://podcasts.apple.com/us/podcast/imaginary-worlds/id916273527"
+        let episode = apple + "?i=1000543006547"
+        XCTAssertEqual(try url(episode), episode, "the owner's packet, 2026-11-17")
+        XCTAssertEqual(try url(apple), apple, "the show page has no query")
+        XCTAssertEqual(try url(episode + "&uo=4"), episode, "a tracking item is dropped")
+        XCTAssertEqual(try url(apple + "?uo=4&i=1000543006547"), episode, "order does not matter")
+        XCTAssertEqual(try url(apple + "?i=1000543006547&utm_source=share"), episode)
+        XCTAssertEqual(try url(episode + "#top"), episode, "a fragment is dropped")
+        XCTAssertEqual(try url("  " + episode + "\n"), episode, "whitespace")
+        XCTAssertEqual(try url("https://PODCASTS.APPLE.COM/us/podcast/imaginary-worlds/id916273527?i=1000543006547"), episode, "host case")
+        XCTAssertEqual(try url("https://podcasts.apple.com/gb/podcast/x/id1?i=42"), "https://podcasts.apple.com/gb/podcast/x/id1?i=42", "another storefront")
+        XCTAssertNil(try url(apple + "?i=abc"), "an episode key is digits")
+        XCTAssertNil(try url(apple + "?i="), "empty")
+        XCTAssertNil(try url(apple + "?i=" + String(repeating: "1", count: 30)), "too long for an episode id")
+        XCTAssertNil(try url(apple + "?i=1&i=2"), "two episode keys")
+        XCTAssertNil(try url(apple + "?i=%31%32"), "an encoded key is not trusted")
+        XCTAssertNil(try url(apple + "?uo=4"), "no episode key")
+        XCTAssertNil(try url(apple + "?i=1000543006547&token=abc"), "a secret anywhere still drops the page")
+        XCTAssertNil(try url("http://podcasts.apple.com/us/podcast/x/id1?i=42"), "https only")
+        XCTAssertNil(try url("https://podcasts.apple.com.example.net/us/podcast/x/id1?i=42"), "lookalike host")
+        XCTAssertNil(try url("https://evilpodcasts.apple.com/us/podcast/x/id1?i=42"), "lookalike host")
+        XCTAssertNil(try url("https://example.com/ep?i=42"), "another site's query is still left out")
+
+        let watch = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        XCTAssertEqual(try url(watch), watch)
+        XCTAssertEqual(try url(watch + "&t=42s&si=abcdef"), watch, "time and share tracking are dropped")
+        XCTAssertEqual(try url("https://youtube.com/watch?v=dQw4w9WgXcQ"), "https://youtube.com/watch?v=dQw4w9WgXcQ")
+        XCTAssertNil(try url("https://www.youtube.com/watch?v=short"), "a video id is 11 characters")
+        XCTAssertNil(try url("https://www.youtube.com/results?v=dQw4w9WgXcQ"), "only the watch page")
     }
 
     func testNoPrivateAddressAppearsAnywhereInTheEncodedPreview() throws {

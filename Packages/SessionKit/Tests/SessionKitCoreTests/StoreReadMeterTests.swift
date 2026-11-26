@@ -140,11 +140,11 @@ final class StoreReadMeterTests: XCTestCase {
         XCTAssertLessThan(bytes, 20_000, "#2073: the summary must not decode the segments")
     }
 
-    /// The Library list decodes every article's full text. `listItems` is what the Library rows read today (#2102), so
-    /// until a summary read exists this is a known-oversized read: the test records the budget and skips with the
-    /// measured numbers. When a fix brings the read under the budget the test fails with "remove the marker", so the fix
-    /// that lands flips it on purpose (audit step 5, #2256).
-    func testTheLibraryListDoesNotDecodeEveryArticleText() throws {
+    /// Known gap #2102 (audit step 5, #2256): the Library list decodes every article's full text, because `listItems` is
+    /// what the Library rows read until a summary read exists, so it is over the budget a row needs. This test pins that
+    /// today's read does not get worse (a ceiling per item, measured on the fixture) and fails once the read comes under
+    /// the budget, so the fix that lands flips it on purpose: move the ceiling down to the budget then.
+    func testTheLibraryListReadIsKnownOversizedAndDoesNotGetWorse() throws {
         let scale: LibraryFixture.Scale = largeScale ? .library : .small
         let fixture = try build(scale)
         let meter = StoreReadMeter()
@@ -156,15 +156,14 @@ final class StoreReadMeterTests: XCTestCase {
         let bytes = meter.totals(for: "listItems(includeDeleted:)").bytes
         // About 1 KB of row metadata per item is plenty for a title, status and dates.
         let budget = scale.items * 1_024
-        try expectKnownOversized(bytes > budget, issue: "#2102", message:
-            "listItems decoded \(bytes) bytes for \(scale.items) items; a Library row needs under \(budget)")
+        let ceiling = scale.items * Self.listItemsBytesPerItemCeiling
+        XCTAssertLessThanOrEqual(bytes, ceiling, "#2102: listItems got worse: \(bytes) bytes for \(scale.items) items (ceiling \(ceiling))")
+        XCTAssertGreaterThan(bytes, budget, "#2102: listItems is within the \(budget)-byte budget now: lower the ceiling to the budget so the limit is enforced")
     }
 
-    private func expectKnownOversized(_ oversized: Bool, issue: String, message: String,
-                                      file: StaticString = #filePath, line: UInt = #line) throws {
-        if oversized { throw XCTSkip("Known oversized read (\(issue)): \(message)") }
-        XCTFail("Within budget now: remove expectKnownOversized for \(issue) so the limit is enforced. \(message)", file: file, line: line)
-    }
+    /// `listItems` decoded 2,265,210 bytes for the 32 small-fixture items (about 70,800 each) on 2026-11-14; the ceiling is
+    /// that with some room. The fixture's article text sets the size, so the same ceiling per item holds at Library scale.
+    private static let listItemsBytesPerItemCeiling = 80_000
 
     /// The fixture's mapped podcast has no `media`, so exports treat it as text. A recording's export reads its
     /// timeline for the words around each Margin (#2102); give it the media it has on the phone.
@@ -428,9 +427,15 @@ final class StoreReadMeterTests: XCTestCase {
         "importedCommentaryRecordsMention",   // a miss is the common answer: it scans every record
         "marginNoteChanges", "itemRevision", "isLiveImportedCommentaryLayer", "transcriptTimelineStamp",
         "listDeletedItems",                   // the trash starts empty
+        "loadLibraryFolders",                 // only an imported folder has a record; a Library with none reads none (#3769)
+        "loadPaperSources",                   // only a followed Zotero reading list has a record; most Libraries follow none (#4341)
+        "loadMovedMarginOrigins",             // no Margin is moved until the Move feature ships (#4233); then only a cut-short move has one to finish
+        "loadTranscriptTimes",                // only an imported meeting transcript has a record; the screens read it only for one (#2997)
         "loadLastSentReadAloud",              // only a Margin shared as text carries a choice, so a healthy Library mostly misses (it filters inside SQLite)
+        "loadLastSentLeadIns",                // only a Margin shared at a length other than 20 s carries one, so a healthy Library mostly misses (it filters inside SQLite)
         "latestPendingSummaryTurnId",         // no summary is waiting in a healthy Library; a miss is the common answer
-        "holdsImportedListeningMap"           // few layers carry a friend's map; a miss is the common answer (it still reads the item's layers inside SQLite)
+        "holdsImportedListeningMap",         // few layers carry a friend's map; a miss is the common answer (it still reads the item's layers inside SQLite)
+        "loadPublisherAudioChoice"            // only an item whose listener chose the app voice over its recording has one; a miss is the common answer (#4640)
     ]
 
     /// Answered from memory, not SQLite: nothing for the meter to see.

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "zotero-group.schema.json",
+  "title": "A recorded Zotero web API `groups/<id>` reply (third-party)",
+  "description": "As recorded, so fields are open. PaperSourceFetcher reads only the group's name, for the title of a whole group library that is followed.",
+  "type": "object",
+  "required": ["id", "data"],
+  "properties": {
+    "id": {"type": "integer"},
+    "data": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {"id": {"type": "integer"}, "name": {"type": "string"}}
+    }
+  }
+}

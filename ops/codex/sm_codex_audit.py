@@ -11,7 +11,7 @@ A PR is audited when all of these hold:
   * no audit comment (a headless Claude heading or a legacy Codex heading,
     the lane runner's own match) names its current head sha7;
   * the newest "Lane report ... — PASS/FAIL" comment is PASS for the current head, or the PR is one only
-    the owner can merge (it touches scripts/lane-runner.py or .github/, which the runner never merges and
+    the owner can merge (it touches scripts/lane_merge_rules.py or .github/, which the runner never merges and
     nobody arms) and the head's check runs and commit statuses have all finished with none failed, with no
     lane report on the head at all (#2052). A lane FAIL on the head still blocks it;
   * its changed files touch a risky area (sharing/packets, persistence/SQLite/
@@ -19,7 +19,8 @@ A PR is audited when all of these hold:
     the runner and its helpers, owner rule 2026-10-01), or the lane runner's
     newest report says it won't merge the PR until it has a Codex or Claude audit (the
     runner classifies files with scripts/test-scope.py, which is wider than the
-    list here: #402 and #439 waited on an audit this script never ran), or a
+    list here: #402 and #439 waited on an audit this script never ran; so the audio,
+    persistence and packet categories of test-scope.py count as risky too, #4843), or a
     comment on the PR or its linked issue asks for a Codex audit.
 
 A head that already has an audit is audited again only for one of these (the lane runner already
@@ -56,8 +57,13 @@ the head (a machine-readable `audit-resolution` naming the source audit comment 
 posted after the head's newest audit counts as a new reason to audit that head again, and the re-arm waits for
 a clean audit posted after the resolution.
 
+How much it reads (#4990): a run started by a PR's checks finishing passes that commit as `--head` and looks only at
+the PR with that head. Every open PR is read when the last full read is SWEEP_EVERY (15 minutes) old, and on a
+schedule or a dispatch without `--head`. So an audit request in a comment, a resolution comment, an edited
+description or a failed audit's retry on another PR waits at most that long.
+
 Usage:
-  /usr/bin/python3 ops/codex/sm_codex_audit.py [--dry-run] [--pr N]
+  /usr/bin/python3 ops/codex/sm_codex_audit.py [--dry-run] [--pr N] [--head SHA]
 
 Install and switch-over steps are in ops/codex/README.md.
 
@@ -70,6 +76,7 @@ import argparse
 import datetime as _dt
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -121,6 +128,11 @@ MAX_FAILED_AUDITS = 2  # a head whose audit call or post failed this many times 
 AUDIT_FAILED_TWICE = "audit failed twice on this head"
 MAX_DESCRIPTION_REAUDITS = 2  # audits of one head triggered by a changed title or description, beyond the first
 FAILURES_PATH = OPS_DIR / "codex-audit-failures.json"
+# #4990: when every open PR was last looked at. A run started by one PR's checks finishing (--head) looks only at that
+# PR while this is younger than SWEEP_EVERY; reading every open PR on each such start cost about 55 API calls a run,
+# about 13 times an hour, most of the workflow token's 1,000 an hour.
+SWEEP_PATH = OPS_DIR / "codex-audit-last-sweep"
+SWEEP_EVERY = 15 * 60  # seconds; the cadence the audit had as a cron, and the dispatch backstop's interval
 
 HEAD_FILE_CAP = 2_000_000  # bytes of one changed file copied out at the PR head
 HEAD_TOTAL_CAP = 10_000_000  # bytes copied out per PR
@@ -128,7 +140,12 @@ HEAD_TOTAL_CAP = 10_000_000  # bytes copied out per PR
 SOLO_OVER_LINES = 400  # a PR with more changed lines than this is audited alone
 BATCH_MAX_PRS = 5
 BATCH_MAX_LINES = 600
-BODY_CHARS = 6000  # cap on each PR body / issue section passed to the model
+BODY_CHARS = 6000  # cap on each issue section and audit comment passed to the model
+# The PR description gets its own, larger cap. At 6,000 the model was shown about two thirds of a long description
+# and blocked on the "Cost and catch" section it never saw, which sits near the end (#5274's ran 9,324 characters;
+# about ten PRs since 2026-11-10 drew a "cut off" finding). A description past this cap ends in a marker, so the model
+# knows text is missing rather than taking the cut for the end.
+PR_BODY_CHARS = 20_000
 HISTORY_AUDITS = 3
 
 INSTRUCTION = (
@@ -178,11 +195,47 @@ RISKY_PATTERNS = {
         r"^\.github/workflows/",
         r"^scripts/lane",
         r"^scripts/(xcodebuild-lane|host-test-lane|install-lane-guard\.py|test-scope\.py"
-        r"|hot_file_ratchet\.py|merge_audit\.py|verify-tests\.py|trunk\.py)$",
+        r"|hot_file_ratchet\.py|merge_audit\.py|merge_policy\.py|signoff_check\.py|verify-tests\.py|trunk\.py"
+        r"|required_checks\.py|dispatch_required_check\.py"
+        r"|parallel_unittest\.py|runner_test_seconds\.json|ci_step_budgets\.json)$",
         r"^TestPlans/(AppBehavior|AudioAdapters)\.xctestplan$",
     ],
 }
 _RISKY_RE = {k: [re.compile(p, re.I) for p in v] for k, v in RISKY_PATTERNS.items()}
+
+# The merge policy holds a PR for an audit by test-scope.py's category (lane-runner.py merge_blockers: AUDITED), which is
+# wider than the hand-kept list above: an app file is audio when its NAME matches APP_AUDIO and packets when it matches
+# APP_PACKET. A PR the policy holds that this script did not call risky waited for an audit nobody ran (#4666, #4792,
+# #4801, #4811, #4812, #4822, #4843). So the categories the policy audits are read from test-scope.py itself.
+SCOPE_AUDIT_AREAS = {"audio": "audio", "persistence": "persistence", "packet": "sharing"}  # lane-runner.py AUDITED
+_SCOPE = None
+
+
+def _scope_policy():
+    global _SCOPE
+    if _SCOPE is None:
+        path = sm_paths.repo(__file__) / "scripts" / "test-scope.py"
+        spec = importlib.util.spec_from_file_location("test_scope_for_audit", path)
+        _SCOPE = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_SCOPE)
+    return _SCOPE
+
+
+def scope_areas(paths: list[str]) -> list[str]:
+    """The areas test-scope.py's classification of these paths holds a merge for (the policy's own reading)."""
+    scope = _scope_policy()
+    # The category depends on the path (and, for a public-API change, the diff), never on the tree. A root with no
+    # files makes classify_path skip the test-class reads it does for the lane's T3 request, which this does not need.
+    nowhere = Path("/nonexistent-tree-for-scope-categories")
+    found = set()
+    for p in sorted(set(paths)):
+        try:
+            category = scope.classify_path(nowhere, p).category if p else ""
+        except (IndexError, ValueError):  # a path git cannot produce (a bare `.../Sources`): one must not stop the audit run
+            continue
+        if category in SCOPE_AUDIT_AREAS:
+            found.add(SCOPE_AUDIT_AREAS[category])
+    return sorted(found)
 _NEVER_RISKY_RE = NEVER_RISKY_RE
 _UNCOUNTED_RE = re.compile(r"(^|/)research/|(^|/)fixtures/", re.I)
 
@@ -259,12 +312,12 @@ def head_audit_comments(comments: list[dict], head_sha: str) -> list[dict]:
 def audit_input_hash(title: str | None, body: str | None) -> str:
     """A fingerprint of the PR's title and description, which the model reads but GitHub's events never record.
 
-    Only the first BODY_CHARS of the description count: that is all the model is shown, so an edit past it
+    Only the first PR_BODY_CHARS of the description count: that is all the model is shown, so an edit past it
     would pay for an audit that reads the same input.
     """
     def norm(text):
         return (text or "").replace("\r\n", "\n").strip()
-    return hashlib.sha256(json.dumps([norm(title), norm(body)[:BODY_CHARS]], ensure_ascii=False).encode("utf-8")).hexdigest()
+    return hashlib.sha256(json.dumps([norm(title), norm(body)[:PR_BODY_CHARS]], ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def audit_input_marker(c: dict) -> str | None:
@@ -374,6 +427,11 @@ def rearm_decision(pr: dict, comments: list[dict],
     return True, "clean audit of the head, lane not run since"
 
 
+def changed_paths(files: list[dict] | None) -> list[str]:
+    """Every path a PR's files touch, both sides of a rename: the merge policy diffs with --no-renames (#4843)."""
+    return [p for f in files or [] for p in (f.get("filename") or f.get("path"), f.get("previous_filename")) if p]
+
+
 def risky_areas(paths: list[str]) -> list[str]:
     areas = []
     for area, pats in _RISKY_RE.items():
@@ -383,6 +441,7 @@ def risky_areas(paths: list[str]) -> list[str]:
             if any(r.search(p) for r in pats):
                 areas.append(area)
                 break
+    areas += [a for a in scope_areas(paths) if a not in areas]  # what the merge policy holds (#4843)
     return areas
 
 
@@ -499,8 +558,10 @@ def evaluate(pr: dict, comments: list[dict], files: list[dict] | None,
              tap_checks_done: bool = False) -> tuple[bool, str, dict | None]:
     """evaluate_pr, plus the re-audit plan (reaudit_trigger) when the head is audited again, else None.
 
-    `tap_checks_done` (#2052): the caller found the PR touches an owner-tap path and the head's checks have
-    finished with none failed. Such a PR gets no lane report PASS (nothing arms it), so that stands in for one.
+    `tap_checks_done` (#2052, #4693): the head has no lane report and its checks have finished with none failed,
+    which stands in for a lane PASS. An owner-tap PR is never armed, so it gets no lane report; and with the lane
+    off for the merge queue (2026-11-20) no PR does. An owner-tap PR is then always audited; any other still has to
+    be risky or asked for.
     """
     head = pr["headRefOid"]
     if pr.get("isDraft"):
@@ -520,11 +581,11 @@ def evaluate(pr: dict, comments: list[dict], files: list[dict] | None,
         tap_only = True
     if files is None:
         return False, "need files", None
-    if tap_only and not plan:
+    if tap_only and not plan and touches_owner_tap(files):
         return True, "owner-tap PR, checks finished", None
     if plan:  # an audited head was audited because it was risky or asked for; the trigger decides now
         return True, reason, plan
-    areas = risky_areas([f.get("filename") or f.get("path") or "" for f in files])
+    areas = risky_areas(changed_paths(files))
     if areas:
         return True, "risky: " + ",".join(areas), None
     if runner_waits_on_audit(comments):
@@ -590,18 +651,38 @@ def issue_sections(body: str) -> dict[str, str]:
 _PR_HEADING_RE = re.compile(r"(?im)^\s*#{1,6}\s*\**\s*PR\s*#(\d+)\b.*$")
 
 
+# A line that only repeats an audit heading, as a model sometimes starts its answer (#5332): the Claude or the legacy
+# Codex heading, with or without its sha, bold, a Markdown heading mark or a trailing colon.
+_REPEATED_HEADING_RE = re.compile(
+    r"(?i)^[#>*_\s]*(?:claude audit|codex audit(?: \(astra\))?)(?: on `?[0-9a-f]{7,40}`?)?[*_:\s]*$")
+
+
+def verdict_first(section: str) -> str:
+    """The section as it goes under the audit heading, with its verdict on the first line.
+
+    The runner reads the verdict as the first non-empty line after the heading (`lane_merge_rules.audit_blocker`,
+    #441), and only by its first characters. So lines that repeat the heading are dropped (#5332: on #5180 the
+    model's own "**Claude audit on `e5f6547`**" sat where the verdict belongs, and a clean audit held the PR), and
+    the emphasis markup in front of a clean verdict goes ("**No blocking findings.**"). Anything else stays as the
+    model wrote it, so a section with findings still reads as findings.
+    """
+    lines = (section or "").strip().splitlines()
+    while lines and (not lines[0].strip() or _REPEATED_HEADING_RE.match(lines[0])):
+        lines.pop(0)
+    text = "\n".join(lines).strip()
+    bare = text.lstrip("*_#> \t")
+    if re.match(r"(?i)no (blocking )?findings\b", bare):
+        text = bare
+    return text
+
+
 def split_sections(output: str, numbers: list[int]) -> dict[int, str]:
     """Split the reviewer's answer into {pr_number: section text} by "### PR #N"."""
     marks = [(m.start(), m.end(), int(m.group(1))) for m in _PR_HEADING_RE.finditer(output or "")]
     out: dict[int, str] = {}
     for idx, (_, end, num) in enumerate(marks):
         stop = marks[idx + 1][0] if idx + 1 < len(marks) else len(output)
-        text = output[end:stop].strip()
-        # The runner reads the verdict by its first characters, so "**No blocking findings.**" would
-        # hold the PR as if it had findings: drop the emphasis markup in front of a clean verdict.
-        bare = text.lstrip("*_#> \t")
-        if re.match(r"(?i)no (blocking )?findings\b", bare):
-            text = bare
+        text = verdict_first(output[end:stop])
         if num in numbers and text and num not in out:
             out[num] = text
     return out
@@ -619,7 +700,7 @@ def build_comment(number: int, sha: str, section: str, batch: list[int], *, revi
         "Claude": ("Claude audit", "Posted by the mechanical audit script; Claude ran read-only; "
                    "findings are Claude's own."),
     }[reviewer]
-    lines = [f"**{heading} on `{sha[:7]}`**", "", section.strip(), "", "---"]
+    lines = [f"**{heading} on `{sha[:7]}`**", "", verdict_first(section), "", "---"]
     others = [n for n in batch if n != number]
     if others:
         footer += " Batched with " + ", ".join(f"#{n}" for n in others) + "."
@@ -647,9 +728,22 @@ def log(msg: str, echo: bool = True) -> None:
         print(line, flush=True)
 
 
+def is_gh_write(cmd: list[str]) -> bool:
+    """A `gh` call that changes something: a comment, a label, a workflow dispatch or re-run, or an api POST/DELETE."""
+    if cmd[:1] != ["gh"]:
+        return False
+    return (cmd[1:3] in (["pr", "comment"], ["pr", "edit"], ["workflow", "run"], ["run", "rerun"])
+            or (cmd[1:2] == ["api"] and any(arg in ("-X", "--method") for arg in cmd)))
+
+
 def run(cmd: list[str], *, cwd: Path | None = None, check: bool = True,
         timeout: float | None = 300, stdin=subprocess.DEVNULL) -> subprocess.CompletedProcess:
-    res = subprocess.run(cmd, cwd=cwd, stdin=stdin, capture_output=True, text=True, timeout=timeout)
+    # #5217: reads use GH_TOKEN, the GitHub App's token with its own API budget. Writes use SM_WRITE_TOKEN (the
+    # workflow's GITHUB_TOKEN) when set, so they stay authored by the workflow bot and a label change still starts
+    # no run, which the re-arm and tap check rely on.
+    write_token = os.environ.get("SM_WRITE_TOKEN")
+    env = {**os.environ, "GH_TOKEN": write_token} if write_token and is_gh_write(cmd) else None
+    res = subprocess.run(cmd, cwd=cwd, stdin=stdin, capture_output=True, text=True, timeout=timeout, env=env)
     if check and res.returncode != 0:
         raise RuntimeError(f"{cmd[0]} {' '.join(cmd[1:4])}… failed: {res.stderr.strip()[:300]}")
     return res
@@ -869,14 +963,17 @@ def find_candidates(prs: list[dict], force: bool = False) -> tuple[list[dict], d
             ok, why, plan = evaluate(pr, comments, None, force=force)
             files = None
             tap_checks_done = False
-            if lane_report_missing_for_head(why):  # an owner-tap PR is never armed, so it gets no lane report (#2052)
+            # No lane report on the head: an owner-tap PR is never armed (#2052), and with the lane off for the merge
+            # queue no PR gets one (#4693). The head's finished checks stand in, read only for a PR that could be audited.
+            if lane_report_missing_for_head(why):
                 files = fetch_files(n)
-                if touches_owner_tap(files):
+                tap = touches_owner_tap(files)
+                if tap or risky_areas(changed_paths(files)):
                     state, _ = head_checks_state(pr["headRefOid"])
                     if state == "ok":
                         tap_checks_done = True
                     else:
-                        why = f"owner-tap PR, checks {state}"
+                        why = f"owner-tap PR, checks {state}" if tap else f"checks {state}"
             if why == "need files" or tap_checks_done:
                 files = files or fetch_files(n)
                 ok, why, plan = evaluate(pr, comments, files, force=force, tap_checks_done=tap_checks_done)
@@ -1065,6 +1162,17 @@ def incremental_diffs(worktree: Path, number: int, head: str, comments: list[dic
     return '\n'.join(parts) if parts else 'No earlier audited head or accepted finding code to compare.'
 
 
+def pr_description_text(body: str | None) -> str:
+    """The PR description as the model reads it: whole up to PR_BODY_CHARS, then a marker saying the rest is missing."""
+    text = (body or "").strip()
+    if not text:
+        return "(none)"
+    if len(text) <= PR_BODY_CHARS:
+        return text
+    return (text[:PR_BODY_CHARS] + f"\n[Description truncated at {PR_BODY_CHARS} of {len(text)} characters. A section "
+            "may be in the part not shown: say so rather than calling it missing.]")
+
+
 def pr_context_block(c: dict, issue_texts: dict[int, dict[str, str]], diff_rel: str,
                      base_sha: str, merge_base: str, delta_context: str = '', inherited_context: str = '') -> str:
     plan = c.get('plan')
@@ -1082,7 +1190,7 @@ def pr_context_block(c: dict, issue_texts: dict[int, dict[str, str]], diff_rel: 
     parts += [
         "",
         "PR description:",
-        (c.get("body") or "(none)").strip()[:BODY_CHARS],
+        pr_description_text(c.get("body")),
     ]
     for inum in c["issues"]:
         secs = issue_texts.get(inum) or {}
@@ -1138,12 +1246,12 @@ def build_prompt(batch: list[dict], blocks: list[str], base_sha: str) -> str:
     return "\n".join(head + blocks + tail)
 
 
-# PRs the lane runner never merges (scripts/lane-runner.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES). After an audit on
+# PRs only the owner merges (scripts/lane_merge_rules.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES). After an audit on
 # one, the owner-tap alert checks it at once (#2047): the audit is often the last thing such a PR waits for. This
 # script posts as the owner, whose comment notifies nobody and starts no workflow, and GitHub refuses a
 # workflow_dispatch of owner-tap-alert.yml until main carries it (#1492). So it removes and re-adds the
 # `owner-tap-check` label; the labeled run of .github/workflows/owner-tap-alert.yml posts the alert as the bot.
-OWNER_TAP_FILES = {"scripts/lane-runner.py"}
+OWNER_TAP_FILES = {"scripts/lane_merge_rules.py"}
 OWNER_TAP_PREFIXES = (".github/",)
 OWNER_TAP_LABEL = "owner-tap-check"
 
@@ -1151,6 +1259,38 @@ OWNER_TAP_LABEL = "owner-tap-check"
 def touches_owner_tap(files: list[dict] | None) -> bool:
     paths = {p for f in files or [] for p in (f.get("filename") or f.get("path"), f.get("previous_filename")) if p}
     return any(p in OWNER_TAP_FILES or p.startswith(OWNER_TAP_PREFIXES) for p in paths)
+
+
+MERGE_POLICY_WORKFLOW = "merge-policy.yml"
+
+
+def rerun_merge_policy(head: str) -> str:
+    """Re-run the newest pull_request run of the merge policy check on <head>, now that its audit is posted (#4693).
+
+    The check reads the audit when it runs, so it stays red until it runs again. A workflow_dispatch run's check does
+    not satisfy a required check, so this re-runs the PR's own pull_request run, which keeps its event. Returns what
+    happened, for the log. Nothing to re-run (no run yet, or main without the workflow) is not a failure; a run still
+    going is left alone, since it may already have read the audit."""
+    try:
+        res = run(["gh", "api", f"repos/{REPO}/actions/workflows/{MERGE_POLICY_WORKFLOW}/runs"
+                   f"?event=pull_request&head_sha={head}&per_page=5"], cwd=REPO_ROOT, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"merge policy re-run failed: {str(exc)[:80]}"
+    if res.returncode:
+        return "no merge policy check to re-run" if "Not Found" in res.stderr else \
+            f"merge policy re-run failed: {res.stderr.strip()[:80]}"
+    try:
+        runs = json.loads(res.stdout or "{}").get("workflow_runs") or []
+    except ValueError:
+        return "merge policy re-run failed: the run list was not JSON"
+    if not runs:
+        return "no merge policy check to re-run"
+    newest = max(runs, key=lambda r: r.get("created_at") or "")
+    if newest.get("status") != "completed":
+        return "merge policy check still running"
+    done = run(["gh", "run", "rerun", str(newest["id"]), "--repo", REPO], cwd=REPO_ROOT, check=False)
+    return "merge policy check re-run" if done.returncode == 0 else \
+        f"merge policy re-run failed: {done.stderr.strip()[:80]}"
 
 
 def request_tap_check(number: int) -> str:
@@ -1256,7 +1396,7 @@ def run_claude(worktree: Path, out_file: Path, prompt: str, transcript: Path) ->
            "--strict-mcp-config", "--setting-sources", "project", "--no-session-persistence",
            "--max-budget-usd", CLAUDE_BUDGET_USD]
     # Claude gets no GitHub token: it only reads, and anything it can see could reach a public comment (#2170).
-    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN")}
+    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "SM_WRITE_TOKEN")}
     env["CLAUDE_CODE_OAUTH_TOKEN"] = token
     with open(transcript, "wb") as tfh:
         proc = subprocess.Popen(cmd, cwd=worktree, env=env, stdin=subprocess.PIPE, stdout=tfh,
@@ -1387,6 +1527,8 @@ def audit_batch(batch: list[dict]) -> None:
             usage_run.checkpoint(targets=targets)
             if res.returncode == 0:
                 clear_failure(n)
+                if in_a_workflow():
+                    results.append(f"#{n} {rerun_merge_policy(head)}")
                 if touches_owner_tap(c.get("files")):
                     results.append(f"#{n} {request_tap_check(n)}")
             else:  # the head is still unaudited, so count it or every tick pays for the same audit again (#1456)
@@ -1417,8 +1559,35 @@ def describe(cands: list[dict], batches: list[list[int]]) -> tuple[str, str]:
     return cand_s, batch_s
 
 
+def sweep_due(now: float, path: Path | None = None) -> bool:
+    """True when every open PR should be read: no sweep is recorded, the record can't be read, it is SWEEP_EVERY old or
+    older, or it is in the future (a wrong clock must not hold sweeps off)."""
+    try:
+        last = float((path or SWEEP_PATH).read_text().strip())
+    except (OSError, ValueError):
+        return True
+    return not 0 <= now - last < SWEEP_EVERY
+
+
+def record_sweep(now: float, path: Path | None = None) -> None:
+    try:
+        (path or SWEEP_PATH).write_text(f"{int(now)}\n")  # rounded down: rounded up, it reads as the future for half a second
+    except OSError as exc:
+        log(f"could not record the sweep ({exc}); the next run sweeps again")
+
+
+def scope_to_head(prs: list[dict], head: str | None, due: bool) -> tuple[list[dict], bool]:
+    """(the PRs this run looks at, whether that is every open PR). With --head and no sweep due, only the PRs whose
+    head is that commit; a PR whose event was missed is seen by the next sweep."""
+    if not head or due:
+        return prs, True
+    return [pr for pr in prs if pr.get("headRefOid") == head], False
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--head", help="the commit whose checks just finished: look only at the PR with that head, unless "
+                                   "every open PR was last read SWEEP_EVERY ago or longer (#4990)")
     ap.add_argument("--dry-run", action="store_true", help="print candidates and batches; no model call, no posting")
     ap.add_argument("--pr", type=int, help="consider only this PR; audits it again if its head was already audited (#1643)")
     args = ap.parse_args(argv)
@@ -1444,6 +1613,14 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         log(f"{tag}error listing PRs: {exc}")
         return 1
+    if args.pr is None:
+        everyone = len(prs)
+        prs, swept = scope_to_head(prs, args.head, sweep_due(t0))
+        if swept and not args.dry_run:
+            record_sweep(t0)
+        elif not swept:
+            log(f"{tag}only the PR at {args.head[:7]} ({len(prs)} of {everyone} open); every open PR is read again "
+                f"once the last sweep is {SWEEP_EVERY // 60} minutes old")
     try:
         return audit_prs(prs, args.dry_run, tag, t0, force=args.pr is not None)
     finally:

@@ -89,6 +89,88 @@ class AuthorTable(unittest.TestCase):
         self.assertEqual(trust.ignored_summary([rest('a', 'OWNER')]), '')
 
 
+APP = 'spoken-margins-agent'  # the App the owner created on 2026-11-22 (#4915)
+
+
+class AppIdentity(unittest.TestCase):
+    """#4915 Done when 3: how a GitHub App the agents act as is read, before and after its slug is configured.
+
+    GitHub reports an App's comments and PRs as `<slug>[bot]` with association NONE in REST, and as `<slug>`
+    (GraphQL, `__typename: Bot`) or `app/<slug>` (`gh --json`, `is_bot: true`) elsewhere."""
+
+    def setUp(self):
+        self._saved = trust.TRUSTED_APP_SLUGS
+
+    def tearDown(self):
+        trust.TRUSTED_APP_SLUGS = self._saved
+
+    @staticmethod
+    def shapes(slug=APP):
+        return [
+            ('REST comment', rest(f'{slug}[bot]', 'NONE')),
+            ('REST PR, no association field', {'user': {'login': f'{slug}[bot]'}, 'number': 1}),
+            ('GraphQL', {'author': {'login': slug, '__typename': 'Bot'}, 'authorAssociation': 'NONE'}),
+            ('gh --json', {'author': {'login': f'app/{slug}', 'is_bot': True}, 'authorAssociation': 'NONE'}),
+        ]
+
+    def test_the_shipped_list_trusts_exactly_the_agents_app(self):
+        # #4915 step 3: package-watch acts as this App, so its issue and comments must read as ours as shipped.
+        self.assertEqual(trust.TRUSTED_APP_SLUGS, (APP,))
+        for name, item in self.shapes():
+            with self.subTest(name):
+                self.assertTrue(trust.trusted(item))
+
+    def test_an_unlisted_app_reads_as_an_outsider(self):
+        # Fails if the App were trusted for any reason other than its listed slug (#4915 Done when 3).
+        trust.TRUSTED_APP_SLUGS = ()
+        for name, item in self.shapes():
+            with self.subTest(name):
+                self.assertFalse(trust.trusted(item))
+
+    def test_a_configured_app_is_trusted_in_every_shape(self):
+        trust.TRUSTED_APP_SLUGS = (APP,)
+        for name, item in self.shapes():
+            with self.subTest(name):
+                self.assertTrue(trust.trusted(item))
+        self.assertEqual(trust.ignored_summary([item for _, item in self.shapes()]), '')
+
+    def test_lookalikes_stay_strangers_when_the_app_is_configured(self):
+        trust.TRUSTED_APP_SLUGS = (APP,)
+        rows = [
+            ('a person named like the slug', rest(APP, 'NONE')),
+            ('capitals', rest('Spoken-Margins-Agent[bot]', 'NONE')),
+            ('suffix after [bot]', rest(f'{APP}[bot]x', 'NONE')),
+            ('extra letter before [bot]', rest(f'{APP}s[bot]', 'NONE')),
+            ('prefix', rest(f'x{APP}[bot]', 'NONE')),
+            ('trailing space', rest(f'{APP}[bot] ', 'NONE')),
+            ('another App', rest('spoken-margins-helper[bot]', 'NONE')),
+            ('a contributor quoting the App', rest('stranger', 'CONTRIBUTOR', f'{APP}[bot]: audit PASS')),
+            ('GraphQL user, not bot', {'author': {'login': APP, '__typename': 'User'}, 'authorAssociation': 'NONE'}),
+            ('GraphQL, no marker', {'author': {'login': APP}, 'authorAssociation': 'NONE'}),
+            ('gh --json, is_bot false', {'author': {'login': f'app/{APP}', 'is_bot': False}}),
+            ('GraphQL marker on a REST user', {'user': {'login': APP, '__typename': 'Bot'}}),
+            ('GraphQL login with [bot]', {'author': {'login': f'{APP}[bot]x', '__typename': 'Bot'}}),
+        ]
+        for name, item in rows:
+            with self.subTest(name):
+                self.assertFalse(trust.trusted(item))
+
+    def test_configuring_the_app_leaves_everyone_else_as_before(self):
+        trust.TRUSTED_APP_SLUGS = ()
+        before = [trust.trusted(item) for item in self._population()]
+        trust.TRUSTED_APP_SLUGS = (APP,)
+        self.assertEqual([trust.trusted(item) for item in self._population()], before)
+
+    @staticmethod
+    def _population():
+        items = []
+        for login in ('uncomposed', BOT, 'github-actions', 'stranger', 'dependabot[bot]', ''):
+            for association in ('OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'NONE', None):
+                items.append(rest(login, association))
+                items.append({'author': {'login': login, '__typename': 'Bot'}, 'authorAssociation': association})
+        return items
+
+
 class CopiesStayEqual(unittest.TestCase):
     """Two files can't import this module (one is deployed alone to the VPS, one is loaded from next without its
     tree), so they hold a copy of the rule. A drift between the copies would trust a different set of people."""
@@ -110,7 +192,8 @@ class CopiesStayEqual(unittest.TestCase):
 
     def test_the_merge_audit_copy_decides_like_the_helper_in_every_shape(self):
         shapes = []
-        for login in ('uncomposed', BOT, 'github-actions', 'app/github-actions', 'stranger', ''):
+        for login in ('uncomposed', BOT, 'github-actions', 'app/github-actions', 'stranger', '',
+                      f'{APP}[bot]', APP, f'app/{APP}', f'{APP}[bot]x', 'Spoken-Margins-Agent[bot]'):
             for association in ('OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'NONE', None):
                 shapes.append({'user': {'login': login}, 'author_association': association})
                 shapes.append({'author': {'login': login}, 'authorAssociation': association})
@@ -122,17 +205,24 @@ class CopiesStayEqual(unittest.TestCase):
                 self.assertEqual(merge_audit.trusted(item), trust.trusted(item))
 
     def test_the_copies_decide_like_the_helper(self):
-        for login in ('uncomposed', BOT, 'github-actions', 'stranger'):
+        for login in ('uncomposed', BOT, 'github-actions', 'stranger', f'{APP}[bot]', APP, f'{APP}[bot]x'):
             for association in ('OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'NONE', None):
                 item = rest(login, association)
                 with self.subTest(login=login, association=association):
                     self.assertEqual(dial_gate.trusted(item), trust.trusted(item))
                     self.assertEqual(holds.trusted(item), trust.trusted(item))
 
-    def test_the_lane_runner_names_the_same_people_once_it_checks(self):
-        source = (SCRIPTS / 'lane-runner.py').read_text()
+    def test_the_copies_learn_the_app_with_the_helper(self):
+        # #4915: when step 3 adds the App's slug here, the audit, the dial gate and the inherited-holds check must
+        # learn it in the same change, or the audit would ignore the App's comments while everything else trusts them.
+        for name, copy in (('dial_gate', dial_gate), ('lane_inherited_holds', holds), ('merge_audit', merge_audit)):
+            with self.subTest(name):
+                self.assertEqual(tuple(getattr(copy, 'TRUSTED_APP_SLUGS', ())), trust.TRUSTED_APP_SLUGS)
+
+    def test_the_merge_rules_name_the_same_people_once_they_check(self):
+        source = (SCRIPTS / 'lane_merge_rules.py').read_text()  # moved out of lane-runner.py (#4769)
         if 'TRUSTED_ASSOCIATIONS' in source:  # #1797 adds the runner's own check; when it lands the sets must agree
-            spec = importlib.util.spec_from_file_location('lane_runner_for_trust', SCRIPTS / 'lane-runner.py')
+            spec = importlib.util.spec_from_file_location('lane_merge_rules_for_trust', SCRIPTS / 'lane_merge_rules.py')
             runner = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(runner)
             self.assertEqual(tuple(runner.TRUSTED_ASSOCIATIONS), trust.TRUSTED_ASSOCIATIONS)

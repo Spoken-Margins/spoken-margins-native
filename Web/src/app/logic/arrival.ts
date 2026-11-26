@@ -5,13 +5,23 @@
 import { formatClock } from '../../shared/clock.ts';
 import type { Episode, Margin, PlaybackPosition } from '../../shared/model.ts';
 import type { PacketRead } from '../ports.ts';
+import { appleEpisodeRef } from '../../sources/apple.ts';
+import { isSubstackPostUrl } from '../../sources/substack.ts';
 import { findEpisode } from './import.ts';
 import { listenState } from './library.ts';
 import { senderNameOrNone } from './reply-words.ts';
 import { firesByItself } from './margin-autoplay.ts';
+import { copyLengthNote } from './copy-length.ts';
 
 /** How far before a Margin the first Skip lands, so the friend hears the episode's own lead-in (2026-10-31 call). */
 export const LEAD_IN_SECONDS = 20;
+/** How much more of the episode "Start a minute earlier" plays before the Margin (#4171). */
+export const START_EARLIER_SECONDS = 60;
+
+/** The run-up before this Margin: the sender's own length when the packet carried one, else the usual 20 seconds (#4171). */
+export function leadInSecondsFor(margin: Margin): number {
+  return margin.leadInSeconds ?? LEAD_IN_SECONDS;
+}
 /** A written Margin counts this long toward "about N min": the time to hear a tone and a short line read aloud. */
 const WRITTEN_SECONDS = 8;
 
@@ -45,6 +55,21 @@ function namedAuthor(author: string | undefined, sender: string | undefined): st
   return senderNameOrNone(author) ?? sender;
 }
 
+/** The name a friend's Margin is credited to: its own author, else the packet's sender, else "your friend" (#4107). */
+export function marginSenderName(margin: Margin, sender: string | undefined): string {
+  return senderName(namedAuthor(margin.author, sender));
+}
+
+/**
+ * The copy-length note under a friend's Margin while it plays (#4614): `undefined` for the listener's own Margin (it has
+ * no author), for one with no sender length, while the player has no length yet, and within 10 seconds.
+ */
+export function arrivedLengthNote(margin: Margin, margins: readonly Margin[], measuredLengthSeconds: number | undefined): string | undefined {
+  if (!margin.author) return undefined;
+  const who = marginSenderName(margin, friendMargins(margins)[0]?.author);
+  return copyLengthNote(margin.copyLengthSeconds, measuredLengthSeconds, possessive(who));
+}
+
 /** A name at the start of a sentence: "your friend" becomes "Your friend"; a name is left as the sender wrote it. */
 export function leading(name: string): string {
   return name.startsWith('your friend') ? `Y${name.slice(1)}` : name;
@@ -55,10 +80,21 @@ export function possessive(name: string): string {
   return `${name}’s`;
 }
 
-/** The first letter for the avatar circle. */
+/** The first letter for the avatar circle. A label that stands in for a missing name gets the dot, as `senderName` calls it "your friend" (#4107). */
 export function senderInitial(sender: string | undefined): string {
-  const first = Array.from(sender?.trim() ?? '')[0];
+  const first = Array.from(senderNameOrNone(sender) ?? '')[0];
   return first ? first.toUpperCase() : '•';
+}
+
+/**
+ * The Margins a friend left on an article's words that this browser can play (#4421): they need audio for the
+ * article, which is the episode's own address or, for a Substack post or an Apple Podcasts episode page, the voice looked up
+ * when the friend taps Play. On any other article there is no voice to play them on, so none counts and the page is the text-only card.
+ */
+export function playableArticleMargins(read: Pick<PacketRead, 'episode' | 'percentMargins'>): Margin[] {
+  const { audioUrl, pageUrl } = read.episode;
+  if (!audioUrl && !(pageUrl && (isSubstackPostUrl(pageUrl) || appleEpisodeRef(pageUrl)))) return [];
+  return read.percentMargins.map((p) => p.margin);
 }
 
 export interface ArrivalFacts {
@@ -126,7 +162,7 @@ export const ARRIVAL_WORDS = Object.freeze({
   server: 'The server had a problem. Try again in a minute.',
   unreadable: 'This file couldn’t be opened. It may have been damaged on the way. Ask your friend to send it again.',
   article: (who: string) => `${leading(possessive(who))} Margins are on an article’s text, which the browser can’t play yet.`,
-  noEpisodeAudio: (who: string) => `This episode has no audio the browser can play. ${leading(possessive(who))} Margins are saved in your Library.`,
+  noEpisodeAudio: (who: string) => `This episode has no audio the browser can play. ${leading(possessive(who))} Margins are saved in your Library. Open this in the Spoken Margins app on iPhone to hear them with the episode.`,
   // The episode has an address but it failed to load (#3356): say so once, and offer the Margins on their own.
   episodeCantPlay: (who: string) => `This episode can’t play here, but you can still hear ${possessive(who)} Margins.`,
   hearMargins: (who: string) => `Hear ${possessive(who)} Margins`,
@@ -173,6 +209,17 @@ export type MarginCue =
       leadIn: boolean;
       /** The share left in the lead-in, 0 to 1, for the draining bar. */
       leadInLeft: number;
+      /**
+       * Inside the lead-in only: "Start a minute earlier", which seeks a minute back so the Margin comes after more of the
+       * episode (#4171). Absent outside the lead-in, and when the playhead is too near the start to go back.
+       */
+      startEarlier?: { to: number };
+      /**
+       * Last line of the card, when this load's length differs from the length of the copy the sender made the Margin on
+       * (#4614): "Your copy is about 35 seconds shorter than Cole’s, so Margins may be that far off." Absent while the
+       * player has no length yet, when either length is missing, and when they are within 10 seconds.
+       */
+      lengthNote?: string;
     }
   | { kind: 'after-last'; who: string; /** The name at the start of a sentence. */ lead: string }
   /** The episode failed to load: no countdown, no Skip; one sentence and one button that plays the Margins without it. */
@@ -186,6 +233,8 @@ export interface EpisodeState {
   failed: boolean;
   /** The sender's Margins have all been heard without the episode. */
   heardWithoutEpisode: boolean;
+  /** The first length the audio reported for this load, in seconds; undefined until it reports one (`PlayerApi.measuredLengthSeconds`). */
+  measuredLengthSeconds?: number;
 }
 
 /** Margins closer than this to the playhead are "now", not upcoming: the one just crossed has fired already. */
@@ -217,7 +266,10 @@ export function cueFor(margins: readonly Margin[], time: number, sender: string 
   const who = senderName(namedAuthor(next.author, sender));
   const away = next.atSeconds - time;
   const ordinal = friends.length === 1 ? '' : index === 0 ? 'first ' : index === friends.length - 1 ? 'last ' : 'next ';
-  const leadIn = away <= LEAD_IN_SECONDS + 1;
+  const run = leadInSecondsFor(next);
+  const leadIn = away <= run + 1;
+  const earlierTo = Math.max(0, time - START_EARLIER_SECONDS);
+  const lengthNote = copyLengthNote(next.copyLengthSeconds, episode?.measuredLengthSeconds, possessive(who));
   return {
     kind: 'countdown',
     label: `${leading(possessive(who))} ${ordinal}Margin in`,
@@ -225,14 +277,19 @@ export function cueFor(margins: readonly Margin[], time: number, sender: string 
     spoken: `${leading(possessive(who))} ${ordinal}Margin in ${countdownSpoken(away)}`,
     skip: leadIn
       ? { label: `Skip to ${who} now`, to: Math.max(0, next.atSeconds - CROSS_MARGIN_SECONDS) }
-      : { label: `Skip to just before ${who}`, to: Math.max(0, next.atSeconds - LEAD_IN_SECONDS) },
+      : { label: `Skip to just before ${who}`, to: Math.max(0, next.atSeconds - Math.max(run, CROSS_MARGIN_SECONDS)) },
     leadIn,
-    leadInLeft: leadIn ? Math.min(1, Math.max(0, away / LEAD_IN_SECONDS)) : 1,
+    leadInLeft: leadIn ? (run > 0 ? Math.min(1, Math.max(0, away / run)) : 0) : 1,
+    // Not offered when there is no minute to go back (a hair from the episode's start): no dead button.
+    ...(leadIn && time - earlierTo >= 1 && { startEarlier: { to: earlierTo } }),
+    ...(lengthNote !== undefined && { lengthNote }),
   };
 }
 
 /** The card while a friend's Margin is heard or shown: who, and which of how many. */
 export function speakingLine(margin: Margin, margins: readonly Margin[], sender: string | undefined): { title: string; position: string } {
+  // The listener's own Margin, played from a start or under Autoplay All, is theirs and not one of the friend's count.
+  if (!firesByItself(margin)) return { title: margin.voice ? 'Your Margin is playing' : 'You wrote this', position: '' };
   const friends = friendMargins(margins);
   const place = friends.findIndex((m) => m.id === margin.id) + 1;
   const who = leading(senderName(namedAuthor(margin.author, sender)));
@@ -245,4 +302,17 @@ export function speakingLine(margin: Margin, margins: readonly Margin[], sender:
 /** The line the on-device voice says before a written Margin's words, so a synthetic voice never passes for the sender. */
 export function writtenIntro(author: string | undefined): string {
   return `${leading(senderName(author))} wrote:`;
+}
+
+/**
+ * What the on-device voice says before a written Margin's words. The listener's own Margin (no author) plays too, from a
+ * start or under Autoplay All (part of #3216), and is theirs, never "Your friend wrote:".
+ */
+export function readingIntro(margin: Margin): string {
+  return firesByItself(margin) ? writtenIntro(margin.author) : 'You wrote:';
+}
+
+/** The note under a written Margin while the device's voice reads it, so the voice never passes for its author's. */
+export function readingNote(margin: Margin): string {
+  return `Your device’s voice is reading ${firesByItself(margin) ? possessive(senderName(margin.author)) : 'your'} words.`;
 }

@@ -56,7 +56,8 @@ final class MarginVoicePlayer: ObservableObject {
     private(set) var currentPlayer: AVPlayer?
     /// The poll that watches `currentPlayer`. Read-only for tests.
     private(set) var completionTask: Task<Void, Never>?
-    private var cuePlayer: AVAudioPlayer?
+    /// The tone's player, kept while it sounds. Read-only for tests (#4444).
+    private(set) var cuePlayer: AVAudioPlayer?
     private let remoteControls = ImportedMarginRemoteControls()
     #if os(iOS)
     /// The options the voice's session was set up with, so a resume after a recording sets them again (#1672).
@@ -220,7 +221,7 @@ final class MarginVoicePlayer: ObservableObject {
         if paused {
             player.pause()
             #if os(iOS)
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            try? AudioSessionOperationLabel.scoped(AudioSessionOperationLabel.marginVoiceRelease) { try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
             #endif
         } else {
             #if os(iOS)

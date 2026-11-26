@@ -3,6 +3,8 @@ import SessionKit
 
 enum InterjectionPositionPresentation {
     static func percent(for interjection: Interjection, durationMs: Int?) -> Int? {
+        // A moved Margin with no place stores zeros that mean nothing (#4233): no percent.
+        guard interjection.hasPlace else { return nil }
         guard let mediaTimeMs = interjection.anchor.mediaTimeMs else {
             return max(0, min(100, interjection.roughPercent))
         }
@@ -13,6 +15,7 @@ enum InterjectionPositionPresentation {
     }
 
     static func timelineBadge(for interjection: Interjection, durationMs: Int?) -> String {
+        guard interjection.hasPlace else { return MarginRowWording.noPlace }
         if let percent = percent(for: interjection, durationMs: durationMs) {
             return "\(percent)%"
         }
@@ -20,6 +23,7 @@ enum InterjectionPositionPresentation {
     }
 
     static func detailDescription(for interjection: Interjection, durationMs: Int?) -> String {
+        guard interjection.hasPlace else { return MarginPlacePresentation.detailPosition }
         guard let mediaTimeMs = interjection.anchor.mediaTimeMs else {
             return "Around \(percent(for: interjection, durationMs: durationMs) ?? 0)%"
         }
@@ -30,8 +34,11 @@ enum InterjectionPositionPresentation {
         return timestamp
     }
 
+    /// The coordinate the Timeline and Now Playing sort by. A Margin with no place sorts after every placed entry
+    /// (#4233, PR 3c), never at the 0 its stored zeros would give.
     static func sortPercent(for interjection: Interjection, durationMs: Int?) -> Int {
-        percent(for: interjection, durationMs: durationMs) ?? interjection.roughPercent
+        if interjection.targetType == .item, !interjection.hasPlace { return MarginPlacePresentation.timelineSortPosition }
+        return percent(for: interjection, durationMs: durationMs) ?? interjection.roughPercent
     }
 
     private static func mediaTime(_ milliseconds: Int) -> String {

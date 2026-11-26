@@ -879,6 +879,75 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         XCTAssertNil(restarted.artifact)
     }
 
+    // #4383: the same words under the same voice, prepared for a plan of another size, must not start over from nothing.
+    func testBeginKeepsTheChunksThatStillMatchWhenThePlanChangesSize() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let reports = ReportedEvents()
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared, report: reports.record)
+        let source = "First chunk. Second chunk."
+        _ = try await coordinator.begin(itemId: "item", sourceText: source, signature: signature("one"), plan: plans())
+        try await commit(plans()[0], data: Data([1, 2, 3]), coordinator: coordinator, fixture: fixture)
+        try await commit(plans()[1], data: Data([4, 5, 6]), coordinator: coordinator, fixture: fixture)
+        // The same text planned in three parts: chunk 0 is the same stretch, chunk 1 is now only "Second".
+        let replanned = [
+            PreparedChunkPlan(index: 0, startOffset: 0, sourceLength: 12, text: "First chunk."),
+            PreparedChunkPlan(index: 1, startOffset: 13, sourceLength: 6, text: "Second"),
+            PreparedChunkPlan(index: 2, startOffset: 20, sourceLength: 6, text: "chunk."),
+        ]
+
+        let restarted = try await coordinator.begin(itemId: "item", sourceText: source, signature: signature("one"), plan: replanned)
+
+        XCTAssertEqual(restarted.state, .preparing)
+        XCTAssertEqual(restarted.plannedChunkCount, 3)
+        XCTAssertEqual(restarted.chunks.map(\.index), [0], "chunk 0 still matches its stretch and is kept; chunk 1 now covers other words")
+        let kept = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: replanned[0], sourceText: source)
+        XCTAssertNotNil(kept, "the kept chunk's file still plays")
+        let event = try XCTUnwrap(reports.values["preparedAudio.restarted:item"])
+        XCTAssertEqual(event, "plan_size kept=1 of=2 planned=2->3 was=preparing")
+    }
+
+    func testBeginKeepsNothingWhenTheWordsChangedAndSaysSo() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let reports = ReportedEvents()
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared, report: reports.record)
+        _ = try await coordinator.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plans())
+        try await commit(plans()[0], data: Data([1, 2, 3]), coordinator: coordinator, fixture: fixture)
+        let edited = "First chunk. Other chunk.."
+        // The app saves the edited words to the item before it prepares again. `begin` refuses source text the item doesn't
+        // hold (`PreparedAudioEnqueue.withValidatedSource`, `staleSource`), so the test does the same; without this the
+        // call threw before the coordinator's restart logic ran (integration-dd0dd0d, #4890).
+        try fixture.store.saveItem(Item(id: "item", title: "Paper", mediaType: "pdf", text: edited, externalReference: nil, status: "ready"))
+        let plan = [
+            PreparedChunkPlan(index: 0, startOffset: 0, sourceLength: 12, text: "First chunk."),
+            PreparedChunkPlan(index: 1, startOffset: 13, sourceLength: 12, text: "Other chunk."),
+            PreparedChunkPlan(index: 2, startOffset: 25, sourceLength: 1, text: "."),
+        ]
+
+        let restarted = try await coordinator.begin(itemId: "item", sourceText: edited, signature: signature("one"), plan: plan)
+
+        XCTAssertTrue(restarted.chunks.isEmpty, "audio made from other words never carries over, even where the offsets match")
+        XCTAssertEqual(reports.values["preparedAudio.restarted:item"], "source_text kept=0 of=1 planned=2->3 was=preparing")
+    }
+
+    func testAnotherVoiceRetiresTheOldManifestAndSaysSoWithoutDeletingItsChunks() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let reports = ReportedEvents()
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared, report: reports.record)
+        let source = "First chunk. Second chunk."
+        _ = try await coordinator.begin(itemId: "item", sourceText: source, signature: signature("one"), plan: plans())
+        try await commit(plans()[0], data: Data([1, 2, 3]), coordinator: coordinator, fixture: fixture)
+
+        _ = try await coordinator.begin(itemId: "item", sourceText: source, signature: signature("two"), plan: plans())
+
+        XCTAssertEqual(reports.values["preparedAudio.retired:item"], "other_signature chunks=1 was=preparing engine=supertonic")
+        let old = try XCTUnwrap(try fixture.store.loadPreparedAudioManifests(itemId: "item").first { $0.signature.digest == "one" })
+        XCTAssertEqual(old.state, .needsRepreparation)
+        XCTAssertEqual(old.chunks.count, 1, "the earlier voice's chunk is kept, only its manifest is retired")
+    }
+
     /// #64 Done when 2, through the real preparation pass: heat pauses the job and saves
     /// "Paused for device temperature" with chunk 0 kept; once the phone cools, the pass resumes
     /// at chunk 1. Before #765 the pass returned early on heat and saved no pause.
@@ -1027,6 +1096,16 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         let store = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
         try store.saveItem(Item(id: "item", title: "Paper", mediaType: "pdf", text: "First chunk. Second chunk.", externalReference: nil, status: "ready"))
         return Fixture(root: root, prepared: root.appending(path: "Prepared", directoryHint: .isDirectory), store: store)
+    }
+}
+
+/// What the coordinator reported, by key. The coordinator reports from its own actor, so reads are locked.
+private final class ReportedEvents: @unchecked Sendable {
+    private let lock = NSLock()
+    private var store: [String: String] = [:]
+    var values: [String: String] { lock.lock(); defer { lock.unlock() }; return store }
+    var record: @Sendable (String, String) -> Void {
+        { [self] key, value in lock.lock(); store[key] = value; lock.unlock() }
     }
 }
 

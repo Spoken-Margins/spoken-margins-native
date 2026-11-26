@@ -79,6 +79,162 @@ final class PlaybackTimelineTests: XCTestCase {
         XCTAssertEqual(item.timelineSource.entries.map(\.role), roles, "Now and the reader still receive every retained role")
     }
 
+    /// #4778, device condition `long-source`: on a long article every chapter is a compact header and every link a compact
+    /// child, and none of them repeats its type in a detail line. No work is added per row, so there is no timing test.
+    func testALongSourceMapsEveryChapterAndLinkToItsCompactRole() {
+        let text = String(repeating: "word ", count: 12_000)
+        let chapters = (0..<120).map { index in
+            Chapter(id: "c\(index)", title: "Section \(index)", startChar: index * 500, endChar: index * 500 + 499,
+                    percent: index * 100 / 120)
+        }
+        let links = (0..<300).map { index in
+            SourceElement(id: "l\(index)", kind: .link, start: index * 190 + 7, label: "Link \(index)",
+                          url: "https://www.example\(index % 7).com/p/\(index)")
+        }
+        var item = ItemDetailState(id: "long", title: "Long", text: text)
+            .includingTimelineSource(nil, elements: SourceElementsRecord(text: text, elements: links))
+        item.chapters = chapters
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        let chapterRows = entries.filter { if case .chapter = $0.action { return true } else { return false } }
+        let linkRows = entries.filter { if case .sourceElement = $0.action { return true } else { return false } }
+        XCTAssertEqual(chapterRows.count, 120)
+        XCTAssertEqual(linkRows.count, 300)
+        XCTAssertTrue(chapterRows.allSatisfy { $0.rowRole == .chapter })
+        XCTAssertTrue(linkRows.allSatisfy {
+            if case .sourceElement(.link, let host) = $0.rowRole { return host?.hasPrefix("example") == true } else { return false }
+        })
+        XCTAssertFalse((chapterRows + linkRows).contains { $0.detail.contains("Chapter ·") || $0.detail.contains("Link ·") })
+    }
+
+    /// 2026-11-14: a table is a Timeline row named by its columns; a link row's tap goes straight to its address; a
+    /// picture and a YouTube embed have a picture to draw, a link and a table don't.
+    func testTableRowsLinkTapsAndPreviewPictures() throws {
+        let text = "Intro paragraph.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nSee the study here."
+        let tableStart = try XCTUnwrap(text.range(of: "| A")).lowerBound.utf16Offset(in: text)
+        let record = SourceElementsRecord(text: text, elements: [
+            SourceElement(id: "t0", kind: .table, start: tableStart, label: "A · B", url: "", rows: [["A", "B"], ["1", "2"]]),
+            SourceElement(id: "l0", kind: .link, start: text.count - 10, label: "the study", url: "https://example.com/study")
+        ])
+        let item = ItemDetailState(id: "web", title: "Post", text: text).includingTimelineSource(nil, elements: record)
+        let rows = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil).filter {
+            if case .sourceElement = $0.action { return true } else { return false }
+        }
+        XCTAssertEqual(rows.map(\.title), ["A · B", "the study"])
+        // The kind and the host are the compact row's first line now, so the detail is empty (#4778).
+        XCTAssertEqual(rows.map(\.detail), ["", ""])
+        XCTAssertEqual(rows.map(\.rowRole), [.sourceElement(kind: .table, linkHost: nil),
+                                             .sourceElement(kind: .link, linkHost: "example.com")])
+        XCTAssertEqual(rows.map(\.provenanceLabel), ["Table", "Link"])
+
+        let link = record.elements[1]
+        XCTAssertEqual(link.linkDestination?.absoluteString, "https://example.com/study")
+        XCTAssertNil(record.elements[0].linkDestination)
+        XCTAssertNil(SourceElement(id: "x", kind: .link, start: 0, label: "x", url: "javascript:alert(1)").linkDestination)
+        XCTAssertNil(SourceElement(id: "p", kind: .picture, start: 0, label: "p", url: "https://x.example/p.gif").linkDestination,
+                     "a picture opens its sheet, not the address")
+
+        XCTAssertEqual(SourceElement(id: "p", kind: .picture, start: 0, label: "p", url: "https://x.example/p.gif").previewImageURL?.absoluteString,
+                       "https://x.example/p.gif")
+        XCTAssertNil(link.previewImageURL)
+        XCTAssertNil(record.elements[0].previewImageURL)
+    }
+
+    /// Neighbouring inputs for the YouTube still: each address form, lookalike hosts, and ids that aren't ids.
+    func testYouTubeStillAddresses() {
+        let cases: [(String, String?)] = [
+            ("https://www.youtube.com/watch?v=abc123XYZ_-", "abc123XYZ_-"),
+            ("https://m.youtube.com/watch?v=abc123XYZ&t=10", "abc123XYZ"),
+            ("https://youtu.be/abc123XYZ?si=share", "abc123XYZ"),
+            ("https://www.youtube.com/embed/abc123XYZ", "abc123XYZ"),
+            ("https://www.youtube-nocookie.com/embed/abc123XYZ", "abc123XYZ"),
+            ("https://youtube.com/shorts/abc123XYZ", "abc123XYZ"),
+            ("https://www.youtube.com/channel/UCxyz", nil),
+            ("https://www.youtube.com/watch", nil),
+            ("https://notyoutube.com/watch?v=abc123XYZ", nil),
+            ("https://youtube.com.evil.example/watch?v=abc123XYZ", nil),
+            ("https://www.youtube.com/watch?v=../../x", nil),
+            ("https://vimeo.com/12345678", nil)
+        ]
+        for (address, id) in cases {
+            XCTAssertEqual(SourceElement.youTubeID(address), id, address)
+        }
+        XCTAssertEqual(SourceElement(id: "e", kind: .embed, start: 0, label: "YouTube video", url: "https://youtu.be/abc123XYZ").previewImageURL?.absoluteString,
+                       "https://i.ytimg.com/vi/abc123XYZ/hqdefault.jpg")
+    }
+
+    /// #3895: a PDF's chapters fold. Folding the dense one hides its table and figure text, keeps every chapter row,
+    /// and a Margin the listener is taken to unfolds the chapter that held it.
+    func testFoldingAChapterHidesItsRowsAndKeepsTheNextChapterReachable() {
+        let text = "Intro.\n\nTable A | B\n\nText in figure\n\nSecond chapter body."
+        let tableStart = (text as NSString).range(of: "Table").location
+        let figureStart = (text as NSString).range(of: "Text in").location
+        let secondStart = (text as NSString).range(of: "Second").location
+        let document = StructuredDocument(
+            extraction: .init(engine: "test", version: 1, sourceSHA256: nil, pageCount: 2, textSHA256: nil),
+            text: text,
+            segments: [
+                .init(id: "table", role: .table, range: .init(start: tableStart, length: 9), pageIndex: 0),
+                .init(id: "figure", role: .figureText, range: .init(start: figureStart, length: 14), pageIndex: 0)
+            ], markers: [])
+        var item = ItemDetailState(id: "pdf", title: "Paper", text: text).includingTimelineSource(document)
+        item.chapters = [
+            Chapter(id: "c1", title: "1 Introduction", startChar: 0, endChar: secondStart, percent: 0),
+            Chapter(id: "c2", title: "2 Method", startChar: secondStart, endChar: text.count, percent: 70)
+        ]
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        let rows = entries.map(\.foldingRow)
+        XCTAssertEqual(entries.count, 4, "two chapters, the table and the figure text")
+        XCTAssertEqual([entries.first?.id, entries.last?.id], ["source.chapter.c1", "source.chapter.c2"])
+        XCTAssertEqual(rows.filter(\.isChapter).map(\.id), ["source.chapter.c1", "source.chapter.c2"],
+                       "only chapters open a section, not the rich source rows")
+
+        var folding = TimelineChapterFolding()
+        folding.toggle("source.chapter.c1", in: rows)
+        let visible = folding.visibleRows(in: rows).map(\.id)
+        XCTAssertTrue(visible.contains("source.chapter.c1") && visible.contains("source.chapter.c2"))
+        XCTAssertEqual(visible.count, 2, "the table and the figure text are folded under the first chapter")
+        XCTAssertEqual(folding.summary(forChapter: "source.chapter.c1", in: rows, currentIDs: [])?.hiddenCount, 2)
+
+        let tableRowID = entries.first { if case .sourceText(let e) = $0.action { return e.role == .table } else { return false } }?.id
+        XCTAssertNotNil(tableRowID)
+        XCTAssertTrue(folding.reveal(tableRowID ?? "", in: rows))
+        XCTAssertEqual(folding.visibleRows(in: rows).count, rows.count)
+    }
+
+    /// #4586: a PDF's Timeline opens with only the playing chapter expanded, built from the real rail rows, and
+    /// playback moving into the next chapter folds the first and opens the second.
+    func testTimelineOpensWithOnlyThePlayingChapterExpandedAndFollowsPlayback() {
+        let text = "Intro.\n\nTable A | B\n\nText in figure\n\nSecond chapter body.\n\nSecond table | C"
+        let tableStart = (text as NSString).range(of: "Table A").location
+        let figureStart = (text as NSString).range(of: "Text in").location
+        let secondStart = (text as NSString).range(of: "Second chapter").location
+        let table2Start = (text as NSString).range(of: "Second table").location
+        let document = StructuredDocument(
+            extraction: .init(engine: "test", version: 1, sourceSHA256: nil, pageCount: 2, textSHA256: nil),
+            text: text,
+            segments: [
+                .init(id: "table", role: .table, range: .init(start: tableStart, length: 9), pageIndex: 0),
+                .init(id: "figure", role: .figureText, range: .init(start: figureStart, length: 14), pageIndex: 0),
+                .init(id: "table2", role: .table, range: .init(start: table2Start, length: 14), pageIndex: 1)
+            ], markers: [])
+        var item = ItemDetailState(id: "pdf2", title: "Paper", text: text).includingTimelineSource(document)
+        item.chapters = [
+            Chapter(id: "c1", title: "1 Introduction", startChar: 0, endChar: secondStart, percent: 0),
+            Chapter(id: "c2", title: "2 Method", startChar: secondStart, endChar: text.count, percent: 70)
+        ]
+        let rows = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil).map(\.foldingRow)
+        let c1 = "source.chapter.c1", c2 = "source.chapter.c2"
+        XCTAssertEqual(rows.filter(\.isChapter).map(\.id), [c1, c2])
+
+        var folding = TimelineChapterFolding()
+        folding.sync(rows: rows, currentIDs: [c1])
+        XCTAssertEqual(folding.foldedChapterIDs, [c2], "the playing chapter is open, the other is folded")
+        XCTAssertEqual(folding.visibleRows(in: rows).count, rows.count - TimelineChapterFolding.members(in: rows)[c2]!.count)
+
+        folding.sync(rows: rows, currentIDs: [c2])
+        XCTAssertEqual(folding.foldedChapterIDs, [c1], "playback entered the second chapter")
+    }
+
     /// #2032: pictures, embeds and links an imported Substack page kept are Timeline rows, in text order and
     /// labelled; a page that kept none shows none, and ordinary paragraphs still get no row of their own.
     func testTimelineShowsKeptPicturesEmbedsAndLinksAndNoEmptyRows() throws {
@@ -96,7 +252,10 @@ final class PlaybackTimelineTests: XCTestCase {
         let rows = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
         let elementRows = rows.filter { if case .sourceElement = $0.action { return true } else { return false } }
         XCTAssertEqual(elementRows.map(\.title), ["A chart caption.", "the study", "YouTube video"])
-        XCTAssertEqual(elementRows.map(\.detail), ["Picture", "Link · example.com", "Embed"])
+        XCTAssertEqual(elementRows.map(\.detail), ["", "", ""])
+        XCTAssertEqual(elementRows.map(\.rowRole), [.sourceElement(kind: .picture, linkHost: nil),
+                                                    .sourceElement(kind: .link, linkHost: "example.com"),
+                                                    .sourceElement(kind: .embed, linkHost: nil)], "the www. is dropped")
         XCTAssertEqual(elementRows.map(\.position), elementRows.map(\.position).sorted())
         XCTAssertEqual(elementRows.map(\.accessibilityIdentifier),
                        ["timeline.sourceElement.e0", "timeline.sourceElement.e1", "timeline.sourceElement.e2"])
@@ -301,5 +460,200 @@ final class PlaybackTimelineTests: XCTestCase {
             XCTAssertEqual(reply.position, 20)
             XCTAssertEqual(entries.map(\.id), ["source.beginning", "session::margin", "turn.reply"])
         }
+    }
+
+    /// A 5:00 spoken note whose Shorter pauses version is 4:00 (the minute from 1:00 to 2:00 was cut) names that version
+    /// (#4779). A Margin saved at the recording's 4:50 is at 3:50 on the file the Timeline's playhead runs on.
+    func testASpokenNotesMarginSitsAndReadsOnTheShorterFilesClock() throws {
+        let layout = SpokenNoteWholeAudioLayout(
+            requested: [.init(id: "t1", audioFileName: "take-1.m4a", durationMs: 300_000)],
+            placed: [.init(takeId: "t1", startMs: 0, durationMs: 300_000)], durationMs: 300_000)
+        let map = SpokenNoteCleanMap(placements: [
+            SpokenNoteCleanPlacement(takeId: "t1", takeStartMs: 0, takeEndMs: 60_000, outputStartMs: 0),
+            SpokenNoteCleanPlacement(takeId: "t1", takeStartMs: 120_000, takeEndMs: 300_000, outputStartMs: 60_000)
+        ], recorded: layout, cleanDurationMs: 240_000)
+        var item = ItemDetailState(id: SpokenNoteItem.itemId(forNoteId: "n1"), title: "Note", mediaDurationMs: 240_000, isNativeAudio: true)
+        item.interjections = [.init(id: "margin", itemId: item.id, sessionId: "session", targetType: .item,
+            targetId: item.id, createdAt: Date(), roughPercent: 97,
+            anchor: .init(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 290_000),
+            audioPath: nil, audioStatus: "not_recorded", transcriptionStatus: "transcribed", transcript: "Late thought",
+            cleanedTranscript: nil, displayText: nil, status: "active")]
+
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session", noteClock: map)
+        let margin = try XCTUnwrap(entries.first { $0.id == "session::margin" })
+        XCTAssertEqual(margin.cornerLabel, "3:50", "4:50 is past the end of a 4:00 file")
+        XCTAssertEqual(try XCTUnwrap(margin.precisePosition), 230.0 / 240.0 * 100, accuracy: 0.01)
+        guard case .margin(let row) = margin.action else { return XCTFail("the row lost its Margin") }
+        XCTAssertEqual(row.interjection.anchor.mediaTimeMs, 290_000, "a tap seeks from the saved time, which it moves itself")
+
+        let asRecorded = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session")
+        XCTAssertEqual(asRecorded.first { $0.id == "session::margin" }?.cornerLabel, "4:50", "no map: the recording plays")
+    }
+
+    // MARK: #3862 one unit per item, matching its scrubber
+
+    /// A podcast's publisher chapters are saved twice with one id: `chapters` (a percent) and `mediaChapters` (the exact start).
+    private func podcastWithPublisherChapters(durationMs: Int = 6_180_000) -> ItemDetailState {
+        var item = ItemDetailState(id: "podcast", title: "Episode", text: "", isNativeAudio: true)
+        item.mediaDurationMs = durationMs
+        item.chapters = [
+            Chapter(id: "open", title: "Opening", startChar: 0, endChar: 0, percent: 0),
+            Chapter(id: "long", title: "Self modification", startChar: 0, endChar: 0, percent: 65),
+            Chapter(id: "rough", title: "Rough chapter", startChar: 0, endChar: 0, percent: 72)
+        ]
+        // "rough" has no exact twin: it was saved only as a fraction by an earlier build.
+        item.mediaChapters = [
+            MediaTimelineChapter(id: "open", title: "Opening", startMs: 0, transcriptSegmentId: "s0"),
+            MediaTimelineChapter(id: "long", title: "Self modification", startMs: 4_050_000, transcriptSegmentId: "s1")
+        ]
+        return item
+    }
+
+    func testAPodcastChapterWithAnExactStartShowsItsTimeNotItsPercent() throws {
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: podcastWithPublisherChapters(), sessionID: nil)
+        let long = try XCTUnwrap(entries.first { $0.id == "source.chapter.long" })
+        XCTAssertEqual(long.cornerLabel, "1:07:30", "an hour in is 1:07:30, never 67:30")
+        XCTAssertEqual(long.detail, "", "the place shows once, in the corner (#4778)")
+        XCTAssertEqual(long.spokenPosition, "1 hour, 7 minutes, 30 seconds")
+        XCTAssertEqual(long.position, 65, "the sort coordinate stays a percent, so the order does not move")
+        let open = try XCTUnwrap(entries.first { $0.id == "source.chapter.open" })
+        XCTAssertEqual(open.cornerLabel, "0:00")
+        XCTAssertEqual(entries.map(\.id), ["source.chapter.open", "source.chapter.long", "source.chapter.rough"],
+                       "showing a time does not move a card")
+    }
+
+    func testAPodcastChapterSavedOnlyAsAFractionSaysAboutAndNeverMakesATime() throws {
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: podcastWithPublisherChapters(), sessionID: nil)
+        let rough = try XCTUnwrap(entries.first { $0.id == "source.chapter.rough" })
+        XCTAssertEqual(rough.cornerLabel, "about 72%", "the corner keeps the about now the detail line is gone (#4778)")
+        XCTAssertEqual(rough.detail, "")
+        XCTAssertEqual(rough.spokenPosition, "about 72 percent")
+
+        // An episode whose chapters an earlier build saved only as percents (no exact twins at all).
+        var returning = podcastWithPublisherChapters()
+        returning.mediaChapters = []
+        for entry in ExperienceTimelineRailScreen.makeEntries(from: returning, sessionID: nil)
+        where entry.id.hasPrefix("source.chapter.") {
+            XCTAssertTrue(entry.cornerLabel.hasSuffix("%"), "\(entry.id) has no exact time to show")
+            XCTAssertTrue(entry.cornerLabel.contains("about"), entry.cornerLabel)
+        }
+    }
+
+    func testAnArticleKeepsPercentsEvenWhenItHasPreparedAudioChapters() throws {
+        var item = ItemDetailState(id: "article", title: "Essay", text: String(repeating: "word ", count: 400))
+        item.chapters = [Chapter(id: "c1", title: "Middle", startChar: 1_100, endChar: 1_500, percent: 56)]
+        item.mediaChapters = [MediaTimelineChapter(id: "c1", title: "Middle", startMs: 502_000, transcriptSegmentId: "s")]
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        let chapter = try XCTUnwrap(entries.first { $0.id == "source.chapter.c1" })
+        XCTAssertEqual(chapter.cornerLabel, "56%", "text never shows a time")
+        XCTAssertEqual(chapter.detail, "")
+        XCTAssertEqual(chapter.spokenPosition, "56 percent")
+        XCTAssertEqual(try XCTUnwrap(entries.first { $0.id == "source.beginning" }).cornerLabel, "0%")
+    }
+
+    func testAMediaChapterAndSceneOverAnHourReadAsHoursInTheirCorners() throws {
+        var item = ItemDetailState(id: "long", title: "Long episode", text: "", isNativeAudio: true)
+        item.mediaDurationMs = 7_200_000
+        item.mediaChapters = [MediaTimelineChapter(id: "m1", title: "Late", startMs: 4_050_000, transcriptSegmentId: "s")]
+        item.listeningMapScenes = [MediaTimelineChapter(id: "sc1", title: "Scene", startMs: 3_725_000, transcriptSegmentId: "s")]
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        let chapter = try XCTUnwrap(entries.first { $0.id == "source.mediaChapter.m1" })
+        XCTAssertEqual(chapter.detail, "")
+        XCTAssertEqual(chapter.cornerLabel, "1:07:30")
+        let scene = try XCTUnwrap(entries.first { $0.id == "source.listeningMapScene.sc1" })
+        XCTAssertTrue(scene.detail.hasPrefix("Generated scene"), scene.detail)
+        XCTAssertFalse(scene.detail.contains("1:02:05"), "the time is in the corner, once (#4778)")
+        XCTAssertEqual(scene.cornerLabel, "1:02:05")
+    }
+
+    func testTheCurrentLineOnAPodcastHasTheClockAndTheFlooredPercent() throws {
+        let item = podcastWithPublisherChapters(durationMs: 6_180_000)
+        var snapshot = SessionSnapshot()
+        snapshot.itemId = item.id
+        snapshot.currentMediaTimeMs = 4_008_000
+        snapshot.currentPlaybackDurationMs = 6_180_000
+        let position = try XCTUnwrap(ExperienceTimelineRailScreen.currentPosition(forItem: item, snapshot: snapshot))
+        XCTAssertEqual(position.line(for: "Current chapter"), "Current chapter · 1:06:48 · 64%")
+
+        snapshot.currentMediaTimeMs = 6_130_000
+        XCTAssertEqual(try XCTUnwrap(ExperienceTimelineRailScreen.currentPosition(forItem: item, snapshot: snapshot))
+            .line(for: "Current chapter"), "Current chapter · 1:42:10 · 99%", "99% is not rounded up to finished")
+
+        snapshot.currentPlaybackDurationMs = nil
+        XCTAssertEqual(try XCTUnwrap(ExperienceTimelineRailScreen.currentPosition(forItem: item, snapshot: snapshot))
+            .line(for: "Current chapter"), "Current chapter · 1:42:10", "no duration, no percent: none is made up")
+    }
+
+    func testTheCurrentLineOnAnArticleUsesTheTextScrubbersPercent() throws {
+        let text = String(repeating: "word ", count: 200)
+        let item = ItemDetailState(id: "article", title: "Essay", text: text)
+        var snapshot = SessionSnapshot()
+        snapshot.itemId = item.id
+        snapshot.targetType = TargetType.itemTextTTS.rawValue
+        snapshot.currentTextStart = 470
+        let position = try XCTUnwrap(ExperienceTimelineRailScreen.currentPosition(forItem: item, snapshot: snapshot))
+        let scrubber = TimelinePositionLabel.textScrubberPercent(offset: 470, length: text.count)
+        XCTAssertEqual(position.percent, scrubber)
+        XCTAssertEqual(position.line(for: "Current passage"), "Current passage · \(scrubber)%")
+        XCTAssertNil(position.ms)
+    }
+
+    func testTheCurrentLineIsLeftOutWhenAnotherItemOrAReplyIsPlaying() {
+        let item = ItemDetailState(id: "article", title: "Essay", text: String(repeating: "word ", count: 200))
+        var snapshot = SessionSnapshot()
+        snapshot.targetType = TargetType.itemTextTTS.rawValue
+        snapshot.currentTextStart = 100
+        snapshot.itemId = "another"
+        XCTAssertNil(ExperienceTimelineRailScreen.currentPosition(forItem: item, snapshot: snapshot))
+        snapshot.itemId = item.id
+        snapshot.targetType = TargetType.assistantTurnTTS.rawValue
+        XCTAssertNil(ExperienceTimelineRailScreen.currentPosition(forItem: item, snapshot: snapshot),
+                     "a reply counts characters in its own text, not the item's")
+        snapshot.itemId = nil
+        XCTAssertNil(ExperienceTimelineRailScreen.currentPosition(forItem: item, snapshot: snapshot))
+    }
+
+    /// #4233, PR 3c: a Margin moved onto a podcast with no saved place sits after every placed entry on the Timeline, its
+    /// corner and detail say "No place", and it never sorts at the start from its stored zeros. The two placed Margins and
+    /// the chapter are the control.
+    func testAMarginWithNoPlaceSitsAfterThePlacedEntriesOnThePodcastTimeline() {
+        func margin(_ id: String, ms: Int?, percent: Int, unplaced: Bool = false) -> Interjection {
+            var margin = Interjection(
+                id: id, itemId: "podcast", sessionId: "session", targetType: .item, targetId: "podcast",
+                createdAt: Date(timeIntervalSince1970: 1_780_000_000), roughPercent: percent,
+                anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: ms),
+                audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed",
+                transcript: id, cleanedTranscript: nil, displayText: id, status: "active", captureKind: .written)
+            if unplaced {
+                margin.movedOrigin = MovedMarginOrigin(
+                    marginId: id, itemId: "podcast", sessionId: "session", liveMarginId: "live-\(id)", fromLiveSessionId: "live",
+                    fromLiveSessionTitle: "Quick session", sessionPlaceLabel: nil, markedAt: margin.createdAt,
+                    movedAt: margin.createdAt.addingTimeInterval(60), placeKnown: false)
+            }
+            return margin
+        }
+        var item = ItemDetailState(id: "podcast", title: "Episode", text: "")
+        item.isNativeAudio = true
+        item.mediaDurationMs = 100_000
+        item.mediaChapters = [MediaTimelineChapter(id: "late", title: "Late chapter", startMs: 95_000, transcriptSegmentId: "seg-late")]
+        item.interjections = [
+            margin("unplaced", ms: 0, percent: 0, unplaced: true),
+            margin("early", ms: 10_000, percent: 10),
+            margin("end", ms: 99_000, percent: 99)
+        ]
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        let ids = entries.map(\.id)
+        let unplacedIndex = ids.firstIndex(of: "session::unplaced")
+        XCTAssertEqual(unplacedIndex, ids.indices.last, "after the last placed entry: \(ids)")
+        let unplaced = entries.first { $0.id == "session::unplaced" }
+        XCTAssertEqual(unplaced?.cornerLabel, "No place")
+        XCTAssertEqual(unplaced?.spokenPosition, "No place")
+        XCTAssertEqual(unplaced?.detail, "No place")
+        let end = entries.first { $0.id == "session::end" }
+        XCTAssertEqual(end?.detail, "Captured at 99%", "a placed Margin reads as before")
+        XCTAssertNotEqual(end?.cornerLabel, "No place")
+        XCTAssertEqual(InterjectionPositionPresentation.sortPercent(for: item.interjections[0], durationMs: 100_000),
+                       MarginPlacePresentation.timelineSortPosition)
+        XCTAssertEqual(InterjectionPositionPresentation.sortPercent(for: item.interjections[1], durationMs: 100_000), 10)
     }
 }

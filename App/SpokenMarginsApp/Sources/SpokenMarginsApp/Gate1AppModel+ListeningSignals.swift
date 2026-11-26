@@ -1,10 +1,21 @@
 import SessionKit
+import SessionKitAudio
 
 extension Gate1AppModel {
     /// Shared post-save hook for the app, Live Activity and Watch completion routes.
     func transcribeAndRecordSavedSpokenMargin() {
+        transcribeAndRecordSavedSpokenMargin(endedByPhrase: false)
+    }
+
+    /// `endedByPhrase` is true only when the spoken "stop margin" ended the Margin (#3940): the Margin is marked before
+    /// its transcription is scheduled, so the job cuts the phrase from its audio and words. Every other save leaves it
+    /// unmarked and keeps everything.
+    /// `hearItLandWillRun` is `HearItLand.order`'s answer for this save: the speech card then waits for the playback (#4715).
+    func transcribeAndRecordSavedSpokenMargin(endedByPhrase: Bool, hearItLandWillRun: Bool = false) {
         guard let interjection = latestInterjectionNeedingTranscription() else { return }
+        if endedByPhrase { MarginEndPhraseEndLedger.shared.markEndedByPhrase(interjectionId: interjection.id) }
         scheduleTranscription(for: interjection)
+        SpeechAskController.shared.spokenMarginSaved(isWritten: interjection.captureKind == .written, hearItLandWillRun: hearItLandWillRun) // the app's one line before iOS's prompt (#5016)
         recordSpokenMarginSignal(interjection)
     }
 

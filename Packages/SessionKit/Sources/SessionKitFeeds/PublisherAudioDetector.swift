@@ -17,10 +17,10 @@ public enum FeedEntryMediaKind: String, Equatable, Sendable {
 public enum PublisherAudioDetector {
     /// A minimum article body, applied only after affirmative narration evidence.
     public static let minimumBodyWords = 600
-    public static let detectedFromFeedEnclosure = "feed_enclosure"
-    public static let detectedFromPublisherNarration = "substack_post_voiceover"
+    public static let detectedFromFeedEnclosure = PublisherAudioSource.feedEnclosure.rawValue
+    public static let detectedFromPublisherNarration = PublisherAudioSource.substackPostVoiceover.rawValue
     /// Substack's automatic narration of a post whose author recorded nothing (#810).
-    public static let detectedFromGeneratedNarration = "substack_post_generated_voice"
+    public static let detectedFromGeneratedNarration = PublisherAudioSource.substackPostGeneratedVoice.rawValue
 
     public static func kind(audioURL: String?, pageURL: String, bodyWordCount: Int?, publisherNarrationConfirmed: Bool = false) -> FeedEntryMediaKind {
         guard let audio = httpsURL(audioURL) else { return .article }
@@ -66,8 +66,13 @@ public enum PublisherAudioDetector {
     /// Substack post added by "Add every new item", which the listener didn't start. Nil when the feed gave none.
     public static func feedBodyHandoff(for entry: FeedEntry) -> BrowserTextHandoff? {
         guard let body = entry.fullBody, !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        // The body keeps the post's headings as Markdown heading lines (`FeedArticleBodyText`), which the importer turns
+        // into chapters (#4461). Only a body with such a line is read as Markdown, so any other feed text (a post with no
+        // headings, a JSON Feed `content_text`) imports as the plain text it always did.
+        let hasHeadings = body.range(of: #"(?m)^#{2,6} \S"#, options: .regularExpression) != nil
         return BrowserTextHandoff(captureMode: .readablePage,
-            source: BrowserTextSource(url: entry.canonicalURL, title: entry.title), text: body)
+            source: BrowserTextSource(url: entry.canonicalURL, title: entry.title), text: body,
+            contentFormat: hasHeadings ? .markdown : nil)
     }
 
     private static func httpsURL(_ raw: String?) -> String? {

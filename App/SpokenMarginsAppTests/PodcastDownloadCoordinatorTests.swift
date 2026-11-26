@@ -1120,6 +1120,70 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         }
     }
 
+    // MARK: One live session per background identifier (#4392)
+
+    /// The launch crash: `Gate1AppModel.configurePodcastDownloads` shuts the old coordinator down and builds the
+    /// next one on the same background identifier at once. `invalidateAndCancel()` is asynchronous, so the new
+    /// session was made while the old one still existed, and its first `downloadTask(with:)` raised
+    /// "A background URLSession with identifier ... already exists!" and aborted the app. This uses real background
+    /// sessions, because a fake session cannot raise it.
+    func testSecondCoordinatorOnTheSameBackgroundIdentifierWaitsForTheFirstToInvalidate() async throws {
+        let identifier = "com.spokenmargins.tests.downloads-\(UUID().uuidString)"
+        let fixture = try makeFixture()
+        let first = try makeBackgroundCoordinator(fixture, identifier: identifier)
+        XCTAssertTrue(first.hasSessionForTesting)
+        first.shutdown()
+        let second = try makeBackgroundCoordinator(fixture, identifier: identifier)
+        defer { second.shutdown() }
+        second.setNetworkTransportForTesting(.wifi)
+        second.register(itemId: "episode", remoteURL: URL(string: "https://127.0.0.1:9/episode.mp3")!,
+                        userInitiated: true)
+        // Reaching the end of the preparation task means `downloadTask(with:)` ran without aborting the app.
+        await second.preparationTasks["episode"]?.value
+        XCTAssertTrue(second.hasSessionForTesting, "the second session is made once the first has let go")
+        XCTAssertFalse(second.recordsByItemId["episode"]?.failureReason?.contains("restarting") ?? false,
+                       "a handoff that completes in time is not shown as a failed download")
+    }
+
+    /// A session that never lets go must not leave the row stuck in "downloading" or make a second session. The
+    /// row fails with a reason, and the retry works once the identifier is free.
+    func testADownloadWaitingTooLongForTheOldSessionFailsAndRetriesOnceItIsFree() async throws {
+        let identifier = "com.spokenmargins.tests.downloads-\(UUID().uuidString)"
+        let fixture = try makeFixture()
+        let first = try makeBackgroundCoordinator(fixture, identifier: identifier)   // never shut down yet
+        let second = try makeBackgroundCoordinator(fixture, identifier: identifier, handoffTimeout: .milliseconds(100))
+        defer { second.shutdown(); first.shutdown() }
+        XCTAssertFalse(second.hasSessionForTesting, "the identifier is held, so no second session is made")
+        second.setNetworkTransportForTesting(.wifi)
+        second.register(itemId: "episode", remoteURL: URL(string: "https://127.0.0.1:9/episode.mp3")!,
+                        userInitiated: true)
+        await second.preparationTasks["episode"]?.value
+        XCTAssertEqual(second.recordsByItemId["episode"]?.state, .failed)
+        XCTAssertNotNil(second.recordsByItemId["episode"]?.failureReason)
+        XCTAssertFalse(second.hasSessionForTesting)
+
+        first.shutdown()
+        try await pollUntil(timeout: .seconds(5)) { !BackgroundSessionGate.shared.isHeld(identifier) }
+        XCTAssertFalse(BackgroundSessionGate.shared.isHeld(identifier), "invalidation gives the identifier back")
+        second.retry(itemId: "episode")
+        await second.preparationTasks["episode"]?.value
+        XCTAssertTrue(second.hasSessionForTesting)
+        XCTAssertNotEqual(second.recordsByItemId["episode"]?.failureReason, "Downloads are restarting. Try again in a moment.")
+    }
+
+    private func makeBackgroundCoordinator(
+        _ fixture: (root: URL, support: URL, store: SQLiteSessionStore),
+        identifier: String,
+        handoffTimeout: Duration = .seconds(20)
+    ) throws -> PodcastDownloadCoordinator {
+        try PodcastDownloadCoordinator(
+            store: fixture.store, applicationSupportDirectory: fixture.support, cacheLimit: .five,
+            monitorsNetwork: false, usesBackgroundSession: true,
+            contentLength: { _, _ in 1_000 },
+            sessionIdentifier: identifier, sessionHandoffTimeout: handoffTimeout
+        )
+    }
+
     // Keep SQLite files until the test process exits: URLSession callbacks may
     // retain the store after a test returns. Unlinking an open WAL corrupts fixtures.
     private func makeFixture() throws -> (root: URL, support: URL, store: SQLiteSessionStore) {

@@ -5,7 +5,7 @@ import { expect, test, type Page } from '@playwright/test';
 import type { Episode, Margin } from '../src/shared/model.ts';
 import { writePacket } from '../src/packet/write.ts';
 import { withLayer } from '../src/packet/resign.ts';
-import { serveFixtures } from './fixtures.ts';
+import { nowTab, serveFixtures } from './fixtures.ts';
 
 const TITLE = 'The tide tables, explained';
 const episode: Episode = {
@@ -51,6 +51,8 @@ async function openFile(page: Page) {
   await (await choosing).setFiles(await packet());
   const nowPlaying = page.getByRole('dialog', { name: TITLE });
   await expect(nowPlaying).toBeVisible();
+  // A friend's unheard Margins open Now Playing on Margins (part of #3216); these checks are on Now.
+  await nowTab(page);
   return nowPlaying;
 }
 

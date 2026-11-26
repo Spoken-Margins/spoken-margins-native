@@ -29,6 +29,8 @@ import SessionKitSharing
 final class SpokenMarginsPackageImportCoordinator {
     /// Opens tapped share links into this flow (#488); the model reaches it as `shareLinkOpener`.
     let shareLinkOpener = ShareLinkOpener()
+    /// The sheet that says a friend's link or file could not be opened (#3801); the model reaches it as `packetOpenFailures`.
+    let openFailures = PacketOpenFailurePresenter()
     /// What the flow needs from the app. The live one is `Environment.live(model:)`.
     struct Environment {
         var requireStore: @MainActor () throws -> SQLiteSessionStore
@@ -38,9 +40,12 @@ final class SpokenMarginsPackageImportCoordinator {
         var reportSuccess: @MainActor (String) -> Void
         var reportConfirmation: @MainActor (String) -> Void
         var reportFailureMessage: @MainActor (String) -> Void
+        /// A friend's file that could not be opened, with the words of the failure sheet (#3801).
+        var presentOpenFailure: @MainActor (PacketOpenFailureSheetContent) -> Void
         var reportFailure: @MainActor (_ error: Error, _ context: String) -> Void
         var openItem: @MainActor (String) -> Void
-        /// Makes the imported item the open one: active id, Library rows, item detail, then the item screen, in that order.
+        /// Makes the imported item the open one: active id, item detail, then the item screen, in that order. The Library
+        /// rows are already up to date (`refreshImportedLibrary` runs first), so this reads one item and no more (#2256).
         var showImportedItem: @MainActor (_ itemId: String, _ store: SQLiteSessionStore) throws -> Void
         var recordPacketImport: @MainActor (_ itemId: String?, _ packetId: String, _ marginCount: Int) -> Void
         var localAudiobookDigest: @MainActor (Item) -> String?
@@ -65,8 +70,9 @@ final class SpokenMarginsPackageImportCoordinator {
         var attachListeningMap: (@MainActor (ListeningMap) async throws -> Void)? = nil
         /// True while a Margin is being recorded or written: the listener's position is held (`recordingNavigationIsLocked`).
         var navigationIsLocked: @MainActor () -> Bool = { false }
-        /// Brings the Library rows up to date with an item an import added, without opening it.
-        var refreshImportedLibrary: @MainActor (_ store: SQLiteSessionStore) throws -> Void = { _ in }
+        /// Brings the Library rows up to date with an item an import added, without opening it. It reads off the main
+        /// thread and returns once the rows are on screen, so the callers after it can read them (#2256).
+        var refreshImportedLibrary: @MainActor (_ store: SQLiteSessionStore) async throws -> Void = { _ in }
         /// Names main-thread work for the hang probe. `stage` no longer has any (#2510).
         var labels = MainThreadOperationLabels()
     }
@@ -116,6 +122,7 @@ final class SpokenMarginsPackageImportCoordinator {
 
     init(environment: Environment) {
         self.environment = environment
+        openFailures.cancelRunningOpen = { [shareLinkOpener] in shareLinkOpener.cancel() }
     }
 
     // MARK: Background staging
@@ -256,7 +263,14 @@ final class SpokenMarginsPackageImportCoordinator {
             if error is CancellationError { return .rejected(needsNewerApp: false) }
             environment.recordDiagnostic("lastSpokenMarginsPackageImport", "rejected:\(SharedMarginsImportMessage.diagnosticDetail(error))")
             // A kept file is tried again at launch; the caller says when the listener has already been told.
-            if announcesRejection { environment.reportFailureMessage(SharedMarginsImportMessage.userFacing(error)) }
+            if announcesRejection {
+                // A file the archive refuses gets the failure sheet; other staging failures keep the banner (#3801).
+                if let archiveError = error as? SpokenMarginsPackageArchiveError {
+                    environment.presentOpenFailure(PacketOpenFailureSheetContent(archiveError.listenerOutcome))
+                } else {
+                    environment.reportFailureMessage(SharedMarginsImportMessage.userFacing(error))
+                }
+            }
             return .rejected(needsNewerApp: (error as? SpokenMarginsPackageArchiveError)?.listenerOutcome == .needsNewerApp)
         }
     }
@@ -494,7 +508,7 @@ final class SpokenMarginsPackageImportCoordinator {
             }
             var openingWaits = false
             if let itemId {
-                openingWaits = try presentImportedItem(itemId, store: store)
+                openingWaits = try await presentImportedItem(itemId, store: store)
                 if let item,
                    item.media?.sourceType == .remoteStream,
                    let rawURL = item.media?.url,
@@ -541,21 +555,29 @@ final class SpokenMarginsPackageImportCoordinator {
     /// The item an import finished while a Margin was being recorded or written. It opens once that Margin is saved or
     /// cancelled (`openDeferredItemIfReady`).
     private(set) var deferredItemId: String?
+    /// The Library refresh that ran while the Margin held the opening failed, so the item may not be in the rows yet.
+    /// The opening loads them first (#2256).
+    private var deferredRowsFailedToLoad = false
 
     /// The one place an import turns into navigation (the audits on PR #3298). A Margin being recorded or written holds
     /// the listener's position, and an import can finish at any moment, after a fetch that took seconds, so no import
     /// moves the active item, the item detail or the screen while the lock is on. The item is still in the Library,
     /// and it opens when the lock lifts. Returns whether the opening waits.
     @discardableResult
-    private func presentImportedItem(_ itemId: String, store: SQLiteSessionStore) throws -> Bool {
+    private func presentImportedItem(_ itemId: String, store: SQLiteSessionStore) async throws -> Bool {
+        // The rows first, off the main thread, so the opening below is one item's read. The lock can be taken while
+        // they load, so it is checked after, where the opening happens.
+        var refreshFailure: Error?
+        do { try await environment.refreshImportedLibrary(store) } catch { refreshFailure = error }
         guard environment.navigationIsLocked() else {
             deferredItemId = nil
+            if let refreshFailure { throw refreshFailure }
             try environment.showImportedItem(itemId, store)
             return false
         }
         // The import is saved; a Library refresh that fails must not bring an error sheet up over the Margin.
-        // The item opens, and loads its rows, when the lock lifts.
-        try? environment.refreshImportedLibrary(store)
+        // The item opens when the lock lifts, with the rows this refresh loaded, or loads them then if it failed.
+        deferredRowsFailedToLoad = refreshFailure != nil
         deferredItemId = itemId
         environment.recordDiagnostic("lastSpokenMarginsPackageOpen", "waiting_for_margin:\(itemId)")
         return true
@@ -565,6 +587,16 @@ final class SpokenMarginsPackageImportCoordinator {
     /// whenever the lock changes.
     func openDeferredItemIfReady() {
         guard let itemId = deferredItemId, !environment.navigationIsLocked() else { return }
+        if deferredRowsFailedToLoad {
+            // The rows didn't load while the Margin was open: load them off the main thread, then ask again.
+            deferredRowsFailedToLoad = false
+            Task { @MainActor [weak self] in
+                guard let self, let store = try? self.environment.requireStore() else { return }
+                try? await self.environment.refreshImportedLibrary(store)
+                self.openDeferredItemIfReady()
+            }
+            return
+        }
         deferredItemId = nil
         do {
             let store = try environment.requireStore()
@@ -730,6 +762,16 @@ final class SpokenMarginsPackageImportCoordinator {
             let digestsById = Dictionary(rows.compactMap { row in row.textDigests.map { (row.item.id, $0) } },
                                          uniquingKeysWith: { first, _ in first })
             guard let proposal = ListeningMapPacket.proposal(in: contents) else {
+                // Replies go to the row holding the Margins they answer, whatever edition the friend heard (#5286).
+                let parents = ReplyParentItemMatch.parents(in: contents.conversations)
+                if !parents.isEmpty, let replied = ReplyParentItemMatch.itemId(
+                    for: contents.manifest.item,
+                    holdingParents: try store.itemIdsHoldingOwnMargins(sharedAs: parents),
+                    among: items,
+                    ownedAudiobookDigest: { Self.ownedAudiobookDigest(for: $0, store: store) },
+                    textDigests: { digestsById[$0.id] }) {
+                    return PackageSourceMatch(itemId: replied)
+                }
                 return PackageSourceMatch(itemId: SharedPacketItemMatcher.matchingItemId(
                     for: contents.manifest.item, among: items,
                     ownedAudiobookDigest: { Self.ownedAudiobookDigest(for: $0, store: store) },
@@ -827,7 +869,7 @@ final class SpokenMarginsPackageImportCoordinator {
         await removeFolderIfNothingNamesIt(review.extractionDirectory)
         environment.reportConfirmation(outcome.message)
         do {
-            try presentImportedItem(itemId, store: store)
+            try await presentImportedItem(itemId, store: store)
         } catch {
             environment.reportFailure(error, "Opening it after adding a Listening Map failed")
         }
