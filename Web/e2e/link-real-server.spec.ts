@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { devices, expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { keyFromFragment, PART } from '../src/packet/share-link.ts';
 import { sealPart } from '../src/cli/link-sealing.ts';
+import { withLayer } from '../src/packet/resign.ts';
 import { seconds, serveAudio, serveFixtures, startFromBeginning } from './fixtures.ts';
 
 const repo = fileURLToPath(new URL('../../', import.meta.url));
@@ -29,23 +30,31 @@ let binary = '';
 let server: ChildProcess | undefined;
 let id = '';
 let goneId = '';
+let newerId = '';
 
 test.beforeEach(async ({}, info) => {
   test.skip(info.project.name !== 'phone', 'Opens its own laptop and Pixel contexts.');
 });
 
-async function seal(): Promise<FormData> {
+/** The voice fixture as a newer Spoken Margins would write it: needing a capability this page has never heard of (#5266). */
+async function newerPacket(): Promise<Uint8Array> {
+  const packet = new Uint8Array(readFileSync(join(repo, 'Contracts/fixtures/web-packets/web-voice.spokenmargins')));
+  return withLayer(packet, () => {}, (manifest) => {
+    manifest.requiredCapabilities = [...((manifest.requiredCapabilities as string[] | undefined) ?? []), 'spokenmargins.capability.from-the-future.v1'];
+  });
+}
+
+async function seal(packet: Uint8Array = new Uint8Array(readFileSync(join(repo, 'Contracts/fixtures/web-packets/web-voice.spokenmargins')))): Promise<FormData> {
   const key = keyFromFragment(KEY) as Uint8Array;
   const preview = { schema: 'spokenmargins.link-preview.v1', source: { title: EPISODE }, margins: [{ text: 'A Margin.' }] };
-  const packet = new Uint8Array(readFileSync(join(repo, 'Contracts/fixtures/web-packets/web-voice.spokenmargins')));
   const form = new FormData();
   form.append('preview', new Blob([await sealPart(new TextEncoder().encode(JSON.stringify(preview)), PART.preview, key)]), 'preview');
   form.append('packet', new Blob([await sealPart(packet, PART.packet, key)]), 'packet');
   return form;
 }
 
-async function make(): Promise<string> {
-  const made = await fetch(`${SERVER}/api/v1/links`, { method: 'POST', body: await seal() });
+async function make(packet?: Uint8Array): Promise<string> {
+  const made = await fetch(`${SERVER}/api/v1/links`, { method: 'POST', body: await seal(packet) });
   if (made.status !== 201) throw new Error(`seeding a link answered ${made.status}`);
   return ((await made.json()).path as string).replace('/l/', '');
 }
@@ -71,6 +80,7 @@ test.beforeAll(async () => {
   }
   id = await make();
   goneId = await make();
+  newerId = await make(await newerPacket());
   execFileSync(binary, ['takedown', '-state', join(work, 'state'), goneId], { stdio: 'inherit' });
 });
 
@@ -205,6 +215,11 @@ test('the failure table: each cause is one plain sentence, with no raw error and
     await page.goto(`${WEB}/l/${link}#${KEY}`);
     await expectFailure(name, 'This link has expired.');
   }
+  // Margins from a newer Spoken Margins, through the real server page: a version gap, never "damaged" or "send it again" (#5266).
+  await page.goto(`${SERVER}/l/${newerId}#${KEY}`);
+  await expectFailure('newer packet', 'These Margins were made by a newer Spoken Margins than this page can read.');
+  await expect(failed).toContainText('Open your friend’s link again, so this page loads its newest version.');
+  await expect(failed).not.toContainText(/damaged|send it again|Update the app/i);
   // Links switched off on the real server (503), then back on.
   const sw = (state: string) => execFileSync(binary, ['switch', '-public', join(work, 'public'), 'links', state], { stdio: 'inherit' });
   sw('off');
