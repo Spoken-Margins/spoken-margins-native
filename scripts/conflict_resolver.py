@@ -808,6 +808,13 @@ def run(api, repo, base, workdir, only=None, read_token=None, write_token=None, 
             labels = {label['name'] for label in pull.get('labels', [])}
             earlier = done.get((pr, pull['head']['sha'][:7]))
             if earlier and parse_time(earlier['at']) >= parse_time(marker['created_at']):
+                if earlier['outcome'] == 'merged':
+                    # Its pushed merge is no longer the head (a failed re-arm of one is the `pushed` case above): the
+                    # branch was set back. Re-arming would say a merge is there that isn't, and loop with
+                    # lane_conflicts while main stands still, so the finisher takes it.
+                    finish(api, pr, dict(earlier, outcome='taken-back'), base, marker, labels)
+                    log(f'#{pr}: its resolver merge was removed from the branch; handed to the Mac finisher.')
+                    continue
                 # Handled for this hand-off already, yet the label is still on: moving the labels failed part way.
                 finish(api, pr, earlier, base, marker, labels)
                 log(f'#{pr}: recorded as {earlier["outcome"]} at this head already; moved its labels again.')

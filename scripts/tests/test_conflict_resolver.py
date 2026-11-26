@@ -389,6 +389,18 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(api.labels_added(), ['automerge'])
         self.assertEqual(api.deletes, ['issues/7/labels/conflict-resolver'])
 
+    def test_a_merge_the_thread_removed_from_the_branch_goes_to_the_finisher_not_a_re_arm(self):
+        # Audit of 2b59715 (non-blocking): a `merged` record at the current head means the branch was set back.
+        rec = {'user': {'login': cr.BOT}, 'created_at': iso(NOW - timedelta(minutes=10)),
+               'body': cr.record_comment({'kind': 'case', 'pr': 7, 'head': self.head[:7], 'outcome': 'merged',
+                                          'merge': 'd' * 40, 'base': 'bbbbbbb', 'sort': 'small'}, 'x')}
+        api = FakeApi([pull(head=self.head)], {7: [marker_comment(head=self.head)], cr.LOG_ISSUE: [rec]})
+        posted = cr.run(api, REPO, 'main', self.workdir, now=NOW, claude=lambda *a: self.fail('called'),
+                        remote=str(self.bare))
+        self.assertEqual(posted, [])
+        self.assert_to_finisher(api)
+        self.assertNotIn('automerge', api.labels_added())
+
     def test_a_new_conflict_at_a_head_handled_before_is_resolved_again(self):
         # Audit finding 4 on #5395: a clean re-arm pushes nothing, so main can move and conflict again at that head.
         rec = {'user': {'login': cr.BOT}, 'created_at': iso(NOW - timedelta(hours=3)),
