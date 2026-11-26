@@ -15,7 +15,9 @@ import (
 const (
 	MaxPacketBytes  = 20 << 20
 	MaxPreviewBytes = 16 << 10
-	Lifetime        = 30 * 24 * time.Hour
+	// MaxReplyBytes bounds a link's sealed reply part (#4675): a box id, a post proof and a sealing key.
+	MaxReplyBytes = 1 << 10
+	Lifetime      = 30 * 24 * time.Hour
 )
 
 var (
@@ -30,10 +32,14 @@ var (
 // that name so no readable copy outlives its link.
 const previewFile = "preview"
 
+// replyFile holds a link's sealed reply part (#4675, docs/design/reply-mailbox.md), when the sender's phone
+// made a reply box with the link. It is content: takedown and the sweep delete it with the packet.
+const replyFile = "reply"
+
 // A parked link (ParkLink) can also hold reported full links, key included, in the same slots a hold uses.
 // They are content: takedown and the sweep delete them with the packet, so no key outlives its link.
 var contentFiles = func() []string {
-	names := []string{"packet", previewFile, "preview.json"}
+	names := []string{"packet", previewFile, "preview.json", replyFile}
 	for n := 1; n <= MaxReportedLinks; n++ {
 		names = append(names, reportedLinkName(n))
 	}
@@ -203,6 +209,68 @@ func (s *Store) PacketUntil(id string, now time.Time) (*os.File, time.Time, erro
 		return nil, time.Time{}, ErrGone
 	}
 	return f, expires, err
+}
+
+// PutReply stores a link's sealed reply part beside its packet (#4675). The link must be live and the part
+// sealed as part 4; it is stored as it came, and a second call for the same link is refused, so a link's
+// reply part never changes once made.
+func (s *Store) PutReply(id string, part []byte, now time.Time) error {
+	if len(part) > MaxReplyBytes {
+		return ErrTooLarge
+	}
+	if !Sealed(part, PartReply) {
+		return ErrUnsealed
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.live(id, now); err != nil {
+		return err
+	}
+	dir := filepath.Join(s.dir, id)
+	if _, err := os.Stat(filepath.Join(dir, "packet")); err != nil {
+		return ErrGone
+	}
+	f, err := os.CreateTemp(dir, ".reply-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	_, err = f.Write(part)
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.Chmod(f.Name(), 0o600); err != nil {
+		return err
+	}
+	// Link, not rename, so an existing reply part is never replaced.
+	if err := os.Link(f.Name(), filepath.Join(dir, replyFile)); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return errors.New("links: reply part already stored")
+		}
+		return err
+	}
+	return nil
+}
+
+// Reply returns the link's sealed reply part unchanged: ErrNotFound when the link has none, and the same
+// answers as Packet for a link that has ended or was taken down.
+func (s *Store) Reply(id string, now time.Time) ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if err := s.live(id, now); err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(filepath.Join(s.dir, id, "packet")); errors.Is(err, os.ErrNotExist) {
+		return nil, ErrGone
+	}
+	data, err := os.ReadFile(filepath.Join(s.dir, id, replyFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotFound
+	}
+	return data, err
 }
 
 func (s *Store) deleteContent(id string) error {

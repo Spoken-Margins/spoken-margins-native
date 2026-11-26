@@ -163,7 +163,13 @@ func (s *Server) uploadLink(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "path": "/l/" + id, "expiresAt": expires})
+	out := map[string]any{"id": id, "path": "/l/" + id, "expiresAt": expires}
+	// A reply box, if the phone sent one (#4675, reply_box.go). Made only after the link stands and is bound
+	// to its sender; if it cannot be made the link still stands, answered without "replyBox".
+	if s.makeReplyBox(r, id, expires, now) {
+		out["replyBox"] = true
+	}
+	writeJSON(w, http.StatusCreated, out)
 }
 
 func linkReadFailure(w http.ResponseWriter, err error) {
