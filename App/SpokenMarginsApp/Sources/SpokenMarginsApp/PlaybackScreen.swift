@@ -705,8 +705,8 @@ struct PlaybackScreen: View {
 
             // The compact title already is the show name, so the show appears once while a friend's card is up (#3598).
             if titleMode.showsSeparateShowLine, model.selectedItem.isNativeAudio,
-               let show = model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
-               !show.isEmpty {
+               let show = PlaybackTitleMode.showName(
+                   sourceTitle: model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle) {
                 Text(show)
                     .font(.subheadline)
                     .foregroundStyle(AppColors.watchSecondary)
