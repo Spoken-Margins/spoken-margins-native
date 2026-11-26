@@ -744,6 +744,13 @@ These came in the project chat, so most have no comment of his to link. Each cit
   - Bringing it back is a new decision: a revert of the removal, possibly as a paid feature, and after the lawyer.
   - Builds already on phones (36 and 37) keep the toggles until the server's map endpoints are switched off. That server change is his to approve; the privacy page keeps its community-maps section while those builds can use it.
 
+## 2026-11-26
+- **A browser friend answers through the share link; the web app may post a sealed answer (2026-11-26, #4675).** The 2026-11-22 Design for a reply mailbox ([docs/design/reply-mailbox.md](design/reply-mailbox.md)) asked him to change his 2026-11-05 rule that "the web app is receive-only for share links", and offered three timings, all after a no-code test with four first-time friends answering by file. Asked about that test and the plan's eleven sessions, he wrote in the project chat (copied from his message by the server): "How could it possibly take 11 sessions? Why would we do a forefriend test with files? That sounds like the most miserable thing we could possibly subject ourselves to." And next: "Unless we have proof that a single session can't knock it all out, then we should give it to a single session of Opus and tell it to use background agents."
+  - The rule's new wording: **the web app creates no links and no boxes. It opens and reports links, saves and sends `.spokenmargins` files, and may post a sealed answer into the reply box the sender's phone made for that link.** It replaces point 3 of the 2026-11-05 share-link abuse design above. `Web/src/app/no-link-creation.test.ts` still fails a bundle that can create a link or a club.
+  - The four-friend file test is no longer a gate for #4675. The issue is built whole in one PR, server, web and app together; each side ignores the new parts when the other doesn't have them yet.
+  - Still his: the server deploy that turns on the `replies` switch (a public push), and which build carries `SM_LINK_REPLIES` (it follows `SM_SHARE_LINK_CREATION`).
+  - Links made on the Mac get no reply box, so persona and intro links never become an inbox (#4784 keeps the rest of its one-way design).
+
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
   - Verification layers: tests that pass while the app is broken usually fake the boundary that broke, such as audio sessions, players, file paths across containers and network responses.
