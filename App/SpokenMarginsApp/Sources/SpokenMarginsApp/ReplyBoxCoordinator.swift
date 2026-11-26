@@ -56,10 +56,11 @@ final class ReplyBoxCoordinator: ObservableObject {
 
     private func startCheck(_ trigger: ReplyBoxPickup.Trigger) {
         guard check == nil, let model else { return }
-        // Not before first run and the Terms are done, and only once the listener agreed to links that take answers:
-        // a reply box is made only after that agreement, so before it there is nothing to collect.
-        guard model.hasAcceptedCurrentTerms, !model.isTermsOfUsePresented,
-              ServerSendConsent.hasConsented(to: .shareLinks, repliesOffered: true) else { return }
+        // Not while the Terms sheet is up, and only once the listener agreed to links that take answers. The voice Terms
+        // are not a condition (ReplyBoxCheckGate says why).
+        guard ReplyBoxCheckGate.mayCheck(
+            termsSheetShowing: model.isTermsOfUsePresented,
+            agreedToLinksWithAnswers: ServerSendConsent.hasConsented(to: .shareLinks, repliesOffered: true)) else { return }
         let pickup = self.pickup ?? makePickup()
         self.pickup = pickup
         checkCount += 1

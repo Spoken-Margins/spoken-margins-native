@@ -147,7 +147,7 @@ There is no capture of a banner. This uses the existing top banner (`UserFeedbac
   - In both, **Open** goes to the Following tab.
 - **Timing.**
   - While a Margin is being recorded or written, the banner waits until it ends. The import coordinator already does this (`SpokenMarginsPackageImportCoordinator.swift:528`).
-  - Pickup does not run before first run and the Terms are done. A sender who made a link has passed both, so this only matters after a reinstall restores nothing.
+  - Pickup does not run while the Terms sheet is on screen, or before the listener agreed to links that take answers. The on-device voice Terms are not a condition: a podcast-only sender never sees them and "Use iOS Voice" declines them (Test Desk run on #5397, 2026-11-26).
   - A check that finds nothing, or fails, shows nothing.
 
 ### D. Friend card on the item screen, for an answer that came through your reply box
@@ -409,7 +409,7 @@ The sheet is a standard SwiftUI `Form` in a sheet with a navigation bar.
    - Tests: `npm run test:web`.
 7. **App: quiet pickup and banner** (6a).
    - A focused `ReplyBoxCoordinator`, called from `handleAppBecameActive` (`Gate1AppModel.swift:1009`; one line, nothing added to the model) and from `pullToRefreshFollowing`.
-   - Runs only after first run and the Terms are done.
+   - Runs only once the listener agreed to links that take answers, and not while the Terms sheet is up.
    - Packet bytes go to a temporary file in Caches.
    - `SpokenMarginsPackageImportCoordinator.stage` gains `quiet: true`. The "only answers to the shared item" check runs before `confirm`. A quiet import skips the review queue (`queue.offer`) and shows nothing of its own. It suppresses:
      - the waiting message

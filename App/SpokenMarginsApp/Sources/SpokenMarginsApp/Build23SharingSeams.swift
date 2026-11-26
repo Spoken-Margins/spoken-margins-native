@@ -714,7 +714,10 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     /// The friends' cards for the item, and the intro's "Tell Sam you got it" (#3902), worked out together so the reply
     /// graph is built once.
     private func makeImportedLayers(from item: ItemDetailState) -> ([Build23ImportedLayerSnapshot], ReplyReceiptButton.Content?) {
-        let receipts = ReplyReceipt.offers(on: item)
+        // An answer that came through a reply box (#4675) offers no "Tell <friend> you got it": the browser friend's page
+        // already said it was sent, and that friend has no packet thread to answer in.
+        let boxes = replyBoxes
+        let receipts = ReplyReceipt.offers(on: item).excluding { boxes.answer(carrying: $0) != nil }
         let layers = makeLayerSnapshots(from: item, receipts: receipts)
         let intro = receipts.newest.flatMap { offer in
             layers.first { $0.id == offer.layerId }.map { ReplyReceiptButton.Content(offer: offer, itemTitle: $0.itemTitle) }
