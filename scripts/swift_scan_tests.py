@@ -38,7 +38,7 @@ SCANS = (
     'test_camera_wording', 'test_container_identifiers', 'test_dark_toolbar_background_visible', 'test_designated_agent_links',
     'test_dock_dynamic_type', 'test_dynamic_type_add_and_browse', 'test_dynamic_type_clock_and_titles', 'test_dynamic_type_following_rows',
     'test_dynamic_type_library_rows', 'test_dynamic_type_live_activity', 'test_filled_button_contrast', 'test_filled_button_labels', 'test_flow_map',
-    'test_following_row_more_menu', 'test_friend_path_words', 'test_hosted_app_paths', 'test_import_navigation_gate',
+    'test_following_row_more_menu', 'test_friend_help', 'test_friend_path_words', 'test_hosted_app_paths', 'test_import_navigation_gate',
     'test_increase_contrast_wiring', 'test_interjection_writes', 'test_item_screen_nested_lazy_stacks', 'test_listener_error_text_guard',
     'test_listener_tap_opens_off_main', 'test_listener_words', 'test_live_activity_colors', 'test_main_thread_labels',
     'test_map_text_gate', 'test_microphone_wording', 'test_mini_player_keep_out', 'test_opml_import_done_closes_host',
