@@ -13,6 +13,7 @@ struct SpokenNoteAudioVersionControl: View {
     }
 
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ObservedObject var clean: SpokenNoteCleanCoordinator
     let noteId: String
     let placement: Placement
@@ -22,8 +23,11 @@ struct SpokenNoteAudioVersionControl: View {
         let caption = SpokenNoteCleanWords.caption(state)
         let blocked = model.spokenNoteVersionChangeIsBlocked
         VStack(alignment: .leading, spacing: 8) {
+            // At accessibility sizes the picker is a menu that VoiceOver reads as "Note audio" and its choice, so the
+            // heading above it would only say "Note audio" a second time (#5333). Segmented, the heading names the pair.
             Text(SpokenNoteCleanWords.controlLabel)
                 .font(.caption.weight(.semibold))
+                .accessibilityHidden(dynamicTypeSize.isAccessibilitySize)
             Picker(SpokenNoteCleanWords.controlLabel, selection: Binding(
                 get: { clean.version },
                 set: { chosen in
@@ -36,7 +40,10 @@ struct SpokenNoteAudioVersionControl: View {
             }
             .segmentedUnlessLargeText()
             .disabled(blocked)
-            .accessibilityLabel(SpokenNoteCleanWords.controlLabel)
+            .modifier(MenuChoiceValue(
+                isMenu: dynamicTypeSize.isAccessibilitySize,
+                value: SpokenNoteCleanWords.segment(clean.version)
+            ))
             .accessibilityIdentifier(placement.identifier)
 
             Text(caption.line)
@@ -63,6 +70,21 @@ struct SpokenNoteAudioVersionControl: View {
 
     private var secondary: Color {
         placement == .listeningOptions ? PlaybackSpokenNoteVersionColors.secondary : AppColors.secondaryText
+    }
+
+    /// The menu picker's label is its title, "Note audio"; this gives it the chosen version as its value, so VoiceOver
+    /// reads "Note audio, Shorter pauses" once (#5333). The segmented picker's own segments already say which is chosen.
+    private struct MenuChoiceValue: ViewModifier {
+        let isMenu: Bool
+        let value: String
+
+        func body(content: Content) -> some View {
+            if isMenu {
+                content.accessibilityValue(value)
+            } else {
+                content
+            }
+        }
     }
 
     private struct PlacementStyle: ViewModifier {

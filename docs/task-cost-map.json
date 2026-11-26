@@ -65,7 +65,7 @@
               "do": "tap",
               "label": "Item",
               "marker": "\"playback.item.button",
-              "file": "PlaybackScreen.swift"
+              "file": "ListeningOptionsLayout.swift"
             },
             {
               "do": "tap",
