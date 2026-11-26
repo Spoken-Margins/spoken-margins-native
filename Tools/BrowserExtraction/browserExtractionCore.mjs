@@ -421,16 +421,215 @@ function shieldProseFromAdSelectors(documentRef) {
   return () => restores.forEach(restore => restore());
 }
 
+// Some pages draw a figure as an interactive chart: a legend, an <svg> (or
+// <canvas>) and a tooltip, with the same figure as a plain picture hidden
+// beside it for print and for readers without script (#5365). Defuddle drops
+// the hidden picture, the app strips the <svg>, and what is left is the
+// legend's words run together and read aloud. While Defuddle runs, hide each
+// such figure's chart block (the widest wrapper around the chart that holds
+// nothing a listener reads) and unhide its pictures, then put every attribute
+// back. Only attributes change: no node of the page is moved, copied or
+// detached, so an embed or player in the figure keeps its state. `loading` is
+// kept, so a lazy picture the page never loaded is not fetched.
+const CHART_SELECTOR = "svg, canvas";
+// A chart block never grows into or past one of these: it is content a
+// listener reads (a table holding tick icons, a code block holding a copy
+// button, a quote holding a quote mark), or a picture or embed of its own.
+// Buttons, links and labels are not on the list: an interactive legend is
+// made of them, and the block they sit in still stops at the code or table.
+const READABLE_SELECTOR = [
+  "figcaption", "img", "picture", "video", "audio", "iframe", "object", "embed",
+  "table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption",
+  "pre", "code", "blockquote", "p", "ul", "ol", "li", "dl", "dt", "dd",
+  "h1", "h2", "h3", "h4", "h5", "h6", "math", "mjx-assistive-mml"
+].join(", ");
+const HIDDEN_STYLE_DECLARATION = /^\s*(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0)\s*(?:!important)?\s*$/i;
+const HIDDEN_CLASS_TOKEN = /^(?:hidden|invisible|[^[\s]*:(?:hidden|invisible))$/;
+
+function holdsReadableOutside(parent, block) {
+  return Array.from(parent.querySelectorAll(READABLE_SELECTOR))
+    .some(element => !block.contains(element) && !element.contains(block));
+}
+
+function chartBlock(chart, figure) {
+  let block = chart;
+  for (let parent = block.parentElement;
+    parent && parent !== figure && !parent.matches(READABLE_SELECTOR)
+      && !holdsReadableOutside(parent, block);
+    parent = block.parentElement) {
+    block = parent;
+  }
+  return block;
+}
+
+function chartsOutsideCaption(figure) {
+  return Array.from(figure.querySelectorAll(CHART_SELECTOR))
+    .filter(element => !element.closest("figcaption"));
+}
+
+function setAttributeWhileCapturing(element, name, value, restores) {
+  const original = element.getAttribute(name);
+  if (original === value) {
+    return;
+  }
+  if (value === null) {
+    element.removeAttribute(name);
+  } else {
+    element.setAttribute(name, value);
+  }
+  restores.push(() => original === null
+    ? element.removeAttribute(name)
+    : element.setAttribute(name, original));
+}
+
+function hideWhileCapturing(element, restores) {
+  const style = (element.getAttribute("style") || "").trim().replace(/;\s*$/, "");
+  setAttributeWhileCapturing(element, "style", style ? `${style}; display: none` : "display: none", restores);
+}
+
+// Attributes are changed in place where they can be, so the page's own markup
+// keeps its attribute order; only `hidden` has to go and come back.
+function unhideWhileCapturing(element, restores) {
+  if (element.hasAttribute("hidden")) {
+    setAttributeWhileCapturing(element, "hidden", null, restores);
+  }
+  if (element.getAttribute("aria-hidden") === "true") {
+    setAttributeWhileCapturing(element, "aria-hidden", "false", restores);
+  }
+  const style = element.getAttribute("style");
+  if (style !== null) {
+    const kept = style.split(";").filter(part => part.trim() && !HIDDEN_STYLE_DECLARATION.test(part));
+    setAttributeWhileCapturing(element, "style", kept.join(";"), restores);
+  }
+  const className = element.getAttribute("class");
+  if (className !== null) {
+    const kept = className.split(/\s+/).filter(token => token && !HIDDEN_CLASS_TOKEN.test(token));
+    if (kept.length !== className.split(/\s+/).filter(Boolean).length) {
+      setAttributeWhileCapturing(element, "class", kept.join(" "), restores);
+    }
+  }
+}
+
+function hiddenByAttributes(element) {
+  return element.hasAttribute("hidden")
+    || element.getAttribute("aria-hidden") === "true"
+    || (element.getAttribute("style") || "").split(";").some(part => HIDDEN_STYLE_DECLARATION.test(part))
+    || (element.getAttribute("class") || "").split(/\s+/).some(token => token && HIDDEN_CLASS_TOKEN.test(token));
+}
+
+// Only the #5365 shape is touched: a chart beside a picture the page hides
+// (by itself or by a wrapper inside the figure). Any other figure holding an
+// <svg> is left alone, because its words (a quote, a card, code drawn as rows)
+// can't be told apart from a legend.
+function holdsHiddenPicture(figure) {
+  return Array.from(figure.querySelectorAll("img")).some(image => {
+    if (image.closest("figcaption")) {
+      return false;
+    }
+    for (let element = image; element && element !== figure; element = element.parentElement) {
+      if (hiddenByAttributes(element)) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
+// Once a figure has a visible picture, Defuddle writes it as just the picture
+// and its caption and drops every other child, a paragraph included (checked
+// against defuddle 0.19.5). So a chart figure that also holds a paragraph,
+// table, list, code, quote or other content beside the chart is left exactly
+// as main reads it: its picture stays hidden and its words are written out
+// (#5384 audit of 584f63d). Words are never traded for a picture.
+const CONTENT_SELECTOR = `${READABLE_SELECTOR}, details, summary`;
+
+// Plain words count too: a "Source: …" credit in a <div>, a <span>, a
+// "Download the data" <a> or a bare text node beside the chart is dropped by
+// the same figure rule (#5384 audit of c8fef4a). A legend that sits outside
+// the chart's block is kept as words too: losing a picture costs less than
+// losing words.
+const NOT_READ = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "FIGCAPTION"]);
+
+function holdsWordsBesideChart(node, blocks) {
+  for (const child of node.childNodes) {
+    if (child.nodeType === 3) {
+      if (child.textContent.trim()) {
+        return true;
+      }
+    } else if (child.nodeType === 1 && !NOT_READ.has(child.tagName.toUpperCase()) && !blocks.has(child)) {
+      if (holdsWordsBesideChart(child, blocks)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function holdsContentBesideChart(figure, blocks) {
+  return Array.from(figure.querySelectorAll(CONTENT_SELECTOR)).some(element =>
+    !element.matches("figcaption, img, picture")
+      && !element.closest("figcaption")
+      && ![...blocks].some(block => block.contains(element)))
+    || holdsWordsBesideChart(figure, blocks);
+}
+
+function pictureInteractiveFigures(documentRef) {
+  const restores = [];
+  const restore = () => restores.reverse().forEach(undo => undo());
+  try {
+    for (const figure of documentRef.querySelectorAll("figure")) {
+      if (figure.parentElement?.closest("figure")) {
+        continue;
+      }
+      const charts = chartsOutsideCaption(figure);
+      if (!charts.length || !holdsHiddenPicture(figure)) {
+        continue;
+      }
+      const blocks = new Set(charts.map(chart => chartBlock(chart, figure)));
+      if (holdsContentBesideChart(figure, blocks)) {
+        continue;
+      }
+      for (const block of blocks) {
+        if (![...blocks].some(other => other !== block && other.contains(block))) {
+          hideWhileCapturing(block, restores);
+        }
+      }
+      // A picture can be hidden by a wrapper (`<picture hidden>`, a
+      // `display: none` div) as well as by itself; unhide the whole path.
+      const unhidden = new Set();
+      for (const image of figure.querySelectorAll("img")) {
+        if (image.closest("figcaption")) {
+          continue;
+        }
+        for (let element = image; element && element !== figure; element = element.parentElement) {
+          if (!unhidden.has(element)) {
+            unhidden.add(element);
+            unhideWhileCapturing(element, restores);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    restore();
+    throw error;
+  }
+  return restore;
+}
+
 export function extractReadableMarkdown(documentRef) {
-  const restoreAdNames = shieldProseFromAdSelectors(documentRef);
+  let restoreAdNames = () => {};
+  let restoreFigures = () => {};
   let result;
   try {
+    restoreAdNames = shieldProseFromAdSelectors(documentRef);
+    restoreFigures = pictureInteractiveFigures(documentRef);
     result = new Defuddle(documentRef, {
       markdown: true,
       useAsync: false,
       url: documentURL(documentRef)
     }).parse();
   } finally {
+    restoreFigures();
     restoreAdNames();
   }
   const markdown = htmlTablesAsMarkdown(normalizeSocialEmbedsForReading(
