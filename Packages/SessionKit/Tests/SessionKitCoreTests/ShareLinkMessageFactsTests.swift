@@ -1,3 +1,6 @@
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
 import Foundation
 import SessionKit
 import SessionKitSharing
@@ -44,8 +47,7 @@ final class ShareLinkMessageFactsTests: XCTestCase {
 
     func testTheMarginsGoingGiveTheNoun() throws {
         let audio = root.appendingPathComponent("voice.m4a")
-        let header: [UInt8] = [0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x4D, 0x34, 0x41, 0x20, 0, 0, 0, 0]
-        try (Data(header) + Data(repeating: 6, count: 600)).write(to: audio)
+        try writeVoice(to: audio)
         let voice = ReviewedRepresentationSelection.originalAudio(sourceURL: audio, durationMs: 600)
         let article = SharedItemIdentity(itemType: .text, canonicalURL: "https://example.com/article", title: "An Article")
 
@@ -104,5 +106,24 @@ final class ShareLinkMessageFactsTests: XCTestCase {
         let url = root.appendingPathComponent("\(name.replacingOccurrences(of: " ", with: "-")).spokenmargins")
         _ = try SpokenMarginsPackageArchive.write(prepared, to: url)
         return url
+    }
+
+    /// The archive opens voice clips with AudioToolbox where it exists, so there the clip is a real AAC file;
+    /// Linux checks only the bytes are there.
+    private func writeVoice(to url: URL) throws {
+        #if canImport(AVFoundation)
+        let sampleRate = 44_100.0
+        let file = try AVAudioFile(forWriting: url, settings: [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000
+        ])
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sampleRate / 10)))
+        buffer.frameLength = buffer.frameCapacity
+        try file.write(from: buffer)
+        #else
+        let header: [UInt8] = [0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x4D, 0x34, 0x41, 0x20, 0, 0, 0, 0]
+        try (Data(header) + Data(repeating: 6, count: 600)).write(to: url)
+        #endif
     }
 }
