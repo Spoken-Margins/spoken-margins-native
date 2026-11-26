@@ -128,11 +128,19 @@ type metadata struct {
 	State string `json:"state,omitempty"`
 	// DisabledDay is the day State became "disabled", for the 30-day keep. Cleared when the club ends.
 	DisabledDay string `json:"disabledDay,omitempty"`
+	// Kind is "" for a club and "reply" for a reply box (reply.go, #4675). A reply box also keeps the id of
+	// the share link it was made with (cleared when the box ends) and when that link stops taking answers.
+	Kind       string `json:"kind,omitempty"`
+	LinkID     string `json:"linkId,omitempty"`
+	PostsUntil string `json:"postsUntil,omitempty"`
 }
 
 const (
 	stateDisabled = "disabled"
 	stateGone     = "gone"
+	// stateClosed is a reply box its sender closed (reply.go): it takes no more posts, and its sender can
+	// still read, and report what is in it, until the box ends.
+	stateClosed = "closed"
 )
 
 // PostInfo is one row of a club's list.
@@ -284,7 +292,10 @@ func (s *Store) access(id string, kind Kind, proof string, now time.Time) (metad
 	if !matches(m, kind, proof) {
 		return m, ErrNotFound
 	}
-	if m.State != "" || s.expired(id, m, now) {
+	if (m.State != "" && m.State != stateClosed) || s.expired(id, m, now) {
+		return m, ErrGone
+	}
+	if kind == Post && !takesPosts(m, now) {
 		return m, ErrGone
 	}
 	return m, nil
@@ -301,6 +312,11 @@ func (s *Store) expired(id string, m metadata, now time.Time) bool {
 		if d, err := time.Parse(dayFormat, m.DisabledDay); err == nil {
 			return !today.Before(d.AddDate(0, 0, DisabledDays))
 		}
+	}
+	if m.Kind == kindReply {
+		// A reply box lives as long as its link and seven days more, so its sender can still collect an
+		// answer sent on the link's last day. A box nobody answers is normal: no first-post or idle rule.
+		return !now.Before(readsUntil(m))
 	}
 	if last, err := time.Parse(dayFormat, m.LastActiveDay); err != nil || !today.Before(last.AddDate(0, 0, IdleDays)) {
 		return true
@@ -393,7 +409,7 @@ func (s *Store) Create(id, readHash, postHash string, header []byte, now time.Ti
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if m, err := s.readMeta(id); err == nil {
-		if subtle.ConstantTimeCompare([]byte(m.ReadHash+m.PostHash), []byte(readHash+postHash)) != 1 {
+		if subtle.ConstantTimeCompare([]byte(m.ReadHash+m.PostHash), []byte(readHash+postHash)) != 1 || m.Kind != "" {
 			return false, ErrConflict
 		}
 		if m.State != "" || s.expired(id, m, now) {
@@ -451,7 +467,8 @@ func (s *Store) Post(id, postProof string, packet []byte, now time.Time) (int, e
 	if len(packet) == 0 {
 		return 0, ErrUnsealed
 	}
-	if len(packet) > MaxPostBytes {
+	maxPosts, maxBytes, maxPost := s.caps(m)
+	if len(packet) > maxPost {
 		return 0, ErrTooLarge
 	}
 	if !links.Sealed(packet, links.PartPacket) {
@@ -459,7 +476,7 @@ func (s *Store) Post(id, postProof string, packet []byte, now time.Time) (int, e
 	}
 	infos, held, count := s.posts(id)
 	size := int64(len(packet))
-	if count >= s.Limits.posts() || held+s.disabledBytes(id)+size > s.Limits.club() {
+	if count >= maxPosts || held+s.disabledBytes(id)+size > maxBytes {
 		return 0, ErrClubFull
 	}
 	if s.total+size > s.Limits.total() {
@@ -530,6 +547,10 @@ func (s *Store) Item(id, readProof string, seq int, now time.Time) (*os.File, er
 	}
 	s.touch(id, m, now)
 	name := s.path(id, "header")
+	if seq == 0 && m.Kind == kindReply {
+		// A reply box has no header.
+		return nil, ErrNotFound
+	}
 	if seq > 0 {
 		name = s.path(id, "posts", strconv.Itoa(seq))
 	} else if seq < 0 {
@@ -551,7 +572,7 @@ func (s *Store) Disable(id string, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	if m.State != "" {
+	if m.State != "" && m.State != stateClosed {
 		return nil
 	}
 	m.State = stateDisabled
@@ -578,6 +599,8 @@ func (s *Store) endLocked(id string, m metadata, now time.Time) error {
 		held := s.contentBytes(id)
 		m.State = stateGone
 		m.DisabledDay = ""
+		// An ended reply box no longer says which link it came with.
+		m.LinkID = ""
 		if err := s.writeMeta(id, m, dayOf(now)); err != nil {
 			return err
 		}

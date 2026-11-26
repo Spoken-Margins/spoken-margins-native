@@ -27,6 +27,7 @@ final class PlaybackNowClipsTests: XCTestCase {
             switch item {
             case .sentence(let sentence): sentence.text
             case .clip(let floatId, let id): "clip \(floatId) \(id)"
+            case .margin(let item, _): "margin \(item.marginId)"
             }
         }
         XCTAssertEqual(shape, ["First one here.", "Second one here.", "clip a -1", "Table 1.", "Caption words.", "Fourth one here."])

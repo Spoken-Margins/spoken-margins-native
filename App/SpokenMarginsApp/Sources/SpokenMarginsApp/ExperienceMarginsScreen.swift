@@ -631,7 +631,12 @@ struct ExperienceMarginsScreen: View, Equatable {
     @ViewBuilder
     private func ownMarginActions(_ row: MarginRow, repair: MarginRowRepair) -> some View {
         if MarginPlacePresentation.offersGoToMoment(row.interjection) {
-            Button("Play this moment", systemImage: "play.fill") { MarginMomentTap.start(row, model: model) }
+            // Your own written Margin moves the source to its place and plays on, with nothing read aloud: it is not Play (#4938).
+            if SilentMarginWords.ownWrittenGoesTo(row.interjection) {
+                Button(SilentMarginWords.goToTitle, systemImage: "arrow.turn.down.right") { MarginMomentTap.start(row, model: model) }
+            } else {
+                Button("Play this moment", systemImage: "play.fill") { MarginMomentTap.start(row, model: model) }
+            }
         }
         // Also for VoiceOver and the long-press menu (#3856).
         if repair != .none {

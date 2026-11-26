@@ -22,6 +22,9 @@ public enum ShareLinkSealing {
     public enum Part: UInt8, Sendable {
         case preview = 1
         case packet = 2
+        /// The reply box's details (#4675, `docs/design/reply-mailbox.md`): served at `GET /l/<id>/reply`, sealed with
+        /// the link's key like the preview, so only a holder of the link can post an answer. Part 3 is a club's header.
+        case reply = 4
     }
 
     /// Anything wrong with a link, from a missing key to a flipped byte, opens as this one plain result.

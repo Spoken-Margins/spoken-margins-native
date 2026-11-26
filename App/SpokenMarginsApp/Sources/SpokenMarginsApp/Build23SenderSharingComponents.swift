@@ -303,7 +303,7 @@ struct Build23FileNeedsAppCaption: View {
     let linksOffered: Bool
 
     var body: some View {
-        Text(ShareFileMessage.caption(linksOffered: linksOffered))
+        Text(ShareFileMessage.caption(linksOffered: linksOffered, repliesOffered: LinkReplies.offered))
             .font(.footnote)
             .foregroundStyle(AppColors.secondaryText)
             .multilineTextAlignment(.center)

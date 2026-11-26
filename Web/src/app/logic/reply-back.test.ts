@@ -521,3 +521,18 @@ test('#4784 a real friend only: nothing changes (intro false, titles as before)'
   assert.equal(offer?.intro, false);
   assert.equal(offer?.title, 'Share replies with Ana');
 });
+
+test('#4675: when the link carried a reply part, the saved card names "Send to <sender>"; an intro link keeps its own words', () => {
+  const margins = [friend(1), mine];
+  assert.deepEqual(savedMarginCard(margins, undefined, { sender: 'Cole' }), {
+    sentence: 'Your Margin is saved. Send to Cole sends it back. You pick which of your Margins go.',
+  });
+  assert.deepEqual(savedMarginCard(margins, undefined, { sender: undefined }), {
+    sentence: 'Your Margin is saved. Send to your friend sends it back. You pick which of your Margins go.',
+  });
+  assert.deepEqual(nowCard(margins, undefined, true, { sender: 'Cole' }).saved, 'Your Margin is saved. Send to Cole sends it back. You pick which of your Margins go.');
+  // Without a reply part, today's words, byte for byte.
+  assert.deepEqual(savedMarginCard(margins, undefined), { sentence: SAVED('Ana') });
+  const intro = [{ ...friend(1), fromIntro: true }, mine];
+  assert.deepEqual(savedMarginCard(intro, undefined, { sender: 'Cole' }), { sentence: 'Your Margin is saved in this browser. It stays here unless you share it.' });
+});

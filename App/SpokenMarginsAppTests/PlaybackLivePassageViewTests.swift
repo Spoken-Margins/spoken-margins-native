@@ -149,6 +149,7 @@ final class PlaybackLivePassageViewTests: XCTestCase {
             switch item {
             case .sentence(let sentence): sentence.text
             case .clip(let floatId, _): "card \(floatId)"
+            case .margin(let item, _): "margin \(item.marginId)"
             }
         }
         let table = try XCTUnwrap(shape.firstIndex(of: "card t1"))

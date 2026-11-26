@@ -12,6 +12,7 @@
 //	smserver show-reported-link -state DIR ID   print the reported links of a held link, never its content
 //	smserver release-hold -state DIR -reason TEXT ID   end a hold early and delete the held copy
 //	smserver make-test-ca DIR            a fake Apple CA for local testing
+//	smserver replies count -state DIR    how many reply boxes there are and how many have an answer, naming none
 //
 // Admin is CLI-only, on the box: there is no remote admin endpoint to attack.
 package main
@@ -91,6 +92,8 @@ func main() {
 		err = listReports(args, os.Stdout, time.Now())
 	case "club":
 		err = clubCommand(args, os.Stdout, time.Now())
+	case "replies":
+		err = repliesCommand(args, os.Stdout, time.Now())
 	default:
 		usage()
 	}
@@ -101,7 +104,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown|takedown-map|hold|show-reported-link|release-hold|reports|club [flags]")
+	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown|takedown-map|hold|show-reported-link|release-hold|reports|club|replies [flags]")
 	os.Exit(2)
 }
 

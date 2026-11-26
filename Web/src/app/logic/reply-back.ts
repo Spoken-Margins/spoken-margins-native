@@ -19,6 +19,12 @@ import { LIMITS } from '../../packet/format.ts';
 import { TOO_MANY_MARGINS } from '../../packet/write.ts';
 import { senderName, type MarginCue } from './arrival.ts';
 import { canStar, isStarred } from './star.ts';
+import { savedCardWithBox } from './reply-send.ts';
+
+/** The link this item came from carried a reply part (#4675): the saved card says "Send to <sender>". `sender` is the link's sender's name, if any. */
+export interface ReplyBoxSender {
+  sender: string | undefined;
+}
 
 /** The legend and offer title on an introduction link, for replies and for new Margins alike (#4784, amendment 2026-11-21). */
 export const INTRO_SHARE_TITLE = 'Share your Margins';
@@ -271,11 +277,15 @@ export function pickedMargins(offer: ReplyBackOffer, picked: ReadonlySet<string>
  * listener's own gets nothing. It replaces the "That was X's last Margin" card but never the countdown (`nowCard`), until
  * a friend's Margin plays (the screen clears it then); an episode that can't play keeps its own card. No button: Share is on the screen.
  */
-export function savedMarginCard(margins: readonly Margin[], cue: MarginCue | undefined): { sentence: string } | undefined {
+export function savedMarginCard(
+  margins: readonly Margin[], cue: MarginCue | undefined, box?: ReplyBoxSender,
+): { sentence: string } | undefined {
   if (cue && (cue.kind === 'unplayable' || cue.kind === 'unplayable-done')) return undefined;
   const offer = replyBackOffer(margins);
   if (!offer) return undefined;
   if (offer.intro) return { sentence: 'Your Margin is saved in this browser. It stays here unless you share it.' };
+  // The link carried a reply part (#4675): Share's primary button is "Send to <sender>", so the card names that.
+  if (box) return { sentence: savedCardWithBox(box.sender) };
   return { sentence: `Your Margin is saved. Share sends it to ${friendNames(offer.friendLabels)}. You pick which of your Margins go.` };
 }
 
@@ -286,9 +296,9 @@ export function savedMarginCard(margins: readonly Margin[], cue: MarginCue | und
  * an episode that can't play keeps its own card alone.
  */
 export function nowCard(
-  margins: readonly Margin[], cue: MarginCue | undefined, saved: boolean,
+  margins: readonly Margin[], cue: MarginCue | undefined, saved: boolean, box?: ReplyBoxSender,
 ): { saved?: string; cue?: MarginCue } {
-  const sentence = saved ? savedMarginCard(margins, cue)?.sentence : undefined;
+  const sentence = saved ? savedMarginCard(margins, cue, box)?.sentence : undefined;
   if (sentence === undefined) return { cue };
   if (cue?.kind === 'countdown') return { saved: sentence, cue };
   return { saved: sentence };

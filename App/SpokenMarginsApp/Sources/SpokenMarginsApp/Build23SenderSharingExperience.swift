@@ -277,12 +277,12 @@ struct Build23SenderSharingExperience: View {
         // A first link while voices are made: the consent words, at the tap (#4647).
         .alert(ShareLinkConsentCopy.title, isPresented: $isWaitConsentPresented) {
             Button(ShareLinkConsentCopy.accept) {
-                ServerSendConsent.record(.shareLinks)
+                ServerSendConsent.record(.shareLinks, repliesOffered: LinkReplies.offered)
                 coordinator.send(.beginSendWait(.link))
             }
             Button(ShareLinkConsentCopy.decline, role: .cancel) {}
         } message: {
-            Text(ShareLinkConsentCopy.message)
+            Text(ShareLinkConsentCopy.message(repliesOffered: LinkReplies.offered))
         }
         .trackedSheet(isPresented: $isSystemSharePresented, onDismiss: finishSystemShare) {
             if let packageURL = verifiedShareURLForPresentation {
@@ -1189,7 +1189,7 @@ struct Build23SenderSharingExperience: View {
         // A voice the share needs is still being made: wait for it, never send without it (#4647). A first link asks
         // for consent here, at the tap, so the sender answers while the voices are made.
         if snapshot.stage == .review, snapshot.readiness.isWaiting {
-            if kind == .link, !ServerSendConsent.hasConsented(to: .shareLinks) {
+            if kind == .link, !ServerSendConsent.hasConsented(to: .shareLinks, repliesOffered: LinkReplies.offered) {
                 isWaitConsentPresented = true
             } else {
                 coordinator.send(.beginSendWait(kind))
@@ -1254,7 +1254,9 @@ struct Build23SenderSharingExperience: View {
                 return
             }
             guard let packageURL = coordinator.verifiedShareFileURL else { return }
-            linkSender.makeLink(packageURL: packageURL, isSpokenNote: coordinator.sharedItemIsSpokenNote, itemID: coordinator.sharedItemID)
+            linkSender.makeLink(
+                packageURL: packageURL, isSpokenNote: coordinator.sharedItemIsSpokenNote,
+                itemId: coordinator.sharedItemID, replyBoxes: coordinator.replyBoxes)
             #else
             presentVerifiedSystemShare()
             #endif

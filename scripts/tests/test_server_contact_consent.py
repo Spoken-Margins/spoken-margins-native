@@ -22,7 +22,7 @@ APP = "App/SpokenMarginsApp/Sources/SpokenMarginsApp/"
 KIT = "Packages/SessionKit/Sources/"
 
 # A file that names a transport, or builds an address on our host (`ProductServer`), is a server contact.
-TRANSPORTS = re.compile(r"\b(BridgePublicTransport|CommunityMapTransport|ShareLinkTransport|AttestedTransport|ProductServer)\b")
+TRANSPORTS = re.compile(r"\b(BridgePublicTransport|CommunityMapTransport|ShareLinkTransport|AttestedTransport|ClubTransport|ProductServer)\b")
 # DeviceCheck's per-device bits survive a reinstall, so they get the same rules as App Attest.
 ATTEST = re.compile(r"\b(DCAppAttestService|DCDevice)\b")
 KEYCHAIN = re.compile(r"\b(SecItem\w+|kSecClass\w*|Keychain\w*)\b")
@@ -37,8 +37,8 @@ DEFINITIONS = {KIT + "SessionKit/BridgePublicTransport.swift", KIT + "SessionKit
 # server for its config before the alert is shown; that is a plain request too.
 CONTACTS = {
     APP + "ShareLinkSender.swift": (
-        "a consent alert on the first Share as link; the upload code refuses without the record",
-        "guard ServerSendConsent.hasConsented(to: .shareLinks)", 1,
+        "a consent alert on the first Share as link; the upload code refuses without the record (version 3, with the answers paragraph, in a build whose links carry a reply box, #4675)",
+        "guard ServerSendConsent.hasConsented(to: .shareLinks", 1,
     ),
     KIT + "SessionKit/ShareLinkUpload.swift": (
         "the upload refuses to seal or send without the consent record",
@@ -50,7 +50,7 @@ CONTACTS = {
     ),
     APP + "AppAttestDeviceProvider.swift": (
         "checks the same consent record before each of Apple's App Attest calls",
-        "guard ServerSendConsent.hasConsented(to: .shareLinks)", 3,
+        "guard ServerSendConsent.hasConsented(to: .shareLinks", 3,
     ),
     # Community maps were removed from the app (#5359): nothing in the app calls these two any more (see
     # REMOVED_FROM_APP below). They keep their `optedIn` parameter in case the feature comes back.
@@ -85,6 +85,10 @@ CONTACTS = {
     KIT + "SessionKit/ClubInviteHandoff.swift": (
         "none needed here: it reads and builds the spokenmargins://club address the invitation page opens and makes no request (`ProductServer` only names the host of the link it builds). The screen that joins from it must ask with `ClubConsentCopy` and `ServerSendConsent.hasConsented(to: .clubs)` before anything is sent, and add its file here",
         None, 0,
+    ),
+    APP + "ReplyBoxCoordinator.swift": (
+        "a reply box is made only with a link the listener agreed to share under version 3 of the share-link consent, whose words say answers wait on our server until the phone collects them (#4675); the pickup checks that record before any request. Stop and Report are the listener's own taps on an answer in their Library",
+        "ServerSendConsent.hasConsented(to: .shareLinks, repliesOffered: true)", 1,
     ),
     KIT + "SessionKit/ShareLinkOpening.swift": (
         "none needed: the listener tapped a link they were sent; the request names that link only",
