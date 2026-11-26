@@ -265,13 +265,14 @@ struct Build23BackToSelectionButton: View {
 
     var body: some View {
         Button(action: action) {
-            // At the accessibility sizes the title takes two lines; without these it was held to one and read
-            // "Back to" (#5334).
+            // At the accessibility sizes the title takes two lines. A `minHeight` frame takes whatever height it is
+            // offered, so in a squeezed sheet it offered one line and the label read "Back to" (#5334); the frame
+            // itself keeps its ideal height.
             Label(title, systemImage: "chevron.left")
                 .lineLimit(nil)
                 .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
                 .frame(minHeight: 44, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
@@ -293,8 +294,8 @@ struct Build23SendFileButton: View {
             Label("Send as a file", systemImage: "doc")
                 .lineLimit(nil)
                 .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, minHeight: 44)
+                .fixedSize(horizontal: false, vertical: true)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
@@ -341,6 +342,7 @@ struct Build23PreviewRow: View {
             .padding(.horizontal, 14)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .padding(.vertical, 4)
+            .fixedSize(horizontal: false, vertical: true)
             .contentShape(Rectangle())
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
