@@ -21,11 +21,30 @@ public struct FriendLinkArrival: Equatable, Sendable {
 
     public static func make(waiting entries: [SharedMarginReview.Entry], signals: [String: FriendLinkSignal],
                             receiptsOn: Bool, ownLinkIDs: Set<String>) -> FriendLinkArrival {
-        let name = FriendMarginsIntro.singleName(entries.map(\.waitingMargin))
+        make(layers: entries.map(\.layer), signals: signals, receiptsOn: receiptsOn, ownLinkIDs: ownLinkIDs)
+    }
+
+    /// The same, from everything the friend sent that the listener hasn't heard, whether or not each Margin can play
+    /// yet. Opening the item is what the mark says, so a written Margin whose reading isn't ready, or a voice Margin that
+    /// couldn't be placed, still counts (#5351, Test Desk look of 9ad5f26). The listener's own echoed Margins don't.
+    public static func make(layers: [ImportedCommentaryLayer], records: [String: [ImportedCommentaryInterjection]],
+                            ownMargins: [Interjection] = [], signals: [String: FriendLinkSignal],
+                            receiptsOn: Bool, ownLinkIDs: Set<String>) -> FriendLinkArrival {
+        let own = OwnMarginEchoes.identities(of: ownMargins)
+        let arrived = layers.filter { layer in
+            OwnMarginEchoes.withoutEchoes(records[layer.id] ?? [], in: layer, ownIdentities: own).contains(where: \.isNewToListener)
+        }
+        return make(layers: arrived, signals: signals, receiptsOn: receiptsOn, ownLinkIDs: ownLinkIDs)
+    }
+
+    private static func make(layers: [ImportedCommentaryLayer], signals: [String: FriendLinkSignal],
+                             receiptsOn: Bool, ownLinkIDs: Set<String>) -> FriendLinkArrival {
+        let names = Set(layers.map { FriendName.usable($0.displayLabel ?? "") ?? "" })
+        let name = names.count == 1 ? names.first.flatMap { $0.isEmpty ? nil : $0 } : nil
         guard receiptsOn else { return FriendLinkArrival(linkIDs: [], senderName: name) }
         var ids: Set<String> = []
-        for entry in entries {
-            guard let id = entry.layer.shareLinkId, let signal = signals[id], signal.offered, !signal.sent,
+        for layer in layers {
+            guard let id = layer.shareLinkId, let signal = signals[id], signal.offered, !signal.sent,
                   !ownLinkIDs.contains(id) else { continue }
             ids.insert(id)
         }

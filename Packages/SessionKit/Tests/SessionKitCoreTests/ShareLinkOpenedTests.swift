@@ -310,6 +310,34 @@ final class ShareLinkOpenedTests: XCTestCase {
         XCTAssertTrue(arrival.toldNotText.hasPrefix("Your friend won't be told"))
     }
 
+    /// The Test Desk look of 9ad5f26 (#5351): a link with one written Margin on an article, and one with a voice Margin
+    /// that couldn't be placed, showed no notice and sent no mark, because the screen asked only about Margins that
+    /// can play. Opening the item is what the mark says, so every Margin the listener hasn't heard counts.
+    func testTheNoticeCountsMarginsThatCanNotPlayYet() {
+        let signals = [id: FriendLinkSignal(importedAt: now, offered: true, token: token, sent: false)]
+        let layer = entry(layer: "l1", link: id).layer
+        let written = ImportedCommentaryInterjection(
+            id: "w", layerId: "l1", packageScopedId: "w", createdAt: now,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "A written Margin")
+        let unplaced = ImportedCommentaryInterjection(
+            id: "v", layerId: "l1", packageScopedId: "v", createdAt: now,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "",
+            audioPath: "ImportedCommentary/v.m4a", audioDurationMs: 4_000)
+        for records in [[written], [unplaced], [written, unplaced]] {
+            let arrival = FriendLinkArrival.make(layers: [layer], records: ["l1": records], signals: signals, receiptsOn: true, ownLinkIDs: [])
+            XCTAssertEqual(arrival.linkIDs, [id], "\(records.map(\.id))")
+            XCTAssertEqual(arrival.noticeText, "When you open these Margins, Ana can see that you did.")
+        }
+        var heard = written
+        heard.firstHeardAt = now
+        XCTAssertFalse(FriendLinkArrival.make(layers: [layer], records: ["l1": [heard]], signals: signals, receiptsOn: true, ownLinkIDs: []).showsNotice,
+                       "nothing new: the listener already heard it")
+        XCTAssertFalse(FriendLinkArrival.make(layers: [layer], records: [:], signals: signals, receiptsOn: true, ownLinkIDs: []).showsNotice,
+                       "a layer with no Margins")
+        XCTAssertFalse(FriendLinkArrival.make(layers: [layer], records: ["l1": [written]], signals: signals, receiptsOn: true, ownLinkIDs: [id]).showsNotice,
+                       "the listener's own link")
+    }
+
     // MARK: The sender's line
 
     func testTheLineTable() {

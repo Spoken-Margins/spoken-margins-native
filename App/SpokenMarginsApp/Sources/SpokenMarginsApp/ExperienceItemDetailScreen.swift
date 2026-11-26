@@ -1104,8 +1104,12 @@ struct ExperienceItemDetailScreen: View {
     private var friendLinkArrival: FriendLinkArrival {
         // Until the listener's own links are read, nothing counts: the error is a missed notice, never their own link.
         guard let own = sentLinks.knownLinkIDs else { return FriendLinkArrival(linkIDs: [], senderName: nil) }
+        // Every Margin the friend sent that the listener hasn't heard counts, not only the ones that can play yet: a
+        // written Margin before its reading is made, or a voice Margin that couldn't be placed, still arrived (#5351).
+        let item = model.selectedItem
         return FriendLinkArrival.make(
-            waiting: newSharedMargins, signals: FriendLinkSignals().all(now: Date()),
+            layers: item.importedCommentaryLayers, records: item.importedCommentaryInterjections,
+            ownMargins: model.ownMargins(itemId: item.id), signals: FriendLinkSignals().all(now: Date()),
             receiptsOn: showsOpenedReceipts, ownLinkIDs: own)
     }
 
