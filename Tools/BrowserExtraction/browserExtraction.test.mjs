@@ -7,6 +7,7 @@ import { parseHTML } from "linkedom";
 import {
   captureReadablePage,
   fallbackReadableMarkdown,
+  htmlTablesAsMarkdown,
   normalizeSocialEmbedsForReading,
   sourceMetadata
 } from "./browserExtractionCore.mjs";
@@ -198,6 +199,90 @@ test("readable capture hands the app Defuddle's Markdown with the page's source 
   assert.match(payload.text, /^## First section\n\nUseful article prose\./);
   assert.match(payload.text, /\n\n### Second section\n\nUseful article prose\./);
   assert.doesNotMatch(payload.text, /Navigation noise|Footer noise/);
+});
+
+// alignment.anthropic.com marks every table cell colspan='1' rowspan='1'.
+// Defuddle keeps any table with a span attribute as HTML, and the app read
+// each cell's paragraph aloud as a sentence of its own (#5364).
+const spanOneTable = `<p class="table-caption"><b>Table D1. Neuron audit.</b> One row per checkpoint.</p>
+  <div class="table-scroll"><table><thead><tr>
+    <td colspan='1' rowspan='1'><p><span style='font-weight: 700;'>Checkpoint</span></p></td>
+    <td colspan='1' rowspan='1'><p><span style='font-weight: 700;'>Method</span></p></td>
+    <td colspan='1' rowspan='1'><p><span style='font-weight: 700;'>WMDP-cyber accuracy</span></p></td>
+  </tr></thead><tbody></tbody><tbody>
+    <tr><td colspan='1' rowspan='1'><p>Zephyr RMU</p></td><td colspan='1' rowspan='1'><p>RMU</p></td><td colspan='1' rowspan='1'><p>0.27</p></td></tr>
+    <tr><td colspan='1' rowspan='1'><p>Llama-3 TAR</p></td><td colspan='1' rowspan='1'><p>TAR</p></td><td colspan='1' rowspan='1'><p>0.24</p></td></tr>
+  </tbody></table></div>`;
+
+test("#5364: a table whose cells carry colspan=1 reaches the app as a Markdown table, not cell-by-cell HTML", () => {
+  const document = browserLikePage({
+    head: "<title>Neuron basis</title>",
+    body: `<article><h2>D. Case study 2</h2>${articleProse}${spanOneTable}${articleProse}</article>`
+  });
+  const payload = withGlobalDocument(document, () =>
+    captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, document)
+  );
+  assert.equal(payload.metadata.extractor, "defuddle");
+  assert.doesNotMatch(payload.text, /<\/?(table|td|tr|thead|tbody)\b/i);
+  assert.ok(payload.text.includes([
+    "| Checkpoint | Method | WMDP-cyber accuracy |",
+    "| --- | --- | --- |",
+    "| Zephyr RMU | RMU | 0.27 |",
+    "| Llama-3 TAR | TAR | 0.24 |"
+  ].join("\n")), payload.text);
+  assert.match(payload.text, /Table D1\. Neuron audit\./);
+});
+
+test("#5364: HTML tables left in Markdown become Markdown tables, spans laid out on a grid", () => {
+  const { document } = parseHTML("<!doctype html><html><body></body></html>");
+  const cases = [
+    ["span one, header cells tagged td",
+      `<table><thead><tr><td colspan="1" rowspan="1"><p>A</p></td><td colspan=" 1 "><p>B</p></td></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>`,
+      "| A | B |\n| --- | --- |\n| 1 | 2 |"],
+    ["a real column span fills the columns it covers",
+      `<table><tr><th>Family</th><th>C</th><th>P</th></tr><tr><td colspan="2">Both</td><td>3</td></tr></table>`,
+      "| Family | C | P |\n| --- | --- | --- |\n| Both | Both | 3 |"],
+    ["a real row span fills the rows below, never past the table",
+      `<table><tr><th>Group</th><th>Model</th></tr><tr><td rowspan="9">Llama</td><td>8B</td></tr><tr><td>70B</td></tr></table>`,
+      "| Group | Model |\n| --- | --- |\n| Llama | 8B |\n| Llama | 70B |"],
+    ["ragged rows are padded to the widest",
+      `<table><tr><th>One</th></tr><tr><td>a</td><td>b</td></tr></table>`,
+      "| One |  |\n| --- | --- |\n| a | b |"],
+    ["a pipe stays inside its cell, and a cell's paragraphs stay separate words",
+      `<table><tr><th>Expr</th><th>Note</th></tr><tr><td>a|b</td><td><p>first</p><p>second</p></td></tr></table>`,
+      "| Expr | Note |\n| --- | --- |\n| a\\|b | first second |"],
+    ["an unknown or zero span counts as one",
+      `<table><tr><th colspan="x">A</th><th rowspan="0">B</th></tr><tr><td>1</td><td>2</td></tr></table>`,
+      "| A | B |\n| --- | --- |\n| 1 | 2 |"]
+  ];
+  for (const [name, html, expected] of cases) {
+    const result = htmlTablesAsMarkdown(`Before.\n\n${html}\n\nAfter.`, document);
+    assert.equal(result, `Before.\n\n${expected}\n\nAfter.`, name);
+  }
+  assert.equal(htmlTablesAsMarkdown("No table here.", document), "No table here.");
+  assert.equal(htmlTablesAsMarkdown("<table></table>", document), "<table></table>", "an empty table is left as it was");
+});
+
+test("#5364: both semantic fallbacks render a table as a Markdown table, never a cell as its own paragraph", () => {
+  const { document } = parseHTML(`<html><head><title>Tables</title></head><body><article>
+    <p>Before the table.</p>${spanOneTable}<p>After the table.</p>
+  </article></body></html>`);
+  Object.defineProperty(document, "location", { value: { href: "https://example.com/tables" } });
+  const swift = fs.readFileSync("App/SpokenMarginsApp/Sources/SpokenMarginsApp/AppOwnedReadablePageExtractor.swift", "utf8");
+  const script = swift.split('private static let semanticFallbackJavaScript = #"""')[1].split('"""#')[0];
+  const native = new Function("document", script)(document);
+  const expected = [
+    "| Checkpoint | Method | WMDP-cyber accuracy |",
+    "| --- | --- | --- |",
+    "| Zephyr RMU | RMU | 0.27 |",
+    "| Llama-3 TAR | TAR | 0.24 |"
+  ].join("\n");
+  for (const [name, text] of [["native", native.text], ["bundled", fallbackReadableMarkdown(document)]]) {
+    assert.ok(text.includes(`Before the table.\n\n`), name);
+    assert.ok(text.includes(expected), `${name}: ${text}`);
+    assert.doesNotMatch(text, /\n\nZephyr RMU\n\n/, name);
+    assert.ok(text.indexOf("Before the table.") < text.indexOf(expected) && text.indexOf(expected) < text.indexOf("After the table."), name);
+  }
 });
 
 test("readable capture speaks a social card as a sentence, not as link and view-count markup", () => {
