@@ -89,7 +89,8 @@ final class ListeningOptionsLayoutTests: XCTestCase {
         for width in Self.widths {
             let frames = try await frames(width: width, size: .large)
             assertInside(frames.dock, width: width, "The Details, Timeline and Export row")
-            XCTAssertLessThan(frames.dock.height, 80, "one row of 48 pt buttons plus 8 pt padding: \(frames.dock)")
+            // One row is about 76 pt (48 pt buttons, their bordered padding, 8 pt either side); stacked is over 120.
+            XCTAssertLessThan(frames.dock.height, 100, "one row of 48 pt buttons, not two: \(frames.dock)")
         }
     }
 
