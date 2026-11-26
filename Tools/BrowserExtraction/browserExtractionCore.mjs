@@ -195,6 +195,16 @@ function ownTableRows(table) {
   return Array.from(table.querySelectorAll("tr")).filter(row => row.closest("table") === table);
 }
 
+// A data table, as Defuddle draws the line: no nested table, and at least one of its own rows with two or more cells.
+// Anything else is a layout table, whose text is read as the page's own blocks, never announced as a table.
+export function isDataTable(table) {
+  if (table.querySelector("table")) {
+    return false;
+  }
+  return ownTableRows(table).some(row =>
+    Array.from(row.children).filter(cell => /^(td|th)$/i.test(String(cell.tagName || ""))).length >= 2);
+}
+
 export function tableToMarkdown(table) {
   const grid = [];
   const tableRows = ownTableRows(table);
@@ -390,8 +400,18 @@ export function fallbackReadableMarkdown(documentRef) {
   const selector = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,table";
   // Parent block text includes all descendants, including nested lists and
   // quotations. Never deduplicate by prose: repeated sibling text is authored.
+  // A layout table is no block: its headings and paragraphs are (#5364 audit).
+  const isBlock = element => String(element.tagName || "").toLowerCase() !== "table" || isDataTable(element);
+  const insideBlock = element => {
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+      if (parent.matches?.(selector) && isBlock(parent)) {
+        return true;
+      }
+    }
+    return false;
+  };
   const blocks = Array.from(root.querySelectorAll(selector))
-    .filter(element => !element.parentElement?.closest(selector));
+    .filter(element => isBlock(element) && !insideBlock(element));
   const rendered = blocks.map(renderFallbackBlock).filter(Boolean);
   const markdown = rendered.join("\n\n").trim();
   const fallbackText = normalizeWhitespace(root.innerText || root.textContent || "");

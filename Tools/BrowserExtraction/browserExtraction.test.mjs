@@ -300,6 +300,35 @@ test("#5364: both semantic fallbacks render a table as a Markdown table, never a
   }
 });
 
+test("#5364 audit: both semantic fallbacks still read an article laid out in a layout table, paragraph by paragraph", () => {
+  // A layout table (one cell per row, or a nested table) is not data: Defuddle flattens it to its text, and so must
+  // the fallbacks, or an older page built from layout tables is announced as "Table not read." instead of read.
+  const swift = fs.readFileSync("App/SpokenMarginsApp/Sources/SpokenMarginsApp/AppOwnedReadablePageExtractor.swift", "utf8");
+  const script = swift.split('private static let semanticFallbackJavaScript = #"""')[1].split('"""#')[0];
+  const layouts = {
+    "one column": "<table><tr><td><h1>Essay</h1><p>Para one.</p><p>Para two.</p></td></tr></table>",
+    "two columns over a nested table": "<table><tr><td><table><tr><td><p>Nav</p></td></tr></table></td>"
+      + "<td><h1>Essay</h1><p>Para one.</p><p>Para two.</p></td></tr></table>"
+  };
+  for (const [layout, html] of Object.entries(layouts)) {
+    const { document } = parseHTML(`<html><head><title>Old page</title></head><body>${html}</body></html>`);
+    Object.defineProperty(document, "location", { value: { href: "https://example.com/old" } });
+    const native = new Function("document", script)(document);
+    for (const [name, text] of [["native", native.text], ["bundled", fallbackReadableMarkdown(document)]]) {
+      assert.doesNotMatch(text, /\|/, `${layout}, ${name}: ${text}`);
+      assert.ok(text.includes("# Essay\n\nPara one.\n\nPara two."), `${layout}, ${name}: ${text}`);
+    }
+  }
+  // A data table inside a layout table is still a Markdown table.
+  const { document } = parseHTML(`<html><head><title>Old page</title></head><body><table><tr><td>
+    <p>Intro.</p><table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table></td></tr></table></body></html>`);
+  Object.defineProperty(document, "location", { value: { href: "https://example.com/old" } });
+  const native = new Function("document", script)(document);
+  for (const [name, text] of [["native", native.text], ["bundled", fallbackReadableMarkdown(document)]]) {
+    assert.ok(text.includes("Intro.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |"), `${name}: ${text}`);
+  }
+});
+
 test("readable capture speaks a social card as a sentence, not as link and view-count markup", () => {
   const document = browserLikePage({
     head: "<title>Retirement Guide</title>",

@@ -377,8 +377,19 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
     };
     // A container's text already includes its descendants. Consume each DOM
     // passage once, without deleting intentional repetitions in sibling blocks.
+    // A layout table (a nested table, or no row with two cells) is no block:
+    // its headings and paragraphs are, as Defuddle flattens it (#5364 audit).
+    const isDataTable = table => !table.querySelector("table") && Array.from(table.querySelectorAll("tr"))
+        .some(row => Array.from(row.children).filter(cell => /^(td|th)$/i.test(String(cell.tagName || ""))).length >= 2);
+    const isBlock = element => element.tagName.toLowerCase() !== "table" || isDataTable(element);
+    const insideBlock = element => {
+        for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+            if (parent.matches(selector) && isBlock(parent)) { return true; }
+        }
+        return false;
+    };
     const blocks = Array.from(root.querySelectorAll(selector))
-        .filter(element => !element.parentElement?.closest(selector));
+        .filter(element => isBlock(element) && !insideBlock(element));
     const text = blocks.map(element => {
         const tag = element.tagName.toLowerCase();
         if (tag === "table") { return tableMarkdown(element); }
