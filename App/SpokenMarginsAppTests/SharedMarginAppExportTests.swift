@@ -290,14 +290,19 @@ final class SharedMarginAppExportTests: XCTestCase {
         let itemID = model.selectedItem.id
         let store = try SQLiteSessionStore(path: db.path)
         let itemText = try XCTUnwrap(store.loadItem(id: itemID).text)
+        // The Margins go on the item's own listening session, as a listener's do. Opening Share pauses playback (#5050),
+        // and the pause reloads the item from the store with only that session's Margins. Margins on a made-up session
+        // dropped out there, so every later prepare found none and the sheet kept the first share's drafts (#5257).
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId, "importing the text starts listening to it")
+        let lead1 = "\(sessionID)::margin-lead-1"
         let first = try characterRange(of: "Nobody on the pier", in: itemText)
         let second = try characterRange(of: "harbour master", in: itemText)
         let margins = [
-            margin(id: "margin-lead-1", itemID: itemID, roughPercent: 31,
+            margin(id: "margin-lead-1", itemID: itemID, sessionID: sessionID, roughPercent: 31,
                    anchor: Anchor(anchorType: .text, startChar: first.lowerBound, endChar: first.upperBound,
                                   anchorBefore: "The tide went out at dawn.", anchorAfter: "noticed the boat had gone."),
                    audioPath: nil, transcript: "I saw that too."),
-            margin(id: "margin-lead-2", itemID: itemID, roughPercent: 77,
+            margin(id: "margin-lead-2", itemID: itemID, sessionID: sessionID, roughPercent: 77,
                    anchor: Anchor(anchorType: .text, startChar: second.lowerBound, endChar: second.upperBound,
                                   anchorBefore: "By noon the", anchorAfter: "was asking questions."),
                    audioPath: nil, transcript: "He always asks too late.")
@@ -315,30 +320,38 @@ final class SharedMarginAppExportTests: XCTestCase {
             }
             await model.exportSharedInterjections(presentsReadySheet: false)
             XCTAssertNil(model.sharingState.errorMessage, name)
+            // Let the pause's item reload land, and check the Margins survive it, so the next prepare builds fresh drafts.
+            await model.settleItemReload()
+            XCTAssertEqual(Set(model.selectedItem.interjections.map(\.id)), Set(margins.map(\.id)), "\(name): the reload keeps the Margins")
             let packetURL = try XCTUnwrap(model.sharedSpokenMarginsPackageURL, name)
             defer { try? FileManager.default.removeItem(at: packetURL) }
             let packet = try SpokenMarginsPackageArchive.read(from: packetURL, extractingAssetsTo: root.appending(path: "read-\(name)"))
-            return packet.commentaryLayers.flatMap(\.interjections).map(\.leadInMs)
+            // In the Margins' order on the page (31 %, then 77 %): the reloaded item lists them in the store's order.
+            return packet.commentaryLayers.flatMap(\.interjections)
+                .sorted { ($0.anchor.roughPercent ?? 0) < ($1.anchor.roughPercent ?? 0) }
+                .map(\.leadInMs)
         }
 
         let untouched = try await share("untouched", setting: [:])
         XCTAssertEqual(untouched, [nil, nil], "no length chosen: the packet an older build writes")
         XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), [:])
 
-        let minute = try await share("minute", setting: ["session-app-export::margin-lead-1": 60_000])
+        let minute = try await share("minute", setting: [lead1: 60_000])
         XCTAssertEqual(minute, [60_000, nil])
-        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), ["session-app-export::margin-lead-1": 60_000])
+        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), [lead1: 60_000])
 
         model.prepareShareInterjections()
-        XCTAssertEqual(model.sharingState.drafts.map(\.leadInMs), [60_000, SenderLeadIn.defaultMs], "the next share starts where the friend was last told")
+        let startingLengths = Dictionary(uniqueKeysWithValues: model.sharingState.drafts.map { ($0.id, $0.leadInMs) })
+        XCTAssertEqual(startingLengths, [lead1: 60_000, "\(sessionID)::margin-lead-2": SenderLeadIn.defaultMs],
+                       "the next share starts where the friend was last told")
         let again = try await share("again", setting: [:])
         XCTAssertEqual(again, [60_000, nil], "left alone, a re-share keeps the friend's copy at a minute")
 
-        let back = try await share("back", setting: ["session-app-export::margin-lead-1": SenderLeadIn.defaultMs])
+        let back = try await share("back", setting: [lead1: SenderLeadIn.defaultMs])
         XCTAssertEqual(back, [SenderLeadIn.defaultMs, nil], "taking it back is said out loud")
         let done = try await share("done", setting: [:])
         XCTAssertEqual(done, [nil, nil], "after that, nothing more to say")
-        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), ["session-app-export::margin-lead-1": SenderLeadIn.defaultMs])
+        XCTAssertEqual(try store.loadLastSentLeadIns(itemId: itemID), [lead1: SenderLeadIn.defaultMs])
     }
 
     /// The archive is now written while the main thread stays free (#2510), so a second tap can arrive mid-build.
@@ -361,6 +374,7 @@ final class SharedMarginAppExportTests: XCTestCase {
     private func margin(
         id: String,
         itemID: String,
+        sessionID: String = "session-app-export",
         roughPercent: Int,
         anchor: Anchor,
         audioPath: String?,
@@ -368,7 +382,7 @@ final class SharedMarginAppExportTests: XCTestCase {
         evidence: [CapturedPodcastAnchorEvidence]? = nil
     ) -> Interjection {
         Interjection(
-            id: id, itemId: itemID, sessionId: "session-app-export", targetType: .item, targetId: itemID,
+            id: id, itemId: itemID, sessionId: sessionID, targetType: .item, targetId: itemID,
             createdAt: Date(timeIntervalSince1970: 1_700_000_000), roughPercent: roughPercent, anchor: anchor,
             audioPath: audioPath, audioStatus: audioPath == nil ? "none" : "saved",
             transcriptionStatus: "transcribed", transcript: transcript, cleanedTranscript: nil,
