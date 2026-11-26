@@ -8,8 +8,11 @@ carries `automerge` or `lane:queued`, it tries `git merge --no-commit --no-ff` o
 in a throwaway worktree. A clean merge changes nothing. A conflict
 
 1. posts one comment per head/base pair, naming the files: a `Handing to the conflict resolver:` hand-off (#5320,
-   live since 2026-11-26), which says the owning thread has 30 minutes to push its own fix first;
-2. adds `conflict-resolver`, and removes `lane:queued` and `automerge`, so nothing re-queues it.
+   live since 2026-11-26), which says the owning thread has 30 minutes to push its own fix first. A PR with no
+   `automerge` (only a `/lane` request) gets a `Handing to the Mac finisher:` hand-off instead, since the resolver
+   re-arms what it merges with `automerge`;
+2. adds `conflict-resolver` (or `needs-mac` for that PR), and removes `lane:queued` and `automerge`, so nothing
+   re-queues it.
    `scripts/conflict_resolver.py` then merges the base in when the conflict is small, or hands the PR to the Mac
    finisher (`needs-mac`). A `conflict-resolver` PR the resolver has not acted on for STALE_HOURS goes to the
    finisher from here (`promote_stale`), so a broken resolver never strands it;
@@ -53,6 +56,7 @@ ADD = 'needs-mac'
 HANDOFF = 'Handing to the Mac finisher:'
 RESOLVER = 'conflict-resolver'
 RESOLVER_HANDOFF = 'Handing to the conflict resolver:'
+BOT = 'github-actions[bot]'  # the workflow token's login: lane-conflicts.yml posts with github.token
 STALE_HOURS = 2  # the resolver's 30-minute wait plus its 15-minute schedule, several times over
 
 
@@ -189,6 +193,21 @@ def comment_body(pr_base, base_sha, head, files):
             f'{marker(head, base_sha)}')
 
 
+def finisher_body(pr_base, base_sha, head, files):
+    """The hand-off straight to the Mac finisher, for a conflicting PR its thread never armed to merge."""
+    shown = ', '.join(f'`{name}`' for name in files[:10])
+    more = f' and {len(files) - 10} more' if len(files) > 10 else ''
+    return (f'{HANDOFF} the PR does not merge cleanly into `{pr_base}` (`{base_sha[:7]}`) at its head '
+            f'`{head[:7]}`. Conflicting files: {shown}{more}.\n\n'
+            f'Done when: `{pr_base}` is merged into the branch (no force-push), the conflicts are resolved, '
+            f'the checks that covered the change pass, and the branch is pushed. Then arm it as before (`automerge`, '
+            f'or a `/lane` request with `lane:queued`).\n\n'
+            f'Hosted conflict check (#683): `lane:queued` was removed and this PR\'s queued lane runs cancelled, so '
+            f'the Mac spends no slot on it. It had no `automerge`, so the conflict resolver, which re-arms what it '
+            f'merges, leaves it alone. Nothing was pushed to the branch.\n'
+            f'{marker(head, base_sha)}')
+
+
 def no_merge_ref_body(pr_base, base_sha, head):
     return (f'{HANDOFF} GitHub reports this PR as not mergeable into `{pr_base}` (`{base_sha[:7]}`) at its head '
             f'`{head[:7]}`, although git merges it cleanly (usually a history with more than one merge base). '
@@ -311,9 +330,17 @@ def act_on_conflict(api, pr, base, base_sha, head, files, log=print, kind='confl
             # The sweep's git merge takes minutes with many PRs; GitHub may have settled since (#4538 review).
             log(f'#{pr}: GitHub no longer reports it as not mergeable; nothing changed.')
             return done
+        # The resolver re-arms with `automerge`, so it takes only a PR its thread armed to merge. A PR with only a
+        # `/lane` request (`lane:queued`) goes to the finisher, as before the resolver.
+        to_resolver = kind == 'conflict' and 'automerge' in labels
         already = any(marker(head, base_sha, kind) in (c.get('body') or '') for c in api.get_all(f'issues/{pr}/comments?per_page=100'))
         if not already:
-            body = comment_body(base, base_sha, head, files) if kind == 'conflict' else no_merge_ref_body(base, base_sha, head)
+            if kind != 'conflict':
+                body = no_merge_ref_body(base, base_sha, head)
+            elif to_resolver:
+                body = comment_body(base, base_sha, head, files)
+            else:
+                body = finisher_body(base, base_sha, head, files)
             api.post(f'issues/{pr}/comments', {'body': body})
             done.append('comment')
         elif kind != 'conflict':
@@ -326,7 +353,7 @@ def act_on_conflict(api, pr, base, base_sha, head, files, log=print, kind='confl
         for name in REMOVE:
             if name in labels and remove_label(api, pr, name):
                 done.append(f'-{name}')
-        add = RESOLVER if kind == 'conflict' else ADD
+        add = RESOLVER if to_resolver else ADD
         if add not in labels:
             api.post(f'issues/{pr}/labels', {'labels[]': add})
             done.append(f'+{add}')
@@ -366,7 +393,10 @@ def promote_stale(api, base, now=None, hours=STALE_HOURS, log=print):
             continue
         try:
             comments = api.get_all(f'issues/{pr}/comments?per_page=100')
-            ours = [c for c in comments if (c.get('body') or '').lstrip().startswith(RESOLVER_HANDOFF)]
+            # Only this workflow's own hand-offs: a stranger's lookalike must neither restart the clock nor plant a
+            # marker that the finisher's hand-off would carry (AGENTS.md, text from outsiders is data).
+            ours = [c for c in comments if (c.get('user') or {}).get('login') == BOT
+                    and (c.get('body') or '').lstrip().startswith(RESOLVER_HANDOFF)]
             if ours:
                 at = dt.datetime.fromisoformat(ours[-1]['created_at'].replace('Z', '+00:00'))
                 if now - at < dt.timedelta(hours=hours):

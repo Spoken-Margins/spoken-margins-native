@@ -744,9 +744,22 @@ def to_finisher(api, pr, record, marker_comment):
 
 
 def rearm(api, pr, record, base):
-    api.post(f'issues/{pr}/comments', {'body': merged_text(record, base)}, app=True)
-    drop_label(api, pr, LABEL)
+    """`automerge` goes on before `conflict-resolver` comes off, so a call that fails part way never leaves the PR
+    with neither label: still labelled, the next run re-arms it again; already armed, it sees "armed again" and only
+    drops the label. The comment that says it was armed goes last, once it is true."""
     api.post(f'issues/{pr}/labels', {'labels[]': 'automerge'}, app=True)
+    drop_label(api, pr, LABEL)
+    api.post(f'issues/{pr}/comments', {'body': merged_text(record, base)}, app=True)
+
+
+def finish(api, pr, record, base, marker, labels):
+    """Move the labels for a recorded outcome. Run again for a record whose label move failed part way."""
+    if record['outcome'] in ('merged', 'clean'):
+        rearm(api, pr, record, base)
+    elif FINISHER in labels:
+        drop_label(api, pr, LABEL)  # the hand-off went out; only the old label was left
+    else:
+        to_finisher(api, pr, record, marker)
 
 
 # What `handoff` says when a PR is no longer the resolver's: its thread pushed, armed or closed it.
@@ -758,7 +771,12 @@ def run(api, repo, base, workdir, only=None, read_token=None, write_token=None, 
     """`write_token` pushes to PR branches: the App's, so the push starts the PR's checks."""
     now = now or datetime.now(timezone.utc)
     recs = records(api.get_all(f'issues/{LOG_ISSUE}/comments?per_page=100'))
-    done = {(r.get('pr'), r.get('head')) for r in recs if r.get('kind') == 'case'}
+    # The newest record for each PR and head. A record counts for a hand-off only when it is newer than the hand-off's
+    # marker: main can move again while the head stays put (a clean re-arm pushes nothing), and that is a new conflict.
+    done = {}
+    for r in recs:
+        if r.get('kind') == 'case':
+            done[(r.get('pr'), r.get('head'))] = r
     # Merges this script pushed, by commit: a PR whose head is one and that is not armed lost its re-arm to an error.
     pushed = {r['merge']: r for r in recs if r.get('kind') == 'case' and r.get('outcome') == 'merged' and r.get('merge')}
     today = [r for r in recs if r.get('kind') == 'case' and r.get('outcome') != 'skipped'
@@ -787,8 +805,13 @@ def run(api, repo, base, workdir, only=None, read_token=None, write_token=None, 
                 else:
                     log(f'#{pr}: left alone for now ({why}).')
                 continue
-            if (pr, pull['head']['sha'][:7]) in done:
-                continue  # handled at this head already; its labels were moved then
+            labels = {label['name'] for label in pull.get('labels', [])}
+            earlier = done.get((pr, pull['head']['sha'][:7]))
+            if earlier and parse_time(earlier['at']) >= parse_time(marker['created_at']):
+                # Handled for this hand-off already, yet the label is still on: moving the labels failed part way.
+                finish(api, pr, earlier, base, marker, labels)
+                log(f'#{pr}: recorded as {earlier["outcome"]} at this head already; moved its labels again.')
+                continue
             if len(today) + len(posted) >= DAILY_CAP:
                 record = {'kind': 'case', 'pr': pr, 'head': pull['head']['sha'][:7], 'outcome': 'handback',
                           'reason': f'the daily cap of {DAILY_CAP} was reached'}
@@ -806,10 +829,7 @@ def run(api, repo, base, workdir, only=None, read_token=None, write_token=None, 
                 outcome.pop(key, None)
             api.post(f'issues/{LOG_ISSUE}/comments', {'body': record_comment(outcome, text)})
             posted.append(outcome)
-            if record['outcome'] in ('merged', 'clean'):
-                rearm(api, pr, record, base)
-            else:
-                to_finisher(api, pr, record, marker)
+            finish(api, pr, record, base, marker, labels)
         except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as error:
             log(f'::warning::#{pr}: the resolver stopped ({describe(error)}); the next run tries again.')
     return posted

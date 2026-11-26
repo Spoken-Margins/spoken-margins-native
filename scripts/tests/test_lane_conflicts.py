@@ -173,6 +173,18 @@ class ConflictCheckTests(unittest.TestCase):
         self.assertEqual(sorted(api.deleted), ['issues/7/labels/automerge', 'issues/7/labels/lane%3Aqueued'])
         self.assertEqual(api.cancelled, [50])  # the run already on a Mac keeps going
 
+    def test_a_pr_with_only_a_lane_request_goes_to_the_finisher_not_the_resolver(self):
+        # Audit finding 1 on #5395: the resolver re-arms with `automerge`, so a PR its thread never armed to merge
+        # must not reach it, or work nobody armed would land on main.
+        head = self.conflicting_pr()
+        api = FakeApi([pull(7, head, ('lane:queued',))], runs=[], jobs={})
+        self.assertEqual(self.sweep(api), {7: ['shared.txt']})
+        comments = [fields['body'] for path, fields in api.posted if path.endswith('/comments')]
+        self.assertEqual(len(comments), 1)
+        self.assertTrue(comments[0].startswith(conflicts.HANDOFF), comments[0])
+        self.assertIn(conflicts.marker(head, run_git(self.origin.bare, 'rev-parse', 'next')), comments[0])
+        self.assertEqual([name['name'] for name in api.pulls[7]['labels']], ['needs-mac'])
+
     QUEUED = {'autoMergeRequest': None, 'mergeQueueEntry': {'id': 'MQE_7'}}
     AUTO_ON = {'autoMergeRequest': {'enabledAt': '2026-11-24T18:02:27Z'}, 'mergeQueueEntry': None}
     BRIDGE_DISPATCH = ('actions/workflows/merge-queue-label-bridge.yml/dispatches', {'ref': 'main', 'inputs[pr]': '7'})
@@ -586,6 +598,16 @@ class PromoteStaleTests(unittest.TestCase):
         self.assertTrue(body.startswith(conflicts.HANDOFF))
         self.assertIn('<!-- lane-conflict head=aaaaaaa base=bbbbbbb -->', body)
         self.assertEqual([label['name'] for label in api.pulls[7]['labels']], ['needs-mac'])
+
+    def test_a_strangers_lookalike_hand_off_neither_restarts_the_clock_nor_plants_a_marker(self):
+        # Audit finding 3 on #5395.
+        stranger = dict(self.handed(0.5), user={'login': 'someone'})
+        stranger['body'] = stranger['body'].replace('aaaaaaa', 'ccccccc')
+        api = FakeApi([pull(7, 'a' * 40, ('conflict-resolver',))], comments={7: [self.handed(3), stranger]})
+        self.assertEqual(self.promote(api), [7])
+        body = [f['body'] for p, f in api.posted if p.endswith('/comments')][0]
+        self.assertIn('<!-- lane-conflict head=aaaaaaa base=bbbbbbb -->', body)
+        self.assertNotIn('ccccccc', body)
 
     def test_a_recent_hand_off_is_left_to_the_resolver(self):
         api = FakeApi([pull(7, 'a' * 40, ('conflict-resolver',))], comments={7: [self.handed(1)]})

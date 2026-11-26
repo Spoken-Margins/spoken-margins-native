@@ -361,6 +361,45 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(api.labels_added(), ['automerge'])
         self.assertEqual(api.deletes, ['issues/7/labels/conflict-resolver'])
 
+    def test_a_re_arm_that_fails_part_way_leaves_the_pr_labelled_and_the_next_run_finishes_it(self):
+        # Audit finding 2 on #5395: `automerge` goes on before `conflict-resolver` comes off.
+        class FailingLabel(FakeApi):
+            def post(self, path, fields, app=False):
+                if path.endswith('/labels') and fields.get('labels[]') == 'automerge':
+                    raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 502')
+                super().post(path, fields, app)
+        merge = 'd' * 40
+        rec = {'user': {'login': cr.BOT}, 'created_at': iso(NOW - timedelta(minutes=20)),
+               'body': cr.record_comment({'kind': 'case', 'pr': 7, 'head': self.head[:7], 'outcome': 'merged',
+                                          'merge': merge, 'base': 'bbbbbbb', 'sort': 'small'}, 'x')}
+        api = FailingLabel([pull(head=merge)], {7: [marker_comment(head=self.head)], cr.LOG_ISSUE: [rec]})
+        cr.run(api, REPO, 'main', self.workdir, now=NOW, claude=lambda *a: self.fail('called'),
+               remote=str(self.bare), log=lambda line: None)
+        self.assertEqual(api.deletes, [], 'the label stays, so the next run tries again')
+        self.assertEqual(api.pr_comments(), [], 'nothing says it was armed while it is not')
+
+    def test_a_clean_record_whose_label_move_failed_is_re_armed_at_the_same_head(self):
+        rec = {'user': {'login': cr.BOT}, 'created_at': iso(NOW - timedelta(minutes=10)),
+               'body': cr.record_comment({'kind': 'case', 'pr': 7, 'head': self.head[:7], 'outcome': 'clean',
+                                          'base': 'bbbbbbb', 'sort': 'clean'}, 'x')}
+        api = FakeApi([pull(head=self.head)], {7: [marker_comment(head=self.head)], cr.LOG_ISSUE: [rec]})
+        posted = cr.run(api, REPO, 'main', self.workdir, now=NOW, claude=lambda *a: self.fail('called'),
+                        remote=str(self.bare))
+        self.assertEqual(posted, [])
+        self.assertEqual(api.labels_added(), ['automerge'])
+        self.assertEqual(api.deletes, ['issues/7/labels/conflict-resolver'])
+
+    def test_a_new_conflict_at_a_head_handled_before_is_resolved_again(self):
+        # Audit finding 4 on #5395: a clean re-arm pushes nothing, so main can move and conflict again at that head.
+        rec = {'user': {'login': cr.BOT}, 'created_at': iso(NOW - timedelta(hours=3)),
+               'body': cr.record_comment({'kind': 'case', 'pr': 7, 'head': self.head[:7], 'outcome': 'clean',
+                                          'base': 'eeeeeee', 'sort': 'clean'}, 'x')}
+        api = FakeApi([pull(head=self.head)], {7: [marker_comment(head=self.head)], cr.LOG_ISSUE: [rec]})
+        reply = json.dumps({'hunks': [{'id': 'h1', 'text': 'if (a and b) or c:\n'}], 'handback': None})
+        posted = cr.run(api, REPO, 'main', self.workdir, now=NOW, claude=lambda *a: (reply, ''),
+                        remote=str(self.bare))
+        self.assertEqual([r['outcome'] for r in posted], ['merged'])
+
     def test_a_pr_without_the_label_is_not_touched(self):
         api, posted, calls = self.resolver_run('{}', pulls=[pull(head=self.head, labels=('needs-mac',))])
         self.assertEqual((posted, calls, api.posts, api.deletes), ([], [], [], []))

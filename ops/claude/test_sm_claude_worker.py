@@ -679,8 +679,9 @@ class FinishEligibleTests(unittest.TestCase):
 
     def test_a_merge_conflict_hand_off_is_taken_at_once(self):
         # Owner, 2026-11-24: a conflict needs no Mac and no person, so it skips the finisher's hour.
-        # Since the resolver went live (#5320), a conflict reaches the finisher by one of three hand-offs: the
-        # resolver's own, lane_conflicts.py's for a resolver PR left too long, and its no-merge-ref one. The bodies
+        # Since the resolver went live (#5320), a conflict reaches the finisher by one of four hand-offs: the
+        # resolver's own, lane_conflicts.py's for a resolver PR left too long, its hand-off of a PR with no
+        # `automerge`, and its no-merge-ref one. The bodies
         # come from those scripts, so a change to their marker breaks this test.
         import importlib.util
         import sys
@@ -698,6 +699,7 @@ class FinishEligibleTests(unittest.TestCase):
         conflict_marker = lc.marker('a' * 40, 'b' * 40)
         record = {'head': 'a' * 7, 'sort': 'hard', 'outcome': 'hard'}
         for body in (cr.finisher_text(record, conflict_marker),
+                     lc.finisher_body('main', 'b' * 40, 'a' * 40, ['docs/decisions.md']),
                      lc.stale_body('main', lc.STALE_HOURS, conflict_marker),
                      lc.no_merge_ref_body('main', 'b' * 40, 'a' * 40)):
             with self.subTest(body=body[:60]):
