@@ -29,6 +29,7 @@ struct SharedPacketImportSheet<Sheet: View>: ViewModifier {
             .onChange(of: model.recordingNavigationIsLocked) {
                 model.openSharedPacketDirectlyIfReady()
                 model.openDeferredImportedItemIfReady()
+                model.replyBoxes.showHeldBannerIfReady() // banner C waits while a Margin is recorded or written (#4675)
             }
     }
 }

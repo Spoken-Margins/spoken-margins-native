@@ -20,7 +20,7 @@ import WebKit
 enum ShareLinkAttestation {
     static let client = AttestedServerClient(
         provider: AppAttestDeviceProvider(),
-        consent: { ServerSendConsent.hasConsented(to: .shareLinks) },
+        consent: { ServerSendConsent.hasConsented(to: .shareLinks, repliesOffered: LinkReplies.offered) },
         post: AttestedTransport.post
     )
 }
@@ -99,11 +99,21 @@ final class ShareLinkSender: ObservableObject {
         return links.isOn
     }
 
-    /// Seals and uploads the packet at `packageURL`, the file the sender would otherwise share.
-    func makeLink(packageURL: URL) {
+    /// The shared item in the sender's Library, kept for the consent alert's agreeing tap. A reply box's record names it,
+    /// so only answers placed on it get in (#4675).
+    private var itemId: String?
+    /// Where a reply box's record is kept once the server made the box.
+    private weak var replyBoxes: ReplyBoxCoordinator?
+
+    /// Seals and uploads the packet at `packageURL`, the file the sender would otherwise share. `itemId` is the item the
+    /// packet was made from; in a build whose links take answers (`LinkReplies`) the link gets a reply box for it, kept
+    /// by `replyBoxes`.
+    func makeLink(packageURL: URL, itemId: String?, replyBoxes: ReplyBoxCoordinator?) {
         guard state != .making, shareLinkAfterwards.allowsShareLink else { return }
+        self.itemId = itemId
+        self.replyBoxes = replyBoxes
         // Before anything is read, sealed or sent, and before any key is made: the first link asks (#2842).
-        guard ServerSendConsent.hasConsented(to: .shareLinks) else {
+        guard ServerSendConsent.hasConsented(to: .shareLinks, repliesOffered: LinkReplies.offered) else {
             state = .needsConsent
             return
         }
@@ -112,15 +122,16 @@ final class ShareLinkSender: ObservableObject {
         let bridge = self.bridge
         Task {
             // The packet is read, sealed and posted off the main thread: it can be 20 MB.
-            let prepared = await Task.detached(priority: .userInitiated) { () -> Result<(Data, ShareLinkPreview), ShareLinkFallback> in
+            let prepared = await Task.detached(priority: .userInitiated) { () -> Result<PreparedPacket, ShareLinkFallback> in
                 Self.prepare(packageURL: packageURL)
             }.value
             guard requests.accepts(ticket) else { return }
             let packet: Data
             let preview: ShareLinkPreview
+            let packageDigest: String?
             switch prepared {
             case .success(let made):
-                (packet, preview) = made
+                (packet, preview, packageDigest) = (made.packet, made.preview, made.digest)
                 companionNote = preview.needsCompanionFile ? Self.companionLine : nil
             case .failure(let fallback):
                 state = .useFile(fallback)
@@ -136,7 +147,7 @@ final class ShareLinkSender: ObservableObject {
             let attested = self.attested
             let noticeStore = self.noticeStore
             let client = ShareLinkClient(
-                consent: { ServerSendConsent.hasConsented(to: .shareLinks) },
+                consent: { ServerSendConsent.hasConsented(to: .shareLinks, repliesOffered: LinkReplies.offered) },
                 senderCheck: { await ShareLinkSenderCheck.check(using: attested) },
                 takedownNotice: { [weak self] in
                     // Kept first, so a notice the screen never gets to show is not lost.
@@ -146,7 +157,17 @@ final class ShareLinkSender: ObservableObject {
                 },
                 post: ShareLinkTransport.postWithHeaders
             )
-            let result = await client.makeLink(packet: packet, preview: preview, linksState: linksState, faultPolicy: Self.faultPolicy)
+            // A build whose links take answers sends a fresh reply box with the link (#4675); any other build sends exactly
+            // today's request. The box is kept only when the server says it made it, and only with the item and the
+            // uploaded package's digest to admit answers by.
+            let replyBox: ReplyBox? = LinkReplies.offered && itemId != nil && packageDigest != nil && replyBoxes != nil
+                ? ReplyBox.random() : nil
+            let made = await client.makeLink(
+                packet: packet, preview: preview, linksState: linksState, faultPolicy: Self.faultPolicy, replyBox: replyBox)
+            let result = made.result
+            if let itemId, let packageDigest, let record = made.replyBoxRecord(itemId: itemId, sharedPackageDigest: packageDigest) {
+                replyBoxes?.keep(record)
+            }
             // The listener went back or changed the selection meanwhile: this link is for a packet the screen no
             // longer shows, so no sheet opens for it.
             guard requests.accepts(ticket) else { return }
@@ -240,18 +261,27 @@ final class ShareLinkSender: ObservableObject {
 
     /// The listener tapped the agreeing button on the consent alert: remember it, then make the link they asked for.
     func agreeAndMakeLink(packageURL: URL) {
-        ServerSendConsent.record(.shareLinks)
+        ServerSendConsent.record(.shareLinks, repliesOffered: LinkReplies.offered)
         state = .idle
-        makeLink(packageURL: packageURL)
+        makeLink(packageURL: packageURL, itemId: itemId, replyBoxes: replyBoxes)
     }
 
-    /// The packet's bytes and the preview read from it. The audio the read extracts is only for the read, and goes.
-    nonisolated private static func prepare(packageURL: URL) -> Result<(Data, ShareLinkPreview), ShareLinkFallback> {
+    private struct PreparedPacket: Sendable {
+        let packet: Data
+        let preview: ShareLinkPreview
+        /// The package's content digest, which an answer's parent must name (#4675). Nil when the manifest has none.
+        let digest: String?
+    }
+
+    /// The packet's bytes, the preview read from it and its digest. The audio the read extracts is only for the read, and goes.
+    nonisolated private static func prepare(packageURL: URL) -> Result<PreparedPacket, ShareLinkFallback> {
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("share-link-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
         do {
             let packet = try Data(contentsOf: packageURL)
-            return .success((packet, try ShareLinkPacketPreview.preview(ofPackageAt: packageURL, scratch: scratch)))
+            let package = try SpokenMarginsPackageArchive.read(from: packageURL, extractingAssetsTo: scratch)
+            return .success(PreparedPacket(
+                packet: packet, preview: try ShareLinkPacketPreview.preview(of: package), digest: package.manifest.contentDigest))
         } catch ShareLinkPreviewBuilder.Failure.nothingToSay {
             return .failure(.nothingToSay)
         } catch {
@@ -282,7 +312,7 @@ struct ShareLinkPresentation: ViewModifier {
                 Button(ShareLinkConsentCopy.decline, role: .cancel) { sender.reset() }
                     .accessibilityIdentifier("build23.sender.share.link.consent.decline")
             } message: {
-                Text(ShareLinkConsentCopy.message)
+                Text(ShareLinkConsentCopy.message(repliesOffered: LinkReplies.offered))
             }
             .trackedSheet(isPresented: Binding(
                 get: { if case .ready = sender.state { return true } else { return false } },

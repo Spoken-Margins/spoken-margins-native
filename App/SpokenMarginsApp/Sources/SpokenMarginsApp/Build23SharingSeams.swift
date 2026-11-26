@@ -425,6 +425,10 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     /// The links the item's friend Margins came from, for "Report" in the item's ⋯ menu (#2239). Empty for Margins
     /// from a file.
     @Published private(set) var reportEntries: [ShareLinkReport.Entry] = []
+    /// The reply boxes behind card D on a friend's card (#4675).
+    var replyBoxes: ReplyBoxCoordinator { model.replyBoxes }
+    /// The item the sender sheet shares (the packet is made from the open item), named in a reply box's record (#4675).
+    var sharedItemID: String { model.selectedItem.id }
 
     init(model: Gate1AppModel) {
         self.model = model

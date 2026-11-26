@@ -132,3 +132,41 @@ public enum AttestedTransport {
     }
 }
 #endif
+
+#if !canImport(FoundationNetworking)
+/// Sends one club request (#1799), today only a reply box's (#4675): the sender's phone lists and fetches the answers in
+/// its own boxes, closes a box and reports an answer. Like the other public requests it carries no cookies or
+/// credentials, follows no redirect, refuses any host but the pinned one and any path outside the club routes, and
+/// stops reading at the caller's cap. Its one identity is the request's bearer proof, which names a box, not a phone.
+public enum ClubTransport {
+    public static let send: ClubClient.Send = { request, maximumBytes in
+        try await send(request, maximumBytes, host: ProductServer.host,
+                       configuration: BridgePublicTransport.configuration(resourceTimeout: 180))
+    }
+
+    // Injectable only inside SessionKit/tests; the app always uses the anonymous configuration.
+    static func send(
+        _ request: ClubClient.Request, _ maximumBytes: Int, host: String, configuration: URLSessionConfiguration
+    ) async throws -> (status: Int, body: Data) {
+        // `path` holds the query too (`/api/v1/clubs/<id>/posts?after=3`), so the address is read whole.
+        guard request.path.hasPrefix("/api/v1/clubs/"), let url = URL(string: "https://\(host)\(request.path)"),
+              BridgeManifestPolicy.production.isTrusted(url) else { throw BridgeRefreshError.untrustedURL }
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = request.method
+        if let bearer = request.bearer { urlRequest.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
+        if let contentType = request.contentType { urlRequest.setValue(contentType, forHTTPHeaderField: "Content-Type") }
+        urlRequest.httpBody = request.body
+        let session = URLSession(configuration: configuration, delegate: BridgePublicSessionDelegate(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let (bytes, response) = try await session.bytes(for: urlRequest)
+        guard response.expectedContentLength <= maximumBytes else { throw URLError(.dataLengthExceedsMaximum) }
+        var data = Data()
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            guard data.count < maximumBytes else { throw URLError(.dataLengthExceedsMaximum) }
+            data.append(byte)
+        }
+        return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
+    }
+}
+#endif
