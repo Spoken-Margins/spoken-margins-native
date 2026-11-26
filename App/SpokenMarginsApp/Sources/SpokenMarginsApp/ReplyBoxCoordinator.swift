@@ -77,11 +77,18 @@ final class ReplyBoxCoordinator: ObservableObject {
     private func makePickup() -> ReplyBoxPickup {
         let importer = ReplyBoxAppImporter(
             importing: { [weak self] answer in
-                // The importer reads a file: the packet goes to Caches for the length of one import, then away.
-                guard let file = try? ReplyBoxAnswerFile.write(answer.packet) else { return .notNow }
-                defer { ReplyBoxAnswerFile.remove(file) }
-                guard let self else { return .notNow }
-                return await self.importQuietly(file, record: answer.record)
+                // The importer reads a file: the packet goes to Caches for the length of one import, then away. Writing
+                // and removing it (up to 10 MB) happen off the main thread.
+                let packet = answer.packet
+                let written = Task.detached(priority: .utility) { try ReplyBoxAnswerFile.write(packet) }
+                guard let file = try? await written.value else { return .notNow }
+                guard let self else {
+                    Task.detached(priority: .utility) { ReplyBoxAnswerFile.remove(file) }
+                    return .notNow
+                }
+                let outcome = await self.importQuietly(file, record: answer.record)
+                Task.detached(priority: .utility) { ReplyBoxAnswerFile.remove(file) }
+                return outcome
             },
             checkingLayer: { [weak self] layerId in
                 guard let self else { return true }
