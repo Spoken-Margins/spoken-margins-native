@@ -2873,9 +2873,9 @@
    "control": "Timeline (list.bullet.rectangle)",
    "control_kind": "button",
    "presentation": "screen swap",
-   "file": "PlaybackScreen.swift",
-   "line": 566,
-   "anchor": "Button(action: openTimeline)",
+   "file": "ListeningOptionsLayout.swift",
+   "line": 76,
+   "anchor": "Button(action: showTimeline)",
    "present_line": 128,
    "condition": "",
    "notes": "Inside the 'Listening options' sheet (More button). OptionsDestination.timeline: closes the sheet, then selectedPane = .timeline (embedded rail pane), not model.openTimeline()."
