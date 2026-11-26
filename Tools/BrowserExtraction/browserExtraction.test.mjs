@@ -1271,6 +1271,13 @@ test("#5365: neighbours of the interactive figure: chart only, canvas, an icon i
   assert.ok(text.includes("npm install placeholder-package"), text);
   assert.ok(text.includes("Figure K. Install it."));
 
+  // A picture hidden by its wrapper rather than by itself comes out too.
+  text = captureFigures([`<figure><div class="ix"><div class="ix-legend"><span>wrapper legend</span></div><svg></svg></div>`
+    + `<div class="ix-static" style="display: none"><picture hidden><img alt="Wrapped static." src="ws.png"></picture></div>`
+    + `<figcaption>Figure H. Hidden by its wrapper.</figcaption></figure>`]);
+  assert.equal(pictureCount(text), 1, text);
+  assert.ok(text.includes("Figure H. Hidden by its wrapper.") && !text.includes("wrapper legend"));
+
   // A caption wrapped below the chart is kept, and the chart's own words are not.
   text = captureFigures([`<figure><div class="ix"><div class="ix-legend"><span>wrapped legend</span></div><svg></svg></div>`
     + `<img alt="Wrapped." src="w.png" style="display:none"><div class="caption-wrap"><figcaption>Figure W. Wrapped caption.</figcaption></div></figure>`]);

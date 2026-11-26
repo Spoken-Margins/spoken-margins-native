@@ -260,23 +260,23 @@ function hideWhileCapturing(element, restores) {
 
 // Attributes are changed in place where they can be, so the page's own markup
 // keeps its attribute order; only `hidden` has to go and come back.
-function unhideWhileCapturing(image, restores) {
-  if (image.hasAttribute("hidden")) {
-    setAttributeWhileCapturing(image, "hidden", null, restores);
+function unhideWhileCapturing(element, restores) {
+  if (element.hasAttribute("hidden")) {
+    setAttributeWhileCapturing(element, "hidden", null, restores);
   }
-  if (image.getAttribute("aria-hidden") === "true") {
-    setAttributeWhileCapturing(image, "aria-hidden", "false", restores);
+  if (element.getAttribute("aria-hidden") === "true") {
+    setAttributeWhileCapturing(element, "aria-hidden", "false", restores);
   }
-  const style = image.getAttribute("style");
+  const style = element.getAttribute("style");
   if (style !== null) {
     const kept = style.split(";").filter(part => part.trim() && !HIDDEN_STYLE_DECLARATION.test(part));
-    setAttributeWhileCapturing(image, "style", kept.join(";"), restores);
+    setAttributeWhileCapturing(element, "style", kept.join(";"), restores);
   }
-  const className = image.getAttribute("class");
+  const className = element.getAttribute("class");
   if (className !== null) {
     const kept = className.split(/\s+/).filter(token => token && !HIDDEN_CLASS_TOKEN.test(token));
     if (kept.length !== className.split(/\s+/).filter(Boolean).length) {
-      setAttributeWhileCapturing(image, "class", kept.join(" "), restores);
+      setAttributeWhileCapturing(element, "class", kept.join(" "), restores);
     }
   }
 }
@@ -299,9 +299,18 @@ function pictureInteractiveFigures(documentRef) {
           hideWhileCapturing(block, restores);
         }
       }
+      // A picture can be hidden by a wrapper (`<picture hidden>`, a
+      // `display: none` div) as well as by itself; unhide the whole path.
+      const unhidden = new Set();
       for (const image of figure.querySelectorAll("img")) {
-        if (!image.closest("figcaption")) {
-          unhideWhileCapturing(image, restores);
+        if (image.closest("figcaption")) {
+          continue;
+        }
+        for (let element = image; element && element !== figure; element = element.parentElement) {
+          if (!unhidden.has(element)) {
+            unhidden.add(element);
+            unhideWhileCapturing(element, restores);
+          }
         }
       }
     }
