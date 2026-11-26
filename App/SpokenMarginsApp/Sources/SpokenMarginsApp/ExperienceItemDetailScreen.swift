@@ -18,6 +18,8 @@ struct ExperienceItemDetailScreen: View {
     /// Saved live-session photos for Recent Margins (#4180), observed directly so they appear once the launch load finishes.
     @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
 
+    /// The followed show this item came from, for **Show less like this** (#4046 PR 12); nil for an item from no followed show.
+    @State private var showLessTarget: ShowLessTarget?
     @State private var confirmsTrash = false
     /// Why Share has nothing to send, when it has none (#4229).
     @State private var shareExplanation: ItemShareStart.Explanation?
@@ -47,6 +49,8 @@ struct ExperienceItemDetailScreen: View {
     @State private var pdfExport: PDFCommentExportModel?
     /// A tap on Play or "Skip to …" made before its start is possible, kept until it can run (#3788).
     @StateObject private var arrival = FriendArrivalPresenter()
+    /// "Keep Sam’s readings together" under the friend's intro, from the second packet from one sender (#5033).
+    @StateObject private var senderOffer = SenderCollectionOfferPresenter()
     private let episodeLinker = ImportedFileEpisodeLinker()
 
     /// Finds whether the open item is a PDF, or a Word document with a kept original (#4338, #4595). A PDF needs only the
@@ -98,7 +102,17 @@ struct ExperienceItemDetailScreen: View {
                     let friendIntro = FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin))
                     if let friendIntro { FriendMarginsSenderLine(intro: friendIntro) }
                     hero
+                    // At the accessibility text sizes the status lines and the second choice sit here, under the
+                    // title, and only the main button stays pinned, so the pinned area leaves room to read (#5110).
+                    // Below those sizes the layout pins every part, so the choices aren't worked out a second time.
+                    if ItemStartControlsLayout(accessibilityTextSize: dynamicTypeSize.isAccessibilitySize) != .allPinned {
+                        let inlineStart = startControls(.inline)
+                        if inlineStart.drawsAnything {
+                            VStack(alignment: .leading, spacing: 8) { inlineStart }
+                        }
+                    }
                     if let friendIntro { FriendMarginsSummary(intro: friendIntro, receipt: sharingCoordinator.introReceipt) }
+                    SenderCollectionOfferRow(presenter: senderOffer)
                     if let description = model.selectedItem.descriptionText {
                         ItemDescriptionPreview(text: description).id(model.selectedItem.id)
                     }
@@ -132,7 +146,7 @@ struct ExperienceItemDetailScreen: View {
             }
             // The main listening button stays pinned at the bottom, within thumb reach, above the mini player (#149).
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                VStack(alignment: .leading, spacing: 8) { primaryPlaybackAction }
+                VStack(alignment: .leading, spacing: 8) { startControls(.pinned) }
                     .padding(.horizontal, horizontalSizeClass == .regular ? 30 : 18)
                     .padding(.vertical, 10)
                     .frame(maxWidth: 900)
@@ -193,6 +207,20 @@ struct ExperienceItemDetailScreen: View {
                                 .accessibilityIdentifier("item.menu.exportWord.button")
                         }
                         quickActionButtons
+                        // An episode or post from a followed show (#4046 PR 12): the same mark the Show screen writes.
+                        if let target = showLessTarget {
+                            let marked = model.showLessMark(entryId: target.entryId, itemId: target.item.id) != nil
+                            Button(ShowLessWords.menuTitle(isMarked: marked), systemImage: ShowLessWords.symbol) {
+                                Task {
+                                    if marked {
+                                        await model.unmarkShowLess(entryId: target.entryId, itemId: target.item.id)
+                                    } else {
+                                        await model.markShowLess(target.mark)
+                                    }
+                                }
+                            }
+                            .accessibilityIdentifier("item.menu.showLess.button")
+                        }
                         if episodeLinkStatus.canLink && !episodeLinkStatus.canChange {
                             Button("Episode can't change: friends' Margins are on it", systemImage: "link") {}
                                 .disabled(true)
@@ -234,11 +262,16 @@ struct ExperienceItemDetailScreen: View {
                 }
             }
             .task(id: model.selectedItem.id) { await refreshEpisodeLinkStatus() }
+            .task(id: "\(model.selectedItem.id)|\(model.feedSubscriptions.count)") {
+                showLessTarget = await model.showLessTarget(itemId: model.selectedItem.id)
+            }
             // Runs again when the item's Library row arrives, so the entry is not missed on a screen opened before the row.
             .task(id: "\(model.selectedItem.id)|\(model.libraryItems.contains { $0.id == model.selectedItem.id })") {
                 await refreshKeptOriginal()
             }
             .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Skip to the Margins" (#3365)
+            .onAppear { senderOffer.refresh(model: model, arriving: !newSharedMargins.isEmpty) }
+            .onChange(of: senderOfferKey) { senderOffer.refresh(model: model, arriving: !newSharedMargins.isEmpty) }
             .onDisappear {
                 WrittenMarginReadings.leftItemScreen(model.selectedItem.id)
                 arrival.cancel()
@@ -543,57 +576,27 @@ struct ExperienceItemDetailScreen: View {
         }
     }
 
-    @ViewBuilder
-    private var primaryPlaybackAction: some View {
-        if [.waiting, .preparing].contains(model.selectedItemStartupAudioState) {
-            HStack(spacing: 10) {
-                if model.selectedItemStartupAudioState == .preparing {
-                    ProgressView()
-                        .tint(AppColors.evergreen)
-                }
-                Text(model.selectedItemStartupAudioProgressDescription)
-                    .fontWeight(.semibold)
-            }
-            .foregroundStyle(AppColors.secondaryText)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(model.selectedItemStartupAudioProgressDescription)
-            .accessibilityIdentifier("item.start.preparing")
-        }
+    /// The start controls in one place on the screen (#5110): pinned at the bottom, or at the top of the scrolling
+    /// content. `ItemStartControlsLayout` says which parts each place draws at the listener's text size.
+    private func startControls(_ placement: ItemStartControls.Placement) -> ItemStartControls {
         let choices = listeningChoices
         // While the friend's intro shows, a tap that can't start yet is kept (#3788). Otherwise the buttons act as before.
         let holdsEarlyTap = FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin)) != nil
-        if let line = arrival.line {
-            Text(line)
-                .font(.subheadline)
-                .foregroundStyle(AppColors.secondaryText)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("item.arrival.waitingLine")
-        }
-        Button {
-            tapped(.play, holdsEarlyTap: holdsEarlyTap)
-        } label: {
-            Label(choices.primaryTitle, systemImage: "play.fill")
-                .frame(maxWidth: .infinity, minHeight: 52)
-        }
-        .filledActionButton()
-        .accessibilityLabel(choices.primaryAccessibilityLabel ?? choices.primaryTitle)
-        .accessibilityIdentifier("item.start.button")
-        if let secondaryTitle = choices.secondaryTitle, let secondaryAction = choices.secondaryAction {
-            Button {
-                // Only "Skip to …" waits on a Margin's audio; "Listen without them" and "Play from the start" need none.
-            tapped(.skip, holdsEarlyTap: holdsEarlyTap && secondaryAction == .reviewNewMargins(thenContinue: false))
-            } label: {
-                // Words only, as on the screens the owner reviewed (#3247): the line already says whose Margins.
-                Text(secondaryTitle)
-                    .fontWeight(.semibold)
-                    .frame(maxWidth: .infinity, minHeight: 44)
+        let startup = model.selectedItemStartupAudioState
+        return ItemStartControls(
+            placement: placement,
+            layout: ItemStartControlsLayout(accessibilityTextSize: dynamicTypeSize.isAccessibilitySize),
+            preparing: [.waiting, .preparing].contains(startup)
+                ? ItemStartControls.Preparing(showsSpinner: startup == .preparing, description: model.selectedItemStartupAudioProgressDescription)
+                : nil,
+            arrivalLine: arrival.line,
+            choices: choices,
+            onMainButton: { tapped(.play, holdsEarlyTap: holdsEarlyTap) },
+            // Only "Skip to …" waits on a Margin's audio; "Listen without them" and "Play from the start" need none.
+            onSecondChoice: {
+                tapped(.skip, holdsEarlyTap: holdsEarlyTap && choices.secondaryAction == .reviewNewMargins(thenContinue: false))
             }
-            .buttonStyle(.bordered)
-            .tint(AppColors.evergreen)
-            .accessibilityLabel(choices.secondaryAccessibilityLabel ?? secondaryTitle)
-            .accessibilityIdentifier(secondaryAction == .reviewNewMargins(thenContinue: false) ? "item.reviewNewMargins.button" : "item.listenWithout.button")
-        }
+        )
     }
 
     /// A tap on a pinned button. With the friend's intro showing it goes through the keeper, which runs it now or keeps it
@@ -621,7 +624,9 @@ struct ExperienceItemDetailScreen: View {
             // Friend Margins ahead of the place play in place as the episode reaches them (#3219).
             model.continueListening(itemId: itemId, surface: .itemScreen) { pendingNewMarginsOffer = $0 }
         case .reviewNewMargins(let thenContinue):
-            model.reviewNewMargins(itemId: itemId, thenContinue: thenContinue, entries: thenContinue ? behind : nil)
+            // In catch-up the big button plays only what is new and pauses after it (#4785).
+            model.reviewNewMargins(
+                itemId: itemId, thenContinue: thenContinue, entries: thenContinue ? behind : nil, catchUp: catchUp != nil)
         case .continueWithout:
             model.continueWithoutNewMargins(NewMarginsOfferRequest(itemId: itemId, entries: behind))
         case .startFromBeginning:
@@ -635,14 +640,26 @@ struct ExperienceItemDetailScreen: View {
 
     /// The start controls for this item: today's single button, or the two choices when a friend's Margins wait (#3219).
     private var listeningChoices: ItemListeningChoices {
-        ItemListeningChoices(
+        let catchUp = catchUp
+        return ItemListeningChoices(
             unheardFriendMargins: newSharedMargins.map(\.waitingMargin),
             marginsBehindPlace: marginsBehindPlace.map(\.waitingMargin),
             placeIsAtEnd: model.selectedItemSavedPlaceIsAtEnd(),
             hasFinishedSession: hasFinishedSession,
             hasContinuationSession: model.selectedItemPreferredContinuationSession != nil,
-            isPreparingAudio: [.waiting, .preparing].contains(model.selectedItemStartupAudioState)
+            isPreparingAudio: [.waiting, .preparing].contains(model.selectedItemStartupAudioState),
+            catchUp: catchUp,
+            resumesShortOfEnd: catchUp != nil && model.selectedItemCatchUpResumesARelisten(),
+            ownParentDurationsMs: catchUp.map { model.catchUpOwnParentLengthsMs($0) } ?? []
         )
+    }
+
+    /// Catch-up (#4785): the item is finished (the Library row's `isCompleted`, which is `ItemFinishedRule.isFinished`)
+    /// and a new Margin answers one of the listener's own. Built from the same list as the intro's "Replies from" line,
+    /// so the two can never disagree, with no read of its own.
+    private var catchUp: ConversationCatchUp? {
+        let finished = model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.isCompleted ?? false
+        return ConversationCatchUp.make(isFinished: finished, waiting: newSharedMargins.map(\.waitingMargin))
     }
 
     @ViewBuilder
@@ -1068,11 +1085,17 @@ struct ExperienceItemDetailScreen: View {
         model.newSharedMargins(itemId: model.selectedItem.id)
     }
 
+    /// Changes when something the sender collection offer reads changes: the open item, the Library's rows (a Margin the
+    /// listener saved, a packet that arrived), the collections, or the friend's waiting Margins.
+    private var senderOfferKey: String {
+        "\(model.selectedItem.id)|\(model.libraryPresentationRevision)|\(model.libraryCollections.collections.count)|\(newSharedMargins.count)"
+    }
+
     private var itemMargins: [MarginRow] {
         model.selectedItem.interjections
             .filter { $0.status == "active" }
             .sorted { $0.createdAt > $1.createdAt }
-            .map { MarginRow(interjection: $0, itemTitle: model.selectedItem.title, sessionDate: nil) }
+            .map { MarginRow(interjection: $0, itemTitle: model.selectedItem.title, sessionDate: nil, transcriptWaitsForAnswer: MarginRow.waitsForAnswer($0)) }
     }
 
     private var readinessLabel: String {

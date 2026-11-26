@@ -1,7 +1,7 @@
 import Foundation
 import SessionKit
 
-public enum ShareMarginRepresentationChoice: String, CaseIterable, Identifiable {
+public enum ShareMarginRepresentationChoice: String, CaseIterable, Identifiable, Sendable {
     case original
     case cleaned
     case textOnly
@@ -33,7 +33,9 @@ public struct ShareMarginEditState: Equatable, Sendable {
 }
 
 public struct ShareInterjectionDraft: Identifiable {
-    public var id: String { interjection.id }
+    /// The Margin's session and id (#4688): the sheet holds Margins from every pass of an item, and each pass numbers
+    /// its own from "ij-001", so the Margin's `id` alone would name two drafts.
+    public var id: String { interjection.sessionScopedId }
     public var interjection: Interjection
     public var isIncluded = true
     public var approvedTranscript: String
@@ -66,6 +68,10 @@ public struct ShareInterjectionDraft: Identifiable {
     /// The length the sender's last share of this Margin wrote, or `nil` if none ever did. With `leadInMs` it decides
     /// what the packet writes (`SenderLeadIn.valueToWrite`).
     public var previousLeadInMs: Int?
+    /// The version the sender last picked for this Margin, or `nil` when they never picked one (#4647). A pick holds: a
+    /// render that lands later never overrides "As recorded" or "Words only", and "Words only" survives undo. A "Without
+    /// ums" pick is kept even before its file exists (`recordPick`), so the share waits for that voice.
+    public var senderPickedVersion: ShareMarginRepresentationChoice?
 
     public init(
         interjection: Interjection,
@@ -189,6 +195,25 @@ extension ShareInterjectionDraft {
         if choice == .cleaned, cleanedAudioURL == nil { return }
         if choice == .original, !hasOriginalAudio { return }
         representationChoice = choice
+        senderPickedVersion = choice
+    }
+
+    /// Records a pick without changing what goes now (#4647): "Without ums" picked before its file exists, so the voice
+    /// can be made and the share waits for it.
+    public mutating func recordPick(_ choice: ShareMarginRepresentationChoice) {
+        senderPickedVersion = choice
+    }
+
+    /// The sender picked As recorded or Words only, so this Margin needs no voice without ums (#4647).
+    public var optedOutOfCleanedVoice: Bool {
+        senderPickedVersion == .original || senderPickedVersion == .textOnly
+    }
+
+    /// The version a draft falls back to when it has no cleaned file to send (#4647): Words only stays Words only when
+    /// it is what goes now or what the sender picked; otherwise As recorded, or Words only with no recording.
+    private func fallbackVersion(hasOriginalAudio: Bool) -> ShareMarginRepresentationChoice {
+        if representationChoice == .textOnly || senderPickedVersion == .textOnly { return .textOnly }
+        return hasOriginalAudio ? .original : .textOnly
     }
 
     public mutating func setAnchorBefore(_ value: String) {
@@ -201,8 +226,10 @@ extension ShareInterjectionDraft {
         anchorAfter = ExcerptCapRule.hardLimit(value, cap: ExcerptCapRule.afterMaximum, keepingEnd: false)
     }
 
-    public mutating func setCleanupDecision(decisionID: String, accepted: Bool, hasOriginalAudio: Bool) -> Bool {
-        recordEdit(hasOriginalAudio: hasOriginalAudio) { state in
+    public mutating func setCleanupDecision(
+        decisionID: String, accepted: Bool, hasOriginalAudio: Bool, renderCleanedAudio: Bool = true
+    ) -> Bool {
+        recordEdit(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: renderCleanedAudio) { state in
             if accepted {
                 state.restoredAutomaticDecisionIds.remove(decisionID)
             } else {
@@ -211,13 +238,13 @@ extension ShareInterjectionDraft {
         }
     }
 
-    public mutating func toggleWord(segmentID: String, hasOriginalAudio: Bool) -> Bool {
+    public mutating func toggleWord(segmentID: String, hasOriginalAudio: Bool, renderCleanedAudio: Bool = true) -> Bool {
         guard let aligned = interjection.alignedTranscript,
               let segment = aligned.segments.first(where: { $0.id == segmentID }) else { return false }
         let overlappingAccepted = cleanup?.decisions.filter {
             $0.accepted && $0.kind != .longPause && $0.startMs < segment.endMs && $0.endMs > segment.startMs
         } ?? []
-        return recordEdit(hasOriginalAudio: hasOriginalAudio) { state in
+        return recordEdit(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: renderCleanedAudio) { state in
             if state.manuallyDeletedSegmentIds.contains(segmentID) || !overlappingAccepted.isEmpty {
                 state.manuallyDeletedSegmentIds.remove(segmentID)
                 overlappingAccepted.forEach { state.restoredAutomaticDecisionIds.insert($0.id) }
@@ -253,7 +280,7 @@ extension ShareInterjectionDraft {
     /// Returns whether anything changed; the Margin's words and the sender's edits are never touched.
     @discardableResult
     public mutating func refreshAnchorEvidence(from stored: Interjection) -> Bool {
-        guard stored.id == interjection.id,
+        guard stored.sessionScopedId == interjection.sessionScopedId,
               interjection.podcastAnchorEvidence != stored.podcastAnchorEvidence
                 || interjection.podcastAnchorEvidenceCaptureStatus != stored.podcastAnchorEvidenceCaptureStatus
                 || interjection.podcastAnchorEvidenceFailureReason != stored.podcastAnchorEvidenceFailureReason
@@ -279,7 +306,7 @@ extension ShareInterjectionDraft {
         from stored: Interjection, hasVoice: Bool, itemTitle: String?, timeZone: TimeZone = .current
     ) -> Bool {
         let standsIn = isShowingPlaceholder || !SharedMarginTextRequirement.hasReviewedText(approvedTranscript)
-        guard stored.id == interjection.id,
+        guard stored.sessionScopedId == interjection.sessionScopedId,
               stored.transcriptionStatus != "pending",
               ["pending", "failed"].contains(interjection.transcriptionStatus),
               interjection.transcriptionStatus != stored.transcriptionStatus,
@@ -314,7 +341,11 @@ extension ShareInterjectionDraft {
         preparationMessage = nil
         let words = interjection.transcript ?? interjection.displayText ?? ""
         approvedTranscript = SharedMarginTextRequirement.hasReviewedText(words) ? words : (placeholderText ?? words)
-        representationChoice = hasOriginalAudio ? .original : .textOnly
+        representationChoice = fallbackVersion(hasOriginalAudio: hasOriginalAudio)
+        // No edits are left, so a "Without ums" pick means nothing any more; As recorded and Words only hold (#4647).
+        if senderPickedVersion == .cleaned { senderPickedVersion = nil }
+        // A render still out for the old words is now stale.
+        renderGeneration += 1
         warning = SharedMarginTextRequirement.reviewWarning(for: approvedTranscript)
     }
 
@@ -380,7 +411,10 @@ extension ShareInterjectionDraft {
             isPreparingCleanup = false
             cleanedAudioURL = nil
             cleanedAudioDurationMs = nil
-            representationChoice = hasOriginalAudio ? .original : .textOnly
+            representationChoice = fallbackVersion(hasOriginalAudio: hasOriginalAudio)
+            if !hasEdits, senderPickedVersion == .cleaned { senderPickedVersion = nil }
+            // The words changed and no render was asked for: a render still out for the old words is stale (#4647).
+            renderGeneration += 1
         }
         return false
     }

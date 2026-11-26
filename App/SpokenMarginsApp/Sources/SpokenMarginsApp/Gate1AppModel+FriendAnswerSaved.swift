@@ -17,7 +17,8 @@ extension Gate1AppModel {
     var friendAnswerSavedCard: PinnedMarginCard? {
         let facts = friendItemFacts
         guard !facts.layers.isEmpty else { return nil }
-        return PinnedMarginCard.answerSaved(now: Date(), localMargins: facts.localMargins, layers: facts.layers)
+        return PinnedMarginCard.answerSaved(
+            now: Date(), localMargins: facts.localMargins, layers: facts.layers, windowStart: HearItLandState.shared.aftermath.playbackEndedAt)
     }
 
     /// "That was Cole's last Margin. To answer him, add a Margin of your own." The pinned card asks only when no friend's

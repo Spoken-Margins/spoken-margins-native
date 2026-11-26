@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<rss version="2.0"
+  xmlns:atom="http://www.w3.org/2005/Atom"
+  xmlns:cc="http://web.resource.org/cc/"
+  xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+  xmlns:media="http://search.yahoo.com/mrss/"
+  xmlns:content="http://purl.org/rss/1.0/modules/content/"
+  xmlns:podcast="https://podcastindex.org/namespace/1.0"
+  xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0"
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns:libsyn="https://rss.libsyn.com/ns.xml">
+
+  <channel>
+    <atom:link href="https://rss.libsyn.com/shows/138806/destinations/865793.xml" rel="self" type="application/rss+xml"/>
+    <title>Macro Musings with David Beckworth</title>
+    <pubDate>Mon, 23 Nov 2026 10:10:25 +0000</pubDate>
+    <lastBuildDate>Mon, 23 Nov 2026 10:10:25 +0000</lastBuildDate>
+    <generator>Libsyn RSSgen 1.0</generator>
+    <libsyn:show-id>138806</libsyn:show-id>
+    
+    <libsyn:last-updated>2026-10-01T00:00:16Z</libsyn:last-updated>
+    
+    <link>https://macroeconomicpolicynexus.substack.com/</link>
+    <language>en</language>
+    <copyright><![CDATA[]]></copyright>
+    <docs>https://macroeconomicpolicynexus.substack.com/</docs>
+    <itunes:summary><![CDATA[Hosted by David Beckworth of the Mercatus Center, Macro Musings pulls back the curtain on the important macroeconomic issues of the past, present, and future.]]></itunes:summary>
+    <image>
+      <url>https://static.libsyn.com/p/assets/5/6/4/8/5648d73583b24c6ed959afa2a1bf1c87/MM_Podcast_Cover_Art_Update_V02_3000x3000.png</url>
+      <title>Macro Musings with David Beckworth</title>
+      <link><![CDATA[https://macroeconomicpolicynexus.substack.com/]]></link>
+    </image>
+    <itunes:author>Mercatus Center at George Mason University</itunes:author>
+		<itunes:category text="Business" />
+<itunes:category text="Education" />
+    <itunes:image href="https://static.libsyn.com/p/assets/5/6/4/8/5648d73583b24c6ed959afa2a1bf1c87/MM_Podcast_Cover_Art_Update_V02_3000x3000.png" />
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:owner>
+      <itunes:name>David Beckworth</itunes:name>
+      <itunes:email>macromusings@mercatus.gmu.edu</itunes:email>
+    </itunes:owner>
+    <description><![CDATA[Hosted by David Beckworth of the Mercatus Center, Macro Musings pulls back the curtain on the important macroeconomic issues of the past, present, and future.]]></description>
+    
+    <itunes:type>episodic</itunes:type>
+    
+
+    <itunes:keywords />
+
+    
+
+    
+    <podcast:locked owner="macromusings@mercatus.gmu.edu">no</podcast:locked>
+    
+    
+    
+    
+    
+    

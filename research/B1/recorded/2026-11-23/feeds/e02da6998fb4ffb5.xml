@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<?xml-stylesheet href="https://rss.buzzsprout.com/styles.xsl" type="text/xsl"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:podcast="https://podcastindex.org/namespace/1.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:psc="http://podlove.org/simple-chapters" xmlns:atom="http://www.w3.org/2005/Atom">
+<script xmlns="http://www.w3.org/1999/xhtml" src="https://www.buzzsprout.com/vendor/xslt-polyfill/xslt-polyfill-1.0.33.min.js" charset="utf-8"></script>
+<channel>
+  <atom:link href="https://rss.buzzsprout.com/2126417.rss" rel="self" type="application/rss+xml" />
+  <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub" xmlns="http://www.w3.org/2005/Atom" />
+  <title>Mystery AI Hype Theater 3000</title>
+
+  <lastBuildDate>Tue, 10 Nov 2026 06:00:02 -0500</lastBuildDate>
+  <link>https://dair-institute.org/maiht3k</link>
+  <language>en-us</language>
+  <copyright>© 2026 Mystery AI Hype Theater 3000</copyright>
+  <podcast:locked>yes</podcast:locked>
+    <podcast:guid>c07dc0a2-9bb3-5f31-8b80-d3fb3b230d78</podcast:guid>
+  <itunes:author>Emily M. Bender and Alex Hanna</itunes:author>
+  <itunes:type>episodic</itunes:type>
+  <itunes:explicit>true</itunes:explicit>
+  <description><![CDATA[<div>Artificial Intelligence has too much hype. In this podcast, linguist Emily M. Bender and sociologist Alex Hanna break down the AI hype, separate fact from fiction, and science from bloviation. They're joined by special guests and talk about everything, from machine consciousness to science fiction, to political economy to art made by machines.</div>]]></description>
+  <generator>Buzzsprout (https://www.buzzsprout.com)</generator>
+  <itunes:keywords>ai, artificial intelligence, technology, hype, tech criticism</itunes:keywords>
+  <itunes:owner>
+    <itunes:name>Emily M. Bender and Alex Hanna</itunes:name>
+  </itunes:owner>
+  <image>
+     <url>https://storage.buzzsprout.com/nbr2t4ckk58jfmstgrkyyz57axo1?.jpg</url>
+     <title>Mystery AI Hype Theater 3000</title>
+     <link>https://dair-institute.org/maiht3k</link>
+  </image>
+  <itunes:image href="https://storage.buzzsprout.com/nbr2t4ckk58jfmstgrkyyz57axo1?.jpg" />
+  <itunes:category text="Technology" />
+  <itunes:category text="News">
+    <itunes:category text="Tech News" />
+  </itunes:category>
+  <itunes:category text="Science" />
+  <podcast:person role="co-host" href="https://alex-hanna.com" img="https://storage.buzzsprout.com/sp1v10cgj44mqwzlk0eoef541ef8">Alex Hanna</podcast:person>
+  <podcast:person role="co-host" href="https://faculty.washington.edu/ebender/" img="https://storage.buzzsprout.com/hdsipy4i9r6nk5j8otj0cj96txjq">Emily M. Bender</podcast:person>
+  

@@ -50,7 +50,8 @@ final class CatalogDrawerTests: XCTestCase {
             searcher: searcher,
             startFirstListen: startFirstListen,
             libraryHoldsFriendPacket: libraryHoldsFriendPacket,
-            openFriendLink: openFriendLink
+            openFriendLink: openFriendLink,
+            packetOpenFailures: PacketOpenFailurePresenter()
         )
     }
 
@@ -77,7 +78,8 @@ final class CatalogDrawerTests: XCTestCase {
 
         XCTAssertEqual(started.count, 1)
         XCTAssertEqual(started.first?.count, 2)
-        XCTAssertEqual(started.first, ["source-1", "source-2"], "waits for both follows, in the order tapped")
+        // #4285: Done waits for the first pick that lands, then the rest that landed, in tap order. Here both did.
+        XCTAssertEqual(started.first, ["source-1", "source-2"], "the first tapped leads, the other follows in tap order")
         XCTAssertEqual(log.feeds, [picks[1].feedURL, picks[0].feedURL])
 
         await drawer.playFirstListenIfRequested()
@@ -335,6 +337,7 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.friendFileArrived()
         drawer.settleFirstRun(at: .library)
         XCTAssertFalse(drawer.isPresented, "the friend's item hasn't opened yet")
+        drawer.packetOpenFailures?.friendItemOpened(itemId: "friend-item")
         drawer.listenerMoved(to: .item)
         XCTAssertFalse(drawer.isPresented)
         drawer.listenerMoved(to: .library)
@@ -350,6 +353,7 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
         drawer.settleFirstRun(at: .library)
         XCTAssertFalse(drawer.isPresented)
+        drawer.packetOpenFailures?.friendItemOpened(itemId: "friend-item")
         drawer.listenerMoved(to: .item)
         drawer.listenerMoved(to: .library)
         XCTAssertTrue(drawer.isPresented)
@@ -381,6 +385,7 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
         drawer.friendFileArrived()
         drawer.settleFirstRun(at: .library)
+        drawer.packetOpenFailures?.friendItemOpened(itemId: "friend-item")
         drawer.listenerMoved(to: .item)
         drawer.listenerMoved(to: .library)
         XCTAssertTrue(drawer.isPresented)
@@ -397,6 +402,7 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
         drawer.friendFileArrived()
         drawer.settleFirstRun(at: .library)
+        drawer.packetOpenFailures?.friendItemOpened(itemId: "friend-item")
         drawer.listenerMoved(to: .item)
         drawer.listenerMoved(to: .library)
         await drawer.load()
@@ -417,6 +423,7 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.friendFileArrived()
         XCTAssertTrue(defaults.bool(forKey: CatalogDrawerModel.deferredByFriendFileKey), "owed to the next launch while held back")
         drawer.settleFirstRun(at: .library)
+        drawer.packetOpenFailures?.friendItemOpened(itemId: "friend-item")
         drawer.listenerMoved(to: .item)
         drawer.listenerMoved(to: .library)
         XCTAssertTrue(drawer.isPresented)
@@ -435,6 +442,7 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
         drawer.friendFileArrived()
         drawer.settleFirstRun(at: .library)
+        drawer.packetOpenFailures?.friendItemOpened(itemId: "friend-item")
         drawer.listenerMoved(to: .item)
         drawer.listenerMoved(to: .library)
         XCTAssertTrue(drawer.isPresented)
@@ -442,6 +450,7 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertFalse(drawer.isPresented, "withdrawn for the second friend's file")
         XCTAssertTrue(defaults.bool(forKey: CatalogDrawerModel.deferredByFriendFileKey))
         drawer.didDismiss()
+        drawer.packetOpenFailures?.friendItemOpened(itemId: "friend-item")
         drawer.listenerMoved(to: .item)
         drawer.listenerMoved(to: .library)
         XCTAssertTrue(drawer.isPresented, "back after the second friend's item")
@@ -524,6 +533,93 @@ final class CatalogDrawerTests: XCTestCase {
         drawer.settleFirstRun(at: .library)
         drawer.friendFileFailed(at: .library)
         XCTAssertFalse(drawer.isPresented)
+    }
+
+    /// #4834: an item the listener opened themselves while a friend's link waited is not the friend's item, so that link
+    /// failing still brings the drawer back and Done plays the Welcome sample.
+    func testAFailedFriendLinkAfterTheListenerOpenedTheirOwnItemBringsTheDrawerBackAndDonePlays() async throws {
+        var started: [(ids: [String], allowsWelcome: Bool)] = []
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog()) { ids, allowsWelcome in started.append((ids, allowsWelcome)) }
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        drawer.didDismiss()
+        drawer.listenerMoved(to: .item)
+        drawer.listenerMoved(to: .elsewhere)
+
+        drawer.friendFileFailed(at: .elsewhere)
+        drawer.listenerMoved(to: .library)
+
+        XCTAssertTrue(drawer.isPresented)
+        drawer.finish()
+        drawer.didDismiss()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started.map(\.allowsWelcome), [true])
+    }
+
+    /// #4672 PR 3: the item a friend's file opened on a first launch is remembered as the arrival item, once; an
+    /// item opened with no friend's file waiting, or a second friend's item, never replaces it.
+    func testOnlyTheFirstFriendItemOfAFirstLaunchIsRememberedAsTheArrivalItem() throws {
+        let defaults = try freshDefaults()
+        let drawer = try makeDrawer(defaults: defaults, log: FollowLog())
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        drawer.didDismiss()
+        drawer.friendItemOpened("friend-episode")
+        drawer.friendItemOpened("second-friend-item")
+        XCTAssertEqual(FirstLaunchArrival(defaults: defaults).itemId, "friend-episode")
+
+        // A friend's link that arrives while the first-run drawer still shows picks opens its item underneath it.
+        let underPicks = try freshDefaults()
+        let picking = try makeDrawer(defaults: underPicks, log: FollowLog())
+        picking.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        picking.friendFileArrived()
+        picking.friendItemOpened("pasted-link-episode")
+        XCTAssertEqual(FirstLaunchArrival(defaults: underPicks).itemId, "pasted-link-episode")
+
+        let returning = try freshDefaults()
+        let notFirstLaunch = try makeDrawer(defaults: returning, log: FollowLog())
+        notFirstLaunch.friendItemOpened("friend-episode")
+        XCTAssertNil(FirstLaunchArrival(defaults: returning).itemId, "no first-launch drawer was owed, so this is not an arrival")
+    }
+
+    /// #4834: the drawer comes back only once the failure sheet has fully left (its `onDismiss`), never on the close that
+    /// starts it: a sheet presented while the old one is still dismissing is dropped by SwiftUI. A Try Again that is
+    /// refused, and a banner after the sheet closed, are told the same way.
+    func testTheFailedLinkNoticeReachesTheDrawerOnlyAfterTheSheetHasLeft() throws {
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog())
+        let presenter = try XCTUnwrap(drawer.packetOpenFailures)
+        presenter.onCloseNotice = { [weak drawer] in drawer?.friendFileFailed(at: .library) }
+        drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        drawer.settleFirstRun(at: .library)
+        XCTAssertFalse(drawer.isPresented)
+
+        presenter.present(PacketOpenFailureSheetContent(row: .offline), retry: {}, endsOpen: true)
+        presenter.close()
+        XCTAssertFalse(drawer.isPresented, "the sheet is still leaving")
+
+        presenter.sheetDismissed()
+        XCTAssertTrue(drawer.isPresented, "the sheet is gone: the drawer comes back")
+    }
+
+    func testARefusedFileAfterTryAgainTellsTheDrawerOnceTheSheetHasLeft() throws {
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog())
+        let presenter = try XCTUnwrap(drawer.packetOpenFailures)
+        presenter.onCloseNotice = { [weak drawer] in drawer?.friendFileFailed(at: .library) }
+        drawer.noteLaunch(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        drawer.friendFileArrived()
+        drawer.settleFirstRun(at: .library)
+
+        presenter.present(PacketOpenFailureSheetContent(row: .offline), retry: {}, endsOpen: true)
+        presenter.tryAgain()
+        let since = presenter.openToken
+        presenter.present(PacketOpenFailureSheetContent(row: .expired), retry: nil)
+        presenter.close()
+        presenter.sheetDismissed()
+        XCTAssertFalse(drawer.isPresented, "the refused file's open has not ended yet")
+
+        presenter.openEnded(opened: false, since: since)
+        XCTAssertTrue(drawer.isPresented, "the open ended with nothing to show: the drawer comes back")
     }
 
     // MARK: The first-launch "Got a link from a friend?" card (#3782)
@@ -800,6 +896,239 @@ final class CatalogDrawerTests: XCTestCase {
         private var count = 0
         var value: Int { lock.withLock { count } }
         func add() { lock.withLock { count += 1 } }
+    }
+
+    // MARK: Packs (#4285, PRs 7–9)
+
+    /// A gate the test opens, so a follow or a snapshot read waits on the test's state, never on the clock.
+    @MainActor private final class Gate {
+        private var continuations: [CheckedContinuation<Void, Never>] = []
+        private(set) var isOpen = false
+        func wait() async {
+            if isOpen { return }
+            await withCheckedContinuation { continuations.append($0) }
+        }
+        func open() {
+            isOpen = true
+            continuations.forEach { $0.resume() }
+            continuations = []
+        }
+    }
+
+    private final class PackLog {
+        var hidden: [String] = []         // feed URLs hidden, in order
+        var shownAgain: [String] = []
+        var unfollowed: [String] = []
+        var quietFollows: [String] = []
+        var refreshes = 0
+        var snapshot = NotForMeSnapshot.empty
+    }
+
+    private func packActions(_ packLog: PackLog, log: FollowLog, snapshotGate: Gate? = nil) -> CatalogDrawerPackActions {
+        CatalogDrawerPackActions(
+            followQuietly: { feedURL in
+                packLog.quietFollows.append(feedURL)
+                log.feeds.append(feedURL)
+                let sourceId = "source-\(log.feeds.count)"
+                log.subscriptions.append(FeedSubscription(
+                    id: "subscription-\(log.feeds.count)",
+                    source: SourceIdentity(id: sourceId, kind: .podcastFeed, canonicalURL: feedURL, host: URL(string: feedURL)?.host ?? "")))
+                return sourceId
+            },
+            refreshAfterBatch: { packLog.refreshes += 1 },
+            notForMe: {
+                await snapshotGate?.wait()
+                return packLog.snapshot
+            },
+            currentNotForMe: { packLog.snapshot },
+            hiddenSources: { [] },
+            hide: { entry, _ in
+                packLog.hidden.append(entry.feedURL)
+                if let key = SourceCatalog.feedKey(entry.feedURL) { packLog.snapshot.hiddenFeedKeys.insert(key) }
+            },
+            showAgain: { feedURL in
+                packLog.shownAgain.append(feedURL)
+                if let key = SourceCatalog.feedKey(feedURL) { packLog.snapshot.hiddenFeedKeys.remove(key) }
+            },
+            unfollow: { feedURL, _ in
+                packLog.unfollowed.append(feedURL)
+                let key = SourceCatalog.feedKey(feedURL)
+                log.subscriptions.removeAll { SourceCatalog.feedKey($0.source.canonicalURL) == key }
+                return true
+            }
+        )
+    }
+
+    private func packDrawer(
+        log: FollowLog, packLog: PackLog, snapshotGate: Gate? = nil,
+        follow: (@MainActor (String) async throws -> String)? = nil,
+        startFirstListen: (@MainActor ([String], Bool) async -> Void)? = nil
+    ) throws -> CatalogDrawerModel {
+        let bundled = try XCTUnwrap(Bundle.main.url(forResource: "catalog", withExtension: "json"))
+        let cache = FileManager.default.temporaryDirectory.appending(path: "catalog-packs-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: cache) }
+        let store = SourceCatalogStore(bundledCatalogURL: bundled, cacheDirectory: cache) { _, _ in throw URLError(.notConnectedToInternet) }
+        let defaultFollow: @MainActor (String) async throws -> String = { feedURL in
+            if log.failing { throw URLError(.timedOut) }
+            log.feeds.append(feedURL)
+            let sourceId = "source-\(log.feeds.count)"
+            log.subscriptions.append(FeedSubscription(
+                id: "subscription-\(log.feeds.count)",
+                source: SourceIdentity(id: sourceId, kind: .podcastFeed, canonicalURL: feedURL, host: URL(string: feedURL)?.host ?? "")))
+            return sourceId
+        }
+        return CatalogDrawerModel(
+            store: store, defaults: try freshDefaults(),
+            subscriptions: { log.subscriptions },
+            follow: follow ?? defaultFollow,
+            startFirstListen: startFirstListen,
+            packs: packActions(packLog, log: log, snapshotGate: snapshotGate)
+        )
+    }
+
+    func testTheBundledCatalogOpensOnPacksAndAHiddenSourceNeverShowsEvenWhenTheSnapshotIsSlow() async throws {
+        let log = FollowLog(), packLog = PackLog(), gate = Gate()
+        let drawer = try packDrawer(log: log, packLog: packLog, snapshotGate: gate)
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        // Hide the first source of the first pack, as a slow store would report it.
+        let bundled = try JSONDecoder().decode(SourceCatalog.self, from: Data(contentsOf: try XCTUnwrap(Bundle.main.url(forResource: "catalog", withExtension: "json"))))
+        let firstPack = try XCTUnwrap(bundled.packs?.first)
+        let hiddenId = try XCTUnwrap(firstPack.entryIds.first)
+        packLog.snapshot = NotForMeSnapshot(hiddenEntryIds: [hiddenId])
+
+        let loading = Task { await drawer.load() }
+        await Task.yield()
+        XCTAssertNil(drawer.catalog, "nothing is published before the snapshot is read")
+        XCTAssertTrue(drawer.entries.isEmpty)
+        gate.open()
+        await loading.value
+
+        XCTAssertEqual(drawer.selectedChip, .packs, "the first opening starts on Packs, chosen when the catalog arrived")
+        XCTAssertTrue(drawer.showsPacksChip)
+        XCTAssertFalse(drawer.entries.contains { $0.id == hiddenId }, "hidden from Top")
+        for pack in drawer.visiblePacks {
+            XCTAssertFalse(drawer.visibleSources(of: pack).contains { $0.id == hiddenId }, "hidden from every pack")
+        }
+        XCTAssertEqual(drawer.hiddenCount, 0, "a hide by entry id alone has no feed key in this fake")
+        drawer.selectedSubject = "news"
+        XCTAssertEqual(drawer.selectedChip, .subject("news"))
+        drawer.present()
+        XCTAssertEqual(drawer.selectedChip, .packs, "every opening resets to Packs")
+
+        // A hide made elsewhere since (the Show screen) shows at the next opening, without a second load.
+        let other = try XCTUnwrap(drawer.entries.first)
+        packLog.snapshot.hiddenEntryIds.insert(other.id)
+        drawer.present()
+        XCTAssertFalse(drawer.entries.contains { $0.id == other.id }, "the snapshot is read again at each opening")
+    }
+
+    func testFollowingLoadingTheCatalogFirstStillReadsHidesBeforeAnythingDraws() async throws {
+        let log = FollowLog(), packLog = PackLog()
+        let drawer = try packDrawer(log: log, packLog: packLog)
+        let bundled = try JSONDecoder().decode(SourceCatalog.self, from: Data(contentsOf: try XCTUnwrap(Bundle.main.url(forResource: "catalog", withExtension: "json"))))
+        let hiddenId = try XCTUnwrap(bundled.entries(forSubject: nil).first?.id)
+        packLog.snapshot = NotForMeSnapshot(hiddenEntryIds: [hiddenId])
+        await drawer.loadSnapshot() // Following's tags, before the drawer ever opens
+        XCTAssertNotNil(drawer.catalog)
+        XCTAssertFalse(drawer.entries.contains { $0.id == hiddenId })
+    }
+
+    func testFollowAllFollowsThePackInOrderOnceAndASecondTapDoesNothing() async throws {
+        let log = FollowLog(), packLog = PackLog(), gate = Gate()
+        // The first follow waits on the gate, so the batch is still in flight at the second tap.
+        let drawer = try packDrawer(log: log, packLog: packLog, follow: { feedURL in
+            await gate.wait()
+            log.feeds.append(feedURL)
+            log.subscriptions.append(FeedSubscription(id: "sub-first", source: SourceIdentity(
+                id: "source-first", kind: .podcastFeed, canonicalURL: feedURL, host: URL(string: feedURL)?.host ?? "")))
+            return "source-first"
+        })
+        await drawer.load()
+        let pack = try XCTUnwrap(drawer.visiblePacks.first)
+        let order = drawer.visibleSources(of: pack)
+        XCTAssertEqual(drawer.buttonState(for: pack), .followAll(order.count))
+
+        drawer.followAll(pack)
+        XCTAssertEqual(drawer.buttonState(for: pack), .following)
+        drawer.followAll(pack)
+        try await waitFor { packLog.quietFollows.count == order.count - 1 }
+        gate.open()
+        try await waitFor { drawer.buttonState(for: pack) == .followedAll(order.count) }
+        try await waitFor { packLog.refreshes == 1 }
+
+        XCTAssertEqual(log.feeds.count, order.count, "one follow per source, however many taps")
+        XCTAssertEqual(Set(log.feeds), Set(order.map(\.feedURL)))
+        XCTAssertEqual(packLog.quietFollows, order.dropFirst().map(\.feedURL), "the rest follow quietly, in §2f order")
+        XCTAssertEqual(order.first?.contentKind, .podcast, "Done's first listen is a podcast")
+    }
+
+    func testDoneWaitsForTheFirstPickOnly() async throws {
+        let log = FollowLog(), packLog = PackLog(), never = Gate()
+        var started: [[String]] = []
+        var calls = 0
+        let drawer = try packDrawer(log: log, packLog: packLog, follow: { _ in
+            calls += 1
+            if calls == 1 { return "source-first" }
+            await never.wait() // a second pick that never lands
+            return "source-never"
+        }, startFirstListen: { ids, _ in started.append(ids) })
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        await drawer.load()
+        drawer.selectedSubject = nil
+        let picks = Array(drawer.entries.prefix(2))
+        drawer.toggleFollow(picks[0])
+        drawer.toggleFollow(picks[1])
+        drawer.finish()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started, [["source-first"]], "Done didn't wait for the second follow")
+        never.open()
+    }
+
+    func testWhenTheFirstPickFailsDonePlaysTheSecond() async throws {
+        let log = FollowLog(), packLog = PackLog()
+        var started: [[String]] = []
+        var calls = 0
+        let drawer = try packDrawer(log: log, packLog: packLog, follow: { _ in
+            calls += 1
+            if calls == 1 { throw URLError(.timedOut) }
+            return "source-second"
+        }, startFirstListen: { ids, _ in started.append(ids) })
+        drawer.presentIfFirstRun(libraryWasEmptyAtLaunch: true, followedSourceCount: 0)
+        await drawer.load()
+        drawer.selectedSubject = nil
+        let picks = Array(drawer.entries.prefix(2))
+        drawer.toggleFollow(picks[0])
+        drawer.toggleFollow(picks[1])
+        drawer.finish()
+        await drawer.playFirstListenIfRequested()
+        XCTAssertEqual(started, [["source-second"]])
+    }
+
+    func testPackRowNotForMeUnfollowsHidesAndReordersAndUndoRestoresBoth() async throws {
+        let log = FollowLog(), packLog = PackLog()
+        let drawer = try packDrawer(log: log, packLog: packLog)
+        await drawer.load()
+        let pack = try XCTUnwrap(drawer.visiblePacks.first)
+        let before = drawer.visibleSources(of: pack)
+        let target = try XCTUnwrap(before.first)
+        drawer.toggleFollow(target)
+        try await waitFor { drawer.state(for: target) == .followed }
+
+        drawer.notForMeFromPack(target)
+        try await waitFor { drawer.toast != nil }
+        XCTAssertEqual(packLog.unfollowed, [target.feedURL], "unfollowed first")
+        XCTAssertEqual(packLog.hidden, [target.feedURL], "then hidden")
+        XCTAssertEqual(drawer.toast?.message, "\(target.title) won't be suggested again.")
+        XCTAssertFalse(drawer.visibleSources(of: pack).contains { $0.id == target.id }, "the row leaves the pack")
+        XCTAssertEqual(drawer.hiddenCount, 1)
+        XCTAssertGreaterThan(drawer.visiblePacks.count, 1)
+        XCTAssertNotEqual(drawer.visiblePacks.first?.id, pack.id, "a pack with a hidden source moves below packs with none")
+
+        drawer.undoToast()
+        try await waitFor { drawer.state(for: target) == .followed }
+        XCTAssertEqual(packLog.shownAgain, [target.feedURL])
+        XCTAssertEqual(drawer.hiddenCount, 0)
+        XCTAssertEqual(drawer.visibleSources(of: pack).map(\.id), before.map(\.id), "back in its place")
     }
 }
 

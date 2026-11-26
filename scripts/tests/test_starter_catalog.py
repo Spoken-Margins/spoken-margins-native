@@ -141,7 +141,11 @@ class PublishedStarterListTests(unittest.TestCase):
         catalog = published()
         config = json.loads((B1 / "shows.json").read_text(encoding="utf-8"))
         names = {builder.https_form(s["feed"]) for s in config["shows"]}
-        self.assertEqual({e["feedURL"] for e in catalog["entries"]}, names - self.dropped())
+        # Pack shows (#4285) not in shows.json join the list only when a pack uses them.
+        pack_feeds = {builder.https_form(item["feed"]) for pack in json.loads((B1 / "packs.json").read_text())["packs"]
+                      for kind in builder.PACK_LISTS for item in pack[kind] if item.get("feed")}
+        used = {e["feedURL"] for e in catalog["entries"] if any(e["id"] in p["entryIds"] for p in catalog["packs"])}
+        self.assertEqual({e["feedURL"] for e in catalog["entries"]}, (names - self.dropped()) | (pack_feeds & used))
         provenance = {p["id"] for p in catalog["provenance"]}
         self.assertEqual(provenance, {"hand-picked-shows", "publisher-feeds"})
         for entry in catalog["entries"]:
@@ -238,6 +242,216 @@ class FeedReadingTests(unittest.TestCase):
         self.assertLessEqual(len(cut), 301)
         self.assertTrue(cut.endswith("word…"))
         self.assertEqual(builder.shorten("short", 300), "short")
+
+
+class PublishedPacksTests(unittest.TestCase):
+    """The eight persona packs (#4285, Design PR 5) as the first-run drawer gets them."""
+
+    def test_eight_packs_each_with_five_to_twelve_offered_sources(self):
+        catalog = published()
+        entries = {e["id"]: e for e in catalog["entries"]}
+        self.assertEqual(len(catalog["packs"]), 8)
+        self.assertEqual(len({p["id"] for p in catalog["packs"]}), 8)
+        for pack in catalog["packs"]:
+            with self.subTest(pack=pack["id"]):
+                self.assertTrue(5 <= len(pack["entryIds"]) <= 12)
+                self.assertLessEqual(len(pack["title"]), 40)
+                self.assertLessEqual(len(pack["summary"]), 90)
+                sources = [entries[i] for i in pack["entryIds"]]
+                self.assertFalse(any(s["explicit"] for s in sources))
+                kinds = [s["contentKind"] for s in sources]
+                self.assertEqual(kinds, sorted(kinds, key=lambda k: k != "podcast"), "podcasts come before newsletters")
+                self.assertIn("podcast", kinds)
+                for source in sources:
+                    self.assertGreaterEqual(len(source.get("recentPublishedAt", [])), 2, source["id"])
+
+    def test_pack_dates_are_utc_newest_first_and_never_after_the_build(self):
+        catalog = published()
+        for entry in catalog["entries"]:
+            dates = entry.get("recentPublishedAt")
+            if dates is None:
+                continue
+            with self.subTest(entry=entry["id"]):
+                self.assertLessEqual(len(dates), 20)
+                self.assertTrue(all(d.endswith("Z") for d in dates))
+                self.assertEqual(dates, sorted(dates, reverse=True))
+
+    def test_new_pack_newsletters_are_writers_and_podcasts_take_their_packs_subjects(self):
+        catalog = published()
+        config = json.loads((B1 / "shows.json").read_text(encoding="utf-8"))
+        listed = {builder.feed_key(s["feed"]) for s in config["shows"]}
+        packs = json.loads((B1 / "packs.json").read_text())["packs"]
+        for entry in catalog["entries"]:
+            if builder.feed_key(entry["feedURL"]) in listed:
+                continue
+            with self.subTest(entry=entry["id"]):
+                if entry["contentKind"] == "newsletter":
+                    self.assertEqual(entry["subjects"], ["writers"])
+                    self.assertEqual(entry["kind"], "article_feed")
+                else:
+                    expected = []
+                    for pack in packs:
+                        if any(entry["id"] in p["entryIds"] for p in catalog["packs"] if p["id"] == pack["id"]):
+                            expected += [s for s in pack["subjects"] if s not in expected]
+                    self.assertEqual(entry["subjects"], expected)
+
+
+class FeedDatesTests(unittest.TestCase):
+    """feed_dates reads up to 20 items for publish dates, since feed_head stops at the first one."""
+
+    def item(self, date_tag="pubDate", date="Mon, 16 Nov 2026 10:00:00 -0500", enclosure='type="audio/mpeg"'):
+        enclosure_tag = f'<enclosure url="https://example.org/a.bin" {enclosure}/>' if enclosure else ""
+        date_part = f"<{date_tag}>{date}</{date_tag}>" if date_tag else ""
+        return f"<item><title>T</title>{date_part}{enclosure_tag}</item>"
+
+    def test_dates_are_read_the_way_feeds_spell_them(self):
+        for tag, raw, expected in (
+            ("pubDate", "Mon, 16 Nov 2026 10:00:00 -0500", "2026-11-16T15:00:00Z"),
+            ("pubDate", "Mon, 16 Nov 2026 10:00:00 GMT", "2026-11-16T10:00:00Z"),
+            ("pubDate", "<![CDATA[Mon, 16 Nov 2026 10:00:00 +0000]]>", "2026-11-16T10:00:00Z"),
+            ("pubDate", "  Mon, 16 Nov 2026 10:00:00 +0000\n", "2026-11-16T10:00:00Z"),
+            ("published", "2026-11-16T10:00:00Z", "2026-11-16T10:00:00Z"),
+            ("published", "2026-11-16T10:00:00.250+01:00", "2026-11-16T09:00:00Z"),
+            ("updated", "2026-11-16T10:00:00-08:00", "2026-11-16T18:00:00Z"),
+            ("dc:date", "2026-11-16T10:00:00Z", "2026-11-16T10:00:00Z"),
+            ("published", "2026-11-16", "2026-11-16T00:00:00Z"),
+        ):
+            with self.subTest(tag=tag, raw=raw):
+                text = "<rss><channel>" + self.item(tag, raw) + "</channel></rss>"
+                self.assertEqual(builder.dates_from_feed(text)[0], [expected])
+
+    def test_an_unreadable_or_missing_date_is_dropped(self):
+        for tag, raw in (("pubDate", "sometime soon"), ("pubDate", ""), (None, None)):
+            with self.subTest(raw=raw):
+                text = "<rss>" + self.item(tag, raw) + self.item() + "</rss>"
+                self.assertEqual(builder.dates_from_feed(text)[0], ["2026-11-16T15:00:00Z"])
+
+    def test_only_the_first_twenty_items_count_and_dates_come_newest_first(self):
+        items = "".join(self.item(date=f"{day:02d} Nov 2026 10:00:00 +0000") for day in (3, 1, 2) + tuple(range(4, 30)))
+        dates, _ = builder.dates_from_feed("<rss>" + items + "</rss>")
+        self.assertEqual(len(dates), 20)
+        self.assertEqual(dates[0], "2026-11-20T10:00:00Z")
+        self.assertEqual(dates[-1], "2026-11-01T10:00:00Z")
+        self.assertEqual(dates, sorted(dates, reverse=True))
+
+    def test_audio_is_told_by_type_or_file_name(self):
+        for enclosure, expected in (('type="audio/mpeg"', True), ("type='AUDIO/x-m4a'", True),
+                                    ('type="video/mp4"', False), ('type="image/jpeg"', False), (None, False)):
+            with self.subTest(enclosure=enclosure):
+                self.assertEqual(builder.dates_from_feed("<rss>" + self.item(enclosure=enclosure) + "</rss>")[1], expected)
+        by_name = '<item><enclosure url="https://example.org/ep.mp3?x=1" length="1"/></item>'
+        self.assertTrue(builder.dates_from_feed("<rss>" + by_name + "</rss>")[1])
+
+    def test_an_atom_entry_with_both_dates_uses_published(self):
+        text = ("<feed><entry><updated>2026-11-20T00:00:00Z</updated><published>2026-11-01T00:00:00Z</published>"
+                "</entry></feed>")
+        self.assertEqual(builder.dates_from_feed(text)[0], ["2026-11-01T00:00:00Z"])
+
+
+class PackChoiceTests(unittest.TestCase):
+    """The replacement rule (#4285 PR 4) on a small recorded build: a failed candidate gives way to the next
+    usable alternate of the same kind only, and new pack shows take the union of their packs' subjects."""
+
+    BUILT = "2026-11-20T12:00:00Z"
+    FRESH = ["2026-11-19T10:00:00Z", "2026-11-12T10:00:00Z", "2026-11-05T10:00:00Z"]
+
+    def head(self, title, explicit="false", art=True):
+        image = f'<itunes:image href="https://example.org/{title}.jpg"/>' if art else ""
+        return (f'<?xml version="1.0"?><rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel>'
+                f"<title>{title}</title><itunes:author>{title} people</itunes:author>"
+                f"<itunes:explicit>{explicit}</itunes:explicit>{image}")
+
+    def build(self, feeds, packs, shows=()):
+        """feeds: {name: dict(head kwargs + dates/audio/status)}; returns (catalog, report)."""
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "rec" / "feeds").mkdir(parents=True)
+        log = {"feeds": {}, "artwork": {}, "dates": {}}
+        for name, spec in feeds.items():
+            url = f"https://example.org/{name}.rss"
+            (root / "rec" / "feeds" / f"{name}.xml").write_text(
+                self.head(name, spec.get("explicit", "false"), spec.get("art", True)))
+            log["feeds"][url] = {"url": url, "status": 200, "finalURL": url, "looksLikeFeed": True,
+                                 "fetchedAt": self.BUILT, "file": f"{name}.xml"}
+            log["artwork"][f"https://example.org/{name}.jpg"] = {"ok": True}
+            log["dates"][url] = {"url": url, "status": spec.get("status", 200), "dates": spec.get("dates", self.FRESH),
+                                 "audio": spec.get("audio", True)}
+        (root / "rec" / "fetch-log.json").write_text(json.dumps(log))
+        subjects = [{"id": s, "title": s} for s in ("science", "history", "health-fitness", "writers")]
+        (root / "shows.json").write_text(json.dumps({"subjects": subjects, "shows": [
+            {"name": n, "id": f"listed-{n}", "feed": f"https://example.org/{n}.rss", "subjects": ["science"]} for n in shows]}))
+        (root / "packs.json").write_text(json.dumps({"packs": packs}))
+        out = root / "out"
+        status = builder.main(["--replay", str(root / "rec"), "--content-version", "9", "--out", str(out),
+                               "--shows", str(root / "shows.json"), "--packs", str(root / "packs.json")])
+        self.assertEqual(status, 0)
+        return json.loads((out / "catalog.json").read_text()), json.loads((out / "build-report.json").read_text())
+
+    @staticmethod
+    def pack(pid, podcasts, alternates=(), newsletters=(), newsletter_alternates=(), subjects=("science",)):
+        item = lambda n: {"title": n.title(), "feed": f"https://example.org/{n}.rss"} if not n.startswith("nofeed") \
+            else {"title": n}
+        return {"id": pid, "title": pid.title(), "summary": "For testing.", "subjects": list(subjects),
+                "podcasts": [item(n) for n in podcasts], "podcastAlternates": [item(n) for n in alternates],
+                "newsletters": [item(n) for n in newsletters], "newsletterAlternates": [item(n) for n in newsletter_alternates]}
+
+    def ids(self, catalog, pid):
+        titles = {e["id"]: e["title"] for e in catalog["entries"]}
+        return [titles[i] for i in next(p for p in catalog["packs"] if p["id"] == pid)["entryIds"]]
+
+    def test_each_failure_is_replaced_in_place_by_the_next_usable_alternate(self):
+        feeds = {n: {} for n in ("p1", "p2", "p3", "p4", "p5", "a1", "a2", "a3", "n1", "na1")}
+        feeds["p2"] = {"explicit": "true"}
+        feeds["p3"] = {"dates": ["2026-08-01T00:00:00Z", "2026-07-01T00:00:00Z"]}     # nothing in the last 60 days
+        feeds["a1"] = {"audio": False}                                                  # not a podcast
+        feeds["p5"] = {"art": False}
+        catalog, report = self.build(feeds, [self.pack("one", ["p1", "p2", "p3", "nofeed", "p4", "p5"], ["a1", "a2", "a3"],
+                                                       ["n1"], ["na1"])])
+        self.assertEqual(self.ids(catalog, "one"), ["p1", "a2", "a3", "p4", "n1"])
+        whys = [(r["replaced"], r["why"], r["by"]) for r in report["packReplacements"]]
+        self.assertEqual(whys, [("P2", "explicit", "A2"), ("P3", "no item in the 60 days before the build", "A3"),
+                                ("nofeed", "no publisher feed found", None), ("P5", "no usable artwork", None)])
+
+    def test_a_podcast_is_never_replaced_by_a_newsletter_or_the_other_way(self):
+        feeds = {n: {} for n in ("p1", "p2", "p3", "p4", "n1", "n2", "na1")}
+        feeds["p4"] = {"status": 404}
+        feeds["n2"] = {"dates": []}
+        catalog, report = self.build(feeds, [self.pack("one", ["p1", "p2", "p3", "p4"], [], ["n1", "n2"], ["na1"])])
+        # p4 has no podcast alternate, so the spare newsletter alternate only fills n2's place.
+        self.assertEqual(self.ids(catalog, "one"), ["p1", "p2", "p3", "n1", "na1"])
+        kinds = {e["title"]: e["contentKind"] for e in catalog["entries"]}
+        self.assertEqual(kinds["na1"], "newsletter")
+        self.assertIn(("P4", None), [(r["replaced"], r["by"]) for r in report["packReplacements"]])
+
+    def test_a_pack_left_with_fewer_than_five_sources_does_not_ship(self):
+        feeds = {n: {} for n in ("p1", "p2", "p3", "n1")}
+        catalog, report = self.build(feeds, [self.pack("small", ["p1", "p2", "p3", "nofeed"], [], ["n1"])])
+        self.assertNotIn("packs", catalog)
+        self.assertEqual(report["packs"], {})
+        self.assertEqual(report["packReplacements"][-1]["replaced"], "the whole pack")
+        self.assertEqual(len(catalog["entries"]), 0, "no pack, so its shows don't join the list")
+
+    def test_new_shows_take_the_union_of_their_packs_subjects_and_listed_shows_keep_theirs(self):
+        feeds = {n: {} for n in ("p1", "p2", "p3", "p4", "shared", "listed", "n1", "spare")}
+        packs = [self.pack("one", ["p1", "p2", "shared", "listed"], ["spare"], ["n1"], subjects=("science",)),
+                 self.pack("two", ["p3", "p4", "shared", "listed"], [], ["n1"], subjects=("history", "science"))]
+        catalog, _ = self.build(feeds, packs, shows=["listed"])
+        entries = {e["title"]: e for e in catalog["entries"]}
+        self.assertEqual(entries["shared"]["subjects"], ["science", "history"])
+        self.assertEqual(entries["p3"]["subjects"], ["history", "science"])
+        self.assertEqual(entries["listed"]["subjects"], ["science"])
+        self.assertEqual(entries["listed"]["id"], "listed-listed", "a listed show keeps its entry; the pack names its id")
+        self.assertEqual(entries["n1"]["subjects"], ["writers"])
+        self.assertNotIn("spare", entries, "an unused alternate never joins the list")
+        self.assertEqual(entries["shared"]["recentPublishedAt"], self.FRESH)
+        self.assertNotIn("recentPublishedAt", {k for e in catalog["entries"] if e["title"] == "spare" for k in e})
+
+    def test_replay_rebuilds_the_same_bytes(self):
+        feeds = {n: {} for n in ("p1", "p2", "p3", "p4", "n1")}
+        first, _ = self.build(feeds, [self.pack("one", ["p1", "p2", "p3", "p4"], [], ["n1"])])
+        second, _ = self.build(feeds, [self.pack("one", ["p1", "p2", "p3", "p4"], [], ["n1"])])
+        self.assertEqual(first, second)
 
 
 if __name__ == "__main__":

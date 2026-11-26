@@ -218,7 +218,7 @@ final class Build23SharingSeamsTests: XCTestCase {
     }
 
     /// #3839 second audit: the same landing after the system share sheet closed (stage back on review, packet kept) or
-    /// after "Back to selection" must not show "Your selection changed" or move the sender. The old packet is dropped
+    /// after "Back to your Margins" (#4647) must not show "Your selection changed" or move the sender. The old packet is dropped
     /// quietly, so the next Share builds one that carries the evidence.
     func testEvidenceLandingAfterSharingOrGoingBackIsNotAChangedSelection() async throws {
         for returning in [Build23SenderAction.returnFromSystemShare, .returnToSelect] {
@@ -303,7 +303,7 @@ final class Build23SharingSeamsTests: XCTestCase {
     func testWordsArriveWhateverElseTheSenderChangedAndTypedWordsStay() async throws {
         let (coordinator, model, root) = try await coordinatorWithPendingWords()
         defer { try? FileManager.default.removeItem(at: root) }
-        coordinator.send(.setRepresentation(id: "margin-words-wait", choice: .textOnly))
+        coordinator.send(.setRepresentation(id: "session-test::margin-words-wait", choice: .textOnly))
         wordsArrive(in: model)
         try await pollUntil { coordinator.snapshot.margins.first?.reviewedText == "Keep going." }
         XCTAssertEqual(coordinator.snapshot.margins.first?.representation, .textOnly, "their choice stays")
@@ -311,7 +311,7 @@ final class Build23SharingSeamsTests: XCTestCase {
 
         let (typed, typedModel, typedRoot) = try await coordinatorWithPendingWords()
         defer { try? FileManager.default.removeItem(at: typedRoot) }
-        typed.send(.setReviewedWords(id: "margin-words-wait", text: "My own words"))
+        typed.send(.setReviewedWords(id: "session-test::margin-words-wait", text: "My own words"))
         wordsArrive(in: typedModel)
         try await pollUntil { typed.snapshot.margins.first?.waitingBadge == nil }
         try await waitUntilQuiet(typed)
@@ -325,7 +325,7 @@ final class Build23SharingSeamsTests: XCTestCase {
     func testRebuildKeepsALeftOutMarginOutAndAFailedTranscriptionShowsNoStep() async throws {
         let (coordinator, model, root) = try await coordinatorWithPendingWords()
         defer { try? FileManager.default.removeItem(at: root) }
-        coordinator.send(.setIncluded(id: "margin-words-wait", included: false))
+        coordinator.send(.setIncluded(id: "session-test::margin-words-wait", included: false))
         XCTAssertNil(coordinator.snapshot.pinnedStep, "a Margin that isn't going doesn't hold the bar")
         wordsArrive(in: model)
         try await pollUntil { coordinator.snapshot.margins.first?.reviewedText == "Keep going." }
@@ -378,8 +378,8 @@ final class Build23SharingSeamsTests: XCTestCase {
         let coordinator = Build23SharingCoordinator(model: model)
 
         coordinator.send(.begin)
-        XCTAssertEqual(coordinator.snapshot.stage, .select)
-        XCTAssertEqual(coordinator.snapshot.margins.map(\.id), ["margin-build-23-seam"])
+        XCTAssertEqual(coordinator.snapshot.stage, .review, "a sheet that isn't a reply opens the list (#4647)")
+        XCTAssertEqual(coordinator.snapshot.margins.map(\.id), ["session-build-23-seam::margin-build-23-seam"])
         coordinator.send(.advanceToReview)
         XCTAssertEqual(coordinator.snapshot.stage, .review)
         coordinator.send(.buildRecipientPreview)
@@ -444,8 +444,8 @@ final class Build23SharingSeamsTests: XCTestCase {
         let coordinator = Build23SharingCoordinator(model: model)
 
         coordinator.send(.begin)
-        XCTAssertEqual(coordinator.snapshot.stage, .select)
-        XCTAssertEqual(coordinator.snapshot.margins.map(\.id), ["margin-build-23-seam"])
+        XCTAssertEqual(coordinator.snapshot.stage, .review, "a sheet that isn't a reply opens the list (#4647)")
+        XCTAssertEqual(coordinator.snapshot.margins.map(\.id), ["session-build-23-seam::margin-build-23-seam"])
         coordinator.send(.advanceToReview)
         XCTAssertEqual(coordinator.snapshot.stage, .review)
         coordinator.send(.setIncludesAcousticEvidence(false))

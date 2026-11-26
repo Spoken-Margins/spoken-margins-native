@@ -50,7 +50,8 @@ extension Gate1AppModel {
         sourceLinkGate.begin()
         sourceLinkSafariOffer = nil
         sourceLinkImportState = "resolving"
-        sourceLinkImportMessage = "Resolving source link…"
+        // The listener's words while it resolves; `SourceLinkImportStatusView` moves to the long-wait line (#5049).
+        sourceLinkImportMessage = SourceLinkProgressMessage.looking
         statusMessage = "Resolving source link..."
         lastError = nil
         diagnostics["lastSourceLinkButtonTap"] = "registered"

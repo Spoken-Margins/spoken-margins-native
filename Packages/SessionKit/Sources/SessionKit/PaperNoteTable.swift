@@ -125,7 +125,7 @@ public struct PaperNoteTable: Equatable, Sendable {
             let text = (margin.displayText ?? margin.cleanedTranscript ?? margin.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
             byRole[role, default: []].append(Answer(
-                text: text, page: paper.document?.pageNumber(atCharacter: margin.anchor.startChar),
+                text: text, page: PaperNoteOrder.page(of: margin, in: paper.document),
                 startChar: margin.anchor.startChar, createdAt: margin.createdAt, id: margin.id
             ))
             newest = max(newest ?? margin.createdAt, margin.createdAt)

@@ -260,6 +260,22 @@ test('the name typed in Share goes on the file, is kept for next time, and a bla
   await context.close();
 });
 
+test('a reply saved from a link whose show the friend does not follow names the sender’s show, not "Shared by" (#4689)', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  const page = await friendPage(context);
+  await page.goto(LINK);
+  const playing = await startFromBeginning(page).then(() => page.getByRole('dialog', { name: EPISODE }));
+  await playing.getByRole('button', { name: 'Write a Margin' }).click();
+  await playing.getByLabel(/Your Margin at/).fill('My answer.');
+  await playing.getByRole('button', { name: 'Save Margin' }).click();
+  const downloading = page.waitForEvent('download');
+  await playing.getByRole('button', { name: 'Save as a file' }).click();
+  const saved = await readPacket(new Uint8Array(readFileSync((await (await downloading).path()) as string)));
+  // The friend's page files the episode under "Shared by …"; the iPhone took that for another show beside the same guid.
+  expect(saved.episode.showTitle).toBe('Example Show');
+  await context.close();
+});
+
 /** The file Save as a file just wrote, read back: the Margins it carries and whether it has the reply artifact. */
 async function savedPacket(page: Page, playing: Page | ReturnType<Page['getByRole']>) {
   const downloading = page.waitForEvent('download');
@@ -612,6 +628,7 @@ test('a link that can’t open says what happened and one thing to do, in the sa
     ['a link with no key', `${STUB}/l/vectorvoice01`, 'This link is cut off.'],
     ['a link with the wrong key', `${STUB}/l/vectorvoice01#${wrongKey}`, 'This link is cut off.'],
     ['a file that opens under the key but is not a packet', `${STUB}/l/AbCdEf123456#${KEY}`, 'This file couldn’t be opened.'],
+    ['a packet from a newer Spoken Margins', `${STUB}/l/vectornewer01#${KEY}`, 'These Margins were made by a newer Spoken Margins than this page can read.'],
   ];
   for (const [name, address, headline] of cases) {
     await page.goto(address);
@@ -620,6 +637,12 @@ test('a link that can’t open says what happened and one thing to do, in the sa
     await expect(page.getByText(/not_found|disabled|\{"error"/), name).toHaveCount(0);
     await expect(failed.getByRole('button'), name).toHaveCount(0);
   }
+  // A newer packet is a version gap: sending it again gives the same result, so the page never says so (#5266).
+  await page.goto(`${STUB}/l/vectornewer01#${KEY}`);
+  await expect(failed).toContainText('Open your friend’s link again, so this page loads its newest version.');
+  await expect(failed).toContainText('open the link in the Spoken Margins app on iPhone');
+  await expect(failed).not.toContainText(/damaged|send it again|Update the app/i);
+  await shot(page, info, 'link-newer-app');
   await page.goto(`${STUB}/l/switchedoff1#${KEY}`);
   await expect(failed).toContainText('Ask your friend to send the Margins as a file.');
   await expect(failed).not.toContainText('Try again');

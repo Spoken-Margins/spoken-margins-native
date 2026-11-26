@@ -21,6 +21,11 @@ export interface Show {
   followedAt: string;
   /** When the feed was last read successfully by a refresh (#2977). Unset until the first refresh after following. */
   refreshedAt?: string;
+  /**
+   * When the listener unfollowed the show, as an ISO date (#4426). The record and its episodes stay stored; the show
+   * leaves Following and refresh stops reading it. Absent (never `undefined`) on a followed show.
+   */
+  unfollowedAt?: string;
 }
 
 /** Where an episode's audio comes from. Substack posts play the publisher's or Substack's own voice. */
@@ -40,6 +45,11 @@ export interface Episode {
   audioOrigin?: AudioOrigin;
   durationSeconds?: number;
   publishedAt?: string;
+  /**
+   * The show's own title as a friend's packet named it, kept only on an episode filed under a "Shared by …" holder (#4689).
+   * The holder's title is the web's, not the show's, so a reply packet carries this one instead.
+   */
+  showTitle?: string;
 }
 
 /** A Margin, anchored by time in its episode's audio. */

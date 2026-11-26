@@ -255,7 +255,8 @@ extension SQLiteSessionStore {
                 sourceURL: item.sourceURL, createdAt: item.createdAt, publishedAt: item.publishedAt,
                 sourceCompletedAt: item.sourceCompletedAt, hasListenableText: slice.hasListenableText,
                 textCharacterCount: slice.textCharacterCount, transcriptId: item.transcriptId,
-                addedAgainAt: item.addedAgainAt)
+                addedAgainAt: item.addedAgainAt, publisherBlocked: item.publisherBlocked,
+                fromPrivateFeed: item.fromPrivateFeed)
         }
     }
 

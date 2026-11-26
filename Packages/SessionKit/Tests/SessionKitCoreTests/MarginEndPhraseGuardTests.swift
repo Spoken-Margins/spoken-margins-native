@@ -78,7 +78,7 @@ final class MarginEndPhraseGuardTests: XCTestCase {
                        "one entry point marks a Margin as ended by the phrase")
         XCTAssertEqual(capture.components(separatedBy: "requestFinish(endedByPhrase: false)").count - 1, 1,
                        "a tap, the Lock Screen and a headset press never mark one")
-        XCTAssertTrue(capture.contains("transcribeAndRecordSavedSpokenMargin(endedByPhrase: endedByPhrase)"),
+        XCTAssertTrue(capture.contains("transcribeAndRecordSavedSpokenMargin(endedByPhrase: endedByPhrase, hearItLandWillRun: willPlayBack)"),
                       "the save passes the phrase's flag on to the transcription it schedules")
 
         let signals = try appSource("Gate1AppModel+ListeningSignals.swift")

@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitPersistence
 
 #if canImport(WatchConnectivity)
 @preconcurrency import WatchConnectivity
@@ -28,7 +29,7 @@ final class WatchMarginReceiver: NSObject {
 
     let files: LiveSessionFileWorker
     /// The on-device transcription, replaceable in tests (which must not ask for speech recognition).
-    var transcribe: @Sendable (String) async -> String? = { await LiveSessionSpokenMargins.transcribe(audioPath: $0) }
+    var transcribe: @Sendable (String) async -> String? = { await LiveSessionSpokenMargins.transcribe(audioPath: $0, for: .watchMargin) }
     /// Waiting Lock Screen Marks, removed as they are read.
     var drainMarks: () -> [Date] = { LiveSessionMarkQueue.drain() }
     /// Waiting Resumes tapped on the Lock Screen card (#2883), removed as they are read.
@@ -47,6 +48,10 @@ final class WatchMarginReceiver: NSObject {
     private(set) var sentAnswers: [WatchMarginAnswer] = []
     /// Passes run one after another, so each Margin is filed once.
     private var lastPass: Task<Void, Never>?
+    /// The Library's store, for finishing a move of live Margins cut short (#4233); nil until the model has one.
+    var movedMarginStore: () -> SQLiteSessionStore? = { PlayerRunController.store }
+    /// True once this launch has finished any such move, which it does before its first filing pass with a store.
+    private var reconciledMovedMargins = false
     private var resumeObserver: NSObjectProtocol?
     /// Called on the main actor whenever the Watch's pairing state changes: the session finished activating, or a
     /// Watch was paired, unpaired or got the app (#4563). Activation starts in `didFinishLaunching`
@@ -144,7 +149,7 @@ final class WatchMarginReceiver: NSObject {
             await previous?.value
             // A Resume tapped before a Mark opens the session the Mark belongs in.
             let resumed = await self?.apply(resumes) ?? false
-            let result = await files.fileMarks(marks, playerRuns: PlayerRunController.runs())
+            let result = await files.fileMarks(marks, playerRuns: PlayerRunController.runs(), filesAttached: PlayerRunController.filesAttached())
             let placed = await self?.placeOnPlayerItems(result.placements)
             if result.changed || resumed || placed?.changed == true { self?.announceChange() }
         }
@@ -167,14 +172,18 @@ final class WatchMarginReceiver: NSObject {
 
     /// Files what is waiting and answers the Watch, without transcribing.
     private func fileWaiting() async -> [LiveSessionFileWorker.FiledMargin] {
+        if !reconciledMovedMargins, let store = movedMarginStore() {
+            // Before the inbox is filed, so the Library row, the Watch and the screen never see a moved Margin twice.
+            reconciledMovedMargins = await LiveMarginMoving.reconcileAtLaunch(store: store, files: files)
+        }
         var changed = await apply(drainResumes())
         let marks = drainMarks()
         if !marks.isEmpty {
-            let result = await files.fileMarks(marks, playerRuns: PlayerRunController.runs())
+            let result = await files.fileMarks(marks, playerRuns: PlayerRunController.runs(), filesAttached: PlayerRunController.filesAttached())
             changed = result.changed || changed
             changed = await placeOnPlayerItems(result.placements).changed || changed
         }
-        let pass = await files.fileWatchInbox(playerRuns: PlayerRunController.runs())
+        let pass = await files.fileWatchInbox(playerRuns: PlayerRunController.runs(), filesAttached: PlayerRunController.filesAttached())
         changed = pass.changed || changed
         let placed = await placeOnPlayerItems(pass.placements)
         changed = placed.changed || changed

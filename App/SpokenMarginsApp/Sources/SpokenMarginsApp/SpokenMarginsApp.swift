@@ -89,6 +89,9 @@ struct SpokenMarginsApp: App {
         if !runningTests {
             LaunchRecorder.shared = LaunchRecorder()
         }
+        // iOS's Speech Recognition prompt waits for the listener's Yes (#5016). Unit tests and scripted journeys have no card
+        // (it is hidden under the first-run suppression) and no way to say Yes, so they keep the gate open as before.
+        if !runningTests, !UITestingHooks.suppressesFirstRun { SpeechAskController.installGate() }
         let model = Gate1AppModel.makeApplicationModel()
         // Memory use and memory kills, in Diagnostics (#122). Unit tests keep nothing on disk.
         let pinnedDiagnostics = PinnedDiagnostics(diagnostics: model.runtimeDiagnostics)
@@ -164,6 +167,9 @@ struct SpokenMarginsApp: App {
                 )
                 // A show followed from any list leaves the AI's suggestions (#4683).
                 importer.onFollowed = { model?.aiFollowSuggestionsModel.remove(urls: $0) }
+                // A file's lists, includes and rules (#4046 PR 5, 8, 13).
+                importer.existingLists = { FollowListsState.shared.lists }
+                importer.saveExtras = { extras in await model?.saveOPMLImportExtras(extras) }
                 return importer
             },
             searcher: CatalogDrawerModel.makeSearcher(),
@@ -172,14 +178,41 @@ struct SpokenMarginsApp: App {
             },
             libraryHoldsFriendPacket: { [weak model] in await model?.libraryHoldsFriendPacket() ?? true },
             openFriendLink: { [weak model] url in model?.openShareLink(url) },
-            packetOpenFailures: model.packetOpenFailures
+            packetOpenFailures: model.packetOpenFailures,
+            packs: CatalogDrawerPackActions(
+                // Follow all (#4285): the first source fetches its episodes at once, the rest wait for one refresh.
+                followQuietly: { [weak model] feedURL in
+                    guard let model else { throw CancellationError() }
+                    return try await model.followCatalogFeed(feedURL, refreshAfter: false)
+                },
+                refreshAfterBatch: { [weak model] in
+                    _ = await model?.performFollowedSourceRefresh(force: false, trigger: .afterFollow)
+                },
+                notForMe: { [weak model] in
+                    await model?.loadNotForMe()
+                    return model?.notForMeSnapshot ?? .empty
+                },
+                currentNotForMe: { [weak model] in model?.notForMeSnapshot ?? .empty },
+                hiddenSources: { [weak model] in await model?.notForMeHiddenSources() ?? [] },
+                hide: { [weak model] entry, sourceId in
+                    await model?.hideNotForMeSource(feedURL: entry.feedURL, title: entry.title, artworkURL: entry.artworkURL, sourceId: sourceId)
+                },
+                showAgain: { [weak model] feedURL in await model?.showNotForMeSourceAgain(feedURL: feedURL) },
+                unfollow: { [weak model] feedURL, sourceId in await model?.unfollowCatalogFeed(feedURL, sourceId: sourceId) ?? false }
+            )
         )
+        model.notForMe.catalog = { [weak drawer] in drawer?.catalog }
         // A closed "Suggested by your AI" preview drops what it settled: what it followed, and what it couldn't offer.
         drawer.importClosed = { [weak model] importer in
             guard importer.origin == .assistant else { return }
             model?.aiFollowSuggestionsModel.remove(urls: importer.settledFeedLinks())
         }
         _catalogDrawer = StateObject(wrappedValue: drawer)
+        // Where the presenter is wired to the drawer, before any failure can exist (#4834): the one place the drawer is told.
+        model.packetOpenFailures.onCloseNotice = { [weak model, weak drawer] in
+            guard let model, let drawer else { return }
+            drawer.friendFileFailed(at: drawer.isPresented ? .elsewhere : FirstLaunchWelcomeOrder.Place(model))
+        }
         #if !SPOKEN_MARGINS_LEGACY
         FollowPodcastsShortcutBridge.catalogDrawer = drawer
         FollowPodcastsShortcutBridge.prepare = { [weak model] in
@@ -201,6 +234,8 @@ struct SpokenMarginsApp: App {
             for: url, appScheme: Gate2CompactCommandURL.scheme, compactHost: Gate2CompactCommandURL.host))
         let url = UITestingHooks.handedOffShareLink(url) ?? url
         if LiveSessionLinkRouter.shared.handle(url) { return }
+        // A list of shows opened from Files or Mail (#4046 PR 5): its import preview, never the Library.
+        if OPMLOpenRouter.opens(url), catalogDrawer.openFileImport(url) { return }
         // A friend's file comes before the first-run drawer (#3291).
         if ShareLinkURL.isOnShareHost(url)
             || (url.isFileURL && url.pathExtension.lowercased() == SpokenMarginsPackageArchive.fileExtension) {
@@ -227,6 +262,8 @@ struct SpokenMarginsApp: App {
                 .onCompatibleChange(of: scenePhase) { phase in
                     if phase == .active {
                         MainThreadOperationLabels.shared.scoped("scene.active") { model.handleAppBecameActive() }
+                        // A decision made in iOS Settings, or Margins that waited through a relaunch, are settled wherever the listener is (#4715).
+                        SpeechAskController.shared.reconcile(model: model)
                     } else if phase == .inactive || phase == .background {
                         MainThreadOperationLabels.shared.scoped("scene.inactiveOrBackground") { model.handleAppBecameInactiveOrBackground(entersBackground: phase == .background) }
                         #if canImport(BackgroundTasks) && canImport(UIKit)
@@ -247,6 +284,7 @@ struct SpokenMarginsApp: App {
                 #endif
                 .task {
                     MainThreadOperationLabels.shared.scoped("launch.sourceLinkHandoffs") { model.importPendingSourceLinkHandoffs() }
+                    SpeechAskController.shared.reconcile(model: model)
                     #if DEBUG
                     // The screen tour's packets (#3237) open the way a listener's tap does.
                     if let packet = UITestingHooks.packetToOpen() { open(packet) }

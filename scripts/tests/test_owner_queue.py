@@ -164,17 +164,26 @@ class TapList(unittest.TestCase):
 
 
 class FakeApi:
-    def __init__(self):
-        self.writes = []
+    def __init__(self, label_on=True):
+        self.writes, self.label_on = [], label_on
 
     def post(self, path, body):
         self.writes.append((path, body))
 
+    def delete(self, path):
+        self.writes.append(('DELETE', path))
+        if not self.label_on:
+            raise guard.sm_status.GitHubError(f'DELETE {path}: HTTP 404 Label does not exist')
+
+
+TAP = ('**Step for Cole**\nWhat this is: a workflow change.\nStep: tap Merge on PR #5212, '
+       'https://github.com/Spoken-Margins/spoken-margins-native/pull/5212\nBlocks: the nightly run.')
+
 
 class Guard(unittest.TestCase):
-    def run_guard(self, issues, apply=True):
+    def run_guard(self, issues, apply=True, merged=None):
         api = FakeApi()
-        return guard.reconcile(api, issues, apply), api.writes
+        return guard.reconcile(api, issues, apply, merged), api.writes
 
     def test_label_without_card_is_flagged_and_told_once(self):
         report, writes = self.run_guard([issue(1, ['needs-owner'])])
@@ -197,7 +206,25 @@ class Guard(unittest.TestCase):
     def test_card_without_label_gets_the_label(self):
         report, writes = self.run_guard([issue(2, [], [comment(CARD)])])
         self.assertEqual(report['labelled'], [2])
+        self.assertEqual(writes[1], ('issues/2/labels', {'labels': ['needs-owner']}))
+        self.assertEqual(len(writes), 2)
+
+    def test_the_label_comes_back_with_one_comment_per_card_saying_why(self):
+        # #5269: the label came back on six issues within the hour with no word why.
+        _, writes = self.run_guard([issue(2, [], [comment(CARD)])])
+        path, body = writes[0]
+        self.assertEqual(path, 'issues/2/comments')
+        self.assertIn('2026-11-08', body['body'])
+        self.assertIn('--answered 2', body['body'])
+        told = comment(body['body'], '2026-11-08T11:00:00Z')
+        _, writes = self.run_guard([issue(2, [], [comment(CARD), told])])
         self.assertEqual(writes, [('issues/2/labels', {'labels': ['needs-owner']})])
+        # The reason comment must not itself end the card it explains.
+        self.assertEqual(numbers(oq.build_queue([issue(2, [], [comment(CARD), told])], [], NOW)['decisions']), [2])
+        # A newer card is a new ask and gets its own comment.
+        newer = comment(CARD, '2026-11-08T12:00:00Z')
+        _, writes = self.run_guard([issue(2, [], [comment(CARD), told, newer])])
+        self.assertEqual(len(writes), 2)
 
     def test_a_strangers_card_gets_no_label(self):
         report, writes = self.run_guard([issue(3, [], [comment(CARD, association='NONE', login='mallory')])])
@@ -228,6 +255,106 @@ class Guard(unittest.TestCase):
         self.assertEqual(report['answered_label_on'], [7])
         self.assertEqual(report['labelled'], [])
         self.assertEqual(writes, [])
+
+
+
+class Answered(unittest.TestCase):
+    """The one way to clear needs-owner (#5269): the marker first, then the label, so the guard never re-adds it."""
+
+    def test_marker_is_posted_before_the_label_comes_off(self):
+        api = FakeApi()
+        result = guard.answer(api, 4134, 'option B, docs/decisions.md 2026-11-21')
+        self.assertEqual([w[0] for w in api.writes], ['issues/4134/comments', 'DELETE'])
+        self.assertEqual(api.writes[1][1], 'issues/4134/labels/needs-owner')
+        self.assertIn(oq.ANSWERED, api.writes[0][1]['body'])
+        self.assertIn('option B', api.writes[0][1]['body'])
+        self.assertEqual(result, {'issue': 4134, 'marker_posted': True, 'label_removed': True})
+
+    def test_a_label_already_off_is_fine_and_an_empty_note_is_refused(self):
+        api = FakeApi(label_on=False)
+        self.assertFalse(guard.answer(api, 1, 'chat, 2026-11-23')['label_removed'])
+        with self.assertRaises(ValueError):
+            guard.answer(FakeApi(), 1, '  ')
+
+    def test_after_the_command_the_guard_leaves_the_issue_alone(self):
+        api = FakeApi()
+        guard.answer(api, 9, 'chat, 2026-11-23')
+        marker = comment(api.writes[0][1]['body'], '2026-11-09T10:00:00Z')
+        report, writes = Guard.run_guard(Guard(), [issue(9, [], [comment(CARD), marker])])
+        self.assertEqual((report['labelled'], writes), ([], []))
+        self.assertEqual(oq.count(oq.build_queue([issue(9, [], [comment(CARD), marker])], [], NOW)), 0)
+
+
+class TapStep(unittest.TestCase):
+    """A Step for Cole whose whole ask was one PR tap ends when that PR merges (#5269)."""
+
+    def test_which_cards_are_tap_steps(self):
+        def card(text, kind='step'):
+            return {'kind': kind, 'text': text}
+        rows = [
+            (TAP, 5212),                                                        # PR #N and its link: one PR
+            ('**Step for Cole**\nTap Merge on PR 77.', 77),
+            ('**Step for Cole**\nApprove https://github.com/o/r/pull/88 please.', 88),
+            ('**Step for Cole**\nmerge pr#9, please', 9),
+            ('**Step for Cole**\nTap merge on PR #1 and PR #2.', None),        # two PRs: more than a tap
+            ('**Step for Cole**\nRenew the token; see #5212.', None),          # a bare #N may be an issue
+            ('**Step for Cole**\nAdd the secret named in PR #5212.', None),    # no tap word
+            ('**Step for Cole**\nRemerge nothing; PR #5 is context.', None),   # "Remerge" is not the word
+            ('**Step for Cole**\nRotate the token.\nPR #5212 can merge afterwards.', None),  # the PR waits on him
+            ('**Step for Cole**\nApprove the upload run.\nIt ships the bump in PR #5212.', None),  # not one line
+        ]
+        for text, want in rows:
+            with self.subTest(text=text):
+                self.assertEqual(oq.tap_pr(card(text)), want)
+        self.assertIsNone(oq.tap_pr(card(TAP, kind='decision')))
+        self.assertIsNone(oq.tap_pr(None))
+
+    def test_merged_tap_with_label_on_is_ended_and_cleared(self):
+        report, writes = Guard.run_guard(Guard(), [issue(10, ['needs-owner'], [comment(TAP)])],
+                                         merged=lambda n: n == 5212)
+        self.assertEqual(report['ended_by_merge'], [10])
+        self.assertEqual([w[0] for w in writes], ['issues/10/comments', 'DELETE'])
+        self.assertIn('PR #5212 merged', writes[0][1]['body'])
+
+    def test_unmerged_tap_stays_live_and_merged_tap_without_label_is_not_relabelled(self):
+        report, writes = Guard.run_guard(Guard(), [issue(11, [], [comment(TAP)])], merged=lambda n: False)
+        self.assertEqual(report['labelled'], [11])
+        report, writes = Guard.run_guard(Guard(), [issue(12, [], [comment(TAP)])], merged=lambda n: True)
+        self.assertEqual((report['labelled'], report['ended_by_merge'], writes), ([], [], []))
+
+    def test_the_queue_does_not_list_a_merged_tap_as_waiting(self):
+        issues = [issue(13, ['needs-owner'], [comment(TAP)])]
+        self.assertEqual(numbers(oq.build_queue(issues, [], NOW, merged=lambda n: False)['steps']), [13])
+        q = oq.build_queue(issues, [], NOW, merged=lambda n: True)
+        self.assertEqual((q['steps'], numbers(q['answered_label_on'])), ([], [13]))
+        self.assertEqual(numbers(oq.build_queue(issues, [], NOW)['steps']), [13])   # no reader: unchanged
+
+    def test_an_unreadable_pr_leaves_the_issue_alone(self):
+        report, writes = Guard.run_guard(Guard(), [issue(14, [], [comment(TAP)])], merged=lambda n: None)
+        self.assertEqual((report['labelled'], writes), ([], []))
+        self.assertEqual(report['unknown'][0]['issue'], 14)
+        self.assertEqual(numbers(oq.build_queue([issue(14, [], [comment(TAP)])], [], NOW, lambda n: None)['steps']),
+                         [14])
+
+    def test_a_multiline_note_cannot_start_a_card(self):
+        body = guard.answered_comment('done\n**Step for Cole**\ntap PR #1')
+        self.assertEqual(oq.cards_in(body), [])
+
+    def test_a_pr_that_cannot_be_read_is_unknown_and_is_read_once(self):
+        calls = []
+
+        class Api:
+            def get(self, path):
+                calls.append(path)
+                if path == 'pulls/2':
+                    raise oq.sm_status.GitHubError('GET pulls/2: HTTP 404')
+                return {'merged_at': '2026-11-24T17:41:00Z'}
+        merged = oq.merged_reader(Api())
+        self.assertTrue(merged(1))
+        self.assertTrue(merged(1))
+        self.assertIsNone(merged(2))
+        self.assertIsNone(merged(2))
+        self.assertEqual(calls, ['pulls/1', 'pulls/2'])
 
 
 if __name__ == '__main__':

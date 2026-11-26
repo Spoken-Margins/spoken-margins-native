@@ -228,7 +228,9 @@ enum WrittenMarginReadings {
     /// most, then starts, unless the listener did anything else meanwhile (checked every quarter second against where
     /// they were when they asked); a reading still missing then gets the ordinary warning. True when this took the call
     /// (the review starts later, from here).
-    static func holdReview(itemId: String, thenContinue: Bool, entries: [SharedMarginReview.Entry], model: Gate1AppModel) -> Bool {
+    static func holdReview(
+        itemId: String, thenContinue: Bool, entries: [SharedMarginReview.Entry], catchUp: Bool = false, model: Gate1AppModel
+    ) -> Bool {
         let key = "review::\(itemId)"
         if releasedReviews.contains(key) { return false } // this is the start after the hold
         if holds[key] != nil { return true } // a second tap while the hold is running
@@ -249,7 +251,7 @@ enum WrittenMarginReadings {
             }
             guard !Task.isCancelled, let model, listenerPlace(model) == from else { return }
             releasedReviews.insert(key)
-            model.hangTelemetry.labels.scoped("writtenMarginReview") { model.reviewNewMargins(itemId: itemId, thenContinue: thenContinue, entries: entries) }
+            model.hangTelemetry.labels.scoped("writtenMarginReview") { model.reviewNewMargins(itemId: itemId, thenContinue: thenContinue, entries: entries, catchUp: catchUp) }
             releasedReviews.remove(key)
         }
         return true

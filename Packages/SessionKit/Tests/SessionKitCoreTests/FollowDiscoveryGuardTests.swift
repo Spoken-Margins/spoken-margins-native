@@ -309,6 +309,24 @@ final class FollowDiscoveryGuardTests: XCTestCase {
             "two untitled feeds both show the host as their name, so both show their address")
     }
 
+    // MARK: Multilingual pages (#4640)
+
+    /// openai.com lists 40-odd `hreflang` page alternates before any feed link. The first 8 alternates used to be taken
+    /// before their type was checked, so the RSS link after them was never seen.
+    func testAFeedLinkAfterManyLanguageAlternatesIsFound() async throws {
+        let languages = (0..<40).map { #"<link rel="alternate" hreflang="l\#($0)" href="https://multilingual.example/l\#($0)/article">"# }.joined()
+        let feedLink = #"<link rel="alternate" type="application/rss+xml" href="/news/rss.xml">"#
+        DiscoveryStubProtocol.serve("https://multilingual.example/article",
+            .html("<html><head><title>Article</title>\(languages)\(feedLink)</head><body><p>Text.</p></body></html>"))
+        DiscoveryStubProtocol.serve("https://multilingual.example/news/rss.xml",
+            .feed(rss(title: "News", links: ["https://multilingual.example/article"])))
+        let coordinator = coordinator()
+
+        let candidates = try await coordinator.discover(urlString: "https://multilingual.example/article")
+
+        XCTAssertEqual(candidates.first?.source.canonicalURL, "https://multilingual.example/news/rss.xml")
+    }
+
     // MARK: Fixtures
 
     /// An article page linking `links` as RSS alternates, padded with a comment to exactly `totalBytes` when given.

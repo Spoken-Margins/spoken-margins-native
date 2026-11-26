@@ -1,0 +1,387 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="/template/rss.xsl"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podaccess="https://access.acast.com/schema/1.0/" xmlns:acast="https://schema.acast.com/1.0/">
+   <script src="https://feeds.acast.com/global/feed/xslt-polyfill.min.js" xmlns="http://www.w3.org/1999/xhtml"></script>
+	<channel>
+		<ttl>60</ttl>
+		<generator>acast.com</generator>
+		<title>Money Talks from The Economist</title>
+		<link>https://www.economist.com/</link>
+		<atom:link href="https://access.acast.com/rss/39fc4a99-8861-437d-81e2-684d13e48f92/default" rel="self" type="application/rss+xml"/>
+
+    <language>en</language>
+		<copyright>Copyright © The Economist Newspaper Limited 2023. All rights reserved.</copyright>
+		<itunes:keywords><![CDATA[Business,Economy,Finance & economics]]></itunes:keywords>
+		<itunes:author>The Economist</itunes:author>
+		<itunes:subtitle>Make sense of the biggest stories in economics, business and markets.</itunes:subtitle>
+		<itunes:summary>&lt;p&gt;Join &lt;em&gt;The Economist&lt;/em&gt;’s Alice Fulwood and Ethan Wu for award-winning reporting and discussion on the stories that move markets. They speak to top bosses, investors and analysts around the world for unmatched insight into global finance, business and economics. Published every Thursday.&lt;/p&gt;&lt;br&gt;&lt;p&gt;&lt;em&gt;If you’re already a subscriber to The Economist, you’ll have full access to all our shows as part of your subscription.&lt;/em&gt;&lt;/p&gt;&lt;br&gt;&lt;p&gt;&lt;em&gt;For more information about Economist Podcasts+, including how to get access, please visit our &lt;a href=&quot;https://myaccount.economist.com/s/article/What-is-Economist-Podcasts&quot; rel=&quot;noopener noreferrer&quot; target=&quot;_blank&quot;&gt;FAQs page&lt;/a&gt; at &lt;a href=&quot;https://myaccount.economist.com/s/article/What-is-Economist-Podcasts&quot; rel=&quot;noopener noreferrer&quot; target=&quot;_blank&quot;&gt;https://myaccount.economist.com/s/article/What-is-Economist-Podcasts&lt;/a&gt;.&lt;/em&gt;&lt;/p&gt;
+
+&lt;hr&gt;&lt;p style=&apos;color:grey; font-size:0.75em;&apos;&gt; Hosted on Acast. See &lt;a style=&apos;color:grey;&apos; target=&apos;_blank&apos; rel=&apos;noopener noreferrer&apos; href=&apos;https://acast.com/privacy&apos;&gt;acast.com/privacy&lt;/a&gt; for more information.&lt;/p&gt;</itunes:summary>
+		<description>&lt;p&gt;Join &lt;em&gt;The Economist&lt;/em&gt;’s Alice Fulwood and Ethan Wu for award-winning reporting and discussion on the stories that move markets. They speak to top bosses, investors and analysts around the world for unmatched insight into global finance, business and economics. Published every Thursday.&lt;/p&gt;&lt;br&gt;&lt;p&gt;&lt;em&gt;If you’re already a subscriber to The Economist, you’ll have full access to all our shows as part of your subscription.&lt;/em&gt;&lt;/p&gt;&lt;br&gt;&lt;p&gt;&lt;em&gt;For more information about Economist Podcasts+, including how to get access, please visit our &lt;a href=&quot;https://myaccount.economist.com/s/article/What-is-Economist-Podcasts&quot; rel=&quot;noopener noreferrer&quot; target=&quot;_blank&quot;&gt;FAQs page&lt;/a&gt; at &lt;a href=&quot;https://myaccount.economist.com/s/article/What-is-Economist-Podcasts&quot; rel=&quot;noopener noreferrer&quot; target=&quot;_blank&quot;&gt;https://myaccount.economist.com/s/article/What-is-Economist-Podcasts&lt;/a&gt;.&lt;/em&gt;&lt;/p&gt;
+
+&lt;hr&gt;&lt;p style=&apos;color:grey; font-size:0.75em;&apos;&gt; Hosted on Acast. See &lt;a style=&apos;color:grey;&apos; target=&apos;_blank&apos; rel=&apos;noopener noreferrer&apos; href=&apos;https://acast.com/privacy&apos;&gt;acast.com/privacy&lt;/a&gt; for more information.&lt;/p&gt;</description>
+		<itunes:explicit>false</itunes:explicit>
+		<itunes:owner>
+			<itunes:name>The Economist</itunes:name>
+			<itunes:email>podcasts@economist.com</itunes:email>
+		</itunes:owner>
+		<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+		<acast:showUrl>theeconomistmoneytalks</acast:showUrl>
+		<acast:signature key="EXAMPLE" algorithm="aes-256-cbc"><![CDATA[wbG1Z7+6h9QOi+CR1Dv0uQ==]]></acast:signature>
+		<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmStkiTEE0CNxIPxmLPEYNwN8JcQ4bXX8FAQw6qUVW5tXhItbJeDFCms6g/S+7uRWuy149fCgrICmeajbnXORXdWuM1vDpdrpuF9ZxdvdcfCHlCXk+F4W/yvYQ84+R3ZEbw==]]></acast:settings>
+		<acast:network id="807caab7-4464-43dd-8fb0-0d9c7bfec348" slug="economist"><![CDATA[The Economist Newspaper Ltd]]></acast:network>
+		<acast:importedFeed>http://rss.acast.cloud/theeconomistmoneytalks</acast:importedFeed>
+		<itunes:type>episodic</itunes:type>
+		<itunes:image href="https://assets.pippa.io/shows/62e286a934d4d92155874248/1793638173864-99cb8ea2-a713-4093-8419-27a4d98d3f6c.jpeg"/>
+
+  <image>
+			<url>https://assets.pippa.io/shows/62e286a934d4d92155874248/1793638173864-99cb8ea2-a713-4093-8419-27a4d98d3f6c.jpeg</url>
+			<link>https://www.economist.com/</link>
+			<title>Money Talks from The Economist</title>
+		</image>
+			<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>Anthropic goes to Wall Street</itunes:title>
+			<pubDate>Thu, 19 Nov 2026 21:44:52 GMT</pubDate>
+			<itunes:duration>23:38</itunes:duration>
+			<guid isPermaLink="false">6aff6dd53c298292f30f7869</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/anthropic-goes-to-wall-street</link>
+			<acast:episodeId>6aff6dd53c298292f30f7869</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>anthropic-goes-to-wall-street</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9WGCoSqMyFQu2/zoiJt+subvw/vE0sprPt8bdbfLF1IqkIgtE565ShXy4t/uFt2HUj2rbW/aeuJBenWp/Yi9i83MToge7xjwhhrC/ZQYEinymhnjFpynsK/jbuzvpJmbfbMvTSsvEkokTjFnhTElII5Bnt2J07OtiIRH34MJ0+ZytR6a+j/7oGrbhzIIssS2JzmEDTO6+SuKC0CbXEfNY/9b94HREMaZh/kw9ldmX3HEZInqPUw+98E/2HZcnaCo7mZu/Nk/UORebXfpv7K+JV2BYM3HkUogD7Fl4hMGWj4k=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>Anthropic has just gone public in the biggest <u><a href="https://www.economist.com/finance-and-economics/2026/11/17/why-startups-still-go-public-eventually?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">IPO</a></u> in history. After a lot of toing-and-froing over its valuation, investors eventually priced the firm at $1.3trn at the end of its first day of trading. What does that mean for Wall Street—and for the future of AI?</p><br><p>Guests and hosts:</p><ul><li>Alice Fulwood, co-host of “Money Talks”</li><li>Miles Kruppa, technology correspondent at <em>The Economist</em></li></ul><p><br></p><p>Topics covered:</p><ul><li>Anthropic’s IPO</li><li>Nvidia</li><li>Dario Amodei</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via<u><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"> economist.com/podcasts</a></u>.</em></p><p><em>Listen to what matters most, from global politics and business to science and technology—<u><a href="https://www.economist.com/subscribe" rel="noopener noreferrer" target="_blank">subscribe to The Economist</a></u>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>How to prepare for an AI world</itunes:title>
+			<pubDate>Thu, 12 Nov 2026 16:37:20 GMT</pubDate>
+			<itunes:duration>35:26</itunes:duration>
+			<guid isPermaLink="false">6af5eb40d397467e34ee008a</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/how-to-prepare-for-an-ai-world</link>
+			<acast:episodeId>6af5eb40d397467e34ee008a</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>how-to-prepare-for-an-ai-world</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9XQKdQyBuY1fgwFja8ufhQX0N69T1Dai7AV9F0ZpIfYdiZZ7TFUwAvabfNidBY9DPdNFMTbtrafphuhoeXWvwXIa7oGCqzhLpHGpqjtoq+/p5wsI0dKL8u7ggu34gEKmDudt9nJCWla8YCrkxY8kNUezVK5MgZNTPjQUts99ovE1ZuOBDKVKBy3ajt/C8yjjhAuZ5yI4q+lyVNCkVhJyNEQ2CnaMai2XvYmj3YByXzKAAr+s/2NFg7X2QOdeQZmMuOms2zsCarLyKvu0cUIgo0rjOFdZHFjsJPIL0V3M1m5I=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>The AI industry has been shaken in the past week. First, investors—rattled by the success of anti-data centre Democrats in the midterms—sent <u><a href="https://www.economist.com/leaders/2026/11/12/why-you-should-expect-an-ai-crash?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">tech stocks</a></u> tumbling. Then came the scandal surrounding Nvidia chief <u><a href="https://www.economist.com/business/2026/11/12/jensen-huang-is-out-his-successor-has-the-toughest-job-in-tech?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">Jensen Huang</a></u>. We wanted to know what to make of all that, and how to prepare for an AI world, so we spoke to Gina Raimondo. She was commerce secretary when ChatGPT was launched and she has now built a foundation to deal with the impact AI might have on workers.</p><br><p>Guests and hosts:</p><ul><li>Gina Raimondo, former US Secretary of Commerce and CEO of RAISE US</li><li>Alice Fulwood, co-host of “Money Talks”</li><li>Ethan Wu, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>AI retraining</li><li>Data centres</li><li>Jensen Huang scandal</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via<u><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"> economist.com/podcasts</a></u>.</em></p><br><p><em>Listen to what matters most, from global politics and business to science and technology—<u><a href="https://www.economist.com/subscribe" rel="noopener noreferrer" target="_blank">subscribe to The Economist</a></u>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>Why big law has big problems</itunes:title>
+			<pubDate>Thu, 05 Nov 2026 16:13:04 GMT</pubDate>
+			<itunes:duration>39:06</itunes:duration>
+			<guid isPermaLink="false">6aecab104cac7bbabb0fe72b</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/why-big-law-has-big-problems</link>
+			<acast:episodeId>6aecab104cac7bbabb0fe72b</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>why-big-law-has-big-problems</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9D0tgZfND3/IqhwKcfd41c4COkdwPfViPuSqjuQZdpBmhhZgPeFiA7kNHf4308qeI4dfbGCM/+ORZYCKElmH9bY9tCjK+XmPklSx8XoclLFr63nnHTPNvm6/V3lpgmALHz5rrY9Sb9H0e1OJ5NLIkcQctKl4GS/fFMbpxCs528bK9WGIM1ie+uGu18eTEt+9yIZOxOmsxLr9USWCfoXjj70DLdJhMjpR5+TuYZGN1LIRLYFKko800O7Akx1TwxZfyWbnYe24s7ABIO1uk3H+H2mSMIpAggEw9Bq1US2guY5g=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>The legal industry is losing one of its best-known firms. <u><a href="https://www.economist.com/business/2026/10/28/weils-collapse-and-the-death-of-corporate-loyalty?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">Weil, Gotshal &amp; Manges</a></u> is the first major victim of <u><a href="https://www.economist.com/business/2026/09/28/big-laws-century-old-business-model-is-being-transformed?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">changes</a></u> that are gripping what was, until recently, a staid profession. But the emergence of superstar partners, paid tens of millions of dollars, and the adoption of AI are changing that stuffy reputation. How much trouble is big law really in?</p><br><p>Guests and hosts:</p><ul><li>John Pottow, University of Michigan</li><li>Max Junestrand, CEO of Legora</li><li>Shera Avi-Yonah, <em>The Economist</em>’s business correspondent</li><li>Alice Fulwood, co-host of “Money Talks”</li><li>Ethan Wu, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>Weil, Gotshal &amp; Manges</li><li>Legal profession</li><li>AI</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via<u><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"> economist.com/podcasts</a></u>.</em></p><p><em>Listen to what matters most, from global politics and business to science and technology—<u><a href="https://www.economist.com/subscribe" rel="noopener noreferrer" target="_blank">subscribe to The Economist</a></u>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>Veteran investor Howard Marks on AI debt</itunes:title>
+			<pubDate>Thu, 29 Oct 2026 16:56:01 GMT</pubDate>
+			<itunes:duration>36:20</itunes:duration>
+			<guid isPermaLink="false">6ae37a75b4ef3baecfb3bb09</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/veteran-investor-howard-marks-on-ai-debt</link>
+			<acast:episodeId>6ae37a75b4ef3baecfb3bb09</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>veteran-investor-howard-marks-on-ai-debt</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9HW79h/20OsD6AfwTSnGYoKw2kdp/VO4qmU3NacCOd8KhoJHyZ0q3WV5ZED/Ji+nD6b2ej+EBcV0aDRXF75UMy+ZLyksr3XfCNGHikwBGwc1e2RI3eR3F8YfNUfWjiHrMb2OfSpdWvj0nXI7jJozjKTHbrta5AbeY4r62/BYoPQvoxnTggPJ57XL5LFATxESAYROuOBWA/oI+JPouh3O0EE4GvCUMJfj77M5f7A5HGkIbjtbAuzrbRluCnBNFadffw/jrFPNaVJ2ZWvaLMJU4ncTiBzXrlO2kAQxCRcR3bPA=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>It&#39;s Mike&#39;s last show. And there was only one thing he wanted to talk about: the biggest story on his beat. He speaks to legendary distressed debt investor Howard Marks about the AI boom and the risks of a blow-up.</p><br><p>Guests and hosts:</p><ul><li>Howard Marks, co-chair of Oaktree Capital Management</li><li>Mike Bird, co-host of “Money Talks”</li><li>Ethan Wu, co-host of “Money Talks”</li><li>Alice Fulwood, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>Anthropic</li><li>AI debt</li><li>Investing</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via<u><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"> economist.com/podcasts</a></u>.</em></p><p><em>Listen to what matters most, from global politics and business to science and technology—<u><a href="https://www.economist.com/subscribe" rel="noopener noreferrer" target="_blank">subscribe to The Economist</a></u>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>Sam Bankman-Fried on effective altruism</itunes:title>
+			<pubDate>Thu, 22 Oct 2026 15:51:49 GMT</pubDate>
+			<itunes:duration>50:09</itunes:duration>
+			<guid isPermaLink="false">6ada311523f48c4f2478d21e</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/sam-bankman-fried-on-effective-altruism</link>
+			<acast:episodeId>6ada311523f48c4f2478d21e</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>sam-bankman-fried-on-effective-altruism</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9qJZcoXacSBFZGgvzbxjosyTdaWnytOwhgO99Msn/A72C7yibohy4wGRwHcRLHyPkUY5wxJDUbftwjtY1w36vOqDR6pyBU/PKZRgmWaj4OcKgEl2O3Ij/6D3apx7FWEh6QKxlQ6suIT8cTlDnkK7ydHVdgaECk12g5kF+9I4RVPbhIT65Rj8EMKgp7PMT8nMjSKws5dMmAZ7bFIXtZBdovH9XbtRnMfqVDCZsU6O2O2sZgbvHA03oCWhAgLd57f08CiCkBR99Wezj+/uYowzW2Na74Gg2QPkxUyEZ4VYDW2w=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>Sam Bankman-Fried was the poster child for <u><a href="https://www.economist.com/leaders/2026/10/01/effective-altruism-is-this-centurys-biggest-idea?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">effective altruism</a></u>. Before his arrest, he had done more than anyone to promote the <u><a href="https://www.economist.com/international/2026/10/01/how-effective-altruism-conquered-the-world?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">movement</a></u>. Today, no one has done more damage. Yet, in Silicon Valley, EAs (as adherents are known) are everywhere. Should you worry that a philosophy that inspired the man behind one of America’s largest frauds has taken root in the world’s most important firms? We ask Bankman-Fried himself. We also speak to one of the founding fathers of the EA movement.</p><br><p>Guests and hosts:</p><ul><li>Sam Bankman-Fried, former CEO of FTX</li><li>Toby Ord, co-founder of Giving What We Can</li><li>Shera Avi-Yonah, <em>The Economist</em>’s US business correspondent</li><li>Ethan Wu, co-host of “Money Talks”</li><li>Alice Fulwood, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>Effective Altruism</li><li>AI</li><li>Silicon Valley</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via<u><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"> economist.com/podcasts</a></u>.</em></p><p><em>Listen to what matters most, from global politics and business to science and technology—<u><a href="https://subscribenow.economist.com/podcasts-plus" rel="noopener noreferrer" target="_blank">subscribe to Economist Podcasts+</a></u>.</em></p><p><em>For more information about how to access Economist Podcasts+, please visit our<u><a href="https://myaccount.economist.com/s/article/What-is-Economist-Podcasts" rel="noopener noreferrer" target="_blank"> FAQs page</a></u> or watch<u><a href="https://www.youtube.com/watch?v=Gczo71bg1uY" rel="noopener noreferrer" target="_blank"> our video</a></u> explaining how to link your account.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>A Nobel-winning economics lesson</itunes:title>
+			<pubDate>Thu, 15 Oct 2026 15:50:56 GMT</pubDate>
+			<itunes:duration>37:46</itunes:duration>
+			<guid isPermaLink="false">6ad0f4ba37f0bd18cc698dc1</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/a-nobel-winning-economics-lesson</link>
+			<acast:episodeId>6ad0f4ba37f0bd18cc698dc1</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>a-nobel-winning-economics-lesson</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9Vx42Gdg3fNhIxaieufZW4ow+gbZyHrGAYV8UgZ3U8OyBl6H6fCjQcgzCKsx6SC8fiLh2Zc+JMRohbD2W2FCJClz/Xr1ra3uUNIQdP7niYfjPMJXdrxr/FH9k6m5AQ5c4q7YRiAn50URBOXMz/XqEdKphGD9AHeJ4DC2G0L3kAGUcuc8GfxtVJQxFGvQiAM5f92PHwFVUqh6cb991VXhHETAJEwOMO9JvSRUCVQcBw0pPLE9/FTT280bmr0RXB5d3wbN4nDkEvu/PNrJ++boOdeepP+CtsW/8PN/3vuYkK1M=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>It’s that time of year again. An economist gets a call from Sweden–and we then badger them to speak to us. We’re pleased to say Michael Woodford, who shared the award with Robert Hall, returned our call. The prize committee credited the duo with <u><a href="https://www.economist.com/finance-and-economics/2026/10/12/a-nobel-prize-for-how-to-keep-economies-on-even-keel" rel="noopener noreferrer" target="_blank">rebuilding macroeconomics</a></u> on “microfoundations”: representing economic outcomes as the result of the behaviour of individuals and businesses. On this week’s show, Mr Woodford explains his theory.</p><br><p>Guests and hosts:</p><ul><li>Michael Woodford, Columbia University</li><li>Henry Curr, <em>The Economist</em>’s acting business affairs editor</li><li>Alice Fulwood, co-host of “Money Talks”</li><li>Ethan Wu, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>Nobel prize for economics</li><li>Economic theory</li><li>New Keynesian economics</li></ul><p><br></p><p>Transcripts of our podcasts are available via<u><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"> economist.com/podcasts</a></u>.</p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>Are populists wrecking your portfolio?</itunes:title>
+			<pubDate>Thu, 08 Oct 2026 15:52:42 GMT</pubDate>
+			<itunes:duration>35:26</itunes:duration>
+			<guid isPermaLink="false">6ac7bc4a68b7ce6ffb434bcf</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/are-populists-wrecking-your-portfolio</link>
+			<acast:episodeId>6ac7bc4a68b7ce6ffb434bcf</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>are-populists-wrecking-your-portfolio</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9RTukcqygCv+fRzJypmRVGOCtCnUiwh4xd13gYAyQSWggiozfVS9JZx2pwoDDzgTJaWwdJMIKk3pkp6Z2fDnen2HUlDFKpd1GFzsV4T+lFZ0IZFLXLXwlTPNT5EsQm126o/308lzbVjs5mmvkFOubIO0+1PTIitETr6Uq/1be2ffH9lowKuynFoVrA2l95sgGmT9i6nrsI6HDeX/7RDJfdbXzETBRpg/8qN1/VLnNK/JX8XRnc4H+g2Ck7nj+IjrnvUnUxy7OvBfqy8Jw9d/IaDLLbk1WBToJ5ZKcje6E2Yw=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>Investors have a big problem. Their sharpest tool, diversification, is getting blunter. And one possible culprit may surprise you: Donald Trump. A growing number of investors blame populist politicians for upending the world order and ruining the logic behind their most important strategies. Are they right?</p><br><p>Guests and hosts:</p><ul><li>Ed Cole, of Man Group</li><li>Josh Roberts, <em>The Economist</em>’s acting Britain editor</li><li>Alice Fulwood, co-host of “Money Talks”</li><li>Ethan Wu, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>Populism</li><li>Investment strategies</li><li>Inflation</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via<u><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"> economist.com/podcasts</a></u>.</em></p><p><em>Listen to what matters most, from global politics and business to science and technology—<u><a href="https://subscribenow.economist.com/podcasts-plus" rel="noopener noreferrer" target="_blank">subscribe to Economist Podcasts+</a></u>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>How to short AI with Carson Block</itunes:title>
+			<pubDate>Thu, 01 Oct 2026 15:45:54 GMT</pubDate>
+			<itunes:duration>29:54</itunes:duration>
+			<guid isPermaLink="false">6abe8032d2d2814e2c290c43</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/how-to-short-ai-with-carson-block</link>
+			<acast:episodeId>6abe8032d2d2814e2c290c43</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>how-to-short-ai-with-carson-block</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9gWjcymWC/l4vtf9P7/Jiu2ASmNbB3GE3kaMDFvw0y4rVvD+N0PZkIXJWeyfh/PM/lJ8vylSouOF9cnlAEQCgcXZo6CPvzX/a558e+Fr3LFU8K8erAfRzMbD60N8+UaEf3bn8w9bIOJTXesWyBynhlMALox6HaUFqmJ7t+Bnl4iG80afRV5MReDcUnJD3DE9nrg9wZtNG4PQYQlaU9iuu1vpMT5LUV/9x8EFOjPliKA17Nw42E9ZT+y9e6GpT2Z8lQebwN13vX9RJoA5xTmKq1419LZRJ7nRJ5j+XaESwBjo=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>Carson Block is not the only investor asking whether the AI rally can last. But the famed short-seller has a <u><a href="https://www.economist.com/by-invitation/2026/06/28/if-you-thought-the-global-financial-crisis-was-bad?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">distinctive theory</a></u> of how it will unravel. In this special live show, he explains how he is betting against the AI boom.</p><br><p>Guests and hosts:</p><ul><li>Carson Block, CEO of Muddy Waters Research</li><li>Alice Fulwood, co-host of “Money Talks”</li><li>Mike Bird, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>AI</li><li>Short selling</li><li>Muddy Waters Research</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via<u><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"> economist.com/podcasts</a></u>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>Big booze is reinventing itself</itunes:title>
+			<pubDate>Thu, 24 Sep 2026 17:03:27 GMT</pubDate>
+			<itunes:duration>38:01</itunes:duration>
+			<guid isPermaLink="false">6ab557dfc974afb1541b62f5</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/big-booze-is-reinventing-itself</link>
+			<acast:episodeId>6ab557dfc974afb1541b62f5</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>big-booze-is-reinventing-itself</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9T8LTwkxJc/EcWm0kAymwhpgrRojjWUN1H/Nz4/P8K0tSOIEZ2zn02CVTR96juXDWFmM9u8vKcFhRKg83GUVkaGmv50Yj2jIodF9E7vFltvY/RDTgKXdeRz9mCK/lkc7lTEqxAHQbjUIX+xhOlTqrCrQivlOsVT1icUP2+02LfzeElIHmwOe0nx3mDxL4r0J7RU/nUjIThx9D2XoMh20WHol9IVAlchSfwWnWoAfL68rY96vxNEh+hRQkeu0KvTNRs0uq1An5bTjXjVamZ8K0gmX7ixb5UDlCCcGcpM1unms=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>Global alcohol consumption fell by 2% in 2025. It was the third straight year of decline, as younger drinkers prove they are not as boozy as their parents. As drinks-makers face an uncertain future, competition is <u><a href="https://www.economist.com/business/2026/09/09/as-booze-sales-fall-competition-among-drinks-makers-intensifies?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">sharpening</a></u>. With brewers, vintners and distillers expanding into new domains, which companies hold the advantage?</p><br><p>Guests and hosts:</p><ul><li>Jacob Aarup-Andersen, CEO of Carlsberg</li><li>Trevor Stirling, analyst at Bernstein</li><li>Avantika Chilkoti, global business writer at <em>The Economist</em></li><li>Alice Fulwood, co-host of “Money Talks”</li><li>Ethan Wu, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>Alcoholic drinks industry</li><li>Ready-to-drink cocktails</li><li>Alcohol-free drinks</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via<u><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"> economist.com/podcasts</a></u>.</em></p><p><em>Listen to what matters most, from global politics and business to science and technology—<u><a href="https://www.economist.com/subscribe" rel="noopener noreferrer" target="_blank">subscribe to The Economist</a></u>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>The great global bond sell-off</itunes:title>
+			<pubDate>Thu, 17 Sep 2026 16:12:56 GMT</pubDate>
+			<itunes:duration>38:46</itunes:duration>
+			<guid isPermaLink="false">6aac1188964bc34409412234</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/the-great-global-bond-sell-off</link>
+			<acast:episodeId>6aac1188964bc34409412234</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>the-great-global-bond-sell-off</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9dSCtf36ZVoXr9mK41hYTzeoqJ5QKw1u88GKdMKLWgWp0dzADqJf+OqXcregkeRRyRt3K5SvaNGgg7uuPl13/yM5DxQqXF271FmuILAG1AnVgjYS47b7TR3QcwrXJZRAUxKoINtJHIwVWtFcOaDIXYny+UGyv9O8gaxEydnuHoKuKZn088RPDtvAkolRjWmW5e/3nBKPdSTtyTo+5YDiNiqUkPfeIBPt/223MnVkFwdKpfg6Ur64jKNJ8+9HBlXsBPr4bnKoCyhR7znioQaTqiw==]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>The global bond <a href="https://www.economist.com/finance-and-economics/2026/09/11/surging-bond-yields-presage-pain-and-not-just-for-bond-investors?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">sell-off</a> is deepening. This week, the yield on ten-year American Treasuries surpassed 5%, its highest level in two decades. Meanwhile British gilts, German bunds and Japanese government bonds are all soaring to multi-year highs. Investors are under pressure from persistent inflation, government <a href="https://www.economist.com/leaders/2026/09/17/markets-are-waking-up-to-the-rich-worlds-reckless-borrowing?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">debt</a> and the AI borrowing binge. We ask whether high long-term yields are here to stay.</p><br><p>Guests and hosts:</p><ul><li>Mark Dowding, Chief Investment Officer for BlueBay fixed income</li><li>Mike Bird, co-host of “Money Talks”</li><li>Alice Fulwood, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>Bond markets</li><li>Scott Bessent</li><li>AI infrastructure buildout</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via</em><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"><em> economist.com/podcasts</em></a><em>.</em></p><br><p><em>Listen to what matters most, from global politics and business to science and technology—</em><a href="https://www.economist.com/subscribe" rel="noopener noreferrer" target="_blank"><em>subscribe to The Economist</em></a><em>.</em></p><br><p><br></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>Why the AI giants are acting like banks</itunes:title>
+			<pubDate>Thu, 10 Sep 2026 15:41:11 GMT</pubDate>
+			<itunes:duration>36:38</itunes:duration>
+			<guid isPermaLink="false">6aa2cf97ff74edfd001d73e3</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/why-the-ai-giants-are-acting-like-banks</link>
+			<acast:episodeId>6aa2cf97ff74edfd001d73e3</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>why-the-ai-giants-are-acting-like-banks</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9eiz43QQbiZyENQ/MYtRGawX+Xk+KV8cc97lOPhELsUiwy40eUnfI+Yhv5pkpsop67Dcil2SSyAkJZAonHA8UEBqzyopfJco8FjsXL1j0h6RaUGjEHXAf5UcdnaAFIgxqG0QlqKh6ETvzOyaLW78nwWgYlVzF0JxLvBUGjdVL32Rcpgpb0QcI3bJPfY615aq2fZxtB+ANgn09YqETCAoylmUXqhswJEUAOhtO5PTek2ICq8NK3Gr9SDvGRWxRBU0SNz7vvjQdEjsuIvBz4ufKXA==]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>Since 2022, the <a href="https://www.economist.com/leaders/2026/09/03/nvidia-is-driving-the-ai-boom-good?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">AI boom</a> has been the biggest story in financial markets. It has turned some of the largest tech companies into <a href="https://www.economist.com/interactive/briefing/2026/09/03/nvidia-is-the-central-bank-of-ai?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">major</a> financial players, lending and borrowing from one another. This week, we dig into how worried you should be about that web of “circular” AI financing.</p><br><p>Guests and hosts:</p><ul><li>Shailesh Chitnis, <em>The Economist</em>'s global business writer&nbsp;</li><li>Mike Bird, co-host of “Money Talks”</li><li>Alice Fulwood, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>Nvidia</li><li>AI boom</li><li>“Circular” financing</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via</em><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"><em> economist.com/podcasts</em></a><em>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>A long weekend in Jackson Hole</itunes:title>
+			<pubDate>Thu, 03 Sep 2026 16:11:27 GMT</pubDate>
+			<itunes:duration>34:31</itunes:duration>
+			<guid isPermaLink="false">6a999c2fbe9805796113d669</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/a-long-weekend-in-jackson-hole</link>
+			<acast:episodeId>6a999c2fbe9805796113d669</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>a-long-weekend-in-jackson-hole</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz94E5q4KUI16HXzUpsHcRJ6czoaAWaPjTepdlVZjmlLwexenl2YcVH8LP+aJhQ2Xkq+1c4Tka2e3fA6R1szIPcADhUu67WG08l/B3bYqWLozWdH8FBwoYRTmfHoNLrqU59Zcw2+9ZD7JwtqoC89UqGhpQ33pjCtNmC1C+KSmN0CGxTQNBPhkkVw9qU1TSlg6YdcIojMdLE0lPR+lQierv1NfuBDiih8GVqszrtflfHych5O19fK2YoHBe03rf7oX03aGUnzJtd0pFl9tPTcqPSLtDIeXdu8ARM9/tQbN2pwas=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>Each August, the world’s central bankers descend on Jackson Hole. Normally, the coffee-break chatter is about policy. But this year, the big question was what <a href="https://www.economist.com/finance-and-economics/2026/08/28/kevin-warsh-tries-being-a-normal-central-banker?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">Kevin Warsh</a>, the enigmatic new Fed Chair, was really thinking—about how the Fed works, its independence and monetary policy. His speech was <a href="https://www.economist.com/finance-and-economics/2026/09/02/central-banking-has-a-forbidding-future?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">surprisingly revealing</a>. Our acting economics editor tells us what he learned.</p><br><p>Guests and hosts:</p><ul><li>Archie Hall, <em>The Economist</em>’s acting economics editor</li><li>Alice Fulwood, co-host of “Money Talks”</li><li>Ethan Wu, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>Kevin Warsh</li><li>Jackson Hole Economic Symposium</li><li>Federal Reserve</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via</em><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"><em> economist.com/podcasts</em></a><em>.</em></p><p><em>Listen to what matters most, from global politics and business to science and technology—</em><a href="https://www.economist.com/subscribe" rel="noopener noreferrer" target="_blank"><em>subscribe to The Economist</em></a><em>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>Should investors stop buying American?</itunes:title>
+			<pubDate>Thu, 27 Aug 2026 15:06:00 GMT</pubDate>
+			<itunes:duration>33:17</itunes:duration>
+			<guid isPermaLink="false">6a905258d3e4bd9041524721</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/should-investors-stop-buying-american</link>
+			<acast:episodeId>6a905258d3e4bd9041524721</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>should-investors-stop-buying-american</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9bSTl8klHzhnj+Qq5CXDicLOqg7cVbQBj+UEkOZOkjHlNR50UKmaV0aBJJB/WbyoWwOvEjSYNsOzPhhc1WEHvu16QFZXTg5x9qFXYseVx1ISnP5NArQdRJOuCkNUYSRRc8roCGiO1vIW/hm0rZVf89bLaKV9S9S8ulHqpS9d8+9AA+oYu5abGzYtihAyWEzRsasMHAW2jPl9TYQGVHrgJKU1gitd6ivNyX9VuOfANujWpUPFbUCiTOTxRbFcXSaL/zbdgpvZd+h4QuXX3VVfFOg==]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>For decades, America’s stock exchanges have been the destination of choice for international investors. And no wonder, since that is where the Magnificent Seven tech firms are listed. Until recently these behemoths were generating gushing streams of cash, spending little of it and delivering stellar returns. But are they—and the rest of America’s stock market—now losing their shine?</p><br><p>Guests and hosts:</p><ul><li>Michael Hartnett, Bank of America investment strategist</li><li>Josh Roberts, co-host of “Money Talks”</li><li>Alice Fulwood, co-host of “Money Talks”</li><li>Ethan Wu, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>S&amp;P 500</li><li>American exceptionalism</li><li>Magnificent Seven stocks</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via</em><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"><em> economist.com/podcasts</em></a><em>.</em></p><p><em>Listen to what matters most, from global politics and business to science and technology—</em><a href="https://www.economist.com/subscribe" rel="noopener noreferrer" target="_blank"><em>subscribe to The Economist</em></a><em>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>Who’s to blame for rising food prices?</itunes:title>
+			<pubDate>Thu, 20 Aug 2026 16:18:32 GMT</pubDate>
+			<itunes:duration>40:07</itunes:duration>
+			<guid isPermaLink="false">6a8728d8c71d02aaba55cc5e</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/whos-to-blame-for-rising-food-prices</link>
+			<acast:episodeId>6a8728d8c71d02aaba55cc5e</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>whos-to-blame-for-rising-food-prices</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9hPkebb1zBKEetmPZ8Va1Jmnskc46Cz6P6lskSpRDkhgao6RCYoY6NHfi1oMhqGd5xlarRR2fZlhexMOwpiPs3EtbqIssDua/2hfWB38zbgaED3A6kWX2i0z93O1X91cvdmdsANC4PoqyVI/OKnWj6kG6P7IKPZ2wHUgCIRPRlEaOeKpNIme7nS71/g3wbupIxe2MPvO5ggMDGB9wQO8V4vgpSU15Oy9syaBY/ZUxUTkIXcgS9sJYERHYdeRTC9e11jfbWbmfjsAtdyZHJ153SN9QMjvrV3zhf5/MYMjWz4I=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>American grocery prices have risen by around a quarter since 2020. So are shoppers getting <a href="https://www.economist.com/business/2026/07/20/dont-blame-supermarkets-for-your-expensive-groceries?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">ripped off</a>? And, if so, is anyone cashing in? Money Talks goes on the trail of sky-high shopping bills.</p><br><p>Guests and hosts:</p><ul><li>Aaron Lehman, president of Iowa Farmers Union</li><li>Nik Modi, retail analyst at RBC Capital Markets</li><li>Alice Fulwood, co-host of “Money Talks”</li><li>Ethan Wu, co-host of “Money Talks”</li><li>Josh Roberts, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>Food prices</li><li>Grocery stores</li><li>Farming</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via</em><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"><em> economist.com/podcasts</em></a><em>.</em></p><p><em>Listen to what matters most, from global politics and business to science and technology—</em><a href="https://subscribenow.economist.com/podcasts-plus" rel="noopener noreferrer" target="_blank"><em>subscribe to Economist Podcasts+</em></a><em>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>Investors want to change how babies are made</itunes:title>
+			<pubDate>Thu, 13 Aug 2026 15:27:51 GMT</pubDate>
+			<itunes:duration>45:15</itunes:duration>
+			<guid isPermaLink="false">6a7de278f8e81c43957fded2</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/investors-want-to-change-how-babies-are-made</link>
+			<acast:episodeId>6a7de278f8e81c43957fded2</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>investors-want-to-change-how-babies-are-made</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz923APfoh9ARAmOWWa7F/Vi0aU5dKZ0iEJEInnneIwfZmeZ6zDN+k53dQh1oo2lOpl34bHyz/PXn4e6CmmzLo1xzrUnT1XnS4IIw/cQ7E+dlWSXu0FOt1bQZN+/XjHtBIe1jsBvvy0ZS2TXA1FG2tCrVkWcUi/7b0Tvw62WkBxAomsRg6pRvFeHEk6mpV1zHBJhUixGDVs8K6hQLovoLGnivpNgjixvJ9YxHkR8UTLXinNyxfT7btI8NFOZ4ZlLulwhJ05JwxWloddEusNSO645g==]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>Humans have, mostly, made babies the same way for millenia. That kind of inertia is catnip to Silicon Valley investors who are pouring money into technology like <a href="https://www.economist.com/business/2026/08/10/how-much-would-you-pay-for-a-smarter-baby?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">embryo screening</a>. On this week’s show, we explore the companies offering <a href="https://www.economist.com/leaders/2026/08/13/in-praise-of-designer-ish-babies?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">fertility tech</a> and hear why some don’t shy away from terms like eugenics.</p><br><p>Guests and hosts:</p><ul><li>Jonathan Anomaly, co-founder of Herasight</li><li>Michelle Kwok, principal at Draper</li><li>Shera Avi-Yonah, <em>The Economist</em>’s business correspondent</li><li>Alice Fulwood, co-host of “Money Talks”</li><li>Ethan Wu, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>Fertility industry</li><li>Embryo screening</li><li>Eugenics&nbsp;</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via</em><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"><em> economist.com/podcasts</em></a><em>.</em></p><p><em>Listen to what matters most, from global politics and business to science and technology—</em><a href="https://www.economist.com/subscribe" rel="noopener noreferrer" target="_blank"><em>subscribe to The Economist</em></a><em>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>A report card for Kevin Warsh</itunes:title>
+			<pubDate>Thu, 06 Aug 2026 16:21:19 GMT</pubDate>
+			<itunes:duration>33:43</itunes:duration>
+			<guid isPermaLink="false">6a74b480237988582e5b14bc</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/a-report-card-for-kevin-warsh</link>
+			<acast:episodeId>6a74b480237988582e5b14bc</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>a-report-card-for-kevin-warsh</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9MlvMGlAcLoSH/xeA4hvxXhOa1t9LuGM5hrkTlmxnwg4dlCJYXj/Yvp3iruB1m9DYStLY5snv6AqOAVbPuK9SFhqKvSIHYRmZsYgcpYxl7DrHrLlZnuaYQuaYEgssqWoNTAMz+860SEnoHKUgaX9mKh2f7c0TR8Cao2U4ctEUJZDWGzuVvFqNzgrFuHGYvtQBH2XVuHD66VnhSNjAaHrYIK0wNTyMEAxxkCiAV1sCUuGOuVa8xdEho1QoghDkem53Pt/ZwqlszAY5IubFcwLspCxYcK8pflDkVSZU0SIBQmc=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>Conspiracy theories were rife when <a href="https://www.economist.com/finance-and-economics/2026/08/02/what-will-kevin-warsh-do-if-americas-economy-breaks?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">Kevin Warsh</a> was made Fed chair. Was he a hawk in dove's clothing or a dove dressed as a hawk? The tinfoil hats came out because Mr Warsh himself remained <a href="https://www.economist.com/finance-and-economics/2026/08/06/how-and-how-much-should-central-banks-talk?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">tight-lipped</a>. Now, though, he has presided over two rate-setting meetings at the Fed. So what have we learnt about the world’s most important central banker?</p><br><p>Guests and hosts:</p><ul><li>Josh Roberts, <em>The Economist</em>’s capital markets correspondent</li><li>Archie Hall, <em>The Economist</em>’s acting economics editor</li><li>Alex Domash, <em>The Economist</em>’s acting US economics editor</li></ul><p><br></p><p>Topics covered:</p><ul><li>Kevin Warsh</li><li>The Federal Reserve</li><li>Donald Trump</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via</em><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"><em> economist.com/podcasts</em></a><em>.</em></p><p><em>Listen to what matters most, from global politics and business to science and technology—</em><a href="https://www.economist.com/subscribe" rel="noopener noreferrer" target="_blank"><em>subscribe to The Economist</em></a><em>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>Why economists love burgers</itunes:title>
+			<pubDate>Thu, 30 Jul 2026 14:12:15 GMT</pubDate>
+			<itunes:duration>32:31</itunes:duration>
+			<guid isPermaLink="false">6a6b5bbf248de9b0b254037e</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/why-economists-love-burgers</link>
+			<acast:episodeId>6a6b5bbf248de9b0b254037e</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>why-economists-love-burgers</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9iYTMINpwcIl+Xw9TGHA4Xsrr9VBpl1D8pIR+JjP5jh6pEHP+R1FV3F75ge9o5nrMbv91/vJ+CcIQv7rVaHG6P5iznr15DslGo46hDSf3tksKynBtGqwqzunuSTT8N6HdxBTVpsg8fwc9pcXC69B/eAEeAQdM09w5XMdBMmU3owY18yiu7p0PJaY8b9a052hCMxQ1jDb1exUGrVCyTSB2GVW3yne4MIKcJjT7k87ebksUZ2gL2YX6j5NkVyu7gLtq8ow2/hUFg/5b1cSRWNCU5pMBwIvNtGblLrwWKifRYtI=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>Travelling for work is rarely glamorous. And nowhere is that more true than at <em>The Economist</em>. Our correspondents have spent the last four decades travelling the world, expensing <a href="https://www.economist.com/interactive/briefing/2026/07/30/the-big-mac-index-at-40?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">Big Macs</a> in service of one aim: to understand how currencies work. To celebrate the Big Mac index’s <a href="https://www.economist.com/interactive/leaders/2026/07/30/what-the-big-mac-index-reveals-about-a-global-currency-beef?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">40th birthday</a>, we share what we’ve learnt.</p><br><p>Guests and hosts:</p><ul><li>Eswar Prasad, economics professor at Cornell University</li><li>Simon Cox, <em>The Economist</em>’s China economics editor&nbsp;</li><li>Josh Roberts, <em>The Economist</em>’s capital markets correspondent</li><li>Ethan Wu, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>Big Mac Index</li><li>Currencies&nbsp;</li><li>Purchasing Power Parity</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via</em><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"><em> economist.com/podcasts</em></a><em>.</em></p><p><em>Listen to what matters most, from global politics and business to science and technology—</em><a href="https://www.economist.com/subscribe" rel="noopener noreferrer" target="_blank"><em>subscribe to The Economist</em></a><em>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>Can Andy Burnham fix Britain’s broken finances?</itunes:title>
+			<pubDate>Thu, 23 Jul 2026 13:37:57 GMT</pubDate>
+			<itunes:duration>39:07</itunes:duration>
+			<guid isPermaLink="false">6a62159b562e3ad886e7b04b</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/can-andy-burnham-fix-britains-broken-finances</link>
+			<acast:episodeId>6a62159b562e3ad886e7b04b</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>can-andy-burnham-fix-britains-broken-finances</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz93bgkl9bgcDo0vgfGbj0YycgQs1faj3xudDbR5IhX3sQbIZ9dD9FsrSATK16PR4VKywEcBip11Myi0rOIMA2OS+V/MP5hU9JmFU5hYXDnHnLWY0s98bJv5klso7pnkt7UR+PUucTL9yuCJxlufpDUYNtcoy7iiDg+t90AAo4KcYeRliwM7dQnJbh/frS/FSaqYujuo/cg9XN/AViFckgPBdYkoodOMvorPFys6OiPsrWxw0qiHkjT5R5qlbAog4lfSyUoDKEtVwI+ZafOmUiSR8vIFCr3Ml/URQPJFecGuOE=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>Andy Burnham is Britain’s <a href="https://www.economist.com/leaders/2026/07/22/britains-troublingly-nostalgic-new-prime-minister?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">seventh prime minister</a> in a decade. Can he and his chancellor, John Healey, <a href="https://www.economist.com/britain/2026/07/23/andy-burnhams-first-100-days?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">break</a> the British curse of sluggish growth, high debt and soaring spending? And, crucially, can he survive longer than Keir Starmer?</p><br><p>Guests and hosts:</p><ul><li>Kristina Hooper, chief market strategist at Man Group</li><li>Duncan Robinson, <em>The Economist’s </em>political editor and Bagehot columnist</li><li>Josh Roberts, <em>The Economist</em>’s capital markets correspondent</li><li>Ethan Wu, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>Andy Burnham</li><li>John Healey</li><li>British economy</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via</em><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"><em> economist.com/podcasts</em></a><em>.</em></p><br><p><em>Listen to what matters most, from global politics and business to science and technology—</em><a href="https://subscribenow.economist.com/podcasts-plus" rel="noopener noreferrer" target="_blank"><em>subscribe to The Economist</em></a><em>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>The man reinventing a trillion-dollar drugmaker</itunes:title>
+			<pubDate>Thu, 16 Jul 2026 15:44:18 GMT</pubDate>
+			<itunes:duration>37:35</itunes:duration>
+			<guid isPermaLink="false">6a58fc534d4b991ebea92758</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/the-man-reinventing-a-trillion-dollar-drugmaker1</link>
+			<acast:episodeId>6a58fc534d4b991ebea92758</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>the-man-reinventing-a-trillion-dollar-drugmaker1</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz95ZSxhpwKHHfUUf3X4BfVVE2N0HppnFH9LHkn0G7LT0vDI3kC0c5HUueq5hsdQl1Qm95oFXZ284WlfL0O+lBElv9VoGOVl3+7c197m0TWeXLKmbO/ShPPjidAdSeh0iYX6N60VWVcAzsOd3+Bw1jd7HmFDeNxck0BoywW76DRiEdiM0NX9k/sniXGi0JCutRogbR1tYzxabfRJupVSRpmF/zGX1kQAVagA437UmZn4CouBzcvaTYdQ33aNz2aWlzy1RKba+Wxtg9Bz37pIdTOWkV7TsKNw+o2zzPT4L2bdhc=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>Eli Lilly has been selling pills to sick people for 150 years. That business model has made it a trillion-dollar company. But now, the firm’s CEO David Ricks wants to do something <a href="https://www.economist.com/business/2026/07/15/eli-lilly-is-reinventing-the-pharma-business?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">different</a>. He wants to push treatments that stop people getting sick in the first place. Will it work?</p><br><p>Guests and hosts:</p><p><br></p><ul><li>David Ricks, CEO of Eli Lilly</li><li>Shailesh Chitnis, <em>The Economist’s</em> global business writer</li><li>Mike Bird, co-host of “Money Talks”</li><li>Alice Fulwood, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>Eli Lilly</li><li>AI</li><li>GLP-1s</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via</em><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"><em> economist.com/podcasts</em></a><em>.</em></p><p><em>Listen to what matters most, from global politics and business to science and technology—</em><a href="https://subscribenow.economist.com/podcasts-plus" rel="noopener noreferrer" target="_blank"><em>subscribe to The Economist</em></a><em>.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>The Economist’s long struggle with the oil price</itunes:title>
+			<pubDate>Thu, 09 Jul 2026 12:41:44 GMT</pubDate>
+			<itunes:duration>34:29</itunes:duration>
+			<guid isPermaLink="false">6a4f96e71c8f5a97d8bc955d</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/the-economists-long-struggle-with-the-oil-price</link>
+			<acast:episodeId>6a4f96e71c8f5a97d8bc955d</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>the-economists-long-struggle-with-the-oil-price</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz93rWwVoBR+vJI/rKvBvBvzrqfrnWgjkKWiJWPO5HDk4NqoQKaFL9zWLbcYEa6oYZH8y48AXiXUMVNmbcUwmd9PCnGn0V1Y2lJ6uUw30RL4fi/kPFKB1s7oa78W0M60qqXDOESZeExg6sFGBKEry/myvycbwQoNj8L0k+fQ/6xdi660+H3UEgSIE4szhjCaHfdaAlX6Kfmp7157Gxt2K5oG7Lc4BKEdKHveQrLlMgEzVCPttlsgg3j12NTsZyHpA5dOmDdCnaYhizovqywrEcv+/fYMWGnEL1wPiPPTQf/9Hk=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>Predictions are a feature of The Economist. The inevitable result is that we drop the occasional <a href="https://www.economist.com/leaders/2026/07/02/we-woz-wrong-about-oil?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">clanger</a>. And our big mistakes, it seems, have often had something to do with oil. So why is the black stuff our <em>bête noire</em>?</p><br><p>Guests and hosts:</p><p><br></p><ul><li>Ethan Wu, co-host of “Money Talks”</li><li>Mike Bird, co-host of “Money Talks”</li><li>Alice Fulwood, co-host of “Money Talks”</li><li>Matthieu Favas, <em>The Economist</em>'s commodities editor</li></ul><p><br></p><p>Topics covered:</p><p><br></p><ul><li>Oil</li><li>Iran&nbsp;</li><li>The Strait of Hormuz</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via</em><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"><em> economist.com/podcasts</em></a><em>.</em></p><br><p>Listen to what matters most, from global politics and business to science and technology—<a href="https://subscribenow.economist.com/podcasts-plus" rel="noopener noreferrer" target="_blank">subscribe to <em>The Economist</em></a>.</p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>Will the data-centre backlash derail the AI boom?</itunes:title>
+			<pubDate>Thu, 02 Jul 2026 15:40:45 GMT</pubDate>
+			<itunes:duration>31:32</itunes:duration>
+			<guid isPermaLink="false">6a46867decd1239143cc3ec6</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/will-the-data-centre-backlash-derail-the-ai-boom</link>
+			<acast:episodeId>6a46867decd1239143cc3ec6</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>will-the-data-centre-backlash-derail-the-ai-boom</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9fgpawe8mvaPKsisNUmGEmpIffZzj/6FS1lSyPjNddRguz0EibZKW999JzoqFfzfRckdBpG23vQAVoVsTec5NEAY6mrwbdiId9dUrH0lLd647c4WgNkwnCo32QOyVUm0eKpn5q+lZzvwxvvmJh+HT0Aqo60N4syfhSxZOB83DouWTbXyfznExygnZCTrFb2UUzcSrckD80dPOYhnpX5z6RQ1DpblA85RM/n/aZkIdnz1YJbTM5qQOmGRwYsSkxxye2Rsnfd+GHMbLss2zamqp8wRYsZgM+EcgGk2/PB2ioco=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>America’s AI giants have a problem. The likes of Google, Meta and Microsoft want to spend $3trn on <a href="https://www.economist.com/business/2026/06/23/americas-data-centre-backlash-puts-the-ai-boom-at-risk?utm_campaign=a.io&amp;utm_medium=audio.podcast.np&amp;utm_source=moneytalks&amp;utm_content=discovery.content.anonymous.tr_shownotes_na-na_article&amp;utm_term=sa.listeners" rel="noopener noreferrer" target="_blank">data centres</a> over the next four years. But a backlash among Americans, who don’t want sheds full of chips humming away near their backyards, has made it difficult to find a spot to build them. Will that slow the AI race?</p><br><p>Hosts:</p><p><br></p><ul><li>Alice Fulwood, co-host of “Money Talks”</li><li>Mike Bird, co-host of “Money Talks”</li><li>Ethan Wu, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><p><br></p><ul><li>AI&nbsp;</li><li>Data centres</li><li>NIMBYism</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via</em><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"><em> economist.com/podcasts</em></a><em>.</em></p><br><p>Listen to what matters most, from global politics and business to science and technology—<a href="https://subscribenow.economist.com/podcasts-plus" rel="noopener noreferrer" target="_blank">subscribe to <em>The Economist</em></a>.</p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>Why the global elite are collecting citizenships</itunes:title>
+			<pubDate>Thu, 25 Jun 2026 15:32:14 GMT</pubDate>
+			<itunes:duration>38:37</itunes:duration>
+			<guid isPermaLink="false">6a3d49ffa3fa978237056a2e</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/why-the-global-elite-are-collecting-citizenships</link>
+			<acast:episodeId>6a3d49ffa3fa978237056a2e</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>why-the-global-elite-are-collecting-citizenships</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9JXz7P45nbD574O+FE19VrCsOaW9bJW83BxUugB8fvAVDSK1F8cn0LhUAOzOBp4yfgpZOcG8k8LZgJjiVb53XszNEwgXiqYoKzRinwTX49sdhnHQDkasSYPk7oTXUn39/ITe2EYFud3qE5uEnB8N8EHuxVLmNL8cWiao73Q4pnFyLDN81zw/i2e1ea8bmL/RtBA6q3BPMINpLFmsHuPumc+moHsYWNjavgd0KFJyMzPLzF6+HUBr+wafmPD+T9e1ww+IIBIxXnVk3Tx02Gs9uGh7FIN/csXHYR/zf31+rF1g=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>The world’s wealthy are increasingly on the move, and a booming number of advisors is available to help them. The investment-migration businesses turned over an estimated $40bn last year, twice as much as before the pandemic. So where are they advising the footloose ultra-rich to go?</p><br><p>Guests and hosts:</p><ul><li>Dominic Volek of Henley &amp; Partners&nbsp;</li><li>Ron Klasko, co-founder of Exodus Migration</li><li>Anjani Trivedi, <em>The Economist's</em> global business correspondent</li><li>Mike Bird, co-host of “Money Talks”</li><li>Alice Fulwood, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>Citizenship by investment&nbsp;</li><li>Expat advisors</li><li>Dubai</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via</em><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"><em> economist.com/podcasts</em></a><em>.</em></p><p><em>Listen to what matters most, from global politics and business to science and technology—</em><a href="https://subscribenow.economist.com/podcasts-plus" rel="noopener noreferrer" target="_blank"><em>subscribe to Economist Podcasts+</em></a><em>.</em></p><p><em>For more information about how to access Economist Podcasts+, please visit our</em><a href="https://myaccount.economist.com/s/article/What-is-Economist-Podcasts" rel="noopener noreferrer" target="_blank"><em> FAQs page</em></a><em> or watch</em><a href="https://www.youtube.com/watch?v=Gczo71bg1uY" rel="noopener noreferrer" target="_blank"><em> our video</em></a><em> explaining how to link your account.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+					<podaccess:item locked="true" tier="2e84e086-02e5-4c81-bf40-5879dee9b9fd" ads="true" spons="true" premium="true"><itunes:title>How quickly could you burn through $2.4trn? </itunes:title>
+			<pubDate>Thu, 18 Jun 2026 16:35:31 GMT</pubDate>
+			<itunes:duration>33:17</itunes:duration>
+			<guid isPermaLink="false">6a341e53f1612f1c694f9436</guid>
+			<itunes:explicit>false</itunes:explicit>
+			<link>https://shows.acast.com/theeconomistmoneytalks/episodes/how-quickly-could-you-burn-through-24trn</link>
+			<acast:episodeId>6a341e53f1612f1c694f9436</acast:episodeId>
+			<acast:showId>39fc4a99-8861-437d-81e2-684d13e48f92</acast:showId>
+			<acast:episodeUrl>how-quickly-could-you-burn-through-24trn</acast:episodeUrl>
+			<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmRbkUlg2iR8fDtnl1O71B2N8B7jZZH+7YdsHlGFxMJ/JB5ewwSWwnDfITsERRlXnRPdjbJm7d4qQ2rUK1Oh2E65gYDhVAjVZ14DHwOhC8Pz9Il+6id8fH3U4k4JSyF+Ld6nLtvnwHAEaAR+Vp5rVy9y77cLNkSc+vy1kmRucrhTbQ1wXhz625cRo+Z//TqRNVZc+egeW/EgCU3B4h/y8DQomKPlIov6Ni3jv10iH5YodTVdQskkDN4aNxpC0AJbbuR00gpnHcFEOFvFpZ/PtbQ8g3T7JabXWpC/ux9nuSnfCNgNx0D9MArRcB+guD4aIt9vRYUl9YNxZH0oOn1CyR/yyTWNABv0iylXCOnRkfTrypHU8GNZ3bxzR4RxwuxIU79Jzf9P8GMqG+ZpJ78P7D6U=]]></acast:settings>
+			<itunes:episodeType>full</itunes:episodeType>
+						<itunes:summary><![CDATA[<p>For America's social security trust fund, the answer is around six years. A growing elderly population and falling birth rate mean the pot, accumulated over decades will run dry some time towards the end of the next presidential term, in late 2032. When that happens, the country's retirees will take a battering. So can anything be done to stop it before time runs out?</p><br><p>Hosts:</p><ul><li>Mike Bird, co-host of “Money Talks”</li><li>Alice Fulwood, co-host of “Money Talks”</li><li>Ethan Wu, co-host of “Money Talks”</li></ul><p><br></p><p>Topics covered:</p><ul><li>America’s Social Security Trust Fund</li><li>Retirement</li><li>US politics</li></ul><p><br></p><p><em>Transcripts of our podcasts are available via</em><a href="http://economist.com/podcasts" rel="noopener noreferrer" target="_blank"><em> economist.com/podcasts</em></a><em>.</em></p><p><em>Listen to what matters most, from global politics and business to science and technology—</em><a href="https://subscribenow.economist.com/podcasts-plus" rel="noopener noreferrer" target="_blank"><em>subscribe to Economist Podcasts+</em></a><em>.</em></p><p><em>For more information about how to access Economist Podcasts+, please visit our</em><a href="https://myaccount.economist.com/s/article/What-is-Economist-Podcasts" rel="noopener noreferrer" target="_blank"><em> FAQs page</em></a><em> or watch</em><a href="https://www.youtube.com/watch?v=Gczo71bg1uY" rel="noopener noreferrer" target="_blank"><em> our video</em></a><em> explaining how to link your account.</em></p>]]></itunes:summary>
+				  <podaccess:premium locked="true"/>
+
+</podaccess:item>
+				

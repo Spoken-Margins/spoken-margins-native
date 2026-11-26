@@ -32,6 +32,8 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
         case presentDrawer
         /// Close the drawer without marking it seen: it opens again after the friend's item.
         case withdrawDrawer
+        /// Play the bundled welcome now, where the listener is (#4711 Design section 3). Once per owed welcome.
+        case playWelcome
     }
 
     public enum Phase: Equatable, Sendable {
@@ -55,6 +57,15 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     /// The drawer is owed although the Library will not be empty at the next launch: a friend's file failed, and the
     /// drawer it withdrew has not shown since.
     private var isOwedAfterFailure: Bool
+    /// A friend's file opened its item in this launch (the import's signal, #4834). Stays true once set; the Follow
+    /// card remembers that item as the arrival item (#4672).
+    public private(set) var reachedFriendItem = false
+    /// The cold-install welcome is owed and waits for the launch to settle (#4711 Design section 3, `welcomeOwed`).
+    public private(set) var welcomeOwed: Bool
+    /// A friend's file took the welcome's place in this launch; a failed file gives it back.
+    private var welcomeHeldByFile = false
+    /// The welcome has started in this launch, so a file that arrives later doesn't change the entry (Default taken 2).
+    private var welcomePlayed = false
 
     /// What the app keeps for the next launch, in case this one ends now.
     public enum Carry: Equatable, Sendable {
@@ -84,6 +95,11 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     /// when a friend's file held the drawer back (#3796).
     public var playsWelcomeSampleOnClose: Bool { !wasHeldBack }
 
+    /// How this first run began (#4711 Design section 3, `entry`): `.friendArrival` when a friend's file held the
+    /// welcome (or the drawer) back, else `.coldInstall`. A file that arrives after the welcome has played doesn't
+    /// change it (Default taken 2). The app stores it while "first Margin heard" hasn't fired.
+    public var entry: FirstRunEntry { wasHeldBack && !welcomePlayed ? .friendArrival : .coldInstall }
+
     /// Whether this launch owes the drawer. A fresh install owes it (the Library was empty before the Welcome
     /// sample was added), and so does a launch after one whose friend's file kept it waiting.
     public static func drawerOwed(
@@ -104,7 +120,16 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     ///     it showed; the drawer is owed now and counts as held back.
     ///   - owedAfterEarlierFailure: an earlier launch's friend's file failed and the app was left before the drawer it
     ///     withdrew came back; the drawer is owed now and is not held back.
-    public init(drawerOwed: Bool, owedFromEarlierLaunch: Bool = false, owedAfterEarlierFailure: Bool = false) {
+    ///   - welcomeOwed: a cold install owes the bundled welcome, played on settle with no Play tap (#4711 Design section 3;
+    ///     #4714 builds the order with it). Defaults to false, so every existing caller is unchanged. An earlier launch's
+    ///     held-back friend's file means it isn't owed.
+    public init(
+        drawerOwed: Bool,
+        owedFromEarlierLaunch: Bool = false,
+        owedAfterEarlierFailure: Bool = false,
+        welcomeOwed: Bool = false
+    ) {
+        self.welcomeOwed = welcomeOwed && !(drawerOwed && owedFromEarlierLaunch)
         phase = drawerOwed ? .owed : .notOwed
         wasHeldBack = drawerOwed && owedFromEarlierLaunch
         wasHeldBackBeforeThisLaunch = wasHeldBack
@@ -125,6 +150,11 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     /// A friend's file (a `.spokenmargins` packet or a share link) arrived. An untouched drawer is withdrawn so the
     /// file comes first; one the listener has already picked shows in stays, and the file's item opens under it.
     public mutating func friendFileArrived(drawerHasPicks: Bool) -> Action {
+        if welcomeOwed {
+            welcomeOwed = false
+            welcomeHeldByFile = true
+            wasHeldBack = true
+        }
         switch phase {
         case .owed:
             phase = .waitingForFriendItem
@@ -147,22 +177,52 @@ public struct FirstLaunchWelcomeOrder: Equatable, Sendable {
     /// an earlier launch's friend's file held it back (that friend's item is in the Library). A failure with the drawer
     /// never withdrawn (it had picks, or nothing was owed) changes nothing.
     public mutating func friendFileFailed(place: Place) -> Action {
-        guard phase == .waitingForFriendItem else { return .none }
+        // Once the friend's item has opened (`friendItemOpened`) the phase is waitingForLibrary and a failure changes nothing.
+        let drawerWaiting = phase == .waitingForFriendItem
+        guard drawerWaiting || welcomeHeldByFile else { return .none }
         wasHeldBack = wasHeldBackBeforeThisLaunch
-        isOwedAfterFailure = true
-        phase = .owed
+        if drawerWaiting {
+            isOwedAfterFailure = true
+            phase = .owed
+        }
+        if welcomeHeldByFile {
+            // Owed again unless an earlier launch's file held it back (the same rule as the drawer).
+            welcomeHeldByFile = false
+            welcomeOwed = !wasHeldBackBeforeThisLaunch
+        }
         return moved(to: place)
+    }
+
+    /// A friend's file imported and opened its item (the import's own signal, not the listener's place). From now on a
+    /// failure of another link does not undo the hold-back: that item is in the Library (#4834).
+    public mutating func friendItemOpened() {
+        if welcomeHeldByFile {
+            // The welcome's place was taken by this file, which has now opened: a later failure doesn't give it back.
+            welcomeHeldByFile = false
+            reachedFriendItem = true
+        }
+        guard phase == .waitingForFriendItem || phase == .waitingForLibrary else { return }
+        reachedFriendItem = true
+        phase = .waitingForLibrary
     }
 
     /// The listener's place changed.
     public mutating func moved(to place: Place) -> Action {
+        // The welcome goes first and plays wherever the listener is; it doesn't wait for the Library (Design: "any
+        // settled place counts"). If the drawer is owed too, it waits for the next Library visit (Default taken 5).
+        if welcomeOwed, isSettled, phase != .waitingForFriendItem, phase != .waitingForLibrary {
+            welcomeOwed = false
+            welcomePlayed = true
+            return .playWelcome
+        }
         switch phase {
         case .owed, .waitingForLibrary:
             guard isSettled, place == .library else { return .none }
             phase = .drawerShowing
             return .presentDrawer
         case .waitingForFriendItem:
-            if place == .item { phase = .waitingForLibrary }
+            // Only the import's own signal (`friendItemOpened`) advances this: an item the listener opened themselves,
+            // or one still downloading, is not the friend's, and going back to the Library must not bring the drawer.
             return .none
         case .notOwed, .drawerShowing:
             return .none

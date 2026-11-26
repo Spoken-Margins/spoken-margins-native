@@ -63,6 +63,80 @@ class DecideTests(unittest.TestCase):
                 self.assertFalse(b.decide(NOW, 15, run)[0])
 
 
+def at(day, hhmm):
+    hour, minute = (int(x) for x in hhmm.split(':'))
+    return dt.datetime(2026, 11, day, hour, minute, tzinfo=dt.timezone.utc)
+
+
+def run_at(day, hhmm, event='schedule', status='completed'):
+    return {'created_at': at(day, hhmm).strftime('%Y-%m-%dT%H:%M:%SZ'), 'event': event, 'status': status,
+            'conclusion': 'success' if status == 'completed' else None}
+
+
+PHONE = b.SLOTS['phone-build.yml']  # 12:00 and 21:30 UTC
+
+
+class SlotTests(unittest.TestCase):
+    """#5154: a fixed-slot workflow is dispatched once its newest slot is an hour past with no run since."""
+
+    def test_table_around_a_slot(self):
+        cases = [
+            # The real 2026-11-23: the 21:30 slot of 11-22 ran at 01:55, and the 12:00 slot never ran.
+            ('12:00 slot 65m past, last run 01:55', at(23, '13:05'), run_at(23, '01:55'), True),
+            ('12:00 slot only 50m past: inside the grace', at(23, '12:50'), run_at(23, '01:55'), False),
+            ('12:00 slot exactly an hour past', at(23, '13:00'), run_at(23, '01:55'), True),
+            ('the 12:00 slot ran late but ran', at(23, '13:05'), run_at(23, '12:40'), False),
+            ('a hand-started run 20m before the slot covers it', at(23, '13:05'), run_at(23, '11:40', 'workflow_dispatch'), False),
+            ('a run 40m before the slot does not', at(23, '13:05'), run_at(23, '11:20', 'workflow_dispatch'), True),
+            # 11-22: the 12:00 slot ran at 18:58, then the 21:30 slot was 4 hours late.
+            ('21:30 slot 90m past, last run 18:58', at(22, '23:00'), run_at(22, '18:58'), True),
+            ('past midnight, 21:30 slot of the day before', at(23, '00:10'), run_at(22, '18:58'), True),
+            ('past midnight, 21:30 slot ran', at(23, '00:10'), run_at(22, '21:45'), False),
+            ('never ran', at(23, '13:05'), None, True),
+        ]
+        for name, now, run, expected in cases:
+            with self.subTest(name):
+                self.assertEqual(b.decide_slots(now, PHONE, run)[0], expected)
+
+    def test_a_run_still_going_is_not_dispatched_over(self):
+        for status in ('queued', 'in_progress', 'waiting'):
+            with self.subTest(status):
+                go, why = b.decide_slots(at(23, '13:05'), PHONE, run_at(23, '01:55', status=status))
+                self.assertFalse(go)
+                self.assertIn(f'still {status}', why)
+
+    def test_the_reason_names_the_slot_and_how_late(self):
+        go, why = b.decide_slots(at(23, '13:05'), PHONE, run_at(23, '01:55'))
+        self.assertTrue(go)
+        self.assertIn('the 12:00 slot is 65m past with no run', why)
+
+    def test_main_t3_dispatches_on_its_interval_or_its_slot(self):
+        slots, interval = b.SLOTS['main-t3.yml'], b.WORKFLOWS['main-t3.yml']
+        # Inside 3 hours, but the 13:30 pre-phone-build slot is 70m past with no run since 12:50.
+        self.assertTrue(b.decide_both(at(23, '14:40'), interval, slots, run_at(23, '12:50'))[0])
+        # A run at 13:10 covers the 13:30 slot and is inside the interval.
+        self.assertFalse(b.decide_both(at(23, '14:40'), interval, slots, run_at(23, '13:10'))[0])
+        # Slot covered, interval past.
+        self.assertTrue(b.decide_both(at(23, '16:40'), interval, slots, run_at(23, '13:10'))[0])
+
+    def test_tick_acts_only_on_the_missed_slot(self):
+        runs = {name: {'created_at': (at(23, '13:05') - dt.timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                       'event': 'schedule', 'status': 'completed', 'conclusion': 'success'} for name in b.watched()}
+        runs['phone-build.yml'] = run_at(23, '01:55')
+        github, out = FakeGitHub(runs), io.StringIO()
+        self.assertEqual(b.tick('tok', at(23, '13:05'), out=out, get=github), 0)
+        self.assertEqual(github.posts, [('phone-build.yml', {'ref': 'main'})])
+        line = [l for l in out.getvalue().splitlines() if 'phone-build.yml' in l]
+        self.assertEqual(len(line), 1)
+        self.assertIn('dispatched', line[0])
+
+    def test_tick_leaves_a_fresh_slot_alone(self):
+        github, out = FakeGitHub({'phone-build.yml': run_at(23, '12:40')}), io.StringIO()
+        b.tick('tok', at(23, '13:05'), out=out, get=github, workflows={}, slots={'phone-build.yml': PHONE})
+        self.assertEqual(github.posts, [])
+        self.assertIn('covers the 12:00 slot', out.getvalue())
+
+
 class NewestRunTests(unittest.TestCase):
     def pick(self, runs):
         return b.newest_run('merge-stall.yml', 'tok', lambda *a, **k: {'workflow_runs': runs})
@@ -110,11 +184,11 @@ class TickTests(unittest.TestCase):
         return github, out.getvalue().splitlines(), failures
 
     def test_only_overdue_workflows_dispatch_and_each_gets_one_line(self):
-        runs = {name: {'created_at': ago(5), 'event': 'schedule'} for name in b.WORKFLOWS}  # every event counts for these
+        runs = {name: {'created_at': ago(5), 'event': 'schedule'} for name in b.watched()}  # every event counts for these
         runs['merge-stall.yml'] = {'created_at': ago(50), 'event': 'schedule'}
         github, lines, failures = self.run_tick(runs)
         self.assertEqual(github.posts, [('merge-stall.yml', {'ref': 'main'})])
-        self.assertEqual(len(lines), len(b.WORKFLOWS))
+        self.assertEqual(len(lines), len(b.watched()))
         self.assertEqual(failures, 0)
         self.assertEqual([l for l in lines if ' dispatched: ' in l], [lines[1]])
         self.assertIn('merge-stall.yml dispatched: last run 50m ago (schedule), past 15m', lines[1])
@@ -133,7 +207,7 @@ class TickTests(unittest.TestCase):
     def test_one_failure_does_not_stop_the_others_and_is_counted(self):
         github, lines, failures = self.run_tick({}, broken=['claude-audit.yml'])
         self.assertEqual(failures, 1)
-        self.assertEqual(sorted(w for w, _ in github.posts), sorted(set(b.WORKFLOWS) - {'claude-audit.yml'}))
+        self.assertEqual(sorted(w for w, _ in github.posts), sorted(set(b.watched()) - {'claude-audit.yml'}))
         self.assertIn('claude-audit.yml FAILED', lines[0])
 
     def test_a_malformed_answer_is_a_failure_not_a_crash(self):
@@ -201,7 +275,7 @@ class FailureTests(unittest.TestCase):
             return None if method == 'POST' else {'workflow_runs': []}
         out = io.StringIO()
         self.assertEqual(b.tick('tok', NOW, out=out, get=get), 2)
-        self.assertEqual(sum('/dispatches' in c for c in calls), len(b.WORKFLOWS) - 2)
+        self.assertEqual(sum('/dispatches' in c for c in calls), len(b.watched()) - 2)
 
     def test_a_run_still_going_is_not_dispatched_over(self):
         for status in ('queued', 'in_progress', 'waiting'):

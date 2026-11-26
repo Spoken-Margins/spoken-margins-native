@@ -100,6 +100,12 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
     /// carry the follow moment itself, so even one with no publish date reads as back catalogue
     /// (`FollowBaseline`). Nil for entries saved before; Build 29 and 30 ignore the key.
     public var firstSeenAt: Date?
+    /// The feed blocks this episode or its whole show from directories (`<itunes:block>Yes</itunes:block>`, #5340).
+    /// True or nil; nil for entries saved before, until the next refresh. Builds 34 and 36 ignore the key.
+    public var publisherBlocked: Bool? = nil
+    /// The entry came from a feed whose own address holds an access secret (#168, #5340), so its audio link is that
+    /// subscriber's even when it looks ordinary. True or nil. Builds 34 and 36 ignore the key.
+    public var fromPrivateFeed: Bool? = nil
 
     public init(id: String, subscriptionId: String, canonicalURL: String, audioURL: String? = nil, title: String, author: String? = nil, summary: String? = nil, publishedAt: Date? = nil, state: FeedEntryState = .unseen, bodyWordCount: Int? = nil, fullBody: String? = nil, publisherPlatform: String? = nil, publisherNarrationConfirmed: Bool? = nil, publisherNarrationGenerated: Bool? = nil, audioDurationMs: Int? = nil, episodeGUID: String? = nil, firstSeenAt: Date? = nil) {
         self.id = id
@@ -131,6 +137,9 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
             item.publishedAt = ISO8601DateFormatter().string(from: publishedAt)
         }
         if item.descriptionText == nil { item.descriptionText = ItemMetadata.plainDescription(from: summary) }
+        // A restriction only ever adds: an item already known as restricted stays so (#5340).
+        if publisherBlocked == true { item.publisherBlocked = true }
+        if fromPrivateFeed == true { item.fromPrivateFeed = true }
         if let media = item.media, PlayableLength.ms(media: media) == nil,
            media.sourceType == .nativeMediaFile || media.sourceType == .remoteStream,
            let stated = audioDurationMs, stated > 0 {

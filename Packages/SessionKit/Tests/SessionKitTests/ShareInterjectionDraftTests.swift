@@ -141,6 +141,9 @@ final class ShareInterjectionDraftTests: XCTestCase {
                 draft.isPreparingCleanup = true
                 draft.preparationMessage = "Preparing"
                 draft.renderGeneration = 7
+                // From As recorded; a Words only draft stays Words only (#4647, ShareVoiceWaitTests and
+                // BulkShareDraftPreparationTests on Linux).
+                draft.representationChoice = .original
                 draft.restoreOriginal(hasOriginalAudio: hasAudio)
                 XCTAssertEqual(draft.editHistory, [.original])
                 XCTAssertEqual(draft.editHistoryIndex, 0)
@@ -157,7 +160,7 @@ final class ShareInterjectionDraftTests: XCTestCase {
                     ? "No transcript yet, so this Margin can't be shared. Retry its transcription in Margin detail."
                     : nil)
                 XCTAssertEqual(draft.acousticPauseDecisions, [acousticPause])
-                XCTAssertEqual(draft.renderGeneration, 7)
+                XCTAssertEqual(draft.renderGeneration, 8, "Undo all edits makes a render still out stale (#4647)")
             }
         }
     }
@@ -186,7 +189,7 @@ final class ShareInterjectionDraftTests: XCTestCase {
         let _: WritableKeyPath<ShareInterjectionDraft, Int?> = \.cleanedAudioDurationMs
         let _: WritableKeyPath<ShareInterjectionDraft, Int> = \.renderGeneration
         let _: KeyPath<ShareInterjectionDraft, [InterjectionCleanupDecision]?> = \.cleanup?.decisions
-        XCTAssertEqual(original.id, "margin")
+        XCTAssertEqual(original.id, "session::margin", "a draft is named by its pass and Margin id (#4688)")
         XCTAssertTrue(original.isIncluded)
         XCTAssertEqual(original.approvedTranscript, "um Keep going.")
         XCTAssertNil(original.cleanup)
@@ -231,6 +234,7 @@ final class ShareInterjectionDraftTests: XCTestCase {
     func testBulkUndoSuppressesRenderAndClearsCleanedAudio() {
         for hasAudio in [false, true] {
             var draft = makeDraft()
+            draft.representationChoice = .original // a Words only draft would stay Words only (#4647)
             _ = draft.toggleWord(segmentID: "keep", hasOriginalAudio: hasAudio)
             _ = draft.recordEdit(hasOriginalAudio: hasAudio) { $0.automaticCleanupEnabled = true }
             draft.cleanedAudioURL = URL(fileURLWithPath: "/test/cleaned.m4a")
@@ -305,6 +309,10 @@ final class ShareInterjectionDraftTests: XCTestCase {
         other.id = "another"
         other.podcastAnchorEvidence = nil
         XCTAssertFalse(draft.refreshAnchorEvidence(from: other), "another Margin's evidence is never taken")
+        var otherPass = stored
+        otherPass.sessionId = "another pass"
+        otherPass.podcastAnchorEvidence = nil
+        XCTAssertFalse(draft.refreshAnchorEvidence(from: otherPass), "another pass's Margin with the same id is another Margin (#4688)")
     }
 
     // MARK: Words arriving (#3839)
@@ -417,6 +425,9 @@ final class ShareInterjectionDraftTests: XCTestCase {
         var other = arrived(draft.interjection)
         other.id = "another"
         XCTAssertFalse(draft.adoptArrivedWords(from: other, hasVoice: true, itemTitle: "Episode"))
+        var otherPass = arrived(draft.interjection)
+        otherPass.sessionId = "another pass"
+        XCTAssertFalse(draft.adoptArrivedWords(from: otherPass, hasVoice: true, itemTitle: "Episode"), "same id, another pass (#4688)")
         XCTAssertFalse(draft.adoptArrivedWords(from: draft.interjection, hasVoice: true, itemTitle: "Episode"), "still pending")
     }
 

@@ -16,7 +16,8 @@ final class SessionSnapshotPlaybackPositionTests: XCTestCase {
         "lastInterjectionAnchorType", "lastInterjectionTargetType", "recordingTargetId", "pendingAiJobKind",
         "pendingAiJobStatus", "providerCallStarted", "turnStatus", "lastUserTurnType", "spokenUnits", "lastFailure",
         "linkResolutionStatus", "linkResolutionFailureReason", "preparedTextAudioStatus", "sourceTranscriptStatus",
-        "skimBridgeState", "canSkimForward", "canSkimBackward", "playbackRequestedAt"
+        "skimBridgeState", "canSkimForward", "canSkimBackward", "playbackRequestedAt",
+        "publisherAudioSource"   // changes only when the voice switches (#4640), never on a tick
     ]
 
     private func playingSnapshot() -> SessionSnapshot {

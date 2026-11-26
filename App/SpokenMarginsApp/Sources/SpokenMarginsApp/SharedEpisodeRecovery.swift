@@ -46,6 +46,9 @@ final class SharedEpisodeRecovery: ObservableObject {
     private let services: Services
     private var candidates: [String: (shared: SharedItemIdentity, episode: ParsedFeedItem, showTitle: String)] = [:]
     private var generation = 0
+    /// Whether the feed being read holds an access secret in its own address (#5340). Only this yes or no is kept,
+    /// never the address.
+    private var feedIsPrivate = false
 
     init(services: Services) {
         self.services = services
@@ -78,6 +81,7 @@ final class SharedEpisodeRecovery: ObservableObject {
             return
         }
         guard current == generation else { return }
+        feedIsPrivate = ShareableLinkPolicy.shareableLink(url.absoluteString) == nil
         let episodes = Self.importableEpisodes(for: shared, in: feed)
         switch episodes.count {
         case 0:
@@ -102,10 +106,11 @@ final class SharedEpisodeRecovery: ObservableObject {
     }
 
     private func add(_ episode: ParsedFeedItem, for shared: SharedItemIdentity, showTitle: String, generation current: Int) async {
-        guard let entry = SharedEpisodeFeedEntry.entry(for: episode) else {
+        guard var entry = SharedEpisodeFeedEntry.entry(for: episode) else {
             phase = .failed(Self.noAudioMessage)
             return
         }
+        if feedIsPrivate { entry.fromPrivateFeed = true }
         do {
             let itemId: String
             if let existing = try await services.existingEpisode(shared, entry, showTitle) {

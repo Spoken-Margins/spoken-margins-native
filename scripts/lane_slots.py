@@ -52,6 +52,7 @@ SECOND_SLOT_COOLDOWN_MAX = 24 * 3600
 SECOND_SLOT_TRIP_WINDOW = 7 * 24 * 3600
 SIMULATOR_DECISION = 'simulator-slot-decision.lock'
 SIMULATOR_RECLAIM = 'simulator-slot-reclaim.lock'
+TEST_RUNNER_LOCK = 'test-runner.lock'
 # A simulator job outlives its taker's process by design, but not by hours: the longest desk run is about two.
 STALE_HOLD_SECONDS = 3 * 3600
 RECLAIM_SETTLE_SECONDS = 10
@@ -482,6 +483,18 @@ def simulator_slot(label, out=sys.stderr, max_wait=None):
 def acquire_simulator_slot(label, out=sys.stderr, max_wait=None):
     """Take a simulator slot and return its open handle, to hand to a longer-lived child process."""
     return acquire(*_simulator_slot_args(label, out, max_wait))[0]
+
+
+def acquire_test_runner(label, out=sys.stderr, max_wait=None):
+    """Take the Mac-wide lock on the dedicated "SpokenMargins Test Runner" and return its open handle (#4736).
+
+    A verify-tests run without --device holds it from before it boots that device until it has shut it down, so two
+    checkouts can never boot, wipe or shut down the device under each other. Before this lock, the integration job
+    held the simulator decision lock for its whole run to guard the device, and every Test Desk boot waited out the
+    run (35 minutes on 2026-11-19). Take it after the simulator slot, never before: a holder of this lock never waits
+    for a slot, so the two can't deadlock. A waiter prints a note like every other lane wait.
+    """
+    return acquire([TEST_RUNNER_LOCK], 'Test Runner lock', label, out, max_wait)[0]
 
 
 def _shut_down_device(udid):

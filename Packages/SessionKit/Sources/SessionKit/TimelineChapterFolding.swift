@@ -49,6 +49,9 @@ public struct TimelineChapterFolding: Equatable, Sendable {
             let rows = hiddenCount == 1 ? "1 row hidden" : "\(hiddenCount) rows hidden"
             return hasNew ? "\(rows), new inside" : rows
         }
+
+        /// What the fold control shows beside its chevron (#4778): the bare count, "3". VoiceOver reads `text`.
+        public var countText: String { "\(hiddenCount)" }
     }
 
     /// The ids of chapter rows that are folded now, by the listener or by `sync`.

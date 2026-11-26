@@ -1,5 +1,6 @@
 import SwiftUI
 import SessionKit
+import SessionKitFeeds
 
 /// The Add sheet's bottom bar (#145): one Paste & go tap adds a copied link or copied text.
 /// `PasteButton` reads the clipboard without the iOS "Allow Paste" prompt because the tap is the
@@ -42,6 +43,9 @@ struct PasteAndGoBar: View {
                 if model.isResolvingSourceLink || isReadingLinkList {
                     ProgressView()
                         .frame(minWidth: 44, minHeight: 44)
+                        // The row's words are hidden from VoiceOver, so the spinner names itself (#5036); the same words
+                        // as the clipboard offer's busy line.
+                        .accessibilityLabel("Adding the link")
                 } else {
                     PasteButton(supportedContentTypes: PastedClipboardContent.supportedTypes) { providers in
                         Task { @MainActor in
@@ -123,13 +127,47 @@ private struct LinkListArrivalWatcher: View {
 }
 
 /// The link import's progress or failure, with Open in Safari when the app couldn't read the page itself.
+/// While a link resolves it says what the app is doing, and moves to a second line on a long wait, and VoiceOver reads
+/// both (#5049): an arXiv abstract page once sat behind a bare spinner for about 41 seconds.
 struct SourceLinkImportStatusView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.openURL) private var openURL
+    /// False where the surface announces its own start (the Library's copied-link card), so VoiceOver hears one line.
+    var announcesStart = true
+    /// Set once this resolve has run `SourceLinkProgressMessage.stillLookingAfter` seconds; reset by each new resolve.
+    @State private var waitedLong = false
+
+    private var isResolving: Bool { model.sourceLinkImportState == "resolving" }
+
+    /// The model's message, except while resolving, when the line follows the wait.
+    private var shownMessage: String? {
+        guard isResolving, SourceLinkProgressMessage.isProgress(model.sourceLinkImportMessage) else {
+            return model.sourceLinkImportMessage
+        }
+        return waitedLong ? SourceLinkProgressMessage.stillLooking : SourceLinkProgressMessage.looking
+    }
 
     var body: some View {
+        content
+            // Keyed on the state, so a result, a failure or a new paste cancels the wait and the next resolve starts fresh.
+            .task(id: model.sourceLinkImportState) {
+                waitedLong = false
+                guard isResolving else { return }
+                if announcesStart { announce(SourceLinkProgressMessage.looking) }
+                try? await Task.sleep(nanoseconds: UInt64(SourceLinkProgressMessage.stillLookingAfter * 1_000_000_000))
+                guard !Task.isCancelled, isResolving else { return }
+                waitedLong = true
+                announce(SourceLinkProgressMessage.stillLooking)
+            }
+    }
+
+    private func announce(_ text: String) {
+        AccessibilityNotification.Announcement(text).post()
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let message = model.sourceLinkImportMessage {
+            if let message = shownMessage {
                 Group {
                     if model.sourceLinkImportState == "failure" {
                         FailureMessageLabel(message)

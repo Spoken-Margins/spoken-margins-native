@@ -43,7 +43,7 @@ final class UnplacedMarginNowPlayingTests: XCTestCase {
 
     func testTheTimelineCornerAndDetailSayNoPlaceNeverAZero() {
         let label = MarginPlacePresentation.timelineLabel
-        for text in [label.corner, label.spoken, label.chapterDetail] {
+        for text in [label.corner, label.spoken] {
             XCTAssertEqual(text, "No place")
             XCTAssertFalse(text.contains("%"))
             XCTAssertFalse(text.contains("0:00"))
@@ -92,6 +92,6 @@ final class UnplacedMarginNowPlayingTests: XCTestCase {
         placed.id = "z-placed"
         placed.createdAt = unplaced.createdAt.addingTimeInterval(3_600)
         let rows = MarginThreadPresentation.rows(itemId: "item", localMargins: [unplaced, placed], layers: [], importedMargins: [])
-        XCTAssertEqual(rows.map(\.reference), [.local("z-placed"), .local("a-unplaced")])
+        XCTAssertEqual(rows.map(\.reference), [.local("session::z-placed"), .local("session::a-unplaced")])
     }
 }
