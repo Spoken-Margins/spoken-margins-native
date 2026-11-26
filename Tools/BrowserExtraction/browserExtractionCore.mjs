@@ -197,52 +197,69 @@ function shieldProseFromAdSelectors(documentRef) {
 // beside it for print and for readers without script (#5365). Defuddle drops
 // the hidden picture, the app strips the <svg>, and what is left is the
 // legend's words run together and read aloud. While Defuddle runs, stand in
-// for each such figure a plain one holding only its pictures and caption,
-// then put the page's own figure back, leaving the page as it was found.
+// for each such figure a copy without the chart's block (the widest wrapper
+// around the chart that holds no picture and no caption) and with its
+// pictures unhidden, then put the page's own figure back. Code, tables and
+// any other content of the figure stay. `loading` is kept, so a lazy picture
+// the page never loaded is not fetched by the copy.
 const CHART_SELECTOR = "svg, canvas";
-const HIDING_ATTRIBUTES = ["class", "style", "hidden", "aria-hidden", "loading"];
+const HIDING_ATTRIBUTES = ["class", "style", "hidden", "aria-hidden"];
 
-function plainFigureFor(figure, documentRef) {
-  const plain = documentRef.createElement("figure");
-  const caption = Array.from(figure.children)
-    .find(child => String(child.tagName || "").toLowerCase() === "figcaption");
-  for (const image of figure.querySelectorAll("img")) {
-    if (image.closest("figcaption")) {
-      continue;
+function chartBlock(chart, figure) {
+  let block = chart;
+  while (block.parentElement && block.parentElement !== figure
+    && !block.parentElement.querySelector("figcaption, img")) {
+    block = block.parentElement;
+  }
+  return block;
+}
+
+function chartsOutsideCaption(figure) {
+  return Array.from(figure.querySelectorAll(CHART_SELECTOR))
+    .filter(element => !element.closest("figcaption"));
+}
+
+function figureWithoutChart(figure) {
+  const copy = figure.cloneNode(true);
+  for (const chart of chartsOutsideCaption(copy)) {
+    if (copy.contains(chart)) {
+      chartBlock(chart, copy).remove();
     }
-    const picture = image.cloneNode(false);
-    HIDING_ATTRIBUTES.forEach(attribute => picture.removeAttribute(attribute));
-    plain.appendChild(picture);
   }
-  if (caption) {
-    plain.appendChild(caption.cloneNode(true));
+  for (const image of copy.querySelectorAll("img")) {
+    if (!image.closest("figcaption")) {
+      HIDING_ATTRIBUTES.forEach(attribute => image.removeAttribute(attribute));
+    }
   }
-  return plain;
+  return copy;
 }
 
 function pictureInteractiveFigures(documentRef) {
   const restores = [];
-  for (const figure of documentRef.querySelectorAll("figure")) {
-    if (figure.parentElement?.closest("figure")) {
-      continue;
+  const restore = () => restores.reverse().forEach(undo => undo());
+  try {
+    for (const figure of documentRef.querySelectorAll("figure")) {
+      if (figure.parentElement?.closest("figure") || !chartsOutsideCaption(figure).length) {
+        continue;
+      }
+      const copy = figureWithoutChart(figure);
+      figure.replaceWith(copy);
+      restores.push(() => copy.replaceWith(figure));
     }
-    const chart = Array.from(figure.querySelectorAll(CHART_SELECTOR))
-      .find(element => !element.closest("figcaption"));
-    if (!chart) {
-      continue;
-    }
-    const plain = plainFigureFor(figure, documentRef);
-    figure.replaceWith(plain);
-    restores.push(() => plain.replaceWith(figure));
+  } catch (error) {
+    restore();
+    throw error;
   }
-  return () => restores.reverse().forEach(restore => restore());
+  return restore;
 }
 
 export function extractReadableMarkdown(documentRef) {
-  const restoreAdNames = shieldProseFromAdSelectors(documentRef);
-  const restoreFigures = pictureInteractiveFigures(documentRef);
+  let restoreAdNames = () => {};
+  let restoreFigures = () => {};
   let result;
   try {
+    restoreAdNames = shieldProseFromAdSelectors(documentRef);
+    restoreFigures = pictureInteractiveFigures(documentRef);
     result = new Defuddle(documentRef, {
       markdown: true,
       useAsync: false,

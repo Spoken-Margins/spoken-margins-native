@@ -1227,6 +1227,19 @@ test("#5365: neighbours of the interactive figure: chart only, canvas, an icon i
     + `${panels.replace('src="left.png"', 'src="left.png" hidden').replace('src="right.png"', 'src="right.png" style="display:none"')}`
     + `<figcaption>Figure T. Two panels.</figcaption></figure>`]);
   assert.equal(text, plain);
+
+  // A code block with an <svg> copy button is not a chart figure to empty: the
+  // code and the caption stay.
+  text = captureFigures([`<figure class="code"><pre><code>npm install placeholder-package</code></pre>`
+    + `<button><svg><path d="M0 0"/></svg></button><figcaption>Figure K. Install it.</figcaption></figure>`]);
+  assert.ok(text.includes("npm install placeholder-package"), text);
+  assert.ok(text.includes("Figure K. Install it."));
+
+  // A caption wrapped below the chart is kept, and the chart's own words are not.
+  text = captureFigures([`<figure><div class="ix"><div class="ix-legend"><span>wrapped legend</span></div><svg></svg></div>`
+    + `<img alt="Wrapped." src="w.png" style="display:none"><div class="caption-wrap"><figcaption>Figure W. Wrapped caption.</figcaption></div></figure>`]);
+  assert.equal(pictureCount(text), 1);
+  assert.ok(text.includes("Figure W. Wrapped caption.") && !text.includes("wrapped legend"));
   assert.ok(!text.includes("legend word"));
 });
 
