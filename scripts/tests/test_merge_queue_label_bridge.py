@@ -222,6 +222,40 @@ class RetitleTests(unittest.TestCase):
         code, _ = run(github, '--pr', '7', '--action', 'converted_to_draft')
         self.assertEqual((code, github.disabled, github.dequeued), (0, [7], []))
 
+    def test_a_dispatch_for_a_handed_off_queued_pr_turns_auto_merge_off_and_dequeues(self):
+        # #5302: lane_conflicts.py swaps automerge for needs-mac with GITHUB_TOKEN, which wakes no unlabeled run,
+        # and dispatches this one-PR run instead (the workflow passes --action edited for a dispatch).
+        github = FakeGitHub({7: pr(7, armed=False, queued=True, extra=('needs-mac',))})
+        code, out = run(github, '--pr', '7', '--action', 'edited')
+        self.assertEqual((code, github.disabled, github.dequeued, github.merged), (0, [7], ['PR_7'], []))
+        self.assertIn('handed off', out)
+
+    def test_a_handed_off_pr_set_to_auto_merge_but_not_queued_only_turns_it_off(self):
+        github = FakeGitHub({7: pr(7, armed=False, auto=True, extra=('needs-mac',))})
+        self.assertEqual(run(github, '--pr', '7', '--action', 'edited')[0], 0)
+        self.assertEqual((github.disabled, github.dequeued), ([7], []))
+
+    def test_a_handed_off_pr_that_is_not_set_to_merge_gets_no_call(self):
+        github = FakeGitHub({7: pr(7, armed=False, extra=('needs-mac',))})
+        self.assertEqual(run(github, '--pr', '7', '--action', 'edited')[0], 0)
+        self.assertEqual((github.disabled, github.dequeued, github.posted), ([], [], []))
+
+    def test_a_queued_pr_with_no_label_and_no_hand_off_is_still_left_alone(self):
+        # It may be the owner's own Merge tap.
+        github = FakeGitHub({7: pr(7, armed=False, queued=True)})
+        self.assertEqual(run(github, '--pr', '7', '--action', 'edited')[0], 0)
+        self.assertEqual((github.disabled, github.dequeued), ([], []))
+
+    def test_a_handed_off_pr_re_armed_after_the_fix_is_queued_as_usual(self):
+        github = FakeGitHub({7: pr(7, auto=False, extra=('needs-mac',))})
+        self.assertEqual(run(github, '--pr', '7', '--action', 'labeled')[0], 0)
+        self.assertEqual((github.merged, github.disabled, github.dequeued), ([7], [], []))
+
+    def test_the_sweep_never_takes_a_handed_off_pr_out(self):
+        github = FakeGitHub({7: pr(7, armed=False, queued=True, extra=('needs-mac',))})
+        self.assertEqual(run(github, '--sweep')[0], 0)
+        self.assertEqual((github.disabled, github.dequeued), ([], []))
+
     def test_an_ordinary_edit_of_a_queued_pr_changes_nothing(self):
         github = FakeGitHub({7: pr(7, queued=True)})
         self.assertEqual(run(github, '--pr', '7', '--action', 'edited')[0], 0)

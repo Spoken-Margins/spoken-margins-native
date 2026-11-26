@@ -374,3 +374,16 @@ test('holder titles are told from show titles', () => {
     assert.equal(isSharedHolderTitle(title), false, title);
   }
 });
+
+test('#4426: a new file from an unfollowed "Shared by" sender revives the holder; a file for a stored episode of an unfollowed feed lands on it', () => {
+  const ada: Show = { ...sharedShowFor('Ada', 'EARLIER'), unfollowedAt: 'LATER' };
+  const fresh = placeImport(read({ title: 'Another', audioUrl: 'https://media.example.com/10.mp3' }, { sender: 'Ada' }), [show, ada], [mine], 'NOW');
+  assert.deepEqual(fresh.show, { id: 'shared:Ada', kind: 'podcast', title: 'Shared by Ada', feedUrl: '', followedAt: 'NOW' });
+  assert.equal(fresh.episode.showId, 'shared:Ada');
+
+  const unfollowed: Show = { ...show, unfollowedAt: 'LATER' };
+  const landed = placeImport(read({ title: 'T', guid: 'g-1' }), [unfollowed], [mine], 'NOW');
+  assert.equal(landed.show, undefined, 'a friend’s file never follows a feed for the listener');
+  assert.equal(landed.episode.id, mine.id);
+  assert.equal(landed.newEpisode, false);
+});

@@ -216,7 +216,7 @@ extension Gate1AppModel {
         activeItemId = id
         selectedItem = detail
         prepareImportedLocalAudioBridges(itemId: id)
-        scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }; fetchCommunityMapIfNeeded(itemId: id); retryVoiceoverLookupIfNeeded(itemId: id, trigger: .open)
+        scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }; retryVoiceoverLookupIfNeeded(itemId: id, trigger: .open)
         prewarmPlaybackProjection(itemId: id, store: store) // off main, so a Play does not project the text (#2256)
         listeningMapJSON = ""
         screen = .item

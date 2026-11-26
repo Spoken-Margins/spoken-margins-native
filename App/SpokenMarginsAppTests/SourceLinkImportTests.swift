@@ -265,6 +265,48 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertNil(model.snapshot.sessionId, "adding from Following starts nothing")
     }
 
+    /// #5328: while a swipe Add fetches, the row says "Adding…" and ▶ stays as it was. A ▶ tap then rides on that fetch:
+    /// ▶ shows its spinner instead, the episode is fetched once, and it plays when it lands.
+    func testPlayDuringASwipeAddJoinsTheFetchAndPlaysTheEpisodeOnce() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        temporaryDirectories.append(root)
+        let database = root.appendingPathComponent("swipe-add-then-play.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: database)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: database.path)
+        let subscription = FeedSubscription(id: "s", source: SourceIdentity(id: "publication", kind: .articleFeed,
+            canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Publisher"), lastRefreshAt: Date())
+        let newest = FeedEntry(id: "newest-entry", subscriptionId: subscription.id,
+            canonicalURL: "https://publisher.example/newest-post", title: "The newest post", publishedAt: Date(timeIntervalSinceNow: -3_600))
+        try store.saveFeedSubscription(subscription)
+        try store.saveFeedEntry(newest)
+        let extractor = GatedFeedArticleExtractor(capture: BrowserTextHandoff(captureMode: .readablePage,
+            source: BrowserTextSource(url: newest.canonicalURL, title: newest.title),
+            text: "The newest post's body."))
+        model.readablePageExtractor = extractor
+        model.followingShowEntries = [newest]
+        let row = try XCTUnwrap(FollowingShowRows.build(subscriptions: [subscription], entries: [newest]).rows.first)
+        XCTAssertEqual(row.playEntryID, row.newestEntryID, "▶ plays the episode the swipe adds")
+
+        model.addPreviewedEpisode(of: row)
+        try await waitFor("the swipe's fetch to start") { extractor.callCount > 0 }
+        XCTAssertTrue(model.followedEntryImports.isAdding(row.newestEntryID), "a swipe Add says Adding…")
+        XCTAssertFalse(model.followedEntryImports.isPlayStarting(row.playEntryID), "and leaves ▶ as it was")
+
+        model.playNewestEpisode(of: row)
+        XCTAssertTrue(model.followedEntryImports.isPlayStarting(row.playEntryID), "▶ shows its own spinner")
+        XCTAssertFalse(model.followedEntryImports.isAdding(row.newestEntryID), "and Adding… gives way to it")
+        extractor.open()
+        try await waitFor("the fetch to finish") { !model.importingFollowedSourceEntryIds.contains(newest.id) }
+        try await waitFor("the episode to start") { model.snapshot.sessionId != nil }
+
+        XCTAssertEqual(extractor.callCount, 1, "▶ rode on the swipe's fetch")
+        XCTAssertEqual(model.libraryItems.filter { $0.title == newest.title }.count, 1, "the episode lands in the Library once")
+        XCTAssertEqual(model.libraryItems.first { $0.id == model.selectedItem.id }?.title, newest.title, "the added episode is the one playing")
+        model.endSession()
+    }
+
     func testRedirectedFollowedArticleAddAndOpenKeepTheirSignalEntry() async throws {
         for openWhenFinished in [false, true] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

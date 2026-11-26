@@ -77,6 +77,7 @@ extension Gate1AppModel {
     func listenerMovedSource() {
         marginMomentConductor?.sourceMoved()
         noteCatchUp(.scrub)
+        dropHeldCatchUpPlace(trigger: "moved") // after the run, a move is the listener's new place (#5238)
     }
 
     /// A compact command arrived (Lock Screen, AirPods, CarPlay, Watch, the playback screen's compact buttons). A move
@@ -84,7 +85,10 @@ extension Gate1AppModel {
     /// Called before any of the command's own early returns. A recording puts the card away only once it really began
     /// (`compactRecordingBegan`), so a refused one leaves it.
     func noteTransportCommand(_ command: CompactControlCommand) {
-        if command.movesPlaybackPosition { marginMomentConductor?.sourceMoved() }
+        if command.movesPlaybackPosition {
+            marginMomentConductor?.sourceMoved()
+            dropHeldCatchUpPlace(trigger: "compact_move") // compact skips and seeks skip `listenerMovedSource` (#5238)
+        }
         guard command != .beginInterjection else { return }
         if let event = CatchUpRun.Event.event(for: command, sourceIsPlaying: snapshot.status.isPlaybackActive) {
             noteCatchUp(event)
@@ -100,10 +104,17 @@ extension Gate1AppModel {
 
     /// The conductor saw its last Margin end. Only the run's own conductor counts. What stays new is the run's friend
     /// Margins whose voice never started (they couldn't play, or were skipped first); the listener's own parents never count.
+    /// A re-listen's place ahead of the reply stays owed, held where the run stopped (#5238): one decision, which the
+    /// card's sentence and the kept note both use.
     func catchUpRunReachedItsEnd(_ conductor: MarginMomentConductor) {
         guard let catchUp, catchUp.run.isRunning, catchUp.conductor == ObjectIdentifier(conductor) else { return }
         let stillNew = catchUp.run.friendMarginIds.filter { !catchUp.heardMarginIds.contains($0) }.count
-        noteCatchUp(.completed(stillNew: stillNew))
+        let held = CatchUpPlace.hold(reviewPlaces.owed(itemId: catchUp.run.itemId), sourceAtMediaTimeMs: snapshot.currentMediaTimeMs)
+        if let held {
+            reviewPlaces.owe(held)
+            diagnostics["catchUp.place"] = "owed"
+        }
+        noteCatchUp(.completed(stillNew: stillNew, owedPlaceMs: held?.returnToMediaTimeMs))
         diagnostics["catchUp"] = "ended:still_new=\(stillNew)"
     }
 

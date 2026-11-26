@@ -26,7 +26,13 @@ label into the queue's own commands. merge-queue-label-bridge.yml runs it from m
 - Sweep: queues every armed PR, re-reading each one just before acting so a PR stopped after the list was read
   (label removed, retitled, `needs-fix` added) is not queued again. It never takes a PR out: a PR set to merge
   without the label may be the owner's own Merge tap or a maintainer's `gh pr merge`. A PR leaves the queue only on
-  the `unlabeled` event, a hold `edited`/`converted_to_draft` event, or merge_queue_dequeued.py's label removal.
+  the `unlabeled` event, a hold `edited`/`converted_to_draft` event, merge_queue_dequeued.py's label removal, or a
+  hand-off (next point).
+- Handed off (#5302): a one-PR run (a dispatch or a PR event) on a PR with no arming label that carries `needs-mac`
+  takes it out of the queue and turns auto-merge off. The hosted conflict check (lane_conflicts.py) hands a
+  conflicting PR to the Mac finisher by swapping `automerge` for `needs-mac` with GITHUB_TOKEN, which wakes no
+  `unlabeled` run, so it dispatches one of these. A queued PR that conflicts can't merge, and while queued nobody
+  can push the fix (#5276 sat 5 hours that way). The sweep never does this: it only reads armed PRs.
 
 The owner's own `owner-tap` label arms a PR the same way (#4939): it is his tap on a PR that touches `.github/` or
 `scripts/lane_merge_rules.py`, which no agent arms, and (owner, 2026-11-22) such a PR goes through the queue on that
@@ -60,6 +66,7 @@ import unicodedata
 LABEL = 'automerge'
 OWNER_TAP = 'owner-tap'  # the owner's tap on a PR only he merges; it arms like `automerge` (#4939)
 FIX_LABEL = 'needs-fix'
+HANDOFF_LABEL = 'needs-mac'  # lane_conflicts.py's hand-off to the Mac finisher; such a PR must not sit queued (#5302)
 TRIES = 3
 MARKER = '<!-- merge-queue-label-bridge not-queued -->'
 QUEUE_FAILED_MARKER = '<!-- merge-queue-label-bridge could-not-queue -->'
@@ -313,6 +320,9 @@ def queue(github, pr, out=sys.stdout, rearmed=False):
         print(f'#{number}: not open, nothing to do', file=out)
         return True
     if not armed(pr):
+        if HANDOFF_LABEL in labels(pr) and (pr.get('autoMergeRequest') or pr.get('mergeQueueEntry')):
+            print(f'#{number}: handed off (`{HANDOFF_LABEL}`) with no `{LABEL}` or `{OWNER_TAP}`, taking it out', file=out)
+            return take_out(github, pr, out)
         print(f'#{number}: no `{LABEL}` or `{OWNER_TAP}` label, nothing to queue', file=out)
         return True
     why = not_queueable(pr)

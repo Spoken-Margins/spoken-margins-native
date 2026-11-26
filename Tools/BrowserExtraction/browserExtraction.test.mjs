@@ -7,6 +7,7 @@ import { parseHTML } from "linkedom";
 import {
   captureReadablePage,
   fallbackReadableMarkdown,
+  htmlTablesAsMarkdown,
   normalizeSocialEmbedsForReading,
   sourceMetadata
 } from "./browserExtractionCore.mjs";
@@ -198,6 +199,176 @@ test("readable capture hands the app Defuddle's Markdown with the page's source 
   assert.match(payload.text, /^## First section\n\nUseful article prose\./);
   assert.match(payload.text, /\n\n### Second section\n\nUseful article prose\./);
   assert.doesNotMatch(payload.text, /Navigation noise|Footer noise/);
+});
+
+// alignment.anthropic.com marks every table cell colspan='1' rowspan='1'.
+// Defuddle keeps any table with a span attribute as HTML, and the app read
+// each cell's paragraph aloud as a sentence of its own (#5364).
+const spanOneTable = `<p class="table-caption"><b>Table D1. Neuron audit.</b> One row per checkpoint.</p>
+  <div class="table-scroll"><table><thead><tr>
+    <td colspan='1' rowspan='1'><p><span style='font-weight: 700;'>Checkpoint</span></p></td>
+    <td colspan='1' rowspan='1'><p><span style='font-weight: 700;'>Method</span></p></td>
+    <td colspan='1' rowspan='1'><p><span style='font-weight: 700;'>WMDP-cyber accuracy</span></p></td>
+  </tr></thead><tbody></tbody><tbody>
+    <tr><td colspan='1' rowspan='1'><p>Zephyr RMU</p></td><td colspan='1' rowspan='1'><p>RMU</p></td><td colspan='1' rowspan='1'><p>0.27</p></td></tr>
+    <tr><td colspan='1' rowspan='1'><p>Llama-3 TAR</p></td><td colspan='1' rowspan='1'><p>TAR</p></td><td colspan='1' rowspan='1'><p>0.24</p></td></tr>
+  </tbody></table></div>`;
+
+test("#5364: a table whose cells carry colspan=1 reaches the app as a Markdown table, not cell-by-cell HTML", () => {
+  const document = browserLikePage({
+    head: "<title>Neuron basis</title>",
+    body: `<article><h2>D. Case study 2</h2>${articleProse}${spanOneTable}${articleProse}</article>`
+  });
+  const payload = withGlobalDocument(document, () =>
+    captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, document)
+  );
+  assert.equal(payload.metadata.extractor, "defuddle");
+  assert.doesNotMatch(payload.text, /<\/?(table|td|tr|thead|tbody)\b/i);
+  assert.ok(payload.text.includes([
+    "| Checkpoint | Method | WMDP-cyber accuracy |",
+    "| --- | --- | --- |",
+    "| Zephyr RMU | RMU | 0.27 |",
+    "| Llama-3 TAR | TAR | 0.24 |"
+  ].join("\n")), payload.text);
+  assert.match(payload.text, /Table D1\. Neuron audit\./);
+});
+
+test("#5364: HTML tables left in Markdown become Markdown tables, spans laid out on a grid", () => {
+  const { document } = parseHTML("<!doctype html><html><body></body></html>");
+  const cases = [
+    ["span one, header cells tagged td",
+      `<table><thead><tr><td colspan="1" rowspan="1"><p>A</p></td><td colspan=" 1 "><p>B</p></td></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>`,
+      "| A | B |\n| --- | --- |\n| 1 | 2 |"],
+    ["a real column span fills the columns it covers",
+      `<table><tr><th>Family</th><th>C</th><th>P</th></tr><tr><td colspan="2">Both</td><td>3</td></tr></table>`,
+      "| Family | C | P |\n| --- | --- | --- |\n| Both | Both | 3 |"],
+    ["a real row span fills the rows below, never past the table",
+      `<table><tr><th>Group</th><th>Model</th></tr><tr><td rowspan="9">Llama</td><td>8B</td></tr><tr><td>70B</td></tr></table>`,
+      "| Group | Model |\n| --- | --- |\n| Llama | 8B |\n| Llama | 70B |"],
+    ["ragged rows are padded to the widest",
+      `<table><tr><th>One</th></tr><tr><td>a</td><td>b</td></tr></table>`,
+      "| One |  |\n| --- | --- |\n| a | b |"],
+    ["a pipe stays inside its cell, and a cell's paragraphs stay separate words",
+      `<table><tr><th>Expr</th><th>Note</th></tr><tr><td>a|b</td><td><p>first</p><p>second</p></td></tr></table>`,
+      "| Expr | Note |\n| --- | --- |\n| a\\|b | first second |"],
+    ["an unknown or zero span counts as one",
+      `<table><tr><th colspan="x">A</th><th rowspan="0">B</th></tr><tr><td>1</td><td>2</td></tr></table>`,
+      "| A | B |\n| --- | --- |\n| 1 | 2 |"]
+  ];
+  for (const [name, html, expected] of cases) {
+    const result = htmlTablesAsMarkdown(`Before.\n\n${html}\n\nAfter.`, document);
+    assert.equal(result, `Before.\n\n${expected}\n\nAfter.`, name);
+  }
+  assert.equal(htmlTablesAsMarkdown("No table here.", document), "No table here.");
+  const simple = "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>";
+  const asMarkdown = "| A | B |\n| --- | --- |\n| 1 | 2 |";
+  assert.equal(htmlTablesAsMarkdown(`<table><caption>Table 2. Scores.</caption><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>`, document),
+    `Table 2. Scores.\n\n${asMarkdown}`, "a caption stays, as a line above the rows");
+  const fenced = "```html\n" + simple + "\n```";
+  assert.equal(htmlTablesAsMarkdown(fenced, document), fenced, "a code sample in a fence is left as written");
+  assert.equal(htmlTablesAsMarkdown(`Use \`<table>\` for data.\n\n${simple}`, document),
+    `Use \`<table>\` for data.\n\n${asMarkdown}`, "a mention of <table> in prose doesn't hide the real table");
+  assert.equal(htmlTablesAsMarkdown(`<table><tr><td>never closed\n\n${simple}`, document),
+    `<table><tr><td>never closed\n\n${asMarkdown}`, "an unclosed table doesn't hide the next one");
+  const code = "```\na\n\n\n\nb\n```";
+  assert.equal(htmlTablesAsMarkdown(`${code}\n\n${simple}\n\nAfter.`, document), `${code}\n\n${asMarkdown}\n\nAfter.`,
+    "blank lines elsewhere are left alone");
+  assert.equal(htmlTablesAsMarkdown("<table><tr><td>x<table><tr><td>y</td></tr></table></td><td>z</td></tr></table>", document),
+    "| x y | z |\n| --- | --- |", "a nested table's words stay apart");
+  assert.equal(htmlTablesAsMarkdown("<table></table>", document), "<table></table>", "an empty table is left as it was");
+});
+
+test("#5364: both semantic fallbacks render a table as a Markdown table, never a cell as its own paragraph", () => {
+  const { document } = parseHTML(`<html><head><title>Tables</title></head><body><article>
+    <p>Before the table.</p>${spanOneTable}<p>After the table.</p>
+  </article></body></html>`);
+  Object.defineProperty(document, "location", { value: { href: "https://example.com/tables" } });
+  const swift = fs.readFileSync("App/SpokenMarginsApp/Sources/SpokenMarginsApp/AppOwnedReadablePageExtractor.swift", "utf8");
+  const script = swift.split('private static let semanticFallbackJavaScript = #"""')[1].split('"""#')[0];
+  const native = new Function("document", script)(document);
+  const expected = [
+    "| Checkpoint | Method | WMDP-cyber accuracy |",
+    "| --- | --- | --- |",
+    "| Zephyr RMU | RMU | 0.27 |",
+    "| Llama-3 TAR | TAR | 0.24 |"
+  ].join("\n");
+  for (const [name, text] of [["native", native.text], ["bundled", fallbackReadableMarkdown(document)]]) {
+    assert.ok(text.includes(`Before the table.\n\n`), name);
+    assert.ok(text.includes(expected), `${name}: ${text}`);
+    assert.doesNotMatch(text, /\n\nZephyr RMU\n\n/, name);
+    assert.ok(text.indexOf("Before the table.") < text.indexOf(expected) && text.indexOf(expected) < text.indexOf("After the table."), name);
+  }
+});
+
+test("#5364 audit: both semantic fallbacks still read an article laid out in a layout table, paragraph by paragraph", () => {
+  // A layout table (one cell per row, or a nested table) is not data: Defuddle flattens it to its text, and so must
+  // the fallbacks, or an older page built from layout tables is announced as "Table not read." instead of read.
+  const swift = fs.readFileSync("App/SpokenMarginsApp/Sources/SpokenMarginsApp/AppOwnedReadablePageExtractor.swift", "utf8");
+  const script = swift.split('private static let semanticFallbackJavaScript = #"""')[1].split('"""#')[0];
+  const layouts = {
+    "one column": "<table><tr><td><h1>Essay</h1><p>Para one.</p><p>Para two.</p></td></tr></table>",
+    "two columns over a nested table": "<table><tr><td><table><tr><td><p>Nav</p></td></tr></table></td>"
+      + "<td><h1>Essay</h1><p>Para one.</p><p>Para two.</p></td></tr></table>",
+    // Audit of 3ac974e: the common old layout, a sidebar cell beside the content cell, with no nested table.
+    "sidebar beside the content": "<table><tr><td><a>Home</a><br><a>About</a></td>"
+      + "<td><h1>Essay</h1><p>Para one.</p><p>Para two.</p></td></tr></table>",
+    "logo and search above the content": "<table><tr><td><a>Logo</a></td><td><a>Search</a></td></tr>"
+      + "<tr><td colspan=\"2\"><h1>Essay</h1><p>Para one.</p><p>Para two.</p></td></tr></table>"
+  };
+  for (const [layout, html] of Object.entries(layouts)) {
+    const { document } = parseHTML(`<html><head><title>Old page</title></head><body>${html}</body></html>`);
+    Object.defineProperty(document, "location", { value: { href: "https://example.com/old" } });
+    const native = new Function("document", script)(document);
+    for (const [name, text] of [["native", native.text], ["bundled", fallbackReadableMarkdown(document)]]) {
+      assert.doesNotMatch(text, /\|/, `${layout}, ${name}: ${text}`);
+      assert.ok(text.includes("# Essay\n\nPara one.\n\nPara two."), `${layout}, ${name}: ${text}`);
+    }
+  }
+  // A data table inside a layout table is still a Markdown table.
+  const { document } = parseHTML(`<html><head><title>Old page</title></head><body><table><tr><td>
+    <p>Intro.</p><table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table></td></tr></table></body></html>`);
+  Object.defineProperty(document, "location", { value: { href: "https://example.com/old" } });
+  const native = new Function("document", script)(document);
+  for (const [name, text] of [["native", native.text], ["bundled", fallbackReadableMarkdown(document)]]) {
+    assert.ok(text.includes("Intro.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |"), `${name}: ${text}`);
+  }
+});
+
+test("#5364 audit of baddf60: a layout table whose content cell uses <br>, <div> or one <p> is read, not \"Table not read.\"", () => {
+  // The content cell of an old table-layout page is often marked up with <br><br>, <div>s or a single <p>, with no
+  // heading. Both fallbacks must still read the essay rather than make the whole page one Markdown table.
+  const swift = fs.readFileSync("App/SpokenMarginsApp/Sources/SpokenMarginsApp/AppOwnedReadablePageExtractor.swift", "utf8");
+  const script = swift.split('private static let semanticFallbackJavaScript = #"""')[1].split('"""#')[0];
+  const nav = "<td><a>Home</a><br><a>About</a></td>";
+  const longProse = Array.from({ length: 45 }, (_, index) => `word${index}`).join(" ");
+  const layouts = {
+    "br breaks, one row": `<table><tr>${nav}<td><b>Essay</b><br>Para one.<br><br>Para two.</td></tr></table>`,
+    "divs, one row": `<table><tr>${nav}<td><div>Para one.</div><div>Para two.</div></td></tr></table>`,
+    "one paragraph, one row": `<table><tr>${nav}<td><p>Para one. Para two.</p></td></tr></table>`,
+    "br breaks under a logo and search row": "<table><tr><td><a>Logo</a></td><td><a>Search</a></td></tr>"
+      + `<tr>${nav}<td><b>Essay</b><br>Para one.<br> <br>Para two.</td></tr></table>`,
+    "divs under a logo and search row": "<table><tr><td><a>Logo</a></td><td><a>Search</a></td></tr>"
+      + `<tr>${nav}<td><div>Para one.</div><div>Para two.</div></td></tr></table>`,
+    "long plain text under a logo and search row": "<table><tr><td><a>Logo</a></td><td><a>Search</a></td></tr>"
+      + `<tr>${nav}<td>Para one. Para two. ${longProse}</td></tr></table>`
+  };
+  for (const [layout, html] of Object.entries(layouts)) {
+    const { document } = parseHTML(`<html><head><title>Old page</title></head><body>${html}</body></html>`);
+    Object.defineProperty(document, "location", { value: { href: "https://example.com/old" } });
+    const native = new Function("document", script)(document);
+    for (const [name, text] of [["native", native.text], ["bundled", fallbackReadableMarkdown(document)]]) {
+      assert.doesNotMatch(text, /\|/, `${layout}, ${name}: ${text}`);
+      assert.match(text, /Para one\.[\s\S]*Para two\./, `${layout}, ${name}: ${text}`);
+    }
+  }
+  // Short data tables stay tables: a single <br> in a cell (an address line) and a header plus one body row.
+  const { document } = parseHTML(`<html><head><title>Data</title></head><body><p>Intro.</p>
+    <table><tr><th>Name</th><th>Address</th></tr><tr><td>Ada</td><td>1 Lane<br>London</td></tr></table></body></html>`);
+  Object.defineProperty(document, "location", { value: { href: "https://example.com/data" } });
+  const native = new Function("document", script)(document);
+  for (const [name, text] of [["native", native.text], ["bundled", fallbackReadableMarkdown(document)]]) {
+    assert.ok(text.includes("| Name | Address |\n| --- | --- |\n| Ada | 1 Lane London |"), `${name}: ${text}`);
+  }
 });
 
 test("readable capture speaks a social card as a sentence, not as link and view-count markup", () => {
@@ -954,6 +1125,65 @@ test("Safari preprocessor hands over an article page as Markdown with its source
   assert.match(markdown, /^## First section\n\nUseful article prose\./);
   assert.match(markdown, /\n\n### Second section\n\nUseful article prose\./);
   assert.doesNotMatch(markdown, /Navigation noise|Footer noise/);
+});
+
+// Safari turns the preprocessor's result into a property list before the share
+// extension sees it. A property list has no null, so one JavaScript null (a page
+// with no author or date, such as alignment.anthropic.com, metr.org or
+// example.com) makes the whole result fail to arrive: the extension's
+// loadItem returns nil ("no_item") and the share is refused (#5338).
+function plistUnsafePaths(value, path = "payload") {
+  if (value === null || value === undefined) return [path];
+  if (typeof value === "number") return Number.isFinite(value) ? [] : [path];
+  if (typeof value === "string" || typeof value === "boolean") return [];
+  if (Array.isArray(value)) return value.flatMap((item, index) => plistUnsafePaths(item, `${path}[${index}]`));
+  if (typeof value === "object") {
+    return Object.entries(value).flatMap(([key, item]) => plistUnsafePaths(item, `${path}.${key}`));
+  }
+  return [path];
+}
+
+function runPreprocessorOn(page, href) {
+  const context = { console, URL, document: page, window: { location: { href } } };
+  vm.runInNewContext(fs.readFileSync(preprocessorPath, "utf8"), context);
+  let payload;
+  context.ExtensionPreprocessingJS.run({ completionFunction: (value) => { payload = value; } });
+  return payload;
+}
+
+test("#5338: a page with no author, date or canonical link hands Safari a result with no null in it", () => {
+  const prose = "<p>" + "Alignment research prose. ".repeat(40) + "</p>";
+  const page = browserLikePage({
+    url: "https://alignment.example/2026/post/",
+    head: "<title>A post with no byline</title>",
+    body: `<article><h2>Setup</h2>${prose}</article>`
+  });
+  Object.defineProperty(page, "contentType", { value: "text/html" });
+
+  const payload = runPreprocessorOn(page, "https://alignment.example/2026/post/");
+
+  assert.deepEqual(plistUnsafePaths(payload), []);
+  assert.equal(payload.title, "A post with no byline");
+  assert.equal(payload.documentURL, "https://alignment.example/2026/post/");
+  assert.match(payload.markdown, /Alignment research prose\./);
+  assert.equal("author" in payload, false);
+  assert.equal("publishedAt" in payload, false);
+});
+
+test("#5338: the fallback after an extraction error also hands Safari no null", () => {
+  const page = {
+    URL: "https://example.com/broken",
+    contentType: "text/html",
+    title: "",
+    body: { innerText: "Some page text." },
+    querySelector: () => { throw new Error("broken document"); }
+  };
+
+  const payload = runPreprocessorOn(page, "https://example.com/broken");
+
+  assert.deepEqual(plistUnsafePaths(payload), []);
+  assert.equal(payload.text, "Some page text.");
+  assert.equal(payload.url, "https://example.com/broken");
 });
 
 // Timers that record themselves instead of running; the handle is the record,

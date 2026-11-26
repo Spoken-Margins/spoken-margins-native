@@ -100,7 +100,7 @@ struct PinnedMarginCardView: View {
         case .dismissSilentMargin: model.dismissSilentMarginLanding()
         case .startEarlier: model.startMarginEarlier()
         case .letFriendKnow:
-            if case .caughtUp(_, _, let text) = model.pinnedMarginCard?.stage { caughtUpShare = PlainTextShare(text: text) }
+            if case .caughtUp(_, _, let text, _) = model.pinnedMarginCard?.stage { caughtUpShare = PlainTextShare(text: text) }
         case .dismissCaughtUp: model.noteCatchUp(.dismissed)
         }
     }

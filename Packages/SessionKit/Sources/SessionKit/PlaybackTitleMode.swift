@@ -19,8 +19,14 @@ public enum PlaybackTitleMode: Equatable, Sendable {
 
     /// The small line. VoiceOver keeps reading the full title.
     public static func compactLine(title: String, sourceName: String?) -> String {
-        let name = sourceName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return name.isEmpty ? title : name
+        showName(sourceTitle: sourceName) ?? title
+    }
+
+    /// The show or source name the Now screen draws (the separate show line, or the compact title), or nil for none.
+    /// A Library row's source title falls back to the item's reference when it has no name, so it can be a
+    /// `note://<id>` or a raw URL; those never reach the screen or VoiceOver (#5345). A web address shows as its site.
+    public static func showName(sourceTitle: String?) -> String? {
+        LibraryRowWording.readableName(sourceTitle)
     }
 
     /// The names Voice Control answers to on the title button. The button's accessibility label stays the full title

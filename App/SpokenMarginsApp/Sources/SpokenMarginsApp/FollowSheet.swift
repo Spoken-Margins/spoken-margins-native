@@ -2,7 +2,7 @@ import SessionKit
 import SwiftUI
 
 /// Following's plus (#3205): one sheet that does one job, following a show. Paste follows a copied link at once and
-/// the banner offers Undo; Browse opens the catalog; Papers from Zotero follows a reading list (#4341); Import from
+/// the banner offers Undo; Browse opens the catalog; Papers from Zotero or PubMed follows a reading list or a search (#4341, #5201); Import from
 /// Apple Podcasts opens its Shortcut's guide (#4290); Import from another app opens the file picker. Read Later and
 /// Listening Edition imports live in Settings, Import & Export. A link to a list of shows opens its "Add <list>"
 /// preview instead (#4046 PR 7a).
@@ -67,12 +67,12 @@ struct FollowSheet: View {
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     }
                     .accessibilityIdentifier("sources.browseCatalog")
-                    // #4341: a reading list from Zotero, followed as papers.
+                    // #4341, #5201: a reading list from Zotero or a PubMed search, followed as papers.
                     NavigationLink {
                         FollowPapersScreen(done: { dismiss() })
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            Label("Papers from Zotero", systemImage: "doc.text.magnifyingglass")
+                            Label("Papers from Zotero or PubMed", systemImage: "doc.text.magnifyingglass")
                             Text("Follow a reading list")
                                 .font(.footnote)
                                 .foregroundStyle(AppColors.secondaryText)

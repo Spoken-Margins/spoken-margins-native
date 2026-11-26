@@ -59,17 +59,22 @@ public enum LibraryRowWording {
     /// A web address shows as its site ("arxiv.org"), never as the raw URL.
     public static func byline(sourceTitle: String?, author: String?, title: String) -> String? {
         for candidate in [sourceTitle, author] {
-            guard var value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { continue }
-            if value.hasPrefix("[["), value.hasSuffix("]]") {
-                value = String(value.dropFirst(2).dropLast(2))
-            }
-            if isAddress(value) {
-                guard let site = webSiteName(value) else { continue }
-                value = site
-            }
+            guard let value = readableName(candidate) else { continue }
             if value.caseInsensitiveCompare(title) != .orderedSame { return value }
         }
         return nil
+    }
+
+    /// A source or author name as a listener may see it, or nil when there is nothing readable. A web address
+    /// becomes its site ("arxiv.org"); any other address (`note://…`, `bundled://…`, `file://…`) is an internal
+    /// reference, never a name, so it gives nil (#5345: a spoken note's player showed `note://<id>`).
+    public static func readableName(_ candidate: String?) -> String? {
+        guard var value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        if value.hasPrefix("[["), value.hasSuffix("]]") {
+            value = String(value.dropFirst(2).dropLast(2)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if isAddress(value) { return webSiteName(value) }
+        return value.isEmpty ? nil : value
     }
 
     /// A URL of any scheme ("https://…", "file://…", "bundled://…") or a bare "www." address.

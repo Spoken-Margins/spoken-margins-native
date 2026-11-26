@@ -98,7 +98,8 @@ struct ClipboardLinkOfferCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("library.clipboardLink.message")
                 } else if clipboard.isAdding {
-                    SourceLinkImportStatusView()
+                    // The card announces "Adding <site> to the Library" itself; the status view adds only the long-wait line.
+                    SourceLinkImportStatusView(announcesStart: false)
                 }
             }
         }

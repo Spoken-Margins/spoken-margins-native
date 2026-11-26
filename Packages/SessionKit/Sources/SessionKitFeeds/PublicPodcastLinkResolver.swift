@@ -843,7 +843,8 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             transcriptLinks: selected.transcriptLinks,
             chapterLinks: selected.chapterLinks,
             publisherChapterCollections: chapterCollections,
-            confidence: selected.isExactMatch ? 0.96 : 0.82
+            confidence: selected.isExactMatch ? 0.96 : 0.82,
+            publisherBlocked: selected.publisherBlocked ? true : nil
         )
         return playable(request: request, provider: "rss", candidate: candidate)
     }
@@ -883,7 +884,8 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             transcriptLinks: selected.transcriptLinks,
             chapterLinks: selected.chapterLinks,
             publisherChapterCollections: chapterCollections,
-            confidence: selected.isExactMatch ? 0.96 : 0.82
+            confidence: selected.isExactMatch ? 0.96 : 0.82,
+            publisherBlocked: selected.publisherBlocked ? true : nil
         )
         return playable(request: request, provider: "rss", candidate: candidate)
     }
@@ -1055,7 +1057,8 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             transcriptLinks: item.transcriptLinks,
             chapterLinks: item.chapterLinks,
             publisherChapterCollections: collections,
-            confidence: 0.96
+            confidence: 0.96,
+            publisherBlocked: item.publisherBlocked ? true : nil
         )
     }
 
@@ -1539,6 +1542,8 @@ private struct RSSFeedItem {
     var publishedAt: String?
     var durationMs: Int?
     var isExactMatch = false
+    /// `<itunes:block>Yes</itunes:block>` on the episode or its show (#5340).
+    var publisherBlocked = false
 }
 
 private final class RSSFeedParser: NSObject, XMLParserDelegate {
@@ -1549,6 +1554,7 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
     private var currentText = ""
     private var isInItem = false
     private var isInPodloveChapters = false
+    private var channelBlocked = false
 
     /// Substack lists each text post's cover image as an `image/jpeg` enclosure, so a shared text post looked like an
     /// episode whose audio was a picture (#223). An enclosure without a type stays: some podcast feeds omit it.
@@ -1562,7 +1568,8 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
         parser.shouldProcessNamespaces = true
         parser.delegate = self
         _ = parser.parse()
-        return items
+        // The show's block may come after its items in the file.
+        return channelBlocked ? items.map { var item = $0; item.publisherBlocked = true; return item } : items
     }
 
     func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
@@ -1610,6 +1617,9 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
         let element = localName(elementName)
         let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if PublisherBlockSignal.isBlock(qName ?? elementName, namespaceURI: namespaceURI, value: text) {
+            if isInItem { currentItem?.publisherBlocked = true } else { channelBlocked = true }
+        }
         if isInItem {
             switch element {
             case "title":

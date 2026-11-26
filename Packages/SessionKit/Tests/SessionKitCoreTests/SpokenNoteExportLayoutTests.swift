@@ -118,6 +118,48 @@ final class SpokenNoteExportLayoutTests: XCTestCase {
         XCTAssertEqual(result.placements["m"]?.startMs, 7_000)
     }
 
+    // #5288: with Shorter pauses attached, the stored timeline is on that file's clock and Margin times are on the
+    // recording's. Takes A (0–5 s), B (5–7 s, wordless) and C (7–10 s) as recorded; the version keeps A 0–1 s and
+    // 2–5 s, drops B, and keeps C: "Two." starts at 1 s on it and "Four." at 4 s.
+    private static let shorterPausesMap = SpokenNoteCleanMap(
+        placements: [
+            .init(takeId: F.takeA.id, takeStartMs: 0, takeEndMs: 1_000, outputStartMs: 0),
+            .init(takeId: F.takeA.id, takeStartMs: 2_000, takeEndMs: 5_000, outputStartMs: 1_000),
+            .init(takeId: F.takeC.id, takeStartMs: 0, takeEndMs: 3_000, outputStartMs: 4_000),
+        ],
+        recorded: F.layout(), cleanDurationMs: 7_000
+    )
+
+    private func shorterPausesLayout(_ margins: [Interjection], input: SpokenNoteExportInput?) -> SpokenNoteExportLayout {
+        let map = Self.shorterPausesMap
+        return SpokenNoteExportLayout(
+            input: input, itemId: F.itemId, itemText: F.note().text,
+            storedTimeline: SpokenNoteWholeTimeline(note: F.note(), layout: F.layout(), map: map).mediaTimeline,
+            storedTimelineClock: map, margins: margins
+        )
+    }
+
+    func testTheFallbackOnShorterPausesComparesSavedTimesOnTheRecordingsClock() {
+        let margins = [F.margin("two", at: 1, mediaTimeMs: 2_100), F.margin("four", at: 2, mediaTimeMs: 7_200)]
+        for input in [nil, F.input(whole: nil)] {
+            let result = shorterPausesLayout(margins, input: input)
+            XCTAssertEqual(result.placements["two"]?.segmentId, F.segmentId(F.takeA, 1), "2.1 s on the recording is in \"Two.\"")
+            XCTAssertEqual(result.placements["four"]?.segmentId, F.segmentId(F.takeC, 0), "7.2 s on the recording is in \"Four.\"")
+            XCTAssertTrue(result.unplacedMarginIds.isEmpty)
+        }
+        let fallback = shorterPausesLayout(margins, input: nil)
+        XCTAssertEqual(fallback.placements["four"]?.startMs, 7_000, "the export stays as recorded")
+        XCTAssertEqual(fallback.recordings[0].sentences.compactMap(\.startMs), [0, 2_000, 3_000, 7_000, 8_000])
+    }
+
+    func testTheFallbackAsRecordedPlacesByTheStoredTimeAsBefore() {
+        let margins = [F.margin("two", at: 1, mediaTimeMs: 2_100), F.margin("four", at: 2, mediaTimeMs: 7_200)]
+        let result = layout(margins, input: nil)
+        XCTAssertEqual(result.placements["two"]?.segmentId, F.segmentId(F.takeA, 1))
+        XCTAssertEqual(result.placements["four"]?.segmentId, F.segmentId(F.takeC, 0))
+        XCTAssertEqual(result.placements["four"]?.startMs, 7_000)
+    }
+
     func testTheFallbackWithNoTimelineIsOneBlockAndPlacesNothing() {
         let result = layout([F.margin("m", at: 1, mediaTimeMs: 2_000)], input: nil, itemText: "Only words.", stored: nil)
         XCTAssertEqual(result.recordings.first?.sentences.map(\.text), ["Only words."])

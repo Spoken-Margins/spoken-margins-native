@@ -16,6 +16,7 @@ extension Gate1AppModel {
     func importRemotePDFInBackground(
         url: URL,
         onboardingSteps: Set<OnboardingStep> = [.addedOwnSource, .addedFromSafari],
+        fallbackTitle: String? = nil,
         bibliography: @escaping @Sendable (PDFBibliography?) -> PDFBibliography? = { $0 }
     ) async throws -> String {
         #if canImport(PDFKit)
@@ -25,7 +26,9 @@ extension Gate1AppModel {
         guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
             throw SourceFileImportError.remotePDFInvalidResponse
         }
-        return try await importDownloadedPDF(data, sourceURL: url, onboardingSteps: onboardingSteps, bibliography: bibliography)
+        return try await importDownloadedPDF(
+            data, sourceURL: url, fallbackTitle: fallbackTitle, onboardingSteps: onboardingSteps, bibliography: bibliography
+        )
         #else
         throw SourceFileImportError.pdfImportUnavailable
         #endif

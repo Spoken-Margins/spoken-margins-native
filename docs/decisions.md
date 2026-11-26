@@ -737,6 +737,12 @@ These came in the project chat, so most have no comment of his to link. Each cit
   5. "Grade the trial on outcomes: do the PR's checks pass on its proposed merge, and are both sides' changes kept? If fewer than about half its 'can combine' cases pass, it doesn't go live."
   6. "#5318 already lets the Mac worker take conflict hand-offs without the finisher's hour. When the resolver goes live, point `lane_conflicts.py`'s hand-off at the resolver instead."
   - How it is carried out: #5320 holds the build. Its workflow change is his merge tap. Until it goes live, conflicts go to the owning thread and then to the Mac worker (#5318).
+  - 2026-11-25: Cole approved the shadow trial's PR, #5323, in the project chat: "Start the trial on 5323." The 12 hours start at the workflow's first run after it merges, which posts a "trial started" record on #5320.
+
+## 2026-11-25
+- **Public (community) Listening Maps come out of the app for now (#5359).** Cole, from his phone on Build 37: "Get rid of public listening maps for now. Liability, don't work great, potentially a feature for paid." This goes further than #2068 ("I am fine not doing community listening maps and waiting for the lawyer to respond"): the two opt-in Settings toggles, "Help make listening maps" and "Look up community maps", and the code behind them are removed, not just left off. Maps made on the phone, publisher chapters and a friend's shared map stay. Community maps already saved on items stay too, since listener data is not deleted.
+  - Bringing it back is a new decision: a revert of the removal, possibly as a paid feature, and after the lawyer.
+  - Builds already on phones (36 and 37) keep the toggles until the server's map endpoints are switched off. That server change is his to approve; the privacy page keeps its community-maps section while those builds can use it.
 
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):

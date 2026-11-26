@@ -200,6 +200,22 @@ class ParallelCoreTests(unittest.TestCase):
             # Together they are the same tests the one step expected before.
             self.assertEqual(CORE | REST, host.step('package-core')[1]['expected'] | kw['expected'])
 
+    def test_every_probe_gated_on_an_environment_variable_is_an_allowed_skip_in_the_package_step(self):
+        # #5347: the filler probe skips unless SPOKEN_MARGINS_FILLER_PROBE_AMI is set, the package step didn't allow it,
+        # and main-slow went red with "Unexpected skip" on every run. A new probe of that shape has to be named.
+        tests = SCRIPTS.parent / 'Packages/SessionKit/Tests/SessionKitTests'
+        gated = set()
+        for path in sorted(tests.glob('*.swift')):
+            for test, body in re.findall(r'func (test\w+)\(\)[^{]*\{(.*?)(?=\n    func |\n    private func |\n    static func |\Z)',
+                                         path.read_text(), re.S):
+                if 'XCTSkip' in body and re.search(r'environment\[\s*"[A-Z0-9_]+"\s*\]', body):
+                    gated.add(f'SessionKitTests/{path.stem}/{test}')
+        self.assertIn('SessionKitTests/FillerTranscriptionProbeTests/testFillerTranscriptionProbe', gated)
+        self.assertEqual(gated, verification.ON_REQUEST_PROBE_TESTS)
+        with tempfile.TemporaryDirectory() as state:
+            host = Host(self, None).run(state)
+            self.assertTrue(gated <= set(host.step('package')[1]['allowed_skips']))
+
     def test_the_measurements_that_run_only_on_request_are_allowed_in_both_core_steps(self):
         # They skip on every fast run, and a skip the core steps don't allow turns the plan red. A new one in these
         # files has to be named, and a renamed one has to follow.

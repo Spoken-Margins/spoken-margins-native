@@ -1126,6 +1126,14 @@ SUPERTONIC_MODEL_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
 # has neither, so the test skips there, naming why; the owner's call is that this skip "is expected" (#2469, 2026-10-23).
 SPEECH_MODEL_TESTS = frozenset({'SessionKitTests/RealSpeechTranscriberTests/testRealTranscriberHearsSynthesizedSpeech'})
 
+# Probes run only by hand: each skips unless an environment variable points it at data the repository doesn't hold, so
+# they skip on every lane and main-slow run. The held-out anchor corpus runs from scripts/run-podcast-anchor-benchmark.sh;
+# the filler probe needs the AMI corpus fetched into artifacts/ami (#4779), and its skip turned main-slow red (#5347).
+ON_REQUEST_PROBE_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
+    'SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus',
+    'FillerTranscriptionProbeTests/testFillerTranscriptionProbe',
+))
+
 
 # The one app-hosted test that runs Supertonic's real model, in the adapters plan. The model is a download since #1820,
 # so the run fetches it (pinned by sha256 in Contracts/voice-models/sources.json) into a cache outside the checkout,
@@ -2227,8 +2235,8 @@ class Run:
             self.command('package', [*PACKAGE_RUNNER, '--rest' if split else '--skip-build', *rest_skip],
                          timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
                          expected=expected - core if split else expected, tests=True,
-                         allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus',
-                                        *POCKET_WEIGHT_TESTS, *SUPERTONIC_MODEL_TESTS, *SPEECH_MODEL_TESTS},
+                         allowed_skips={*ON_REQUEST_PROBE_TESTS, *POCKET_WEIGHT_TESTS, *SUPERTONIC_MODEL_TESTS,
+                                        *SPEECH_MODEL_TESTS},
                          probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
         except RuntimeError as error:
             step = self.manifest['steps'][-1]

@@ -1,0 +1,99 @@
+# Propose merges for conflicts the hosted check handed off: the 12-hour shadow trial (#5320; owner's call 2026-11-24,
+# docs/decisions.md).
+#
+# lane-conflicts.yml takes a conflicting armed PR out of the queue and hands it off. The owning thread usually fixes it
+# within minutes; one whose thread has ended waited a median of 2.3 h for the Mac finisher. This job proposes the merge
+# instead, through scripts/conflict_resolver.py, which says what it does and does not do. In this trial it pushes
+# nothing to any PR branch and changes no label: it pushes its proposed merge to `resolver-shadow/<pr>-<head7>`,
+# dispatches the PR's hosted checks there, and posts one record per PR head on #5320. After 12 hours from its first
+# run it stops proposing; `python3 scripts/conflict_resolver.py report` grades the trial. Going live is a later PR.
+#
+# Safety (the owner's conditions):
+# - The script and this file come from main: workflow_run, schedule and workflow_dispatch run the default branch's
+#   copy. PR heads are fetched as git data and merged with no hooks, filters or user config; no PR code runs here.
+# - Same-repo PRs by collaborators only, and only a PR whose head has carried the hand-off for 30 minutes with no
+#   push, or that a collaborator handed off: one writer per branch.
+# - Claude gets the conflict text and nothing else: no tools (`--tools ""`), run from an empty folder, with every
+#   GitHub token removed from its environment. Its reply may only fill in the hunks it was given.
+# - The Claude token is the claude-audit environment's (only main may use it), the same one the audit uses; no new
+#   secret. Reads use the App's read-only token; the shadow push, the record comments and the check dispatches use
+#   GITHUB_TOKEN, whose pushes start no workflow.
+# - Any PR touching .github/, scripts/lane-runner.py, SessionKitPersistence or SessionKitSharing is only reported.
+#
+# Cost and catch: a run with nothing eligible is under a minute of Linux and no tokens. An eligible small or medium
+# conflict is about 5 to 15 minutes of Linux and one Sonnet call (estimate 100k to 400k input tokens, mostly cached;
+# 5k to 20k output) plus one hosted-portable run on the proposed merge, and a hosted-web run only when the PR touches
+# the web app. A dispatch runs more than a PR does: hosted-portable adds its Mac jobs and the app build (about 8
+# minutes of hosted Mac, competing with the merge queue), and hosted-web runs Playwright on a Mac. Only two jobs are
+# graded, and only when the PR's own head ran them: `hosted fast: portable` and `hosted web: build and Playwright`.
+# Capped at 3 PRs a run and 25 a day, one run at a time; the trial lasts 12 hours. It is meant to catch
+# the finisher's tail (17 hand-offs in three weeks, median 2.3 h, slowest tenth over 15 h). Waste signal: fewer than
+# half of the trial's can-combine cases pass on outcomes, which keeps it from going live.
+name: conflict-resolver
+
+on:
+  # The usual start: a sweep that may have handed off a conflict. The 30-minute wait means the hand-off itself is
+  # usually not yet eligible, so the 15-minute schedule picks it up later.
+  workflow_run:
+    workflows: [lane-conflicts]
+    types: [completed]
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Only this PR (it must still be eligible)'
+        required: false
+        type: string
+
+permissions:
+  contents: write  # the resolver-shadow/* push only; the script never pushes elsewhere
+  issues: write  # the records on #5320
+  actions: write  # dispatching the PR's hosted checks on the proposed merge
+  pull-requests: read
+
+jobs:
+  resolve:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion != 'skipped'
+    concurrency:
+      group: conflict-resolver
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    environment: claude-audit
+    timeout-minutes: 90
+    env:
+      GIT_LFS_SKIP_SMUDGE: '1'
+      SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ vars.SM_TRUNK || 'main' }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/conflict_resolver.py
+            scripts/lane_conflicts.py
+            scripts/comment_trust.py
+          sparse-checkout-cone-mode: false
+      - name: Install Claude Code
+        run: |
+          npm install --global --no-fund --no-audit @anthropic-ai/claude-code@2.1.295
+          echo "SM_CLAUDE_CLI=$(npm prefix --global)/bin/claude" >> "$GITHUB_ENV"
+      - id: app-token
+        # A failed mint falls back to GITHUB_TOKEN instead of failing the run.
+        continue-on-error: true
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.SM_APP_ID }}
+          private-key: ${{ secrets.SM_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: read
+          permission-issues: read
+          permission-actions: read
+      - name: Propose merges (shadow)
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          SM_WRITE_TOKEN: ${{ github.token }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ONLY_PR: ${{ inputs.pr }}
+        run: python3 scripts/conflict_resolver.py run ${ONLY_PR:+--pr "$ONLY_PR"}

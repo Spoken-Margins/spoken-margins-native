@@ -1004,8 +1004,11 @@ class Ops:
             return f'error: {exc}'
         try:
             report = json.loads(res.stdout or '')
-            told = (f"{len(report.get('card_missing', []))} card missing, {len(report.get('labelled', []))} labelled, "
-                    f"{len(report.get('unknown', []))} unknown")
+            ended = len(report.get('ended_by_merge', []))
+            told = ', '.join([f"{len(report.get('card_missing', []))} card missing",
+                              f"{len(report.get('labelled', []))} labelled"]
+                             + ([f'{ended} ended by merge'] if ended else [])
+                             + [f"{len(report.get('unknown', []))} unknown"])
         except (ValueError, AttributeError, TypeError):
             told = one_line(res.stderr or res.stdout or 'no output')
         return f'exit {res.returncode}: {told}'

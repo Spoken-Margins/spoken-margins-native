@@ -26,16 +26,14 @@ public struct PaperSourceFollowing: Sendable {
         self.fetcher = fetcher
     }
 
-    /// What Follow on the Follow papers screen does with the pasted text. A PubMed RSS link is not read as papers yet,
-    /// so it goes to the existing feed follow, where it already works as a feed.
+    /// What Follow on the Follow papers screen does with the pasted text. A PubMed RSS link is followed as papers
+    /// (#5201); a search someone followed as a feed before that stays a feed subscription, untouched.
     public func follow(pasted: String, apiKey: String?, zoteroConnected: Bool, now: Date) async -> FollowOutcome {
         switch PaperFeedLink.recognize(pasted) {
         case .notAPaperLink:
             return .notAPaperLink
         case .rejected(let problem):
             return .rejected(problem.message(zoteroConnected: zoteroConnected))
-        case .source(.pubMedRSS):
-            return .notAPaperLink
         case .source(let source):
             return await follow(source: source, link: pasted.trimmingCharacters(in: .whitespacesAndNewlines), apiKey: apiKey,
                                 zoteroConnected: zoteroConnected, now: now)
@@ -51,7 +49,7 @@ public struct PaperSourceFollowing: Sendable {
         do {
             snapshot = try await fetcher.fetch(source, apiKey: apiKey)
         } catch {
-            return .rejected(error.message(zoteroConnected: zoteroConnected))
+            return .rejected(error.message(zoteroConnected: zoteroConnected, provider: source.provider))
         }
         var record = PaperSourceRecord(source: source, link: link, title: snapshot.title ?? Self.fallbackTitle(source), followedAt: now)
         record.apply(title: snapshot.title, entries: snapshot.entries, totalCount: snapshot.totalCount, at: now)
@@ -84,7 +82,6 @@ public struct PaperSourceFollowing: Sendable {
     public static func due(_ records: [PaperSourceRecord], connectedUserID: Int?, now: Date, pulled: Bool) -> [PaperSourceRecord] {
         records.filter { record in
             if !record.source.isReadable(connectedUserID: connectedUserID) { return false }
-            if case .pubMedRSS = record.source { return false }
             if pulled { return true }
             guard let last = record.lastRefreshedAt else { return true }
             return now.timeIntervalSince(last) >= refreshInterval || now < last
@@ -183,6 +180,11 @@ public enum PaperSourceScreen {
     }
 
     public static let emptyText = "No papers in this collection yet."
+
+    /// The empty line for a list of this kind: a PubMed search has no collection.
+    public static func emptyText(for source: PaperSource) -> String {
+        source.provider == .pubmed ? "No papers in this search yet." : emptyText
+    }
     /// Above the papers when the list couldn't be read because the phone is offline: Following's own offline line.
     public static let offlineSnapshotLine = "Showing the last local snapshot"
 

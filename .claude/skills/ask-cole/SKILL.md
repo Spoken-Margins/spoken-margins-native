@@ -40,3 +40,5 @@ Repeat the ask as an issue comment for the record. "Needs your decision, see #N"
 ## 3. After he answers
 
 An answer that will recur goes into `docs/decisions.md` the same day, quoting him with the date, in a docs-only PR. A tap on a question is his answer: quote the question and his pick.
+
+Then end the card and clear the label in one step: `python3 scripts/owner_card_guard.py --answered N --how "<where his answer is: the decisions.md date, the chat, the merged PR>"`. It posts the `<!-- owner-answered -->` marker and then takes `needs-owner` off. This is the only way to clear `needs-owner` (#5269): taking the label off by hand, or writing "answered" in prose, leaves the card live, and `scripts/owner_card_guard.py` puts the label back within the hour. A `**Step for Cole**` whose whole ask was tapping one PR ends by itself when that PR merges.

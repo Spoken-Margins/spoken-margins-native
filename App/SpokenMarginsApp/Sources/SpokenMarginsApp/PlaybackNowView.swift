@@ -9,12 +9,24 @@ struct PlaybackNowView: View {
     @State private var playbackTick = 0 // bumped by each progress tick: the rows count down on the playhead (#2074)
     /// Saved live-session photos on own rows (#4180), for a session saved with its recording.
     @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
+    /// For a spoken note playing its Shorter pauses version, the map onto that file's clock, read off the main thread
+    /// (#5288). Own Margins are saved on the recording's clock (#4779); the playhead is on the file's.
+    @State private var noteClock: NoteClock?
+    private struct NoteClock: Equatable {
+        let mediaURL: String
+        let map: SpokenNoteCleanMap?
+    }
 
     var body: some View {
         let _ = playbackTick
         let own = model.marginRows
         let shared = model.sharedMarginRows
-        let candidates = own.compactMap { PlaybackNowMargins.Margin(own: $0.interjection, itemID: model.selectedItem.id) }
+        let playingURL = model.openSessionMediaURL
+        let clockRead = noteClock?.mediaURL == playingURL
+        let clock = clockRead ? noteClock?.map : nil
+        // Until the Shorter pauses file's clock is read, own rows wait rather than count down on the recording's clock.
+        let ownOnPlayingClock = clockRead || !SpokenNoteCleanFiles.namesCleanAudio(playingURL) ? own : []
+        let candidates = ownOnPlayingClock.compactMap { PlaybackNowMargins.Margin(own: $0.interjection, itemID: model.selectedItem.id, clock: clock) }
             + shared.compactMap { PlaybackNowMargins.Margin(shared: $0.interjection, layer: $0.layer, itemID: model.selectedItem.id) }
         // A generated response has its own clock. Never count down episode Margins against it.
         let isSourceClock = model.snapshot.itemId == model.selectedItem.id
@@ -86,5 +98,18 @@ struct PlaybackNowView: View {
             SharedMarginDetailView(row: row).environmentObject(model)
         }
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
+        .task(id: model.openSessionMediaURL) { await readNoteClock(for: model.openSessionMediaURL) }
+    }
+
+    /// Reads the clock map of the file playing when it is a spoken note's Shorter pauses version. Any other file needs
+    /// none, and no file is touched for it (a string check first).
+    private func readNoteClock(for mediaURL: String?) async {
+        guard let mediaURL, SpokenNoteCleanFiles.namesCleanAudio(mediaURL) else {
+            if noteClock != nil { noteClock = nil }
+            return
+        }
+        let map = await Task.detached(priority: .userInitiated) { SpokenNoteCleanClock.map(forMediaURL: mediaURL) }.value
+        guard model.openSessionMediaURL == mediaURL else { return } // the note moved to the other file while it was read
+        noteClock = NoteClock(mediaURL: mediaURL, map: map)
     }
 }

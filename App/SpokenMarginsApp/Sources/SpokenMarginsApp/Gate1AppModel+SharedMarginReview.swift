@@ -138,7 +138,7 @@ extension Gate1AppModel {
     /// recording in progress blocks the start.
     func prepareToStartItem(id: String, trigger: VoiceoverLookupDecision.Trigger = .play) -> Bool {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_item") else { return false }
-        prepareImportedLocalAudioBridges(itemId: id); fetchCommunityMapIfNeeded(itemId: id); listenerStartedItem(itemId: id, trigger: trigger)
+        prepareImportedLocalAudioBridges(itemId: id); listenerStartedItem(itemId: id, trigger: trigger)
         if [.waiting, .preparing].contains(libraryItems.first(where: { $0.id == id })?.startupAudioState) {
             scheduleStartupAudioPreparationIfNeeded(itemId: id)
             diagnostics["startupAudioPlayback:\(id)"] = "started_without_waiting_for_opening_buffer"
@@ -177,6 +177,7 @@ extension Gate1AppModel {
         if reviewFriendMarginsOfDeadEpisode(itemId: itemId, entries: entries) { return } // the episode can't play (#3392)
         if WrittenMarginReadings.holdReview(itemId: itemId, thenContinue: thenContinue, entries: entries, catchUp: catchUp, model: self) { return } // readings not ready yet (#3365)
         endMarginMoment()
+        settleCatchUpPlace(trigger: "review") // a place a catch-up run kept comes back first, so this review returns there (#5238)
         // A Margin voice already playing (your own, #1538, or a friend's) or a shared-Margin card waiting gives way:
         // it would play over the review, and its end would resume the source mid-review.
         importedCommentaryAutoPlayTask?.cancel()
@@ -224,7 +225,9 @@ extension Gate1AppModel {
         voiceURLs.merge(WrittenMarginReadings.startingReview(for: entries, voiceFile: resolvedApplicationSupportAssetURL(for:))) { voice, _ in voice }
         startMarginMoment(sequence: sequence, voiceURLs: voiceURLs, title: "New Margins", isApproximate: false)
         if catchUp { beginCatchUpRun(itemId: itemId, entries: entries) }
+        let earlier = marginMomentConductor?.onVoiceStarted // the reply window's hook (#5238)
         marginMomentConductor?.onVoiceStarted = { [weak self] in
+            earlier?($0)
             if let margin = heard[$0] { self?.markSharedMarginHeard(margin) }
             self?.noteCatchUpVoiceStarted($0)
         }
@@ -275,9 +278,14 @@ extension Gate1AppModel {
     /// The source only moves while it is still on the review's item: once another item has taken the player, the
     /// place belongs to the item that was left, not to the new one.
     func giveBackUnfinishedReview() {
+        if marginMomentConductor?.isPlayingVoice == true { closeMomentReplyWindow() } // a cut voice never reaches `onVoiceEnded` (#5238)
         guard let conductor = marginMomentConductor, conductor.sequence.isReview else { return }
         let itemId = conductor.sequence.itemId
-        guard conductor.sequence.isUnfinishedReview else { return reviewPlaces.clear(itemId: itemId) }
+        guard conductor.sequence.isUnfinishedReview else {
+            // A catch-up run's held place outlives the run until Play or a leave settles it (#5238).
+            if reviewPlaces.owed(itemId: itemId)?.heldAtMediaTimeMs == nil { reviewPlaces.clear(itemId: itemId) }
+            return
+        }
         noteCatchUp(.stopped) // a catch-up run that ends early shows no card; the rest stay new (#4785)
         releaseUnplayedReviewMargins()
         if snapshot.itemId == itemId { conductor.stopReview() }
@@ -293,6 +301,11 @@ extension Gate1AppModel {
         guard !snapshot.isRecording, marginMomentConductor == nil, let itemId = snapshot.itemId,
               let place = reviewPlaces.owed(itemId: itemId) else { return }
         reviewPlaces.clear(itemId: itemId)
+        if place.heldAtMediaTimeMs != nil { // a catch-up run's kept place: given back only if the source is still there (#5238)
+            guard case .giveBack(let placeMs) = CatchUpPlace.settle(place, itemId: itemId, sourceAtMediaTimeMs: snapshot.currentMediaTimeMs) else { return }
+            if seekMedia(toMediaTimeMs: placeMs) { diagnostics["catchUp.place"] = "given_back:launch" }
+            return
+        }
         guard place.needsRestoring(from: snapshot.currentMediaTimeMs) else { return }
         seekMedia(toMediaTimeMs: place.returnToMediaTimeMs)
     }
@@ -302,6 +315,7 @@ extension Gate1AppModel {
     /// saved at the listener's place. It runs before they clear the shared-Margin prompts, so the jump back doesn't
     /// count as passing a Margin the review already played.
     func endUnfinishedReview() {
+        settleCatchUpPlace(trigger: "session_start") // a catch-up run's kept place first: Continue, another item, a new run (#5238)
         if marginMomentConductor?.sequence.isUnfinishedReview == true { endMarginMoment() }
     }
 
