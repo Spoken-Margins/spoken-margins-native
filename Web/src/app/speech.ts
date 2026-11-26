@@ -49,6 +49,14 @@ export function primeSpeech(): void {
   }
 }
 
+/**
+ * How a reading ended, for `onEnd`. `paused`: the player's Pause stopped it because this browser can't hold speech
+ * (Chrome on Android), so the listener expects Play to carry on from here, not the next thing to start (#5355).
+ */
+export interface ReadingEnd {
+  paused: boolean;
+}
+
 export interface Reading {
   /** Stops the tone or the voice. `onEnd` still fires if the voice had begun, so the episode comes back up. */
   cancel(): void;
@@ -66,7 +74,7 @@ export interface Reading {
  * episode down); `onEnd` fires when it finishes or can't speak. Returns undefined where this browser has no voice, and
  * then calls neither.
  */
-export function readWrittenMargin(intro: string, words: string, hooks: { onStart(): void; onEnd(): void }): Reading | undefined {
+export function readWrittenMargin(intro: string, words: string, hooks: { onStart(): void; onEnd(ended?: ReadingEnd): void }): Reading | undefined {
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
   if (!synth || typeof SpeechSynthesisUtterance === 'undefined' || !words.trim()) return undefined;
   let live = true;
@@ -74,6 +82,8 @@ export function readWrittenMargin(intro: string, words: string, hooks: { onStart
   // Paused before the tone ended: the voice waits for `resume` instead of starting.
   let paused = false;
   let speakLater: (() => void) | undefined;
+  // Set when Pause had to stop a voice this browser can't hold, so `onEnd` can say so (#5355).
+  let endedByPause = false;
   let held: SpeechSynthesisUtterance | undefined;
   let safety: ReturnType<typeof setTimeout> | undefined;
   let safetyMs = 0;
@@ -86,7 +96,7 @@ export function readWrittenMargin(intro: string, words: string, hooks: { onStart
     live = false;
     clearTimeout(safety);
     held = undefined;
-    hooks.onEnd();
+    hooks.onEnd({ paused: endedByPause });
   };
   const speak = () => {
     if (!live) return;
@@ -122,7 +132,7 @@ export function readWrittenMargin(intro: string, words: string, hooks: { onStart
     } catch {
       // Nothing to stop.
     }
-    if (started) hooks.onEnd();
+    if (started) hooks.onEnd({ paused: endedByPause });
   };
   return {
     cancel,
@@ -139,9 +149,10 @@ export function readWrittenMargin(intro: string, words: string, hooks: { onStart
       }
       if (synth.paused) return;
       // Stopped before the voice began, `cancel` says nothing; the player's turn for this Margin must still end.
+      endedByPause = true;
       const begun = started;
       cancel();
-      if (!begun) hooks.onEnd();
+      if (!begun) hooks.onEnd({ paused: true });
     },
     resume() {
       if (!live || !paused) return;
@@ -171,18 +182,19 @@ export const LINE_START_MS = 2000;
  * fires once, when the line finishes, fails, is cancelled, or hasn't begun within `LINE_START_MS` (its words are on screen
  * already, so a voice that never starts only skips it). Returns undefined, and calls nothing, where there is no voice.
  */
-export function speakLine(text: string, hooks: { onEnd(): void }): Reading | undefined {
+export function speakLine(text: string, hooks: { onEnd(ended?: ReadingEnd): void }): Reading | undefined {
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
   if (!synth || typeof SpeechSynthesisUtterance === 'undefined' || !text.trim()) return undefined;
   let live = true;
   let started = false;
   let paused = false;
+  let endedByPause = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const end = () => {
     if (!live) return;
     live = false;
     clearTimeout(timer);
-    hooks.onEnd();
+    hooks.onEnd({ paused: endedByPause });
   };
   const stop = () => {
     try {
@@ -228,6 +240,7 @@ export function speakLine(text: string, hooks: { onEnd(): void }): Reading | und
         // Handled below.
       }
       if (synth.paused) return;
+      endedByPause = true;
       stop();
       end();
     },
