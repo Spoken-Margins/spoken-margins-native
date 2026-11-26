@@ -1,8 +1,8 @@
 import SessionKit
 import SwiftUI
 
-/// The note's audio control (#4779): As recorded or Shorter pauses, one choice for the app, with a caption that says
-/// where the version stands. The note screen shows it under Play note; Listening options shows it first, for a note.
+/// The note's audio control (#4779): As recorded, Shorter pauses or Without ums (#5342), one choice for the app, with a
+/// caption that says where the version stands. The note screen shows it under Play note; Listening options shows it first, for a note.
 /// Every word comes from `SpokenNoteCleanWords`.
 struct SpokenNoteAudioVersionControl: View {
     enum Placement {
@@ -20,7 +20,7 @@ struct SpokenNoteAudioVersionControl: View {
 
     var body: some View {
         let state = clean.state(noteId: noteId)
-        let caption = SpokenNoteCleanWords.caption(state)
+        let caption = SpokenNoteCleanWords.caption(state, version: clean.version)
         let blocked = model.spokenNoteVersionChangeIsBlocked
         VStack(alignment: .leading, spacing: 8) {
             // At accessibility sizes the picker is a menu that VoiceOver reads as "Note audio" and its choice, so the

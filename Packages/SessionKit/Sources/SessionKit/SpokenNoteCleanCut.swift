@@ -122,13 +122,39 @@ public struct SpokenNoteTakeCut: Codable, Equatable, Sendable {
     /// 4. Remove every filler span not already removed.
     /// 5. Kept is the take minus what was removed; a kept piece under `shortestKeptMs` goes with the cut around it.
     public static func make(words: [SpokenNoteTimedWord], silentFlags: [Bool], durationMs: Int, windowMs: Int = 20) -> SpokenNoteTakeCut {
+        let fillers = SpokenNoteCleanPolicy.fillerSpans(in: words)
+        let realWords = words.filter { !SpokenNoteCleanPolicy.isFiller($0.text) && $0.endMs > $0.startMs }
+            .map { $0.startMs..<$0.endMs }
+        return make(fillerSpans: fillers, speech: realWords, silentFlags: silentFlags, durationMs: durationMs, windowMs: windowMs)
+    }
+
+    /// The cut for one take Without ums (#5342): the filler words and "you know"s the Margins cleanup removes from a
+    /// shared Margin (`DeterministicInterjectionCleanup.propose`, the same call, with its padding), and long pauses
+    /// shortened by the note's rule, as Shorter pauses does, so the two versions agree on pauses. `segments` is the
+    /// take's transcript from the transcriber every Margin uses, in the take's own milliseconds.
+    public static func make(
+        withoutUms segments: [AlignedTranscriptSegment], silentFlags: [Bool], durationMs: Int, windowMs: Int = 20
+    ) -> SpokenNoteTakeCut {
+        let transcript = AlignedInterjectionTranscript(
+            text: segments.map(\.text).joined(separator: " "), segments: segments)
+        let fillers = DeterministicInterjectionCleanup.propose(transcript).decisions
+            .filter { $0.accepted && ($0.kind == .filler || $0.kind == .isolatedPhrase) }
+            .map { $0.startMs..<max($0.startMs, $0.endMs) }
+        let speech = segments.filter { $0.endMs > $0.startMs }.map { $0.startMs..<$0.endMs }
+        return make(fillerSpans: fillers, speech: speech, silentFlags: silentFlags, durationMs: durationMs, windowMs: windowMs)
+    }
+
+    /// The cut from spans already found: `fillerSpans` to remove, and `speech`, the words a shortened pause must not
+    /// reach into (a word inside a filler span counts as the filler).
+    static func make(
+        fillerSpans: [Range<Int>], speech: [Range<Int>], silentFlags: [Bool], durationMs: Int, windowMs: Int
+    ) -> SpokenNoteTakeCut {
         guard durationMs > 0 else {
             return SpokenNoteTakeCut(durationMs: 0, kept: [], fillersRemoved: 0, pausesShortened: 0)
         }
-        let fillers = SpokenNoteCleanPolicy.fillerSpans(in: words).map { max(0, $0.lowerBound)..<min(durationMs, $0.upperBound) }
+        let fillers = fillerSpans.map { max(0, $0.lowerBound)..<max(max(0, $0.lowerBound), min(durationMs, $0.upperBound)) }
             .filter { !$0.isEmpty }
-        let realWords = words.filter { !SpokenNoteCleanPolicy.isFiller($0.text) && $0.endMs > $0.startMs }
-            .map { $0.startMs..<$0.endMs }
+        let realWords = speech
             .filter { word in !fillers.contains { $0.contains(word.lowerBound) && word.upperBound <= $0.upperBound } }
 
         var quiet = silentFlags
