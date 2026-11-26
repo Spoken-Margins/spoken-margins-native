@@ -31,7 +31,7 @@ extension Gate1AppModel {
         switch startItem(id: itemId, catchUp: true) { // `startItem`'s own read of the sessions, no second one
         case .resume(let session)?:
             guard snapshot.itemId == itemId, snapshot.sessionId == session.id else { return nil }
-            return CatchUpStart(returnToMediaTimeMs: snapshot.currentMediaTimeMs)
+            return CatchUpStart(returnToMediaTimeMs: reviewSourcePositionMs) // on the review's clock (#5409)
         case .startNew?:
             guard snapshot.itemId == itemId, let started = snapshot.sessionId, started != before else { return nil }
             return CatchUpStart(returnToMediaTimeMs: nil)
@@ -109,7 +109,7 @@ extension Gate1AppModel {
     func catchUpRunReachedItsEnd(_ conductor: MarginMomentConductor) {
         guard let catchUp, catchUp.run.isRunning, catchUp.conductor == ObjectIdentifier(conductor) else { return }
         let stillNew = catchUp.run.friendMarginIds.filter { !catchUp.heardMarginIds.contains($0) }.count
-        let held = CatchUpPlace.hold(reviewPlaces.owed(itemId: catchUp.run.itemId), sourceAtMediaTimeMs: snapshot.currentMediaTimeMs)
+        let held = CatchUpPlace.hold(reviewPlaces.owed(itemId: catchUp.run.itemId), sourceAtMediaTimeMs: reviewSourcePositionMs)
         if let held {
             reviewPlaces.owe(held)
             diagnostics["catchUp.place"] = "owed"

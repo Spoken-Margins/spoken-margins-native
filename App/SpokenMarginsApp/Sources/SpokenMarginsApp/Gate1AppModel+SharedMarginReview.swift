@@ -169,13 +169,13 @@ extension Gate1AppModel {
     ) {
         guard !rejectNavigationOrSessionMutationWhileRecording("review_new_margins") else { return }
         if catchUp, catchUpRunIsPlaying(itemId: itemId) { return } // a second tap starts one run, not two
-        let entries = offered ?? newSharedMargins(itemId: itemId)
-        guard !entries.isEmpty else {
+        let offeredEntries = offered ?? newSharedMargins(itemId: itemId)
+        guard !offeredEntries.isEmpty else {
             reportWarning("There are no new Margins to review here.")
             return
         }
-        if reviewFriendMarginsOfDeadEpisode(itemId: itemId, entries: entries) { return } // the episode can't play (#3392)
-        if WrittenMarginReadings.holdReview(itemId: itemId, thenContinue: thenContinue, entries: entries, catchUp: catchUp, model: self) { return } // readings not ready yet (#3365)
+        if reviewFriendMarginsOfDeadEpisode(itemId: itemId, entries: offeredEntries) { return } // the episode can't play (#3392)
+        if WrittenMarginReadings.holdReview(itemId: itemId, thenContinue: thenContinue, entries: offeredEntries, catchUp: catchUp, model: self) { return } // readings not ready yet (#3365)
         endMarginMoment()
         settleCatchUpPlace(trigger: "review") // a place a catch-up run kept comes back first, so this review returns there (#5238)
         // A Margin voice already playing (your own, #1538, or a friend's) or a shared-Margin card waiting gives way:
@@ -192,6 +192,15 @@ extension Gate1AppModel {
         } else {
             noteCatchUp(.play) // an ordinary review puts an earlier caught-up card away (#4785)
             if snapshot.itemId != itemId || !hasActiveSession { startItem(id: itemId) }
+        }
+        // The clock is the started session's: an article read aloud counts on narration time, where its Margins are placed
+        // by characters (#5409). Only the Margins placed on that clock can play in this review.
+        let clock = reviewSourceClock
+        let entries = SharedMarginReview.entries(offeredEntries, playableOn: clock)
+        guard !entries.isEmpty else {
+            diagnostics["review.clock"] = "no_margins_on_clock:\(clock.isNarratedText ? "narrated_text" : "media")"
+            reportWarning("There are no new Margins to review here.")
+            return
         }
         // A friend's reply to one of the listener's own spoken Margins plays after that Margin (#3221): the lead-in,
         // the Margin, then the reply. Skip on the card goes past the Margin to the reply.
@@ -211,8 +220,8 @@ extension Gate1AppModel {
             built = StartEarlier.review(itemId: itemId, margins: reviewing, plan: startingEarlier)
         } else {
             built = MarginMomentSequence(
-                itemId: itemId, reviewing: reviewing, returnToMediaTimeMs: catchUp ? catchUpReturnTo : snapshot.currentMediaTimeMs,
-                resumesAtEnd: thenContinue && !catchUp, endsPaused: catchUp)
+                itemId: itemId, reviewing: reviewing, returnToMediaTimeMs: catchUp ? catchUpReturnTo : reviewSourcePositionMs,
+                resumesAtEnd: thenContinue && !catchUp, tickAdvanceLimitMs: clock.tickAdvanceLimitMs, endsPaused: catchUp)
         }
         guard snapshot.itemId == itemId, let sequence = built else { return }
         // The review plays these voices; the automatic shared-Margin prompts mustn't play them again.
@@ -223,7 +232,7 @@ extension Gate1AppModel {
         for entry in entries { heard[entry.marginId] = entry.interjection }
         // Each Margin's recording, or its reading (rendered now if need be), from `SharedMarginAudio` (#3365, #3412).
         voiceURLs.merge(WrittenMarginReadings.startingReview(for: entries, voiceFile: resolvedApplicationSupportAssetURL(for:))) { voice, _ in voice }
-        startMarginMoment(sequence: sequence, voiceURLs: voiceURLs, title: "New Margins", isApproximate: false)
+        startMarginMoment(sequence: sequence, voiceURLs: voiceURLs, title: "New Margins", isApproximate: false, clock: clock)
         if catchUp { beginCatchUpRun(itemId: itemId, entries: entries) }
         let earlier = marginMomentConductor?.onVoiceStarted // the reply window's hook (#5238)
         marginMomentConductor?.onVoiceStarted = { [weak self] in
@@ -302,12 +311,13 @@ extension Gate1AppModel {
               let place = reviewPlaces.owed(itemId: itemId) else { return }
         reviewPlaces.clear(itemId: itemId)
         if place.heldAtMediaTimeMs != nil { // a catch-up run's kept place: given back only if the source is still there (#5238)
-            guard case .giveBack(let placeMs) = CatchUpPlace.settle(place, itemId: itemId, sourceAtMediaTimeMs: snapshot.currentMediaTimeMs) else { return }
-            if seekMedia(toMediaTimeMs: placeMs) { diagnostics["catchUp.place"] = "given_back:launch" }
+            guard case .giveBack(let placeMs) = CatchUpPlace.settle(place, itemId: itemId, sourceAtMediaTimeMs: reviewSourcePositionMs) else { return }
+            if seekReviewSource(toPosition: placeMs) { diagnostics["catchUp.place"] = "given_back:launch" }
             return
         }
-        guard place.needsRestoring(from: snapshot.currentMediaTimeMs) else { return }
-        seekMedia(toMediaTimeMs: place.returnToMediaTimeMs)
+        // On the review's own clock: an article read aloud owes a place in narration time (#5409).
+        guard place.needsRestoring(from: reviewSourcePositionMs) else { return }
+        seekReviewSource(toPosition: place.returnToMediaTimeMs)
     }
 
     /// For the places that stop the player or start another session before they end a moment (opening, resuming or
