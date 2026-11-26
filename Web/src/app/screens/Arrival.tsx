@@ -15,6 +15,9 @@ import { messageForFailure, messageForOpenedSettled, playCheckHandler, reportPla
 import { placeMarginsOnAudio } from '../place-margins.ts';
 import { plainError } from '../logic/messages.ts';
 import { ShareLinkError, linkFooterText, openSharedPacketWithExpiry, type ParsedLink, type ShareLinkRef } from '../logic/share-link.ts';
+import { fetchReplyBox, type ReplyBox } from '../logic/reply-box.ts';
+import { senderNameOrNone } from '../logic/reply-words.ts';
+import { trackReplyBox } from '../reply-boxes.ts';
 import { NotSavedError } from '../logic/storage.ts';
 import { useData } from '../data.tsx';
 import type { PacketRead } from '../ports.ts';
@@ -84,6 +87,8 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
   const playRef = useRef<HTMLButtonElement>(null);
   const dataRef = useRef(data);
   dataRef.current = data;
+  // The link's reply part (#4675), fetched beside the packet and never waited on: the Share section reads it once it settles.
+  const replyFetch = useRef<Promise<ReplyBox | undefined>>(undefined);
 
   // Inside the sender's hidden check (#4454) this says the page is running; anywhere else it does nothing.
   const announced = useRef(false);
@@ -102,6 +107,8 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
       reportPlayCheck({ type: 'failed', reason: 'link-broken' });
       return;
     }
+    // Not inside the sender's hidden check (#4454), which shares nothing back.
+    if (!playCheckHandler()) replyFetch.current = fetchReplyBox(serverFor(link.link));
     void (async () => {
       let message: PlayCheckMessage | undefined;
       let opened: PacketRead | undefined;
@@ -152,6 +159,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
   const store = useCallback((read: PacketRead) => {
     const current = dataRef.current;
     const placed = placeImport(read, current.shows, current.episodes, undefined, current.margins, { unnamedAuthor: unnamedAuthorFor('link') });
+    if (replyFetch.current) trackReplyBox(placed.episode.id, replyFetch.current, senderNameOrNone(read.sender));
     const saved = (async () => {
       if (placed.show) await current.follow(placed.show, [placed.episode]);
       else if (placed.newEpisode) await current.updateEpisode(placed.episode);

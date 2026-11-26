@@ -11,7 +11,11 @@ import { packetPickerAccept, packetRoute } from './logic/native-packets.ts';
 import { plainError } from './logic/messages.ts';
 import { NotSavedError } from './logic/storage.ts';
 import { LINK_MESSAGES, ShareLinkError, openSharedPacket, type ParsedLink } from './logic/share-link.ts';
+import { fetchReplyBox } from './logic/reply-box.ts';
+import { senderNameOrNone } from './logic/reply-words.ts';
+import type { PacketRead } from './ports.ts';
 import { usePlayer } from './player.tsx';
+import { trackReplyBox } from './reply-boxes.ts';
 import { services } from './services.ts';
 import { useUi } from './ui.tsx';
 
@@ -20,7 +24,9 @@ export type OpenMarginFile = (bytes: Uint8Array, fileName: string | undefined, f
 export type OpenShareLink = (parsed: ParsedLink) => Promise<void>;
 
 /** Reads a packet, stores its Margins (and its episode, when new) and opens Now Playing at the first one. */
-function useLandPacket(onLanded: (landing: Landing) => void): (bytes: Uint8Array, fileName: string | undefined, arrival: Arrival) => Promise<void> {
+function useLandPacket(
+  onLanded: (landing: Landing) => void,
+): (bytes: Uint8Array, fileName: string | undefined, arrival: Arrival, onPlaced?: (episodeId: string, read: PacketRead) => void) => Promise<void> {
   const data = useData();
   const player = usePlayer();
   const { toast } = useUi();
@@ -28,10 +34,11 @@ function useLandPacket(onLanded: (landing: Landing) => void): (bytes: Uint8Array
   dataRef.current = data;
 
   return useCallback(
-    async (bytes, fileName, arrival) => {
+    async (bytes, fileName, arrival, onPlaced) => {
       const read = await services.packets.readPacket(bytes, fileName);
       const current = dataRef.current;
       const placed = placeImport(read, current.shows, current.episodes, undefined, current.margins, { unnamedAuthor: unnamedAuthorFor(arrival), backup: arrival === 'backup' });
+      onPlaced?.(placed.episode.id, read);
       if (placed.show) await current.follow(placed.show, [placed.episode]);
       else if (placed.newEpisode) await current.updateEpisode(placed.episode);
       for (const margin of placed.margins) await current.addMargin(margin);
@@ -77,6 +84,8 @@ export function useOpenShareLink(onLanded: (landing: Landing) => void): OpenShar
         toast(LINK_MESSAGES.damaged, 'problem');
         return;
       }
+      // The link's reply part (#4675), fetched beside the packet and never waited on.
+      const replyFetch = fetchReplyBox(parsed.link);
       let bytes: Uint8Array;
       try {
         bytes = await openSharedPacket(parsed.link);
@@ -85,7 +94,7 @@ export function useOpenShareLink(onLanded: (landing: Landing) => void): OpenShar
         return;
       }
       try {
-        await land(bytes, 'shared.spokenmargins', 'link');
+        await land(bytes, 'shared.spokenmargins', 'link', (episodeId, read) => trackReplyBox(episodeId, replyFetch, senderNameOrNone(read.sender)));
       } catch (error) {
         // A write that failed has already said what wasn't saved. Otherwise it opened under the key but isn't a
         // packet this app can read.

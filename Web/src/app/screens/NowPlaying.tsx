@@ -23,6 +23,12 @@ import { browserStorage } from '../logic/position-mirror.ts';
 import { SENDER_NAME_LIMIT, senderForPacket, senderNameHint, sendFile, sendRefusedNextStep } from '../logic/share-send.ts';
 import { NotSavedError } from '../logic/storage.ts';
 import { shareNativePacket } from '../logic/native-packets.ts';
+import { postAnswer, type ReplyFailure } from '../logic/reply-box.ts';
+import {
+  REPLY_SEND_WORDS, everythingSent, failureLine, fileInsteadLabel, forgetTicks, isSent, replyCaption, sendToLabel, sentLine, withoutSent,
+  type FileFallback,
+} from '../logic/reply-send.ts';
+import { useReplyBox } from '../reply-boxes.ts';
 import { SKIP_SECONDS, usePlayer } from '../player.tsx';
 import type { RecordedVoice, VoiceRecording } from '../ports.ts';
 import { services } from '../services.ts';
@@ -132,6 +138,8 @@ function ArrivedMargin({ margins }: { margins: readonly Margin[] }) {
  */
 function MarginCue({ margins, saved }: { margins: readonly Margin[]; /** The listener just saved a Margin (2026-11-06 card). */ saved: boolean }) {
   const player = usePlayer();
+  // The link carried a reply part (#4675): the saved card names "Send to <sender>".
+  const replyState = useReplyBox(player.episode?.id);
   const sender = friendMargins(margins)[0]?.author;
   const cue = cueFor(margins, player.time, sender, {
     failed: player.failed,
@@ -147,7 +155,7 @@ function MarginCue({ margins, saved }: { margins: readonly Margin[]; /** The lis
   if (player.arrived) return null;
   // After a save on a friend's item: what Share does with it, above the countdown (so Skip stays, #4092) and in place
   // of "That was X's last Margin", until a friend's Margin plays (2026-11-06).
-  const shown = nowCard(margins, cue, saved);
+  const shown = nowCard(margins, cue, saved, replyState.kind === 'ready' ? { sender: replyState.sender } : undefined);
   if (shown.saved !== undefined && shown.cue === undefined) {
     return (
       <section className="margin-cue" aria-label="Your Margin is saved" data-testid="margin-cue">
@@ -558,6 +566,9 @@ function canSendFiles(): boolean {
 function ShareMargins({ episode, margins, show }: { episode: Episode; margins: Margin[]; show: Show | undefined }) {
   const { toast } = useUi();
   const data = useData();
+  // The link this came from carried a reply part (#4675): Share leads with "Send to <sender>". Until its fetch settles (at
+  // most 5 seconds) the section waits; with none, it is today's section.
+  const replyState = useReplyBox(episode.id);
   // "Your name (optional)": what the friend sees on the file (#4107). Typed once and kept in this browser; empty signs nothing.
   const [typedName, setTypedName] = useState<string>();
   const name = typedName ?? data.settings.senderName;
@@ -576,14 +587,20 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
   const starredList = starredShareList(margins);
   // The one list with a tick on each row, whichever of the two it is; none leaves Share as it was, every Margin written.
   const listed = offer ? offer.candidates : starredList;
+  // Screen B (#4675) needs a reply offer: with none of the listener's own Margins there is nothing to answer with, and an
+  // introduction link never carries a box. Every other case is today's section.
+  const box = replyState.kind === 'ready' && offer && !offer.intro ? replyState : undefined;
+  const boxSender = box?.sender;
   // The listener's own changes sit over the starting picks, so a reply made while this is open starts picked too.
   const [changed, setChanged] = useState<Readonly<Record<string, boolean>>>({});
-  const starting = offer ? preselected(offer, PAGE_OPENED_AT) : starredList ? starredPicks(starredList) : new Set<string>();
+  const firstPicks = offer ? preselected(offer, PAGE_OPENED_AT) : starredList ? starredPicks(starredList) : new Set<string>();
+  // A Margin already sent back through a link starts unticked; a later one starts ticked as usual (#4675).
+  const starting = box && listed ? withoutSent(firstPicks, listed) : firstPicks;
   const picked = currentPicks(listed ?? [], changed, starting);
   const toWrite = offer ? pickedMargins(offer, picked) : starredList ? pickedFromList(starredList, picked) : margins;
   const replyIds = new Set((offer?.replies ?? []).map((m) => m.id));
   // Greyed buttons say why (#3784), and point at the sentence so a screen reader reads it too.
-  const whyNot = whyNotShared(listed, toWrite.length);
+  const whyNot = box && toWrite.length === 0 && listed && everythingSent(listed) ? REPLY_SEND_WORDS.allSent : whyNotShared(listed, toWrite.length);
   // Nothing ticked, or more ticked than the writer takes (#4093): the buttons are greyed, and the sentence says why.
   const blocked = whyNot !== undefined;
   // What to do with a saved file, kept on the panel: a toast is gone in six seconds.
@@ -599,9 +616,52 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
     markInviteSeen(browserStorage());
     setInvite(false);
   };
+  // "Send to <sender>" (#4675): the error row of the last try, whether the last try went, and a guard so a double tap
+  // posts once (state alone lets a second tap in before the first re-renders).
+  const [boxFailure, setBoxFailure] = useState<ReplyFailure>();
+  const [sentToBox, setSentToBox] = useState(false);
+  const [sendingToBox, setSendingToBox] = useState(false);
+  const sendingRef = useRef(false);
+
+  const sendToBox = async () => {
+    if (!box || sendingRef.current) return;
+    sendingRef.current = true;
+    setBusy(true);
+    setSendingToBox(true);
+    setBoxFailure(undefined);
+    setSentToBox(false);
+    setNextStep(undefined);
+    try {
+      await keepName();
+      // The same packet "Send as a file" writes, so the sender's phone opens it with the importer it already has.
+      const written = await services.packets.writePacket(episode, toWrite, show, senderForPacket(name));
+      const result = await postAnswer(box.box, written.bytes);
+      if (result.kind === 'failed') {
+        setBoxFailure(result.failure);
+        // The box can't take answers: Send goes, so focus moves to the file button that now leads.
+        if (result.failure === 'ended') requestAnimationFrame(() => document.getElementById('share-save')?.focus());
+        return;
+      }
+      // Marked after the server took it, so a reopened link shows what went. A mark that isn't kept has already said so.
+      await data.markSentThrough(written.included, box.box.linkId).catch((error: unknown) => console.warn('Could not mark which Margins were sent.', error));
+      // As a file send does, so an answer to an answer still threads (#4174).
+      data.addSharedAs(written).catch((error: unknown) => console.warn('Could not keep which packet a Margin was shared in.', error));
+      setChanged((current) => forgetTicks(current, written.included));
+      setSentToBox(true);
+      offerApp('sent');
+      if (written.notice) toast(written.notice);
+    } catch (error) {
+      toast(`These Margins weren’t sent. ${plainError(error)}`, 'problem');
+    } finally {
+      sendingRef.current = false;
+      setSendingToBox(false);
+      setBusy(false);
+    }
+  };
 
   const share = async (how: 'save' | 'send') => {
     setBusy(true);
+    setSentToBox(false);
     try {
       // The typed name goes on this file whether or not the browser could keep it; a failed save has already said so, and
       // never throws. It is awaited so a page closed or reloaded the moment the file lands still has the name (#4107).
@@ -644,6 +704,9 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
     }
   };
 
+  // The reply fetch hasn't settled (at most 5 seconds): draw nothing rather than a section that changes under the listener.
+  if (replyState.kind === 'waiting') return null;
+
   return (
     <div className="share-margins">
       {listed && (
@@ -672,6 +735,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
                   <span className="margin-time">{formatClock(margin.atSeconds)}</span>
                   {replyIds.has(margin.id) && <span className="tag tag-quiet">Reply</span>}
                   {isStarred(margin) && <span className="tag tag-quiet">Starred</span>}
+                  {box && isSent(margin) && <span className="tag tag-quiet">{REPLY_SEND_WORDS.sentTag}</span>}
                   <span className="margin-text">{candidateLabel(margin, formatClock)}</span>
                 </label>
               </li>
@@ -693,32 +757,102 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
         />
         <p id="share-name-hint" className="muted">{senderNameHint(offer?.friendLabels ?? [])}</p>
       </div>
-      <p className="muted">Share them as a file. Your friend opens it in Spoken Margins and hears each one at its moment.</p>
-      {/* The live region stays mounted and only its words change, so a screen reader announces them. */}
-      <div role="status" id="share-why-not">
-        {whyNot ? <p className="muted">{whyNot}</p> : nextStep ? <p className="muted">{nextStep}</p> : null}
-      </div>
-      <div className="share-actions">
-        {bridge ? (
-          <button type="button" className="button" disabled={busy || blocked} aria-describedby={whyNot ? 'share-why-not' : undefined} onClick={() => void share('send')}>
-            <ShareIcon />
-            Save or send
-          </button>
-        ) : (
-          <button type="button" id="share-save" className="button" disabled={busy || blocked} aria-describedby={whyNot || nextStep ? 'share-why-not' : undefined} onClick={() => void share('save')}>
-            <DownloadIcon />
-            Save as a file
-          </button>
-        )}
-        {!bridge && sendable && !sendRefused && (
-          <button type="button" className="button" disabled={busy || blocked} aria-describedby={whyNot ? 'share-why-not' : undefined} onClick={() => void share('send')}>
-            <ShareIcon />
-            Send
-          </button>
-        )}
-      </div>
+      {box ? (
+        <ReplyBoxActions
+          sender={boxSender}
+          busy={busy}
+          sending={sendingToBox}
+          blocked={blocked}
+          whyNot={whyNot}
+          nextStep={nextStep}
+          failure={boxFailure}
+          sent={sentToBox}
+          fallback={bridge ? 'native' : sendable && !sendRefused ? 'send' : 'save'}
+          onSend={() => void sendToBox()}
+          onFile={(how) => void share(how)}
+        />
+      ) : (
+        <>
+          <p className="muted">Share them as a file. Your friend opens it in Spoken Margins and hears each one at its moment.</p>
+          {/* The live region stays mounted and only its words change, so a screen reader announces them. */}
+          <div role="status" id="share-why-not">
+            {whyNot ? <p className="muted">{whyNot}</p> : nextStep ? <p className="muted">{nextStep}</p> : null}
+          </div>
+          <div className="share-actions">
+            {bridge ? (
+              <button type="button" className="button" disabled={busy || blocked} aria-describedby={whyNot ? 'share-why-not' : undefined} onClick={() => void share('send')}>
+                <ShareIcon />
+                Save or send
+              </button>
+            ) : (
+              <button type="button" id="share-save" className="button" disabled={busy || blocked} aria-describedby={whyNot || nextStep ? 'share-why-not' : undefined} onClick={() => void share('save')}>
+                <DownloadIcon />
+                Save as a file
+              </button>
+            )}
+            {!bridge && sendable && !sendRefused && (
+              <button type="button" className="button" disabled={busy || blocked} aria-describedby={whyNot ? 'share-why-not' : undefined} onClick={() => void share('send')}>
+                <ShareIcon />
+                Send
+              </button>
+            )}
+          </div>
+        </>
+      )}
       {invite && <AppInvite onDismiss={dismissInvite} />}
     </div>
+  );
+}
+
+/**
+ * Screen B's caption, status line and buttons (#4675): "Send to <sender>" leads, and today's file button follows as a
+ * text button under its "instead" name. A box that can't take answers hides Send and puts the file button first.
+ */
+function ReplyBoxActions({
+  sender, busy, sending, blocked, whyNot, nextStep, failure, sent, fallback, onSend, onFile,
+}: {
+  sender: string | undefined;
+  busy: boolean;
+  sending: boolean;
+  blocked: boolean;
+  whyNot: string | undefined;
+  nextStep: string | undefined;
+  failure: ReplyFailure | undefined;
+  sent: boolean;
+  fallback: FileFallback;
+  onSend: () => void;
+  onFile: (how: 'save' | 'send') => void;
+}) {
+  const ended = failure === 'ended';
+  const lead = failure ? failureLine(failure, sender) : sent ? sentLine(sender) : undefined;
+  const tail = whyNot ?? nextStep;
+  const described = lead || tail ? 'share-why-not' : undefined;
+  return (
+    <>
+      <p className="muted">{replyCaption(sender)}</p>
+      {/* The live region stays mounted and only its words change, so a screen reader announces them. */}
+      <div role="status" id="share-why-not">
+        {lead && <p className="muted">{lead}</p>}
+        {tail && <p className="muted">{tail}</p>}
+      </div>
+      <div className="share-actions">
+        {!ended && (
+          <button type="button" id="share-send-box" className="button button-primary" disabled={busy || blocked} aria-describedby={described} onClick={onSend}>
+            {sending ? REPLY_SEND_WORDS.sending : failure === 'retry' ? REPLY_SEND_WORDS.tryAgain : sendToLabel(sender)}
+          </button>
+        )}
+        <button
+          type="button"
+          id="share-save"
+          className={ended ? 'button button-primary' : 'button button-text'}
+          disabled={busy || blocked}
+          aria-describedby={described}
+          onClick={() => onFile(fallback === 'save' ? 'save' : 'send')}
+        >
+          {fileInsteadLabel(fallback)}
+        </button>
+      </div>
+    </>
   );
 }
 

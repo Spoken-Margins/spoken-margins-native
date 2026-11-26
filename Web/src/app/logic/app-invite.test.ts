@@ -63,3 +63,10 @@ test('#4671: the words say what the app adds, to tap the link again, and one fil
   assert.match(APP_INVITE_WORDS.moveMargins, /one file per item/i);
   assert.equal(APP_INVITE_WORDS.button.href, GET_APP_LINK.href);
 });
+
+test('#4675: a reply sent through the link’s reply box counts as sent, still only for a reply', () => {
+  const s = memory();
+  assert.equal(inviteAfterShare(s, { ...reply, outcome: 'sent' }), true);
+  assert.equal(s.items.has(APP_INVITE_KEY), true);
+  assert.equal(inviteAfterShare(memory(), { ...reply, outcome: 'sent', wasReply: false }), false);
+});

@@ -2667,3 +2667,12 @@ body:not(:has(.mini-player)) .toasts {
   overflow-wrap: anywhere;
   text-align: start;
 }
+
+/* "Send as a file instead" under "Send to <sender>" (#4675): today's file button as a text button. */
+.button-text {
+  background: none;
+  box-shadow: none;
+  padding: 0 8px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

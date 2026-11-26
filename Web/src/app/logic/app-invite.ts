@@ -14,8 +14,11 @@ export interface InviteStorage {
 
 export const APP_INVITE_KEY = 'spokenMargins.appInviteSeen';
 
-/** How a share ended, in the screen's words: the sheet finished, the file downloaded, the sheet closed, or the browser refused it. */
-export type ShareEnd = 'shared' | 'saved' | 'cancelled' | 'refused';
+/**
+ * How a share ended, in the screen's words: the sheet finished, the file downloaded, the answer went into the link's reply
+ * box (#4675), the sheet closed, or the browser refused it.
+ */
+export type ShareEnd = 'shared' | 'saved' | 'sent' | 'cancelled' | 'refused';
 
 export interface ShareEvent {
   /** The Share panel had a friend's Margins to answer, so what left is a reply. */
@@ -55,7 +58,7 @@ export function markInviteSeen(storage: InviteStorage | undefined): void {
 /** Whether this share shows the invitation. When it does, it is marked seen at once, so it never shows twice. */
 export function inviteAfterShare(storage: InviteStorage | undefined, event: ShareEvent): boolean {
   if (event.inApp || !event.wasReply) return false;
-  if (event.outcome !== 'shared' && event.outcome !== 'saved') return false;
+  if (event.outcome !== 'shared' && event.outcome !== 'saved' && event.outcome !== 'sent') return false;
   if (seen(storage)) return false;
   markInviteSeen(storage);
   return true;
