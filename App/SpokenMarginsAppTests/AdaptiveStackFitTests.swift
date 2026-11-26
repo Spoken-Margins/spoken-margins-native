@@ -1,3 +1,4 @@
+import SessionKit
 import SwiftUI
 import XCTest
 @testable import SpokenMarginsApp
@@ -71,6 +72,22 @@ final class AdaptiveStackFitTests: XCTestCase {
             )
             let without = height(of: buttons(labels, stacked: true, withIcons: false), size: size)
             XCTAssertEqual(withSpacer, without, accuracy: 2, "\(size): the spacer added height to the column")
+        }
+    }
+
+    /// #5334: at the largest text size the share sheet's back button read "Back to", with "selection" dropped and no
+    /// ellipsis, so it no longer said where it went. Its title is too long for one line at that size on the narrowest
+    /// phone, so a whole title is at least two lines high; one line is the cut-off button. "Back" alone is one line.
+    func testTheShareSheetBackButtonWrapsItsWholeTitleAtTheLargestTextSize() {
+        let size = DynamicTypeSize.accessibility5
+        let oneLine = height(of: Build23BackToSelectionButton(identifier: "back", title: "Back", action: {}), size: size)
+        XCTAssertGreaterThan(oneLine, 0, "the back button did not render")
+        for title in ["Back to selection", ShareReviewCardWords.backToYourMargins] {
+            let whole = height(of: Build23BackToSelectionButton(identifier: "back", title: title, action: {}), size: size)
+            XCTAssertGreaterThan(
+                whole, oneLine * 1.5,
+                "\(size): \"\(title)\" is \(whole) pt high, about one line (\(oneLine) pt), so the rest of its title was cut off"
+            )
         }
     }
 
