@@ -250,8 +250,8 @@ Target length: 3–4 minutes. The timings are edit targets, not requirements.
 
 - Open **Export**.
 - Show the session picker.
-- Switch between **AI Handoff Markdown** and **Full JSON Archive**.
-- Show Original, Source Notes, and Full Session scopes.
+- Switch between **Markdown** and **JSON**.
+- Show the No Margins, My Margins and Everything contents.
 - Leave useful inclusions enabled and show the preview.
 - Tap **Copy** or open **Share Session**.
 
@@ -380,7 +380,7 @@ does not need equal screen time merely to count as covered.
 - [ ] Summarize Notes.
 - [ ] Discuss with a follow-up.
 - [ ] Show streamed/playable AI content in Timeline.
-- [ ] Export AI Handoff Markdown or Full JSON.
+- [ ] Export Markdown or JSON.
 - [ ] Copy or share a session.
 
 ### Intake — show or mention accurately

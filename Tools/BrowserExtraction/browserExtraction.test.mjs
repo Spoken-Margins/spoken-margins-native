@@ -4,6 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 import { build } from "esbuild";
 import { parseHTML } from "linkedom";
+import Defuddle from "defuddle/full";
 import {
   captureReadablePage,
   fallbackReadableMarkdown,
@@ -1363,6 +1364,236 @@ test("ad-looking names on article bodies are neighbours of the e-flux case; real
   // A long text with few paragraphs is not prose enough to protect: a promo that rambles stays dropped.
   const promo = `<div class="promo-ad"><p>${"Sponsored placeholder words. ".repeat(60)}</p></div>`;
   assert.ok(!contains(capture(`${promo}${articleProse}${articleProse}`), "Sponsored placeholder words."));
+});
+
+// #5365: alignment.anthropic.com/2026/neuron-basis-applications draws 8 of its
+// 11 figures as interactive charts, each with the same figure as a hidden
+// <img class="ix-static"> beside the <svg>. The capture kept 3 pictures and
+// read each chart's legend aloud as run-together words. Markup below is that
+// page's, cut down: legend, chart, tooltip, hidden static picture, caption.
+function interactiveFigure({ id, legend, picture, caption, chart = '<svg role="group" aria-label="Dot plot"><g><text>0.5</text><text>Toxic</text></g></svg>' }) {
+  const legendHTML = legend.map(label => `<span><i class="dot" style="--c:#1b9e77"></i>${label}</span>`).join("");
+  const pictureHTML = picture
+    ? `<img alt="${picture.alt}" src="${picture.src}" class="ix-static" style="display: none;">`
+    : "";
+  return `<figure id="${id}"><div class="ix"><div class="ix-legend">${legendHTML}</div>`
+    + `<div class="ix-chart">${chart}<div class="ix-tip" role="status" hidden="">Tooltip words</div></div></div>`
+    + `${pictureHTML}<figcaption><span style="font-weight: 700;">${caption}</span> More caption.</figcaption></figure>`;
+}
+
+function captureFigures(figures) {
+  const document = browserLikePage({
+    url: "https://alignment.anthropic.com/2026/neuron-basis-applications/",
+    head: "<title>Figures</title>",
+    body: `<article><h1>Title</h1>${articleProse}${figures.join(articleProse)}${articleProse}</article>`
+  });
+  const before = markupInAttributeOrder(document);
+  const nodesBefore = Array.from(document.querySelectorAll("*"));
+  let nodesDuringParse;
+  const payload = whileDefuddleParses(
+    () => { nodesDuringParse = Array.from(document.querySelectorAll("*")); },
+    () => withGlobalDocument(document, () =>
+      captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, document))
+  );
+  assert.equal(payload.metadata.extractor, "defuddle");
+  assert.equal(markupInAttributeOrder(document), before, "the page is left as it was found");
+  // While Defuddle reads the page it holds the same element objects in the same
+  // places: nothing was moved, copied or detached, so an embed or player in a
+  // figure keeps its state on the live page.
+  assert.deepEqual(nodesDuringParse, nodesBefore, "no node of the page is swapped out during the capture");
+  return payload.text;
+}
+
+function whileDefuddleParses(observe, run) {
+  const parse = Defuddle.prototype.parse;
+  Defuddle.prototype.parse = function (...args) {
+    observe();
+    return parse.apply(this, args);
+  };
+  try {
+    return run();
+  } finally {
+    Defuddle.prototype.parse = parse;
+  }
+}
+
+// Taking `hidden` off a picture and putting it back moves it to the end of
+// the element's attributes. Order carries no meaning, so the page's markup is
+// compared with each element's attributes sorted.
+function markupInAttributeOrder(document) {
+  const copy = document.documentElement.cloneNode(true);
+  for (const element of [copy, ...copy.querySelectorAll("*")]) {
+    const attributes = Array.from(element.attributes, ({ name, value }) => [name, value])
+      .sort(([a], [b]) => a.localeCompare(b));
+    attributes.forEach(([name]) => element.removeAttribute(name));
+    attributes.forEach(([name, value]) => element.setAttribute(name, value));
+  }
+  return copy.outerHTML;
+}
+
+const pictureCount = (text) => (text.match(/!\[[^\]]*\]\([^)]+\)/g) || []).length;
+
+test("#5365: an interactive chart with a hidden static picture is captured as that picture and its caption, never its legend", () => {
+  const text = captureFigures([
+    interactiveFigure({
+      id: "figure-1",
+      legend: ["neurons, no labels", "best text search", "probe, 40 labels", "probe, 400 labels"],
+      picture: { alt: "Dot plot comparing label-free neuron probes.", src: "fig1.png" },
+      caption: "Figure 1. Neurons chosen without labels beat text search."
+    }),
+    interactiveFigure({
+      id: "figure-d1",
+      legend: ["RMU", "RMU-LAT", "circuit breakers", "ELM"],
+      picture: { alt: "Unlearning scores by method.", src: "fig10.png" },
+      caption: "Figure D1. Unlearning results.",
+      chart: "<svg></svg>"
+    }),
+    `<figure id="figure-4"><img alt="Line chart showing finetuning raises activation." src="fig4.png"><figcaption>Figure 4. Plain picture.</figcaption></figure>`
+  ]);
+
+  assert.equal(pictureCount(text), 3, text);
+  assert.match(text, /!\[Dot plot comparing label-free neuron probes\.\]\(https:\/\/alignment\.anthropic\.com\/2026\/neuron-basis-applications\/fig1\.png\)/);
+  assert.match(text, /!\[Unlearning scores by method\.\]\([^)]*fig10\.png\)/);
+  assert.match(text, /!\[Line chart showing finetuning raises activation\.\]\([^)]*fig4\.png\)/);
+  for (const caption of ["Figure 1. Neurons chosen without labels beat text search.", "Figure D1. Unlearning results.", "Figure 4. Plain picture."]) {
+    assert.ok(text.includes(caption), caption);
+  }
+  for (const noise of ["neurons, no labels", "best text search", "probe, 40 labels", "RMU-LAT", "circuit breakers", "Tooltip words", "Toxic", "<svg"]) {
+    assert.ok(!text.includes(noise), `${noise} is not read`);
+  }
+});
+
+test("#5365: neighbours of the interactive figure: chart only, canvas, an icon in the caption, two pictures", () => {
+  // A chart with no hidden picture beside it is left alone: its caption stays,
+  // and its legend is read as before, because nothing tells a legend apart
+  // from a figure's own words (#5384 audit).
+  let text = captureFigures([interactiveFigure({
+    id: "figure-x", legend: ["series one", "series two"], caption: "Figure X. Chart with no picture."
+  })]);
+  assert.equal(pictureCount(text), 0);
+  assert.ok(text.includes("Figure X. Chart with no picture."));
+
+  // A <canvas> chart is the same case as an <svg> one.
+  text = captureFigures([interactiveFigure({
+    id: "figure-c", legend: ["canvas series"], picture: { alt: "Canvas chart.", src: "c.png" },
+    caption: "Figure C. Canvas chart.", chart: "<canvas width=\"10\" height=\"10\"></canvas>"
+  })]);
+  assert.equal(pictureCount(text), 1);
+  assert.ok(text.includes("Figure C. Canvas chart.") && !text.includes("canvas series"));
+
+  // An <svg> icon inside the caption is not a chart: the figure is left alone.
+  text = captureFigures([`<figure><img alt="Plain photo." src="photo.png"><figcaption><svg><path d="M0 0"/></svg>Figure P. A photo with an icon.</figcaption></figure>`]);
+  assert.equal(pictureCount(text), 1);
+  assert.ok(text.includes("Figure P. A photo with an icon."));
+
+  // Two hidden pictures in one chart figure come out as the same figure written
+  // plainly would (Defuddle itself keeps only the first picture of a figure).
+  const panels = `<img alt="Left panel." src="left.png"><img alt="Right panel." src="right.png">`;
+  const plain = captureFigures([`<figure>${panels}<figcaption>Figure T. Two panels.</figcaption></figure>`]);
+  text = captureFigures([`<figure><div class="ix"><div class="ix-legend"><span>legend word</span></div><svg></svg></div>`
+    + `${panels.replace('src="left.png"', 'src="left.png" hidden').replace('src="right.png"', 'src="right.png" style="display:none"')}`
+    + `<figcaption>Figure T. Two panels.</figcaption></figure>`]);
+  assert.equal(text, plain);
+
+  // A code block with an <svg> copy button is not a chart figure to empty: the
+  // code and the caption stay.
+  text = captureFigures([`<figure class="code"><pre><code>npm install placeholder-package</code></pre>`
+    + `<button><svg><path d="M0 0"/></svg></button><figcaption>Figure K. Install it.</figcaption></figure>`]);
+  assert.ok(text.includes("npm install placeholder-package"), text);
+  assert.ok(text.includes("Figure K. Install it."));
+
+  // A picture hidden by its wrapper rather than by itself comes out too.
+  text = captureFigures([`<figure><div class="ix"><div class="ix-legend"><span>wrapper legend</span></div><svg></svg></div>`
+    + `<div class="ix-static" style="display: none"><picture hidden><img alt="Wrapped static." src="ws.png"></picture></div>`
+    + `<figcaption>Figure H. Hidden by its wrapper.</figcaption></figure>`]);
+  assert.equal(pictureCount(text), 1, text);
+  assert.ok(text.includes("Figure H. Hidden by its wrapper.") && !text.includes("wrapper legend"));
+
+  // A caption wrapped below the chart is kept, and the chart's own words are not.
+  text = captureFigures([`<figure><div class="ix"><div class="ix-legend"><span>wrapped legend</span></div><svg></svg></div>`
+    + `<img alt="Wrapped." src="w.png" style="display:none"><div class="caption-wrap"><figcaption>Figure W. Wrapped caption.</figcaption></div></figure>`]);
+  assert.equal(pictureCount(text), 1);
+  assert.ok(text.includes("Figure W. Wrapped caption.") && !text.includes("wrapped legend"));
+  assert.ok(!text.includes("legend word"));
+});
+
+test("#5365 audit: content that shares a figure with an icon or a chart is never removed as the chart's block", () => {
+  // A comparison table with tick icons in its cells keeps every cell.
+  let text = captureFigures([`<figure class="table"><table><tr><th>Plan</th><th>Offline</th></tr>`
+    + `<tr><td>Basic plan row</td><td><svg viewBox="0 0 10 10"><path d="M0 0"/></svg></td></tr></table>`
+    + `<figcaption>Table 2. Plans.</figcaption></figure>`]);
+  assert.ok(text.includes("Basic plan row"), text);
+  assert.ok(text.includes("Table 2. Plans."));
+
+  // A copy button inside the <pre>, or beside it in a wrapper, leaves the code.
+  text = captureFigures([`<figure><pre><code>npm install inside-pre</code><button><svg><path d="M0 0"/></svg></button></pre>`
+    + `<figcaption>Figure K1. Copy inside.</figcaption></figure>`]);
+  assert.ok(text.includes("npm install inside-pre"), text);
+  text = captureFigures([`<figure><div class="code-wrap"><pre><code>npm install in-wrapper</code></pre><button><svg><path d="M0 0"/></svg></button></div>`
+    + `<figcaption>Figure K2. Copy in a wrapper.</figcaption></figure>`]);
+  assert.ok(text.includes("npm install in-wrapper"), text);
+
+  // A pull quote with a quote-mark <svg> keeps its words.
+  text = captureFigures([`<figure><blockquote><p>Quoted words stay in the capture.</p><svg class="quote-mark"><path d="M0 0"/></svg></blockquote>`
+    + `<figcaption>Quote author</figcaption></figure>`]);
+  assert.ok(text.includes("Quoted words stay in the capture."), text);
+
+  // A quote whose words sit in a plain <div>/<span> beside a quote-mark <svg>:
+  // no hidden picture, so the figure is not touched (#5384 audit).
+  text = captureFigures([`<figure class="quote"><div class="quote-body"><svg class="quote-mark"><path d="M0 0"/></svg>`
+    + `<span>Quoted words in a span.</span></div><figcaption>Quote author</figcaption></figure>`]);
+  assert.ok(text.includes("Quoted words in a span."), text);
+
+  // A chart figure that hides a picture but also holds a table, list, code or
+  // "show data" block is left as main reads it, so that content is written out
+  // (Defuddle writes a figure with a visible picture as picture and caption only).
+  const chartWith = (content) => `<figure><div class="ix"><div class="ix-legend"><span>side legend</span></div><svg></svg></div>`
+    + `<img alt="Chart static." src="cs.png" style="display: none">${content}`
+    + `<figcaption>Figure CT. Chart and content.</figcaption></figure>`;
+  for (const [content, words] of [
+    [`<table><tr><th>Plan</th><th>Offline</th></tr><tr><td>Charted plan row</td><td><svg><path d="M0 0"/></svg></td></tr></table>`, "Charted plan row"],
+    [`<ul><li>Source list item</li></ul>`, "Source list item"],
+    [`<pre><code>plotted values 1 2 3</code></pre>`, "plotted values 1 2 3"],
+    [`<details><summary>Show data</summary><table><tr><td>Hidden data cell</td></tr></table></details>`, "Hidden data cell"],
+    // Plain words beside the chart count too (#5384 audit of c8fef4a): a credit
+    // in a <div> or <span>, a link, a bare text node.
+    [`<div class="credit">Source: Bureau of Labor Statistics</div>`, "Source: Bureau of Labor Statistics"],
+    [`<span>Credit in a span</span>`, "Credit in a span"],
+    [`<a href="data.csv">Download the data</a>`, "Download the data"],
+    [`Bare words beside the chart`, "Bare words beside the chart"]
+  ]) {
+    text = captureFigures([chartWith(content)]);
+    assert.ok(text.includes(words), `${words}: ${text}`);
+    assert.ok(text.includes("Figure CT. Chart and content."), text);
+  }
+
+  // Figure 6 of the #5365 page: a note paragraph sits beside the chart inside
+  // the widget. Defuddle drops a paragraph beside a visible picture, so the
+  // figure is left as main reads it: the note and caption are read, and the
+  // picture stays out.
+  text = captureFigures([`<figure id="figure-6"><div class="ix"><div class="ix-chart"><svg><path d="M0 0"/></svg>`
+    + `<div class="ix-tip" role="status" hidden=""></div></div><p class="ix-note">Colored: cyber text. Gray: retain text.</p></div>`
+    + `<img alt="Log-scale bar chart." src="fig6.png" class="ix-static" style="display: none;">`
+    + `<figcaption>Figure 6. Note beside the chart.</figcaption></figure>`]);
+  for (const words of ["Colored: cyber text. Gray: retain text.", "Figure 6. Note beside the chart."]) {
+    assert.ok(text.includes(words), `${words}: ${text}`);
+  }
+
+  // A video in a wrapper with an <svg> play button: the wrapper is not the chart's block.
+  const document = browserLikePage({
+    url: "https://example.com/video",
+    head: "<title>Video</title>",
+    body: `<article><h1>Title</h1>${articleProse}<figure><div class="video-wrap"><video src="clip.mp4" controls></video>`
+      + `<button><svg><path d="M0 0"/></svg></button></div><figcaption>Figure V. A clip.</figcaption></figure>${articleProse}</article>`
+  });
+  const wrap = document.querySelector(".video-wrap");
+  const hiddenDuringCapture = [];
+  whileDefuddleParses(
+    () => hiddenDuringCapture.push(wrap.getAttribute("style"), document.querySelector("video").getAttribute("style")),
+    () => withGlobalDocument(document, () =>
+      captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, document))
+  );
+  assert.deepEqual(hiddenDuringCapture, [null, null], "only the play button's own block is hidden");
 });
 
 // The app ships the built scripts, and the tests above that import the

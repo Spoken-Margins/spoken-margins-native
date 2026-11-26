@@ -15,6 +15,10 @@
 //                  page and no audio address and no GUID (#4767, #4783). Two timed Margins, as vectorvoice01's
 //   vectorapple02  the same page-only shape as the owner's 2026-11-22 share of a 2019 episode: Apple's lookup of the show does not
 //                  list it, so its audio is found only in the show's feed (#4783)
+//   vectorpdf001   a PDF's Margins (#5265): web-voice's Margins moved onto the PDF's words, no address (recipient supplied)
+//   vectorbook01   a book's (EPUB) Margins, from web-written, the same way
+//   vectortext01   a pasted text's Margins, from web-written, the same way
+//   vectornoaud1   a podcast episode on an ordinary site's page with no audio address: web-voice's two timed Margins
 //   vectornewer01  vectorvoice01's packet declaring a required capability this page doesn't know, as a packet from a newer
 //                  Spoken Margins does: the page says it is a version gap, not damage (#5266)
 //   expired00001   answers 410, as an expired link does
@@ -129,6 +133,36 @@ links.set('vectorarticle1', {
   preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
   packet: await sealPart(essayPacket, PART.packet, vectorKey),
 });
+
+// #5265: links whose Margins sit on something a browser can't play, each as the iPhone app writes it. A PDF and a book have
+// no address (`recipient_supplied`): the friend needs their own copy. One Margin carries a quote and a rough place, the other
+// only the words before it.
+const onTheWords = (records: Record<string, unknown>[]) => {
+  records.forEach((record, i) => {
+    record.anchor = i === 0
+      ? { anchorType: 'text', startChar: 120, endChar: 180, exactText: 'The first quoted sentence of the source.', prefix: 'Words before the first.', roughPercent: 25, machineEvidenceAssetIds: [] }
+      : { anchorType: 'text', prefix: 'Words before the second Margin.', machineEvidenceAssetIds: [] };
+  });
+};
+const withoutAddress = (itemType: string, title: string) => (manifest: Record<string, unknown>) => {
+  manifest.item = { itemType, title };
+  manifest.itemTransport = { kind: 'recipient_supplied' };
+};
+const cannotPlay: Array<[string, Uint8Array]> = [
+  ['vectorpdf001', await withLayer(voicePacket, onTheWords, withoutAddress('pdf', 'A paper as a PDF'))],
+  ['vectorbook01', await withLayer(writtenPacket, onTheWords, withoutAddress('epub', 'A book as an EPUB'))],
+  ['vectortext01', await withLayer(writtenPacket, onTheWords, withoutAddress('text', 'A pasted text'))],
+  // A podcast episode on an ordinary site's page with no audio address: nothing to look up, so no audio in a browser.
+  ['vectornoaud1', await withLayer(voicePacket, () => {}, (manifest) => {
+    manifest.item = { itemType: 'podcast', canonicalURL: 'https://example.org/show/episode-7', title: 'An episode with no public audio', showTitle: 'A private show', durationMs: SERVED_EPISODE_MS };
+  })],
+];
+for (const [id, packet] of cannotPlay) {
+  links.set(id, {
+    preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
+    packet: await sealPart(packet, PART.packet, vectorKey),
+  });
+}
 
 const APPLE_EPISODE = 'https://podcasts.apple.com/us/podcast/people-parks-and-policy-with-rffs-margaret-walls/id1445582279?i=1000427709574';
 const applePacket = await withLayer(

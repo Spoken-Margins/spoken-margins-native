@@ -43,13 +43,16 @@ public enum SpokenNoteCleanWords {
         switch version {
         case .asRecorded: return "As recorded"
         case .shorterPauses: return "Shorter pauses"
+        case .withoutUms: return ShareCleanupWords.withoutUms
         }
     }
 
     public static let tryAgain = "Try again"
 
-    /// The caption under the control: one line, and a second for a version that is ready.
-    public static func caption(_ state: SpokenNoteCleanState) -> (line: String, second: String?) {
+    /// The caption under the control: one line, and a second for a version that is ready. `version` is the one chosen;
+    /// Without ums (#5342) says what the Margins cleanup says it removes.
+    public static func caption(_ state: SpokenNoteCleanState, version: SpokenNoteAudioVersion = .shorterPauses) -> (line: String, second: String?) {
+        if version == .withoutUms { return withoutUmsCaption(state) }
         switch state {
         case .asRecorded:
             return ("Plays your note exactly as you recorded it.", nil)
@@ -73,8 +76,39 @@ public enum SpokenNoteCleanWords {
         }
     }
 
+    private static func withoutUmsCaption(_ state: SpokenNoteCleanState) -> (line: String, second: String?) {
+        switch state {
+        case .asRecorded:
+            return caption(state)
+        case .untilPlayed:
+            return ("Filler words like um and uh are removed, and long pauses shortened, when the note plays. Your recording stays as it is.", nil)
+        case .making(let fraction):
+            return ("Removing ums… \(percent(fraction))%. Playing as recorded until it's ready.", nil)
+        case .ready(let recordedMs, let versionMs):
+            return (
+                "Filler words and long pauses are removed. Your recording stays as it is.",
+                "\(length(recordedMs)) as recorded, \(length(versionMs)) without ums."
+            )
+        case .nothingToRemove:
+            return ("No ums or long pauses to remove in this note, so it plays as recorded.", nil)
+        case .hot:
+            return caption(state)
+        case .failed(.noSpace):
+            return ("There isn't enough free space on this iPhone to make the version without ums. It plays as recorded.", nil)
+        case .failed(.other):
+            return ("Couldn't remove the ums in this note, so it plays as recorded. Your recording is unchanged.", nil)
+        }
+    }
+
     /// The line on Now, under the title. Nil when there is none: As recorded is chosen, or there was nothing to shorten.
-    public static func nowLine(_ state: SpokenNoteCleanState) -> String? {
+    public static func nowLine(_ state: SpokenNoteCleanState, version: SpokenNoteAudioVersion = .shorterPauses) -> String? {
+        if version == .withoutUms {
+            switch state {
+            case .making(let fraction): return "Removing ums… \(percent(fraction))%"
+            case .ready(let recordedMs, let versionMs): return "\(ShareCleanupWords.withoutUms) · \(shorter(savedMs: recordedMs - versionMs))"
+            default: break
+            }
+        }
         switch state {
         case .asRecorded, .untilPlayed, .nothingToRemove:
             return nil

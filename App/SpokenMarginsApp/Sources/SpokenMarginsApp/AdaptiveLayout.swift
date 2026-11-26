@@ -81,7 +81,7 @@ struct AdaptiveSpacer: View {
 }
 
 /// A segmented control reads well with two or three short labels. At accessibility sizes the segments wrap
-/// or clip long labels such as "AI Handoff Markdown", so the same picker becomes a menu (#1939).
+/// or clip labels such as "My Margins" and "Everything", so the same picker becomes a menu (#1939).
 private struct SegmentedUnlessLargeText: ViewModifier {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 

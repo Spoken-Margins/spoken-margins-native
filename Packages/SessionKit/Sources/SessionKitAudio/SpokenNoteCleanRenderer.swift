@@ -30,7 +30,8 @@ public struct SpokenNoteRenderTake: Sendable {
     }
 }
 
-/// Makes a note's `clean/whole-note.m4a`, the version with long pauses shortened, from its takes and their cuts (#4779).
+/// Makes a note's `clean/whole-note.m4a`, the version with long pauses shortened, from its takes and their cuts (#4779),
+/// or `clean-without-ums/whole-note.m4a` for Without ums (#5342): the same render, in that version's folder.
 ///
 /// One composition with one audio track: each kept stretch is laid end to end, in order, with no overlap, and a 10 ms
 /// fade down and up at every join. It exports to a temporary file in `clean/` and renames it into place, then saves
@@ -56,14 +57,14 @@ public struct SpokenNoteCleanRenderer: Sendable {
     }
 
     public func render(
-        takes: [SpokenNoteRenderTake], noteFolder: URL,
+        takes: [SpokenNoteRenderTake], noteFolder: URL, version: SpokenNoteAudioVersion = .shorterPauses,
         progress: @escaping @Sendable (Double) -> Void = { _ in }
     ) async throws -> SpokenNoteCleanLayout {
         let requested = takes.map(\.requested)
         let fingerprints = Dictionary(takes.map { ($0.requested.id, $0.cutFingerprint) }, uniquingKeysWith: { first, _ in first })
-        let folder = SpokenNoteCleanFiles.folder(inNoteFolder: noteFolder)
-        let audio = SpokenNoteCleanFiles.audioURL(inNoteFolder: noteFolder)
-        if let saved = SpokenNoteCleanFiles.readLayout(inNoteFolder: noteFolder), saved.matches(requested: requested, cutFingerprints: fingerprints),
+        let folder = SpokenNoteCleanFiles.folder(inNoteFolder: noteFolder, version: version)
+        let audio = SpokenNoteCleanFiles.audioURL(inNoteFolder: noteFolder, version: version)
+        if let saved = SpokenNoteCleanFiles.readLayout(inNoteFolder: noteFolder, version: version), saved.matches(requested: requested, cutFingerprints: fingerprints),
            !saved.result.hasAudio || Self.isRegularFile(audio), Self.isSettled(saved.result) {
             progress(1)
             return saved
@@ -79,7 +80,7 @@ public struct SpokenNoteCleanRenderer: Sendable {
                 durationMs: total, result: .nothingToRemove
             )
             try? FileManager.default.removeItem(at: audio)
-            try SpokenNoteCleanFiles.write(layout, to: SpokenNoteCleanFiles.layoutURL(inNoteFolder: noteFolder))
+            try SpokenNoteCleanFiles.write(layout, to: SpokenNoteCleanFiles.layoutURL(inNoteFolder: noteFolder, version: version))
             progress(1)
             return layout
         }
@@ -90,7 +91,7 @@ public struct SpokenNoteCleanRenderer: Sendable {
         if let available = capacity(folder) {
             let needed = Int64(Double(await Self.estimatedBytes(takes: takes, keptMs: keptMs)) * Self.spaceMargin)
             if available < needed {
-                return try saveFailure(.noSpace, requested: requested, fingerprints: fingerprints, noteFolder: noteFolder)
+                return try saveFailure(.noSpace, requested: requested, fingerprints: fingerprints, noteFolder: noteFolder, version: version)
             }
         }
 
@@ -159,7 +160,7 @@ public struct SpokenNoteCleanRenderer: Sendable {
                 return SpokenNoteCleanLayout(requested: requested, cutFingerprints: fingerprints, placements: [], durationMs: 0, result: .interrupted)
             }
             if error is CancellationError || Task.isCancelled { throw CancellationError() }
-            return try saveFailure(.other, requested: requested, fingerprints: fingerprints, noteFolder: noteFolder)
+            return try saveFailure(.other, requested: requested, fingerprints: fingerprints, noteFolder: noteFolder, version: version)
         }
 
         let expectedMs = Self.milliseconds(cursor)
@@ -176,7 +177,7 @@ public struct SpokenNoteCleanRenderer: Sendable {
         let layout = SpokenNoteCleanLayout(
             requested: requested, cutFingerprints: fingerprints, placements: placements, durationMs: expectedMs, result: .made(savedMs: saved)
         )
-        try SpokenNoteCleanFiles.write(layout, to: SpokenNoteCleanFiles.layoutURL(inNoteFolder: noteFolder))
+        try SpokenNoteCleanFiles.write(layout, to: SpokenNoteCleanFiles.layoutURL(inNoteFolder: noteFolder, version: version))
         progress(1)
         return layout
         #else
@@ -211,10 +212,10 @@ public struct SpokenNoteCleanRenderer: Sendable {
 
     private func saveFailure(
         _ failure: SpokenNoteCleanResult.Failure, requested: [SpokenNoteWholeAudioLayout.Requested],
-        fingerprints: [String: String], noteFolder: URL
+        fingerprints: [String: String], noteFolder: URL, version: SpokenNoteAudioVersion
     ) throws -> SpokenNoteCleanLayout {
         let layout = SpokenNoteCleanLayout(requested: requested, cutFingerprints: fingerprints, placements: [], durationMs: 0, result: .failed(failure))
-        try? SpokenNoteCleanFiles.write(layout, to: SpokenNoteCleanFiles.layoutURL(inNoteFolder: noteFolder))
+        try? SpokenNoteCleanFiles.write(layout, to: SpokenNoteCleanFiles.layoutURL(inNoteFolder: noteFolder, version: version))
         return layout
     }
 

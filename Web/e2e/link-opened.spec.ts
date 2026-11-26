@@ -91,3 +91,14 @@ test('a server that keeps no marks shows no notice and gets no post', async ({ p
   await page.locator('.now-playing').waitFor();
   expect(posts).toEqual([]);
 });
+
+test('on the listen-here card (an article link), the notice shows and Hear sends the token (#5351)', async ({ page }) => {
+  const posts = await friend(page, true);
+  await page.goto(`${STUB}/l/vectorarticle1#${vector.keyFragment as string}`);
+  const card = page.getByTestId('arrival-listen');
+  await expect(card.getByTestId('arrival-opened')).toHaveText(`${NOTICE} Don’t tell Web fixture`);
+  await card.getByRole('button', { name: 'Hear Web fixture’s Margins' }).click();
+  await expect.poll(() => posts.length).toBe(1);
+  expect(posts[0]).toMatch(/^POST [0-9a-f]{64}$/);
+  await expect(card.getByTestId('arrival-opened')).toHaveCount(0);
+});

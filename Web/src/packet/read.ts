@@ -18,7 +18,7 @@ import { NotAacError, demuxAac, durationMs as aacDurationMs } from './m4a.ts';
 import { characterCount, swiftTrim } from './swift.ts';
 import { readZip } from './zip.ts';
 import type { ZipEntryInfo } from './zip.ts';
-import type { Episode, Margin, PercentMargin } from '../shared/model.ts';
+import type { Episode, Margin, PageMargin, PercentMargin } from '../shared/model.ts';
 
 type J = any;
 
@@ -114,6 +114,11 @@ export interface ReadPacketResult {
    * the length of the audio that plays it is known (placeByPercent in the app's import logic).
    */
   percentMargins: PercentMargin[];
+  /**
+   * Every text-anchored Margin, as complete Margins (`atSeconds` 0), with the quote it sits on and its rough place when the
+   * packet has them (#5265). `percentMargins` is the subset with a place; this one also holds those with none.
+   */
+  pageMargins: PageMargin[];
   /**
    * The conversation each reply here belongs to, by Margin id. A reply to one of these Margins stays in the same
    * conversation (MarginReplyLink.replying): pass this to writePacket's `conversationIds`.
@@ -517,6 +522,7 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
   const margins: Margin[] = [];
   const textMargins: TextMargin[] = [];
   const percentMargins: PercentMargin[] = [];
+  const pageMargins: PageMargin[] = [];
   for (const record of interjections) {
     const representation = record.representations.find((r) => canon(r.id) === canon(record.defaultRepresentationId));
     if (!representation) continue;
@@ -537,8 +543,6 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
         ...(sender && { author: sender }),
         ...(replyToId && { replyToId }),
       });
-      // Without a rough place there is nothing to play it by; the web leaves such a Margin on the page only.
-      if (anchor.roughPercent == null) continue;
     }
     const margin: Margin = { id, episodeId, atSeconds: textAnchored ? 0 : (atMs as number) / 1000, createdAt: record.createdAt, text: representation.approvedTranscript };
     const voiceAsset = AUDIO_REPRESENTATIONS.has(representation.kind) ? asset(representation.assetId) : undefined;
@@ -563,8 +567,17 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
     if (!textAnchored && item.itemType === 'podcast' && typeof item.durationMs === 'number' && item.durationMs > 0) {
       margin.copyLengthSeconds = item.durationMs / 1000;
     }
-    if (textAnchored) percentMargins.push({ margin, percent: anchor.roughPercent as number });
-    else margins.push(margin);
+    if (textAnchored) {
+      // Every Margin on the words, for the card a browser shows when it can't play them (#5265): its own words or voice,
+      // the quote it sits on, and its rough place when it has one.
+      pageMargins.push({
+        margin,
+        ...(anchor.roughPercent != null && { percent: anchor.roughPercent }),
+        ...(anchor.exactText != null && anchor.exactText.trim() !== '' && { quote: anchor.exactText }),
+      });
+      // Without a rough place there is nothing to play it by; the web leaves such a Margin on the page only.
+      if (anchor.roughPercent != null) percentMargins.push({ margin, percent: anchor.roughPercent });
+    } else margins.push(margin);
   }
   margins.sort((a, b) => a.atSeconds - b.atSeconds);
 
@@ -579,5 +592,5 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
     ...(item.showTitle != null && { showTitle: item.showTitle }),
     ...(item.publisher != null && { publisher: item.publisher }),
   };
-  return { packageId: m.packageId, contentDigest: digest, createdAt: m.createdAt, ...(sender && { sender }), item, episode, margins, textMargins, percentMargins, conversationIds };
+  return { packageId: m.packageId, contentDigest: digest, createdAt: m.createdAt, ...(sender && { sender }), item, episode, margins, textMargins, percentMargins, pageMargins, conversationIds };
 }

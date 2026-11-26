@@ -27,7 +27,7 @@ struct SpokenNoteAudioVersionLine: View {
     let noteId: String
 
     var body: some View {
-        if let line = SpokenNoteCleanWords.nowLine(clean.state(noteId: noteId)) {
+        if let line = SpokenNoteCleanWords.nowLine(clean.state(noteId: noteId), version: clean.version) {
             Text(line)
                 .font(.subheadline)
                 .foregroundStyle(AppColors.watchSecondary)

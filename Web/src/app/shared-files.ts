@@ -48,6 +48,6 @@ export function useLaunchedFiles(open: OpenMarginFile): void {
   useEffect(() => {
     if (set.current || !data.ready) return;
     set.current = true;
-    consumeLaunchQueue(window, (files) => void openFiles(files, (bytes, name) => openRef.current(bytes, name)));
+    consumeLaunchQueue(window, (files) => void openFiles(files, (...args) => openRef.current(...args)));
   }, [data.ready]);
 }

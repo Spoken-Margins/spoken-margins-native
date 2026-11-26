@@ -44,7 +44,7 @@ final class SpokenNoteAudioVersionTests: XCTestCase {
         SpokenNoteAudioVersion.shorterPauses.store(in: defaults)
         XCTAssertEqual(defaults.string(forKey: "spokenNoteAudioVersion"), "shorter_pauses")
         XCTAssertEqual(SpokenNoteAudioVersion.stored(in: defaults), .shorterPauses)
-        defaults.set("without_ums", forKey: SpokenNoteAudioVersion.defaultsKey)
+        defaults.set("no_such_version", forKey: SpokenNoteAudioVersion.defaultsKey)
         XCTAssertEqual(SpokenNoteAudioVersion.stored(in: defaults), .asRecorded, "an unknown value falls back to As recorded")
     }
 
