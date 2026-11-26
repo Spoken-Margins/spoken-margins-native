@@ -333,7 +333,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var feedSubscriptions: [FeedSubscription] = [] { didSet { quickAccess.invalidateCandidates(); listeningSignals.endListening() } }
     @Published var isRefreshingFollowedSources = false
     @Published var followingShows = FollowingShowsState() // Following's rows, entries and looked times (#1865)
-    @Published var importingFollowedSourceEntryIds: Set<String> = []
+    @Published var followedEntryImports = FollowedEntryImports() // Following fetches, and which ones a ▶ tap waits on (#5328)
     /// The latest Play now or Add and open from Following; any later open or start makes it stale (#2124).
     var followedPlayIntent = CurrentRequest()
     @Published var isFollowingSelectedSource = false

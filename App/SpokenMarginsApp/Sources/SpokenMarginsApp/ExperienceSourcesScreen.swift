@@ -87,7 +87,7 @@ struct ExperienceSourcesScreen: View, Equatable {
         var quickFolderName: String?
         var quickFolderPath: String?
         var quickFolderProblem: QuickFolderStatus.Problem?
-        var importingEntryIds: Set<String>
+        var entryImports: FollowedEntryImports
         var subscriptionIDs: [String]
         /// What `FollowingByList` needs to tell which rows are in a list.
         var subscriptions: [FeedSubscription]
@@ -112,7 +112,7 @@ struct ExperienceSourcesScreen: View, Equatable {
             quickFolderName = folder.name
             quickFolderPath = folder.path
             quickFolderProblem = folder.problem
-            importingEntryIds = model.importingFollowedSourceEntryIds
+            entryImports = model.followedEntryImports
             subscriptionIDs = model.feedSubscriptions.map(\.id)
             subscriptions = model.feedSubscriptions
             isRefreshingFollowedSources = model.isRefreshingFollowedSources
@@ -400,8 +400,9 @@ struct ExperienceSourcesScreen: View, Equatable {
             open: { path.append(row.id) },
             play: { model.playNewestEpisode(of: row) },
             add: { model.addPreviewedEpisode(of: row) },
-            isPlayStarting: row.playEntryID.map { feed.inputs.importingEntryIds.contains($0) } ?? false,
-            isAdding: row.newestEntryID.map { feed.inputs.importingEntryIds.contains($0) } ?? false,
+            // A swipe Add shows "Adding…"; only a ▶ tap shows the ▶ spinner (#5328).
+            isPlayStarting: feed.inputs.entryImports.isPlayStarting(row.playEntryID),
+            isAdding: feed.inputs.entryImports.isAdding(row.newestEntryID),
             queueAction: showRowQueueAction(row),
             queue: { model.queueNewestEpisode(of: row) }
         )
