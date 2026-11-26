@@ -34,12 +34,24 @@ public enum PaperFetchProblem: Error, Equatable, Sendable {
     case notFound
     /// 429 or 503: Zotero asked us to slow down.
     case busy
-    /// Any other failure: a timeout, a 5xx, a reply that isn't Zotero's JSON.
+    /// Any other failure: a timeout, a 5xx, a reply that isn't Zotero's JSON or PubMed's RSS.
     case unreachable
-    /// A PubMed search: recognized, but not read as papers yet (no real RSS reply has been seen, see #4341).
-    case pubMedNotReadYet
 
     public func message(zoteroConnected: Bool) -> String {
+        message(zoteroConnected: zoteroConnected, provider: .zotero)
+    }
+
+    /// The words for a list of this provider: a PubMed search never reads as a Zotero problem.
+    public func message(zoteroConnected: Bool, provider: PaperSource.Provider) -> String {
+        if provider == .pubmed {
+            switch self {
+            case .offline: return "You're offline. Try again when you're connected."
+            case .notFound, .privateLibrary, .keyRefused:
+                return "PubMed couldn't find that search. Make a new link with Create RSS."
+            case .busy: return "PubMed is busy. Try again in a few minutes."
+            case .unreachable: return "PubMed couldn't be reached. Try again later."
+            }
+        }
         switch self {
         case .offline: return "You're offline. Try again when you're connected."
         case .privateLibrary:
@@ -50,7 +62,6 @@ public enum PaperFetchProblem: Error, Equatable, Sendable {
         case .notFound: return PaperFeedLinkProblem.zoteroNotUnderstood.message
         case .busy: return "Zotero is busy. Try again in a few minutes."
         case .unreachable: return "Zotero couldn't be reached. Try again later."
-        case .pubMedNotReadYet: return "PubMed searches can't be followed as papers yet."
         }
     }
 }
@@ -87,7 +98,7 @@ public struct PaperSourceFetcher: Sendable {
         switch source {
         case .zoteroGroup(let groupID, let key): (library, collectionKey) = (.group(groupID), key)
         case .zoteroUser(let userID, let key): (library, collectionKey) = (.user(userID), key)
-        case .pubMedRSS: throw .pubMedNotReadYet
+        case .pubMedRSS: return try await fetchPubMed(source)
         }
         let key = source.needsZoteroKey ? apiKey : nil
         var itemPages: [Data] = []
@@ -124,6 +135,26 @@ public struct PaperSourceFetcher: Sendable {
             entries: PaperSourceRecord.capped(entries),
             totalCount: total
         )
+    }
+
+    /// #5201: a PubMed search's RSS, one request with no key and no cookie. The feed holds only the newest items its
+    /// link asks for, so the count is what it gave.
+    private func fetchPubMed(_ source: PaperSource) async throws(PaperFetchProblem) -> PaperSourceSnapshot {
+        var request = URLRequest(url: source.pageURL())
+        request.timeoutInterval = 30
+        request.httpShouldHandleCookies = false
+        request.setValue("application/rss+xml, application/xml;q=0.9", forHTTPHeaderField: "Accept")
+        await PubMedRequestPacer.shared.wait()
+        if Task.isCancelled { throw .unreachable }
+        let reply: PaperFetchReply
+        do {
+            reply = try await transport(request)
+        } catch {
+            throw Self.problem(for: error)
+        }
+        guard (200..<300).contains(reply.status) else { throw Self.problem(status: reply.status, source: source) }
+        guard let page = try? PubMedPaperReader.read(reply.data) else { throw .unreachable }
+        return PaperSourceSnapshot(title: page.title, entries: PaperSourceRecord.capped(page.entries), totalCount: nil)
     }
 
     /// The listener's own collections, for "Your collections", and the library's name for "Connected as". Also the
@@ -180,6 +211,13 @@ public struct PaperSourceFetcher: Sendable {
     }
 
     static func problem(status: Int, source: PaperSource) -> PaperFetchProblem {
+        if source.provider == .pubmed {
+            switch status {
+            case 404, 410: return .notFound
+            case 429, 503: return .busy
+            default: return .unreachable
+            }
+        }
         switch status {
         case 401, 403: return source.needsZoteroKey ? .keyRefused : .privateLibrary
         case 404, 410: return .notFound
@@ -204,5 +242,23 @@ public struct PaperSourceFetcher: Sendable {
     /// How many rows a JSON array holds, nil when the bytes aren't one.
     static func arrayCount(_ data: Data) -> Int? {
         (try? JSONSerialization.jsonObject(with: data)) .flatMap { $0 as? [Any] }?.count
+    }
+}
+
+/// NCBI asks a client with no API key for at most three requests a second. Refreshing several PubMed searches at once
+/// (a pull on Following) spaces its requests by this much; a lone follow or refresh doesn't wait.
+actor PubMedRequestPacer {
+    static let shared = PubMedRequestPacer()
+    static let minimumSpacing: Duration = .milliseconds(340)
+
+    private var last: ContinuousClock.Instant?
+
+    /// Each caller takes its slot before it sleeps, so callers that arrive together leave one spacing apart.
+    func wait() async {
+        let clock = ContinuousClock()
+        let now = clock.now
+        let slot = last.map { max(now, $0.advanced(by: Self.minimumSpacing)) } ?? now
+        last = slot
+        if slot > now { try? await clock.sleep(until: slot) }
     }
 }

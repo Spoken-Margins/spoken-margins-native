@@ -189,6 +189,56 @@ final class SourceLinkShareFallbackTests: XCTestCase {
         XCTAssertEqual(model.libraryItems.map(\.id), itemsBefore)
     }
 
+    /// #5338: a share that ends in the Import Inbox says in Diagnostics what the share extension did with it, tied to
+    /// the app's own result by the handoff id, so an export shows which side of the hand-off a failed share stopped on.
+    func testDiagnosticsCarryTheShareExtensionsLastShareTiedToTheAppsResult() async throws {
+        let store = makePayloadStore()
+        let handoff = SourceLinkHandoff(id: "source-link-traced", inputURL: Self.postURL, sourceSurface: "share_sheet", startSession: false)
+        try store.save(handoff)
+        try ShareExtensionShareRecord(
+            attachmentTypes: [["com.apple.property-list", "public.url"]],
+            route: "share_sheet",
+            candidates: [
+                .init(type: "com.apple.property-list", outcome: "nothing", detail: "results_missing"),
+                .init(type: "public.url", outcome: "link")
+            ],
+            handoffId: handoff.id
+        ).save(inAppGroupRoot: store.rootDirectory)
+        let model = Gate1AppModel(
+            sourceLinkResolver: PublicPodcastLinkResolver(fetch: { try SourceLinkShareFallbackTests.substackPostAndFeed($0) }),
+            sourceLinkHandoffStore: store,
+            audioPlaybackClient: NoopAudioPlaybackClient()
+        )
+        model.resetAndSeed()
+        model.readablePageExtractor = RecordedPageExtractor(.failure(ReadablePageExtractionError.invalidResult))
+
+        model.importPendingSourceLinkHandoffs()
+        try await waitFor("traced share quarantine") {
+            (try? store.failedHandoffs().count) == 1 && !model.isImportingPendingSourceLinkHandoffs
+        }
+
+        let lastShare = try XCTUnwrap(model.diagnostics["lastShareExtension"])
+        XCTAssertTrue(lastShare.contains("route=share_sheet; handoff=source-link-traced;"), lastShare)
+        XCTAssertTrue(lastShare.hasSuffix("tried=com.apple.property-list:nothing(results_missing), public.url:link"), lastShare)
+        XCTAssertFalse(lastShare.contains("substack"), "the export carries no address: \(lastShare)")
+        let appResult = model.diagnostics["pendingSourceLinkPayload:source-link-traced"] ?? "none"
+        XCTAssertTrue(appResult.hasPrefix("quarantined:"), appResult)
+    }
+
+    /// A record an older share extension wrote (route and types only) still reads, and names what was offered.
+    func testAnOlderShareExtensionRecordStillReads() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("last-share-\(UUID().uuidString)", isDirectory: true)
+        temporaryDirectories.append(root)
+        let folder = root.appendingPathComponent(ShareExtensionShareRecord.folderName, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data(#"{"attachmentTypes":[["public.url","public.plain-text"]],"recordedAt":"2026-11-25T11:40:00Z","route":"failed"}"#.utf8)
+            .write(to: folder.appendingPathComponent(ShareExtensionShareRecord.fileName))
+
+        let record = try XCTUnwrap(ShareExtensionShareRecord.load(fromAppGroupRoot: root))
+        XCTAssertEqual(record.diagnosticValue, "at=2026-11-25T11:40:00Z; route=failed; offered=public.url+public.plain-text")
+        XCTAssertNil(ShareExtensionShareRecord.load(fromAppGroupRoot: root.appendingPathComponent("none")))
+    }
+
     /// Both the podcast fetch and the extractor see HTTP 404; quarantine keeps the extractor's specific reason.
     func testMissingSharedPageIsQuarantinedNamingTheExtractorHTTPStatus() async throws {
         let store = makePayloadStore()

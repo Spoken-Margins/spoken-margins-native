@@ -49,6 +49,7 @@ Phone checks, by-ear checks, Diagnostics exports, "after the next build" steps, 
 
 1. Comment on the issue, starting with the line `**Owner check**`: what to do, on which build or after which merge (the PR number), the exact steps, and what you or the next session will read when the result is in and what it unblocks. Write it so a session with no memory of this thread can act on the result.
 2. Add `needs-owner` (leave `ready` off if only the check is left; `agent-verify` and `validate-by-use` issues keep their label and gain `needs-owner` only when the check needs his hands). `scripts/owner_card_guard.py` leaves an issue alone that has `needs-owner` and an `**Owner check**`, and `scripts/sm_owner_queue.py` lists it under "Owner checks". It is not a decision, so no thread waits on it.
+   When the check is done (or a card is answered), clear `needs-owner` only with `python3 scripts/owner_card_guard.py --answered N --how "<where the result or answer is>"`, which posts the answer marker and takes the label off together; a label taken off by hand comes back within the hour (#5269).
 3. Say it once in your stop note, then end the thread. Don't repeat it as a message asking for his reply.
 
 Your last message ends with a question only when you hold a real decision (see the ask-cole skill, section 1) that blocks your work. Before asking the owner anything, run that skill.

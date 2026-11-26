@@ -3,8 +3,8 @@ import SessionKitFeeds
 import SwiftUI
 import UIKit
 
-/// Follow papers (#4341), pushed from the Follow sheet's "Papers from Zotero" row: a how-to, one paste field for a
-/// public Zotero group's collection, and, once the listener's own library is connected in Settings, Your collections to
+/// Follow papers (#4341), pushed from the Follow sheet's "Papers from Zotero or PubMed" row: a how-to, one paste field
+/// for a public Zotero group's collection or a PubMed search's Create RSS link (#5201), and, once the listener's own library is connected in Settings, Your collections to
 /// follow with a tap. Any other link goes to today's feed follow. Following a list closes the sheet; the banner offers
 /// Undo and Following shows the new row.
 struct FollowPapersScreen: View {
@@ -23,12 +23,15 @@ struct FollowPapersScreen: View {
                 Text("Open a public group's collection on zotero.org and copy the address from the browser.")
                     .font(.subheadline)
                     .foregroundStyle(AppColors.text)
+                Text("For PubMed, search on pubmed.ncbi.nlm.nih.gov, tap Create RSS under the search box, then Create RSS and Copy.")
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.text)
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) { field; buttons }
                     VStack(alignment: .leading, spacing: 10) { field; buttons }
                 }
             } header: {
-                Text("Zotero")
+                Text("Zotero or PubMed")
             } footer: {
                 if let problem, !problem.isEmpty {
                     Text(problem)
@@ -52,7 +55,7 @@ struct FollowPapersScreen: View {
     }
 
     private var field: some View {
-        AppTextField("Paste a Zotero link", text: $link)
+        AppTextField("Paste a Zotero or PubMed link", text: $link)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .textContentType(.URL)
