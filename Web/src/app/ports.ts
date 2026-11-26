@@ -30,6 +30,14 @@ export interface SourcesPort {
    * which is why the reason is part of the call.
    */
   findPostVoice(pageUrl: string, options: { relayAllowed: boolean; reason: 'listener-tap' }): Promise<PostVoice | null>;
+  /**
+   * Finds the audio of the Apple Podcasts episode a page names, through Apple's public lookup (#4783). Only for an
+   * address `episodeVoice` calls `apple-lookup`, and only when the listener has opened the link or tapped the episode.
+   * Null when Apple doesn't list that episode with audio and the show's own feed has no one item with `title` (Apple lists a
+   * show's newest 200, so an older episode is found in the feed). Throws `NeedsRelayConsent` when the feed can't be read by
+   * the browser and `relayAllowed` is false, and another error when the lookup or the feed couldn't be asked or answered.
+   */
+  findAppleEpisodeAudio(pageUrl: string, options: { relayAllowed: boolean; title: string }): Promise<PostVoice | null>;
 }
 
 export interface RecordedVoice {
@@ -102,9 +110,11 @@ export interface TranscriberPort {
   /** Loads the model, downloading it the first time; progress is bytes of the known total. */
   prepare(onProgress?: (loaded: number, total: number) => void): Promise<'webgpu' | 'wasm'>;
   /** The words in a recording, or '' when none were heard. */
-  transcribe(voice: Blob): Promise<{ text: string; ms: number; device: 'webgpu' | 'wasm' }>;
+  transcribe(voice: Blob, onSegment?: (done: number, total: number) => void): Promise<{ text: string; ms: number; device: 'webgpu' | 'wasm' }>;
   /** Forgets the downloaded model. */
   remove(): Promise<void>;
+  /** Stops a load or run that has gone quiet, keeping the downloaded model. */
+  abandon(): void;
 }
 
 export interface Services {

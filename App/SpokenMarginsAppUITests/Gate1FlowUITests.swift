@@ -177,8 +177,11 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(scrollToElement("playback.timeline.button").exists)
         openTimelineExperience()
         XCTAssertTrue(element("timeline.rail").exists)
-        XCTAssertTrue(scrollToButton(containingLabel: "Chapter").exists)
-        XCTAssertTrue(scrollToButton(containingLabel: "Assistant response").exists)
+        // A chapter or the Beginning, found by identifier: the compact Beginning row no longer says "Chapter" (#4778).
+        XCTAssertTrue(scrollToChapterOrBeginningRow().exists)
+        // The seeded turn sits inside a chapter that the Timeline folds away from the playhead (#3895), so open it
+        // the way a listener would before looking for the row (#5007).
+        XCTAssertTrue(openFoldedChapters(untilButtonContaining: "Assistant response").exists)
         returnToNowPlayingFromTimelineIfNeeded()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
 
@@ -275,7 +278,7 @@ final class Gate1FlowUITests: XCTestCase {
         launchAllowingOneStall()
         let row = app.buttons["library.row.item-pill"]
         XCTAssertTrue(row.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Completed hidden"].exists)
+        XCTAssertFalse(element("library.filter.summary").exists, "the everyday view has nothing under the chips (#4698)")
         let search = app.textFields["library.search.field"]
         XCTAssertTrue(search.waitForExistence(timeout: 4))
         let searchTop = search.frame.minY
@@ -306,7 +309,7 @@ final class Gate1FlowUITests: XCTestCase {
         captureScreen(named: "library-completed-search-and-undo")
         app.buttons["Clear search"].tap()
         element("library.filters.reset").tap()
-        XCTAssertTrue(app.staticTexts["Completed hidden"].exists)
+        XCTAssertTrue(element("library.filter.summary").waitForNonExistence(timeout: 4), "back to the everyday view, nothing under the chips")
     }
 
     func testLibraryCompactRowStaysDense() throws {
@@ -473,64 +476,6 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(element("timeline.summary.button").exists)
     }
 
-    func testPermanentDeleteDoesNotRestoreRecentlyDeletedItem() throws {
-        let itemTitle = "Permanent Delete \(UUID().uuidString.prefix(8))"
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        app.buttons["home.addSource.button"].tap()
-        scrollToElement("addSource.route.pastedText").tap()
-        let title = element("create.title.field")
-        XCTAssertTrue(title.waitForExistence(timeout: 4))
-        title.tap()
-        title.typeText(itemTitle)
-        let text = element("create.text.editor")
-        text.tap()
-        text.typeText("This item exists only to verify permanent deletion.")
-        let keyboardDone = app.buttons["Done"].firstMatch
-        XCTAssertTrue(keyboardDone.waitForExistence(timeout: 3))
-        keyboardDone.tap()
-        XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4))
-        scrollToElement("create.start.button").tap()
-        XCTAssertTrue(waitForDisappearance(element("addSource.sheet"), timeout: 8))
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
-
-        // The "Added ... to Library" banner's label holds the title too and comes first, so match Library rows only (#2717).
-        let libraryRow = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "library.row.", itemTitle)).firstMatch
-        XCTAssertTrue(libraryRow.waitForExistence(timeout: 4))
-        libraryRow.press(forDuration: 1)
-        XCTAssertTrue(app.buttons["Move to Recently Deleted"].waitForExistence(timeout: 3))
-        app.buttons["Move to Recently Deleted"].tap()
-        // Library deletion is recoverable immediately; permanent deletion below requires confirmation.
-        XCTAssertTrue(waitForDisappearance(libraryRow, timeout: 4))
-
-        openLibrarySettings()
-        // Settings draws Recently Deleted as a collapsed group since #1254, so the row's menu is not on screen until it
-        // is opened (#4391). The label gains a count once an item is in it, hence "containing".
-        scrollToButton(containingLabel: "Recently Deleted").tap()
-        // Delete Permanently sits behind the row's menu, away from Restore (#3206).
-        scrollToButton(containingLabel: "More options for \(itemTitle)").tap()
-        let delete = app.buttons["Delete Permanently"].firstMatch
-        XCTAssertTrue(delete.waitForExistence(timeout: 2))
-        delete.tap()
-        let confirmation = app.alerts["Delete Permanently?"]
-        XCTAssertTrue(confirmation.waitForExistence(timeout: 2))
-        confirmation.buttons["Delete Permanently"].tap()
-
-        XCTAssertTrue(waitForDisappearance(app.buttons["Restore \(itemTitle)"], timeout: 2))
-        XCTAssertFalse(app.staticTexts[itemTitle].exists)
-
-        // Settings is not where a restored item would show up, and a Library row is a button whose label only contains
-        // the title, so the checks above could not see one. Look in the Library, then again after a relaunch (#3716).
-        tapRoot("Library")
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4), "The Library did not open")
-        XCTAssertFalse(libraryRow.exists, "The permanently deleted item is back in the Library")
-
-        app.terminate()
-        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] = "1"
-        app.launch()
-        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8), "The Library did not reopen")
-        XCTAssertFalse(libraryRow.waitForExistence(timeout: 3), "The permanently deleted item came back after a relaunch")
-    }
-
     func testAddSourcePresentsEveryTypedIntakeRoute() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         app.buttons["home.addSource.button"].tap()
@@ -623,6 +568,11 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(seededStart.waitForExistence(timeout: 4), app.debugDescription)
         seededStart.tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        // Pause before touring the tabs (#5310). Since #5196 the fixture article keeps playing after its start tap, and
+        // the simulator's synthesizer reads it to the end within this test's half minute. A finished session hides the
+        // mini player by design (NarrationOwnership.miniPlayerVisibility, "session_finished"), so the bar was gone by
+        // the second Following visit. A paused session is still Now Playing, which is what the tabs must keep.
+        pausePlaybackIfNeeded()
         app.buttons["playback.home.button"].tap()
         XCTAssertTrue(element("miniPlayer.bar").waitForExistence(timeout: 4))
         assertMiniPlayerClearsRootNavigation()
@@ -1113,6 +1063,13 @@ final class Gate1FlowUITests: XCTestCase {
     private func pausePlaybackIfNeeded() {
         let playPause = element("playback.play.button")
         XCTAssertTrue(playPause.waitForExistence(timeout: 8))
+        // The label reads "Pause" from .starting on (activePlaybackIsPlaying uses status.isPlaybackActive), but "Play"
+        // in any state before the start reaches the engine. The old first wait accepted that "Play" at once, the loop
+        // then saw "Play" and called the source paused, and nothing was tapped. Inferred, not confirmed from a run
+        // (#5346): #5310's pause still left the root-tabs journey without its mini player at 30b7c83, which a start
+        // that ran on and finished would explain. So give a start the chance to read "Pause" before taking "Play" as
+        // paused. A source that is really paused costs this wait's ceiling, never a wrong answer.
+        _ = waitUntil(playPause, "label == %@", "Pause", timeout: 10)
         _ = XCTWaiter().wait(
             for: [XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "label == %@ OR label == %@", "Play", "Pause"),
@@ -1382,6 +1339,45 @@ final class Gate1FlowUITests: XCTestCase {
             app.swipeUp()
         }
         XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing button containing \(text)")
+        return candidate
+    }
+
+    /// Taps each folded chapter's "Expand chapter" chevron on screen until a button containing `text` exists, then
+    /// scrolls it into reach, up or down. The Timeline folds chapters away from the playhead (#3895), so a row inside
+    /// one only appears once its chapter is opened (#5007).
+    private func openFoldedChapters(untilButtonContaining text: String) -> XCUIElement {
+        let target = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+        let folded = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "timeline.chapter.fold.", "Expand chapter"))
+        for _ in 0..<12 where !target.exists {
+            // The topmost folded chevron may sit above the screen, so take the first one that can be tapped now.
+            guard let chevron = folded.allElementsBoundByIndex.first(where: isReadyToTap) else {
+                app.swipeUp()
+                continue
+            }
+            let identifier = chevron.identifier
+            chevron.tap()
+            XCTAssertTrue(waitUntil(app.buttons[identifier], "label BEGINSWITH %@", "Collapse chapter"),
+                          "Chapter \(identifier) did not open")
+        }
+        XCTAssertTrue(target.waitForExistence(timeout: 4),
+                      "Missing button containing \(text) after opening the folded chapters: \(app.debugDescription)")
+        for _ in 0..<12 where !isReadyToTap(target) {
+            if target.frame.midY < app.frame.midY { app.swipeDown() } else { app.swipeUp() }
+        }
+        XCTAssertTrue(target.isHittable, "Button containing \(text) never came into reach")
+        return target
+    }
+
+    /// The first Timeline chapter row or the Beginning row. Chapter rows carry the heading trait as well as the button
+    /// trait (#4778), so this looks through every element, not only buttons.
+    private func scrollToChapterOrBeginningRow() -> XCUIElement {
+        let predicate = NSPredicate(format: "identifier BEGINSWITH 'timeline.chapter.jump.' OR identifier == 'timeline.source.beginning'")
+        let candidate = app.descendants(matching: .any).matching(predicate).firstMatch
+        for _ in 0..<12 where !isReadyToTap(candidate) {
+            app.swipeUp()
+        }
+        XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing a Timeline chapter or Beginning row")
         return candidate
     }
 

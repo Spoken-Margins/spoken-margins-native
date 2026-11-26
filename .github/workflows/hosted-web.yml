@@ -30,9 +30,15 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [next, main]  # either trunk (#1492); the checks read the PR's own base
-    # The web app, the share-link page its specs drive on the real server (#3355), and this file, so a change to the job
-    # proves itself. A PR that touches none of them starts no job.
-    paths: ['Web/**', 'research/B4/server/internal/links/**', '.github/workflows/hosted-web.yml']
+    # No paths filter: a required check must report on every PR and merge group, and a workflow a paths filter skips
+    # leaves its check pending, which would block the merge queue (#4693). The `changes` job below (hosted Linux,
+    # seconds) decides instead: the web app, the share-link page its specs drive on the real server (#3355), and this
+    # file, so a change to the job proves itself. With none of them changed, `web` and `rearm` are skipped, and a
+    # skipped job reports success.
+  # GitHub's merge queue (#4693): harmless until the "protect main" ruleset requires the queue.
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
 
 permissions:
   contents: read
@@ -42,13 +48,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    # Does the diff reach the web app? A PR: its merge commit against parent 1. A merge group: everything the group
+    # adds to the trunk itself (refs/heads/main, fetched), so a group whose head entry is not a web change still tests
+    # a web PR ahead of it. Not merge_group.base_sha: behind another entry that is the previous entry's queue commit,
+    # so its diff held only the last PR (#5179, 2026-11-23).
+    # A dispatch, or any trouble reading the diff: yes.
+    name: 'hosted web: changes'
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      web: ${{ steps.diff.outputs.web }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Changed web paths
+        id: diff
+        env:
+          QUEUE_TRUNK: ${{ github.event.merge_group.base_ref }}
+        run: |
+          list="$RUNNER_TEMP/changed-files.txt"
+          if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
+            trunk="${QUEUE_TRUNK#refs/heads/}"
+            trunk="refs/remotes/origin/${trunk:-main}"
+            git fetch --no-tags origin "+refs/heads/${trunk#refs/remotes/origin/}:$trunk" &&
+              git diff --name-only --no-renames "$(git merge-base HEAD "$trunk")" HEAD > "$list" || rm -f "$list"
+          elif [ "$GITHUB_EVENT_NAME" = pull_request ] && git rev-parse --verify --quiet HEAD^2 > /dev/null; then
+            git diff --name-only --no-renames "$(git merge-base HEAD^1 HEAD^2)" HEAD^2 > "$list" || rm -f "$list"
+          fi
+          if [ ! -f "$list" ]; then
+            echo "web=true" | tee -a "$GITHUB_OUTPUT"
+          elif grep -qE '^(Web/|research/B4/server/internal/links/|\.github/workflows/hosted-web\.yml$)' "$list"; then
+            echo "web=true" | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "web=false" | tee -a "$GITHUB_OUTPUT"
+          fi
+
   web:
     # Same-repo PRs only, as in every other workflow. Always true for workflow_dispatch.
     name: 'hosted web: build and Playwright'
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: changes
+    # When `changes` does not succeed (a checkout or runner fault), run anyway: a skipped job reports success, and
+    # `changes` is not a required check, so skipping would let a web change merge untested (#4937).
+    if: >-
+      !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.web == 'true') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     # The image the other hosted Mac jobs use (hosted-app-macos.yml), with Google Chrome installed.
     runs-on: xcode-27
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Start the clock
         run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
@@ -111,9 +161,9 @@ jobs:
         with:
           path: ~/Library/Caches/spoken-margins-web-models
           key: web-models-${{ hashFiles('Web/src/transcribe/catalog.ts') }}
-      # --global-timeout stops the run at 14 minutes, leaving the job's last 6 for setup and the report: a run that
+      # --global-timeout stops the run at 25 minutes, leaving the job's last 5 for setup and the report: a run that
       # hangs still prints each failure's error and keeps its report, where the job's own timeout would cancel it
-      # silently (#3254).
+      # silently (#3254). It was 14 until the suite grew past it: the autoplay specs (#4472) wait out real lead-ins.
       - name: Playwright suite
         if: steps.present.outputs.present == 'true'
         working-directory: Web
@@ -125,7 +175,7 @@ jobs:
           config=$(ls e2e/playwright.config.* playwright.config.* 2>/dev/null | head -n 1 || true)
           [ -n "$config" ] || { echo "No Playwright config under Web/ (looked for e2e/playwright.config.* and playwright.config.*)." >&2; exit 1; }
           echo "Playwright config: $config"
-          npx playwright test -c "$config" --retries=1 --global-timeout=840000 --reporter=list,json,html
+          npx playwright test -c "$config" --retries=1 --global-timeout=1500000 --reporter=list,json,html
       # A test that failed and then passed is a pass, but each one is evidence (#2176 tallies them, and three in a
       # week get an issue). The JSON reporter marks them `flaky`.
       - name: List tests that passed on retry
@@ -176,3 +226,43 @@ jobs:
         run: |
           seconds=$(( $(date +%s) - STARTED ))
           echo "hosted web took ${seconds}s on ${ImageOS:-$RUNNER_OS}." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  rearm:
+    # Start the merge run of each armed PR on this head again, now that this workflow run is over (lane-runner.py
+    # WAITING, scripts/lane_rearm.py). It is a job here, not a workflow_run workflow, because GitHub starts no
+    # workflow_run for a run that GITHUB_TOKEN caused, and the lane's own dispatches of this workflow are such runs:
+    # their PRs would never have been started again. A dispatch sent with GITHUB_TOKEN does start lane.yml. It waits for
+    # every other job, so the PR's last check has recorded before the merge run reads it. `always()` also runs it after
+    # a failure or a cancel, so the PR gets its report (a PASS, or a FAIL it can be fixed from). The script comes from the PR's base
+    # (the trunk, or the lane-check/** base under test), never the PR's head, and the head reaches the shell only through env. Same-repo runs only.
+    name: rearm
+    needs: [changes, web]
+    # Not in a merge group (the queue merges, not the lane), and not when `web` had nothing to test (the PR's other
+    # workflows re-arm it, as before the paths filter moved into `changes`).
+    if: always() && github.event_name != 'merge_group' && needs.changes.outputs.web == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: write  # dispatching lane.yml
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.base.ref || vars.SM_TRUNK || 'main' }}
+          persist-credentials: false
+          sparse-checkout: scripts/lane_rearm.py
+          sparse-checkout-cone-mode: false
+      - name: Start the merge run of each armed PR on this head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RESULTS: ${{ needs.web.result }}
+        run: |
+          if [ ! -f scripts/lane_rearm.py ]; then
+            echo "::notice::scripts/lane_rearm.py is not on the trunk; nothing started."
+            exit 0
+          fi
+          python3 scripts/lane_rearm.py --head "$HEAD_SHA" --results "$RESULTS"

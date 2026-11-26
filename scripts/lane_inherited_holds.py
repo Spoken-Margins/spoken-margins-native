@@ -55,6 +55,7 @@ COMMENT_ID = re.compile(r'issuecomment-(\d+)')
 # scripts/comment_trust.py is copied here; test_comment_trust.py fails if the two drift.
 TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
 TRUSTED_BOTS = ('github-actions[bot]',)
+TRUSTED_APP_SLUGS = ('spoken-margins-agent',)  # the GitHub App the agents act as (#4915)
 LANE_BOT = 'github-actions[bot]'  # its reports quote the hold text, template included: never a resolution
 MIN_EVIDENCE = 10  # characters; "..." and other placeholders are not evidence
 CACHE_ENTRIES = 600
@@ -68,10 +69,14 @@ class LookupFailed(RuntimeError):
     """The inherited-finding lookup could not finish, so the caller must hold the merge (fail closed)."""
 
 
+def _rest_bot_logins() -> tuple:
+    return TRUSTED_BOTS + tuple(f'{slug}[bot]' for slug in TRUSTED_APP_SLUGS)
+
+
 def trusted(comment: dict) -> bool:
     """Whether this comment is from the owner, a member, a collaborator or the project's bot (a stranger's is data)."""
     return (comment.get('author_association') in TRUSTED_ASSOCIATIONS
-            or (comment.get('user') or {}).get('login') in TRUSTED_BOTS)
+            or (comment.get('user') or {}).get('login') in _rest_bot_logins())
 
 
 def comment_id(comment: dict) -> int | None:
@@ -227,12 +232,25 @@ def context(holds: list[dict], comments: list[dict], head: str) -> str:
 
 # ---- Finding the sources -----------------------------------------------------------------------------------
 
+def gh_failure(stderr: str, stdout: str) -> str:
+    """Why a `gh api` call failed: its stderr line, plus the `message` of the error body `gh api` prints on stdout when
+    stderr lacks it, so a rate limit or a 404 says so."""
+    text = (stderr or '').strip()
+    try:
+        message = json.loads(stdout or '').get('message') or ''
+    except (ValueError, AttributeError):
+        message = ''
+    if message and message not in text:
+        text = f'{text} {message}'.strip()
+    return text[:200] or 'no error text'
+
+
 def gh_api(path: str, paginate: bool = False):
     """One `gh api` GET as parsed JSON; a paginated list comes back as one list. Raises LookupFailed."""
     command = ['gh', 'api'] + (['--paginate', '--jq', '.[] | @json'] if paginate else []) + [path]
     done = subprocess.run(command, capture_output=True, text=True)
     if done.returncode:
-        raise LookupFailed(f'gh api {path}: {done.stderr.strip()[:160]}')
+        raise LookupFailed(f'gh api {path}: {gh_failure(done.stderr, done.stdout)}')
     try:
         return [json.loads(line) for line in done.stdout.splitlines() if line.strip()] if paginate \
             else json.loads(done.stdout)

@@ -48,7 +48,7 @@ extension Gate1AppModel {
         statusMessage = "Resolving source link..."
         defer { sourceLinkGate.end() }
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed),
+        guard let url = URL(string: trimmed).map(ArxivPaperLink.openingURL), // #5049
               let scheme = url.scheme?.lowercased(),
               ["http", "https"].contains(scheme) else {
             reportFailure("Enter a valid podcast, RSS, or audio URL.")
@@ -99,7 +99,7 @@ extension Gate1AppModel {
         sourceLinkGate.begin()
         defer { sourceLinkGate.end() }
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed),
+        guard let url = URL(string: trimmed).map(ArxivPaperLink.openingURL), // #5049
               let scheme = url.scheme?.lowercased(),
               ["http", "https"].contains(scheme) else {
             reportFailure("Enter a valid podcast, RSS, or audio URL.")
@@ -191,7 +191,7 @@ extension Gate1AppModel {
             }
             if !startSession {
                 guard let item = try persistResolvedSourceLinkInBackground(
-                    request: request, result: result, listenerAdded: true, readsLibraryOffMain: true) else {
+                    request: request, result: result, listenerAdded: true) else {
                     reportFailure(SourceLinkFailureMessage.text(
                         status: result.status.rawValue,
                         reason: result.failureReason,

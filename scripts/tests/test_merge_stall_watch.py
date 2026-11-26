@@ -2,6 +2,8 @@
 import contextlib
 import datetime
 import io
+import os
+import subprocess
 from pathlib import Path
 import sys
 import unittest
@@ -61,6 +63,8 @@ class StallTests(unittest.TestCase):
         self.assertEqual(watch.stall(NOW, ago(300), [armed(running=['lane'])]), [])
         self.assertEqual(watch.stall(NOW, ago(300), [armed(running=['hosted fast: Mac rest'])]), [])
         self.assertEqual(len(watch.stall(NOW, ago(300), [armed(running=['automerge'])])), 1)
+        # `merge policy` stays in progress while it waits for an audit or the owner's tap (#4986): not progress either.
+        self.assertEqual(len(watch.stall(NOW, ago(300), [armed(running=['merge policy'])])), 1)
 
     def test_a_pr_waiting_on_its_author_is_not_the_pipelines_stall(self):
         fail = comment(f'Lane report pr5-r1 — FAIL\ncommit `{HEAD[:7]}`')
@@ -108,13 +112,12 @@ class StallTests(unittest.TestCase):
             blocking = comment(f'{heading}\nBlocking: the packet breaks.')
             self.assertEqual(watch.stall(NOW, ago(300), [armed([blocking])]), [], heading)
 
-    def test_a_t3_fail_holds_until_a_t3_passes_however_many_other_passes_follow(self):
-        # The runner's t3_gate: a PR that asked for T3 merges only on a T3 PASS, so the author has to act.
+    def test_a_t3_fail_does_not_excuse_a_stall(self):
+        # #4572: a T3 holds no merge, so an armed PR whose only FAIL is a T3's is stalled, not waiting on its author.
         t3_fail = comment(lane_report('FAIL', 'T3'), minutes=500)
         t2_pass = comment(lane_report('PASS', 'T2'), minutes=400)
-        t3_pass = comment(lane_report('PASS', 'T3'), minutes=300)
-        self.assertEqual(watch.stall(NOW, ago(300), [armed([t3_fail, t2_pass])]), [])
-        self.assertEqual(len(watch.stall(NOW, ago(300), [armed([t3_fail, t2_pass, t3_pass])])), 1)
+        self.assertEqual(len(watch.stall(NOW, ago(300), [armed([t3_fail, t2_pass])])), 1)
+        self.assertEqual(len(watch.stall(NOW, ago(300), [armed([t3_fail])])), 1)
 
     def test_an_inconclusive_t3_is_the_pipelines_to_retry_so_it_can_stall(self):
         inconclusive = comment(lane_report('INCONCLUSIVE', 'T3'))
@@ -172,7 +175,8 @@ class AlarmClosingTests(unittest.TestCase):
         tip = {'commit': {'committer': {'date': when(merged_hours_ago)}}}
         calls = []
         patches = {'api': lambda path: [[alarm]] if '/issues' in path else tip,
-                   'gh': lambda *args, stdin=None: calls.append(args) or '',
+                   'gh': lambda *args, stdin=None: calls.append(('READ',) + args) or '',
+                   'gh_write': lambda *args, stdin=None: calls.append(args) or '',
                    'trunk_branch': lambda: 'main'}
         for name, replacement in patches.items():
             self.addCleanup(setattr, watch, name, getattr(watch, name))
@@ -192,6 +196,79 @@ class AlarmClosingTests(unittest.TestCase):
     def test_a_merge_right_after_the_alarm_closes_it(self):
         calls = self.run_watch(merged_hours_ago=0.1, alarm_hours_ago=0.2)
         self.assertEqual(calls[0][:3], ('issue', 'close', '9'))
+
+
+class WriteTokenTests(unittest.TestCase):
+    """#5217: reads run on the GitHub App's token; the alarm issue is written with GITHUB_TOKEN (SM_WRITE_TOKEN) so
+    it stays authored by BOT, which open_alarm() looks for."""
+
+    def env_seen(self, write_token):
+        seen = {}
+
+        def fake_run(args, **kwargs):
+            seen.update(kwargs.get('env') or {})
+            seen['_env_given'] = kwargs.get('env') is not None
+            return subprocess.CompletedProcess(args, 0, stdout='')
+        original = watch.subprocess.run
+        self.addCleanup(setattr, watch.subprocess, 'run', original)
+        watch.subprocess.run = fake_run
+        saved = {k: os.environ.get(k) for k in ('SM_WRITE_TOKEN', 'GH_TOKEN')}
+        self.addCleanup(lambda: [os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+                                 for k, v in saved.items()])
+        os.environ['GH_TOKEN'] = 'app-token'
+        os.environ.pop('SM_WRITE_TOKEN', None)
+        if write_token:
+            os.environ['SM_WRITE_TOKEN'] = write_token
+        watch.gh_write('issue', 'close', '9')
+        return seen
+
+    def test_a_write_uses_the_write_token_when_one_is_set(self):
+        self.assertEqual(self.env_seen('workflow-token')['GH_TOKEN'], 'workflow-token')
+
+    def test_a_write_inherits_the_environment_when_none_is_set(self):
+        self.assertFalse(self.env_seen(None)['_env_given'])
+
+
+class ReadsTests(unittest.TestCase):
+    """#4990: this runs about 20 times an hour, so a run with a recent merge must not read every armed PR."""
+
+    def paths_read(self, merged_minutes_ago: int) -> list[str]:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        tip = {'commit': {'committer': {'date': (now - datetime.timedelta(minutes=merged_minutes_ago)).strftime('%Y-%m-%dT%H:%M:%SZ')}}}
+        listed = {'number': 5, 'draft': False, 'labels': [{'name': watch.AUTOMERGE}],
+                  'head': {'sha': HEAD, 'repo': {'full_name': 'o/r'}}, 'base': {'repo': {'full_name': 'o/r'}}}
+        paths = []
+
+        def api(path):
+            paths.append(path)
+            if '/commits/main' in path:
+                return tip
+            if '/issues?' in path or '/comments' in path:
+                return [[]]
+            if '/pulls?' in path:
+                return [[listed]]
+            if '/check-runs' in path:
+                return {'check_runs': []}
+            if '/commits/' in path:
+                return {'commit': {'committer': {'date': tip['commit']['committer']['date']}}}
+            return dict(listed, mergeable_state='clean')
+        patches = {'api': api, 'gh': lambda *args, stdin=None: '', 'trunk_branch': lambda: 'main'}
+        for name, replacement in patches.items():
+            self.addCleanup(setattr, watch, name, getattr(watch, name))
+            setattr(watch, name, replacement)
+        os.environ['GH_REPO'] = 'o/r'
+        self.addCleanup(os.environ.pop, 'GH_REPO', None)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(watch.main(['--dry-run']), 0)
+        return paths
+
+    def test_a_merge_within_the_hour_reads_the_trunk_and_the_alarm_and_nothing_else(self):
+        paths = self.paths_read(merged_minutes_ago=20)
+        self.assertEqual(len(paths), 2, paths)
+        self.assertFalse([p for p in paths if '/pulls' in p], paths)
+
+    def test_an_hour_without_a_merge_still_reads_the_armed_prs(self):
+        self.assertTrue([p for p in self.paths_read(merged_minutes_ago=90) if '/pulls/5' in p])
 
 
 if __name__ == '__main__':

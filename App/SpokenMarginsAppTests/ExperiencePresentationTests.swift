@@ -60,10 +60,13 @@ final class ExperiencePresentationTests: XCTestCase {
         let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session")
             .filter { $0.reference != nil }
 
-        XCTAssertEqual(entries.map(\.reference), [.imported("parent"), .local("my-reply"), .imported("elsewhere")],
+        XCTAssertEqual(entries.map(\.reference), [.imported("parent"), .local("session::my-reply"), .imported("elsewhere")],
                        "the reply follows its parent even though it was made later and the other Margin is closer in time")
         XCTAssertEqual(entries.map(\.depth), [0, 1, 0])
         XCTAssertEqual(entries[1].position, entries[0].position, "a reply sits at the place it answers")
+        XCTAssertEqual(entries[1].cornerLabel, entries[0].cornerLabel, "and its corner reads that place, not its own (#3862)")
+        XCTAssertNotEqual(entries[1].cornerLabel, "34%", "the reply was made at 34%, but the card stands at its parent's 30%")
+        XCTAssertEqual(entries[1].spokenPosition, entries[0].spokenPosition)
         XCTAssertTrue(entries[1].detail.hasPrefix("Reply to Ana · "), entries[1].detail)
         XCTAssertFalse(entries[0].detail.contains("Reply to"))
     }
@@ -96,7 +99,7 @@ final class ExperiencePresentationTests: XCTestCase {
 
         let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session").filter { $0.reference != nil }
 
-        XCTAssertEqual(entries.map(\.reference), [.local("current"), .imported("ana-reply")], "the earlier session's Margin is not on this rail")
+        XCTAssertEqual(entries.map(\.reference), [.local("session::current"), .imported("ana-reply")], "the earlier session's Margin is not on this rail")
         let shown = try XCTUnwrap(entries.last)
         XCTAssertEqual(shown.depth, 0, "nothing on the rail to indent under")
         XCTAssertEqual(shown.position, 50, "it stays at its own place")
@@ -118,7 +121,8 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertEqual(scenes.map(\.title), (1...24).map { "Scene \($0)" })
         XCTAssertEqual(Set(entries.map(\.id)).count, entries.count)
         XCTAssertEqual(entries.filter { $0.provenance == .source }.map(\.title), ["Publisher opening"])
-        XCTAssertTrue(try XCTUnwrap(scenes.first).detail.contains("Generated scene · 0:00"))
+        XCTAssertTrue(try XCTUnwrap(scenes.first).detail.contains("Generated scene"))
+        XCTAssertFalse(try XCTUnwrap(scenes.first).detail.contains("0:00"), "the time is in the corner, once (#4778)")
         XCTAssertTrue(try XCTUnwrap(scenes.last).detail.contains("Summary for scene 24"))
         for (index, entry) in scenes.enumerated() {
             guard case .listeningMapScene(let scene) = entry.action else {
@@ -166,78 +170,38 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(orphan.first { $0.id == "session::second-25" }).detail.contains("Response unavailable"))
     }
 
-    func testTimelinePullRequiresDeliberateBottomOverscroll() {
-        XCTAssertEqual(
-            TimelinePullPresentation.overscrollDistance(
-                contentOffsetY: 540,
-                contentHeight: 1_200,
-                containerHeight: 640,
-                bottomInset: 0
-            ),
-            0
-        )
-        XCTAssertEqual(
-            TimelinePullPresentation.overscrollDistance(
-                contentOffsetY: 650,
-                contentHeight: 1_200,
-                containerHeight: 640,
-                bottomInset: 0
-            ),
-            90
-        )
-        XCTAssertEqual(
-            TimelinePullPresentation.overscrollDistance(
-                contentOffsetY: 0,
-                contentHeight: 500,
-                containerHeight: 640,
-                bottomInset: 0
-            ),
-            0,
-            "Unused viewport space is not overscroll"
-        )
-        XCTAssertFalse(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: 71))
-        XCTAssertTrue(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: 72))
-    }
-
-    func testTimelinePullMeasuresShortContentFromItsInsetRestingPosition() {
-        // A short player rests above zero because navigation owns the top inset.
-        // The fixed dock also reserves space at the bottom of the scroll view.
-        func distance(_ offset: CGFloat) -> CGFloat {
-            TimelinePullPresentation.overscrollDistance(
-                contentOffsetY: offset, contentHeight: 280,
-                containerHeight: 874, bottomInset: 342, topInset: 116
-            )
+    /// #3777, Design PR 7: a note the narrator reads where it is cited has a row at its citation. Where the plan keeps the
+    /// notes at the end (the screen's `FootnotePlanDecision` answer is false) and for audio, there are no rows.
+    @MainActor
+    func testTimelineListsAFootnoteAtItsCitationOnlyWhenNotesAreReadWhereCited() throws {
+        var item = ItemDetailState()
+        item.id = "item"
+        item.title = "Tides"
+        item.text = "The tide turns twice a day.[^1] It rests between turns. Boats wait for it.[^2] Then they leave.\n\n[^1]: Smith, Tides, 2020.\n[^2]: Lee, Boats, 2021."
+        let withoutMode = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        XCTAssertFalse(withoutMode.contains { if case .footnote = $0.action { true } else { false } },
+                       "a caller that does not pass the setting gets the rail it always had")
+        do {
+            let notes = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil, footnotesReadWhereCited: true)
+                .filter { if case .footnote = $0.action { true } else { false } }
+            XCTAssertEqual(notes.map(\.title), ["Footnote 1", "Footnote 2"])
+            XCTAssertEqual(notes.map(\.detail), ["Smith, Tides, 2020.", "Lee, Boats, 2021."])
+            XCTAssertEqual(notes.map(\.provenanceLabel), ["Footnote", "Footnote"])
+            XCTAssertEqual(notes.map(\.provenanceSystemImage), ["text.append", "text.append"])
+            XCTAssertEqual(notes.map(\.accessibilityIdentifier), ["timeline.footnote.play.1", "timeline.footnote.play.2"])
+            let first = try XCTUnwrap(notes.first), second = try XCTUnwrap(notes.last)
+            XCTAssertLessThan(first.position, second.position, "in the order they are cited")
+            XCTAssertEqual(Set(notes.map(\.id)).count, 2)
+            guard case .footnote(let note) = first.action else { return XCTFail("a footnote row plays the note") }
+            XCTAssertEqual(note.label, "1")
         }
-        XCTAssertEqual(distance(-116), 0, "Resting short content must not open Timeline")
-        XCTAssertEqual(distance(-45), 71)
-        XCTAssertFalse(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance(-45)))
-        XCTAssertEqual(distance(-44), 72)
-        XCTAssertTrue(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance(-44)))
-        XCTAssertEqual(TimelinePullPresentation.overscrollDistance(
-            contentOffsetY: 700, contentHeight: 1_200,
-            containerHeight: 874, bottomInset: 342, topInset: 116
-        ), 32, "Long content must still reach its real bottom before the pull counts")
-    }
+        let atEnd = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil, footnotesReadWhereCited: false)
+        XCTAssertFalse(atEnd.contains { if case .footnote = $0.action { true } else { false } })
 
-    /// #3217: every way in is one tile in the grid, no two do the same thing, and Files is a single tile.
-    func testAddSourceGridHoldsEveryWayInOnceWithOneFilesTile() {
-        XCTAssertEqual(
-            AddSourcePresentation.tiles,
-            [.linkOrPodcast, .findPodcast, .pastedText, .importFromFiles, .quickFolder, .liveSession, .spokenNote]
-        )
-        XCTAssertEqual(Set(AddSourcePresentation.tiles.map(\.title)).count, AddSourcePresentation.tiles.count, "two tiles share a name")
-        let filesTiles = AddSourcePresentation.tiles.filter { $0.route == .importFromFiles }
-        XCTAssertEqual(filesTiles, [.importFromFiles])
-        XCTAssertEqual(AddSourceTile.importFromFiles.title, "Import from Files")
-        // Spoken Note (#3108) sits in a slim row under the grid, so the six grid tiles still end on a full row.
-        XCTAssertEqual(AddSourcePresentation.tiles.filter { $0 != .spokenNote }.count % 2, 0, "the two-column grid should end on a full row")
-        XCTAssertEqual(AddSourceTile.spokenNote.title, "Spoken Note")
-        XCTAssertNil(AddSourceTile.spokenNote.route, "the tile opens the recorder, not a page in the sheet")
-    }
-
-    func testFindPodcastTileIsLeftOutWhereTheCatalogCannotOpen() {
-        XCTAssertFalse(AddSourcePresentation.tiles(canSearchPodcasts: false).contains(.findPodcast))
-        XCTAssertEqual(AddSourcePresentation.tiles(canSearchPodcasts: true), AddSourcePresentation.tiles)
+        var audio = item
+        audio.isNativeAudio = true
+        XCTAssertFalse(ExperienceTimelineRailScreen.makeEntries(from: audio, sessionID: nil, footnotesReadWhereCited: true)
+            .contains { if case .footnote = $0.action { true } else { false } }, "a podcast has no footnote rows")
     }
 
     func testFilesTileAcceptsPacketsByTheExtensionThePacketArchiveWrites() {
@@ -436,7 +400,7 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertTrue(pending.needsAttention)
         XCTAssertEqual(pending.preview, "Transcribing…")
         XCTAssertTrue(unavailableContext.needsAttention)
-        XCTAssertEqual(unavailableContext.attentionDescription, "Context needs retry")
+        XCTAssertEqual(unavailableContext.attentionDescription, "Couldn't find the source words near this Margin")
         XCTAssertTrue(missingRecording.needsAttention)
         XCTAssertEqual(missingRecording.attentionDescription, "Recording is unavailable")
     }

@@ -17,6 +17,15 @@
 //    ignores a setting it doesn't know, and a newer one reads its default.
 //    #3043: a voice Margin's audio is stored as bytes (`voice.data`) instead of a Blob (`voice.blob`), since Safari's
 //    private browsing won't store a Blob. Rows with a Blob still read; see voice-rows.ts. Still shape 2.
+//    Part of #3216: a Margin may carry `heard` and `leadIn`, and settings `marginAutoplay`; an older copy ignores all
+//    three. Still shape 2.
+//    #4425: Library membership. Settings `libraryModel` ('' or 'added') and `libraryMovedOut` (episode ids), plus one
+//    row per episode the listener's Library holds or dropped, under the key `library:<episode id>` with the value
+//    `{ in, at }`. All are settings rows that default when missing, so an older copy ignores them (`readSettings` skips
+//    keys it doesn't know). Still shape 2: no record changed and no store was added.
+//    #4426: a show record may carry `unfollowedAt` (the listener unfollowed it; the record and its episodes stay), and
+//    one settings row per dismissed episode, under the key `dismissed:<episode id>` with the value `{ dismissed, at }`.
+//    An older copy ignores both. Still shape 2.
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
 
 export const DB_VERSION = 1;
@@ -43,6 +52,22 @@ export interface Settings {
    * this browser and written only into a shared file (#4107). A backup never carries it.
    */
   senderName: string;
+  /**
+   * The Margins tab's Autoplay (part of #3216): which Margins play by themselves when the episode reaches them. 'unheard'
+   * (friends' Margins not yet heard), 'all', or 'none' (a tone marks each). Defaults to 'unheard'.
+   */
+  marginAutoplay: 'unheard' | 'all' | 'none';
+  /**
+   * Which rule decides what the Library holds (#4425). '' (the default, and every store from before #4425): every
+   * stored episode. 'added': only episodes whose membership row says in. Set once, after the one-time move has written
+   * its rows, so a move cut short runs again.
+   */
+  libraryModel: '' | 'added';
+  /**
+   * Episode ids the one-time move left out of the Library (#4425), for the Library's notice and its Put them back.
+   * Cleared by Got it. Anything that is not an array of strings reads as empty.
+   */
+  libraryMovedOut: readonly string[];
 }
 
 export const DEFAULT_SETTINGS: Settings = Object.freeze({
@@ -53,7 +78,41 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
   lastBackupAt: '',
   transcription: '',
   senderName: '',
+  marginAutoplay: 'unheard',
+  libraryModel: '',
+  libraryMovedOut: Object.freeze([]) as readonly string[],
 });
+
+/** The settings-store key prefix of a Library membership row (#4425): `library:<episode id>`. */
+export const MEMBERSHIP_PREFIX = 'library:';
+
+/**
+ * Whether the listener's Library holds an episode (#4425). `in: false` is a removal (#4424), kept so a later pass never
+ * adds the episode back on its own. `at` is when the row was first written, as an ISO date ('' when a stored row had
+ * none).
+ */
+export interface Membership {
+  in: boolean;
+  at: string;
+}
+
+/** Membership rows by episode id. Episodes with no row are not in the Library once it is migrated. */
+export type LibraryMembership = Readonly<Record<string, Membership>>;
+
+/** The settings-store key prefix of an episode's dismissal row (#4426): `dismissed:<episode id>`. */
+export const DISMISSED_PREFIX = 'dismissed:';
+
+/**
+ * Whether the listener dismissed an episode from its show's list (#4426). `dismissed: false` is a dismissal undone or
+ * brought back. `at` is when the row was written, as an ISO date.
+ */
+export interface DismissedRow {
+  dismissed: boolean;
+  at: string;
+}
+
+/** Dismissal rows by episode id. An episode with no row is not dismissed. */
+export type Dismissals = Readonly<Record<string, DismissedRow>>;
 
 export interface Snapshot {
   shows: Show[];
@@ -61,6 +120,10 @@ export interface Snapshot {
   margins: Margin[];
   positions: PlaybackPosition[];
   settings: Settings;
+  /** Library membership by episode id (#4425), read from the `library:` setting rows. */
+  library: LibraryMembership;
+  /** Dismissals by episode id (#4426), read from the `dismissed:` setting rows. */
+  dismissed: Dismissals;
 }
 
 export interface SettingRow {
@@ -100,9 +163,55 @@ export function readSettings(rows: readonly SettingRow[]): Settings {
     if (typeof row.value !== typeof target[row.key]) continue;
     if (typeof row.value === 'number' && !Number.isFinite(row.value)) continue;
     if (row.key === 'transcription' && !['', 'on', 'off'].includes(row.value as string)) continue;
+    if (row.key === 'marginAutoplay' && !['unheard', 'all', 'none'].includes(row.value as string)) continue;
+    if (row.key === 'libraryModel' && !['', 'added'].includes(row.value as string)) continue;
+    if (row.key === 'libraryMovedOut') {
+      if (!Array.isArray(row.value) || !row.value.every((id) => typeof id === 'string')) continue;
+      target[row.key] = [...(row.value as string[])];
+      continue;
+    }
     target[row.key] = row.value;
   }
   return settings;
+}
+
+/**
+ * Library membership from the `library:<episode id>` setting rows (#4425). A row whose value is not an object with a
+ * boolean `in`, or whose key names no episode, is skipped. A missing or non-string `at` reads as ''. The result has no
+ * prototype, so an episode id such as `constructor` can't read an inherited value.
+ */
+export function readMembership(rows: readonly SettingRow[]): LibraryMembership {
+  const library: Record<string, Membership> = Object.create(null) as Record<string, Membership>;
+  for (const row of rows) {
+    if (typeof row.key !== 'string' || !row.key.startsWith(MEMBERSHIP_PREFIX)) continue;
+    const id = row.key.slice(MEMBERSHIP_PREFIX.length);
+    if (!id) continue;
+    const value = row.value;
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) continue;
+    const { in: isIn, at } = value as { in?: unknown; at?: unknown };
+    if (typeof isIn !== 'boolean') continue;
+    library[id] = { in: isIn, at: typeof at === 'string' ? at : '' };
+  }
+  return library;
+}
+
+/**
+ * Dismissals from the `dismissed:<episode id>` setting rows (#4426). A row whose value is not an object with a boolean
+ * `dismissed` and a string `at`, or whose key names no episode, is skipped. No prototype, as in `readMembership`.
+ */
+export function readDismissed(rows: readonly SettingRow[]): Dismissals {
+  const dismissed: Record<string, DismissedRow> = Object.create(null) as Record<string, DismissedRow>;
+  for (const row of rows) {
+    if (typeof row.key !== 'string' || !row.key.startsWith(DISMISSED_PREFIX)) continue;
+    const id = row.key.slice(DISMISSED_PREFIX.length);
+    if (!id) continue;
+    const value = row.value;
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) continue;
+    const { dismissed: isDismissed, at } = value as { dismissed?: unknown; at?: unknown };
+    if (typeof isDismissed !== 'boolean' || typeof at !== 'string') continue;
+    dismissed[id] = { dismissed: isDismissed, at };
+  }
+  return dismissed;
 }
 
 /**
@@ -118,6 +227,8 @@ export function upgrade(rows: StoredRows): Upgraded {
     margins: rows.margins,
     positions: rows.positions,
     settings: readSettings(rows.settings),
+    library: readMembership(rows.settings),
+    dismissed: readDismissed(rows.settings),
   };
   // 1 to 2 changed no record, only added the version row (and settings that default when missing).
   const writes = from < SCHEMA_VERSION ? [{ key: SCHEMA_KEY, value: SCHEMA_VERSION }] : [];

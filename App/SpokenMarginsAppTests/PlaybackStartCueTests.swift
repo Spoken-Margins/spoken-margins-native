@@ -47,9 +47,12 @@ final class PlaybackStartCueTests: XCTestCase {
         let cue = makeCue()
 
         cue.observe(snapshot("article", .starting))
+        let pending = cue.cueTask
         clock += 0.3
         cue.observe(snapshot("article", .playing))
-        try await Task.sleep(for: .seconds(1.2))
+        // The chime is a task started with the start. A start that resolves cancels it, and once it has ended it can
+        // chime no more, so wait for it instead of for the time it would have chimed at.
+        await pending?.value
 
         XCTAssertEqual(chimes, 0)
         XCTAssertNil(recorded["lastPlaybackStartCue"])
@@ -100,7 +103,8 @@ final class PlaybackStartCueTests: XCTestCase {
         )
 
         cue.observe(snapshot("article", .starting))
-        try await Task.sleep(for: .seconds(1.2))
+        let pending = cue.cueTask
+        await pending?.value // the task checks once, sees the speech, and ends without chiming
 
         XCTAssertEqual(checks, 1)
         XCTAssertEqual(chimes, 0)
@@ -151,9 +155,10 @@ final class PlaybackStartCueTests: XCTestCase {
         )
 
         cue.observe(snapshot("podcast", .starting))
+        let pending = cue.cueTask
         clock += 0.3
         cue.observe(snapshot("podcast", .playing))
-        try await Task.sleep(for: .seconds(1.2))
+        await pending?.value // cancelled by the start resolving; once it has ended it can run no check
 
         XCTAssertEqual(checks, 0)
         XCTAssertEqual(chimes, 0)
@@ -321,8 +326,12 @@ final class PlaybackStartCueTests: XCTestCase {
         stale.playbackRequestedAt = Date().addingTimeInterval(-1)
 
         model.snapshot = stale
+        // Either the cue's task is pending, or its check has already run: it ends right after that check, with no wait
+        // in between, so a status that has moved means the task is done.
+        try await waitUntil { cue.cueTask != nil || model.snapshot.status != .starting }
+        let pending = cue.cueTask
         try await waitUntil { model.snapshot.status != .starting }
-        try await Task.sleep(for: .milliseconds(100))
+        await pending?.value
 
         XCTAssertNotEqual(model.snapshot.status, .starting, "the check brought the snapshot up to date")
         XCTAssertNil(model.diagnostics["lastPlaybackStartCue"], "so no chime played over a start that had already resolved")
@@ -386,9 +395,10 @@ final class PlaybackStartCueTests: XCTestCase {
         let cue = makeWaitingCue()
 
         cue.observe(snapshot("article", .starting))
+        let pending = cue.cueTask
         clock += 0.3
         cue.observe(snapshot("article", .playing))
-        try await Task.sleep(for: .seconds(1.2))
+        await pending?.value // cancelled by the start resolving; once it has ended it can schedule nothing
 
         XCTAssertEqual(waitingScheduled, [])
         XCTAssertFalse(waitingActive)
@@ -432,12 +442,14 @@ final class PlaybackStartCueTests: XCTestCase {
         }
 
         cue.observe(snapshot("article", .starting))
+        let pending = cue.cueTask
         clock += 1
         try await waitUntil { checks >= 3 }
 
         XCTAssertFalse(waitingActive)
         XCTAssertEqual(recorded["firstAudioMs:article"], "1000")
-        try await Task.sleep(for: .seconds(0.6))
+        // The third check saw the speech and cancelled the task. Once the task has ended it can check no more.
+        await pending?.value
         XCTAssertEqual(checks, 3, "a resolved start is not checked again")
     }
 
@@ -484,6 +496,197 @@ final class PlaybackStartCueTests: XCTestCase {
         XCTAssertEqual(chimeLabels.first?.split(separator: ">").last, "playbackStartChime")
         XCTAssertEqual(waitingLabels.first?.split(separator: ">").last, "playbackWaitingCue")
         XCTAssertFalse(waitingLabels.first?.contains("playbackStartChime") ?? true)
+    }
+
+    // MARK: First sound from the audio client (#842)
+
+    private func targeted(_ itemId: String, _ status: PlaybackStatus, target: String) -> SessionSnapshot {
+        var snapshot = snapshot(itemId, status)
+        snapshot.targetId = target
+        return snapshot
+    }
+
+    /// A chime that is sounding stops the moment the client reports its first sound, with no snapshot in between
+    /// (the regular check can be 500 ms late), and the diagnostic says why.
+    func testFirstAudioSignalStopsTheChimeAtOnce() async throws {
+        let heard = PassthroughSubject<String, Never>()
+        var chiming = false
+        var stops = 0
+        let cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            playChime: { [unowned self] in self.chimes += 1; chiming = true; return "played" },
+            stopChime: { chiming = false; stops += 1 },
+            checkNow: {},
+            firstAudio: heard.eraseToAnyPublisher(),
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+        cue.observe(targeted("article", .starting, target: "narration"))
+        clock += 1
+        try await waitUntil { chiming }
+        let stopsBefore = stops
+
+        heard.send("narration")
+
+        XCTAssertFalse(chiming, "the chime stopped at the signal, before any snapshot")
+        XCTAssertEqual(stops, stopsBefore + 1)
+        XCTAssertEqual(recorded["lastPlaybackStartCue"], "article:stopped_by_first_audio")
+        XCTAssertNil(recorded["firstAudioMs:article"], "the engine's snapshot still times first audio, not the signal")
+        withExtendedLifetime(cue) {}
+    }
+
+    /// A signal before the cue is due means it never chimes for this start.
+    func testFirstAudioSignalBeforeTheCueIsDueMeansNoChime() async throws {
+        let heard = PassthroughSubject<String, Never>()
+        let cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            playChime: { [unowned self] in self.chimes += 1; return "played" },
+            checkNow: {},
+            firstAudio: heard.eraseToAnyPublisher(),
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+        cue.observe(targeted("article", .starting, target: "narration"))
+        let pending = cue.cueTask
+        clock += 0.3
+
+        heard.send("narration")
+        clock += 1 // the start is still "starting" past the 0.8 s the cue would have chimed at
+        await pending?.value
+
+        XCTAssertEqual(chimes, 0)
+        XCTAssertNil(recorded["lastPlaybackStartCue"], "a cue that never played says nothing")
+        withExtendedLifetime(cue) {}
+    }
+
+    /// A late signal from an earlier start, or one for another target, leaves this start's cue alone.
+    func testFirstAudioSignalForAnotherTargetLeavesTheCueAlone() async throws {
+        let heard = PassthroughSubject<String, Never>()
+        let cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            playChime: { [unowned self] in self.chimes += 1; return "played" },
+            checkNow: {},
+            firstAudio: heard.eraseToAnyPublisher(),
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+        cue.observe(targeted("article", .starting, target: "narration"))
+
+        heard.send("an-earlier-start")
+        heard.send("narration-of-another-item")
+        clock += 1
+        try await waitUntil { chimes == 1 }
+
+        XCTAssertEqual(recorded["lastPlaybackStartCue"], "article:played")
+        cue.observe(snapshot("article", .paused))
+        withExtendedLifetime(cue) {}
+    }
+
+    /// With no open start, a signal does nothing, and the next start still chimes.
+    func testFirstAudioSignalWithNoOpenStartDoesNothing() async throws {
+        let heard = PassthroughSubject<String, Never>()
+        let cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            playChime: { [unowned self] in self.chimes += 1; return "played" },
+            checkNow: {},
+            firstAudio: heard.eraseToAnyPublisher(),
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+        heard.send("narration")
+        XCTAssertNil(recorded["lastPlaybackStartCue"])
+
+        cue.observe(targeted("article", .starting, target: "narration"))
+        clock += 1
+        try await waitUntil { chimes == 1 }
+        cue.observe(snapshot("article", .paused))
+        withExtendedLifetime(cue) {}
+    }
+
+    /// Audit of #5020: the first sound of narration ends the cue, then the engine falls back to live speech inside the
+    /// same listener request. The new target is silent, so the start gets its chime.
+    func testAStartThatMovesToAnotherTargetAfterItsFirstSoundGetsItsCue() async throws {
+        let heard = PassthroughSubject<String, Never>()
+        let cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            playChime: { [unowned self] in self.chimes += 1; return "played" },
+            checkNow: {},
+            firstAudio: heard.eraseToAnyPublisher(),
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+        var narration = targeted("article", .starting, target: "narration")
+        narration.playbackRequestedAt = clock
+        cue.observe(narration)
+        clock += 0.3
+        heard.send("narration")
+        clock += 0.2
+        var fallback = targeted("article", .starting, target: "live-speech")
+        fallback.playbackRequestedAt = narration.playbackRequestedAt // the same listener request
+        cue.observe(fallback)
+        clock += 1
+
+        try await waitUntil { chimes == 1 }
+
+        XCTAssertEqual(recorded["lastPlaybackStartCue"], "article:played")
+        cue.observe(snapshot("article", .paused)) // ends the cue's checks
+        withExtendedLifetime(cue) {}
+    }
+
+    /// A returning listener's start (a paused, part-way item resumed) is an ordinary start: the signal ends its cue.
+    func testFirstAudioSignalEndsTheCueOfAResumedPartWayItem() async throws {
+        let heard = PassthroughSubject<String, Never>()
+        let cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            playChime: { [unowned self] in self.chimes += 1; return "played" },
+            checkNow: {},
+            firstAudio: heard.eraseToAnyPublisher(),
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+        cue.observe(targeted("article", .paused, target: "narration"))
+        var resume = targeted("article", .starting, target: "narration")
+        resume.playbackRequestedAt = clock
+        cue.observe(resume)
+        let pending = cue.cueTask
+
+        heard.send("narration")
+        clock += 1
+        await pending?.value
+
+        XCTAssertEqual(chimes, 0)
+        withExtendedLifetime(cue) {}
+    }
+
+    /// The real chime player, held and looping silently so only a stop can end it: the signal stops that player and
+    /// the cue lets it go at once, not at the next snapshot.
+    func testFirstAudioSignalStopsTheRealChimePlayer() async throws {
+        let session = AVAudioSession.sharedInstance()
+        let priorCategory = session.category, priorMode = session.mode, priorOptions = session.categoryOptions
+        defer { try? session.setCategory(priorCategory, mode: priorMode, options: priorOptions) }
+        try session.setCategory(.playback, mode: .spokenAudio, options: [.mixWithOthers])
+        let heard = PassthroughSubject<String, Never>()
+        weak var watched: PlaybackStartCue?
+        var heldPlayer: AVAudioPlayer?
+        let cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            checkNow: {},
+            firstAudio: heard.eraseToAnyPublisher(),
+            record: { [unowned self] key, value in
+                self.recorded[key] = value
+                guard key == "lastPlaybackStartCue", let cue = watched, let player = self.chimePlayer(of: cue) else { return }
+                player.volume = 0
+                player.numberOfLoops = -1
+                heldPlayer = player
+            }
+        )
+        watched = cue
+        cue.observe(targeted("article", .starting, target: "narration"))
+        clock += 1
+        try await waitUntil { recorded["lastPlaybackStartCue"] != nil }
+        XCTAssertEqual(recorded["lastPlaybackStartCue"], "article:played", "the real player took the chime")
+        let player = try XCTUnwrap(heldPlayer)
+        XCTAssertTrue(player.isPlaying)
+
+        heard.send("narration")
+
+        XCTAssertNil(chimePlayer(of: cue), "the cue let the player go at the signal")
+        try await waitUntil { !player.isPlaying }
+        XCTAssertEqual(recorded["lastPlaybackStartCue"], "article:stopped_by_first_audio")
     }
 
     /// Waits for the cue's timer on a loaded simulator, where a fixed sleep can end before it fires.

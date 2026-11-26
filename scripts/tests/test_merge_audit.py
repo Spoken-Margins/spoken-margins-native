@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import merge_audit as audit  # noqa: E402
@@ -87,6 +88,137 @@ class PushTests(unittest.TestCase):
         self.assertEqual((merged, direct), ({}, True))
 
 
+class FakePulls(audit.GitHub):
+    """The two PR lookups merge_audit makes, answered from lists: the recently-updated window and the per-commit table."""
+
+    def __init__(self, closed, by_commit=None):
+        self.repo, self.closed, self.by_commit, self.asked, self.pages_read = 'o/r', closed, by_commit or {}, [], 0
+
+    def api(self, *args, check=True):
+        path = args[0]
+        if '/commits/' in path:
+            sha = path.split('/commits/')[1].split('/')[0]
+            self.asked.append(sha)
+            return json.dumps(self.by_commit.get(sha, []))
+        page = int(path.split('&page=')[1])
+        self.pages_read += 1
+        return json.dumps(self.closed[(page - 1) * 100:page * 100])
+
+
+class BusyHourTests(unittest.TestCase):
+    """#4668: 13 PRs hand-merged in 100 s were each flagged "reached main without a pull request".
+
+    Lane comments and labels touch many PRs, so a PR merged a minute ago sat outside the 50 most recently updated.
+    """
+
+    def pr(self, number, merge_sha, updated='2026-11-18T18:36:00Z', base='main'):
+        return {'number': number, 'merge_commit_sha': merge_sha, 'base': {'ref': base}, 'merged_at': MERGED_AT,
+                'updated_at': updated, 'head': {'sha': HEAD}}
+
+    def busy_hour(self, n=60):
+        return [self.pr(1000 + i, f'other{i}', updated='2026-11-18T18:40:00Z') for i in range(n)]
+
+    def test_a_merged_pr_outside_the_recently_updated_window_is_not_a_direct_push(self):
+        merged_pr = self.pr(4488, 'merge4488')
+        # The PR is in the closed list, but behind 120 PRs updated more recently: past the 50 the audit used to read,
+        # and past the 100 of the one page it reads now, so only the per-commit lookup can find it.
+        github = FakePulls(self.busy_hour(120) + [merged_pr], {'merge4488': [merged_pr]})
+        old_window = github.recently_closed_into('main')[:50]
+        self.assertNotIn(4488, [p['number'] for p in old_window])
+        _, direct_in_window = audit.classify_push(['merge4488'], 'merge4488', old_window, 'main')
+        self.assertTrue(direct_in_window)  # what the push audit decided before: a false "no pull request"
+        merged, direct = audit.merges_in_push(github, ['merge4488'], 'merge4488', 'main')
+        self.assertEqual((sorted(merged), direct), ([4488], False))
+        self.assertEqual(github.asked, ['merge4488'])  # the lookup, not the window, found it
+
+    def test_a_commit_pushed_straight_to_main_is_still_direct(self):
+        github = FakePulls(self.busy_hour(), {})
+        merged, direct = audit.merges_in_push(github, ['c1', 'c2'], 'c2', 'main')
+        self.assertEqual((merged, direct), ({}, True))
+        self.assertEqual(github.asked[0], 'c2')  # the tip is asked about first
+
+    def test_a_commit_that_belongs_to_some_other_prs_branch_does_not_explain_the_tip(self):
+        # The lookup also names PRs a commit sits inside; only one whose merge commit was pushed counts.
+        inside = self.pr(77, 'merge77')
+        github = FakePulls([], {'local': [inside]})
+        merged, direct = audit.merges_in_push(github, ['local'], 'local', 'main')
+        self.assertEqual((merged, direct), ({}, True))
+
+    def test_a_pr_the_window_already_has_costs_no_lookups(self):
+        github = FakePulls([self.pr(5, 'm5')])
+        merged, direct = audit.merges_in_push(github, ['m5'], 'm5', 'main')
+        self.assertEqual((sorted(merged), direct, github.asked), ([5], False, []))
+
+    def test_a_merge_pushes_its_branch_commits_but_only_the_merge_commit_is_asked_about(self):
+        """A PR with 12 branch commits, merged by hand: the tip is explained by the window, so no lookup at all; if the
+        window missed it, one lookup (the tip), never one per branch commit."""
+        branch = [f'b{i}' for i in range(12)]
+        compare = {'commits': [{'sha': sha, 'parents': [{'sha': 'x'}]} for sha in branch]
+                   + [{'sha': 'merge9', 'parents': [{'sha': 'a'}, {'sha': 'b0'}]}]}
+        github = FakePulls([self.pr(9, 'merge9')], {'merge9': [self.pr(9, 'merge9')]})
+        github.api_compare = json.dumps(compare)
+        orig = github.api
+        github.api = lambda *a, **k: github.api_compare if '/compare/' in a[0] else orig(*a, **k)
+        pushed = github.pushed_commits('before', 'merge9')
+        self.assertEqual(len(pushed), 13)
+        merged, direct = audit.merges_in_push(github, pushed, 'merge9', 'main')
+        self.assertEqual((sorted(merged), direct, github.asked), ([9], False, []))
+        # window misses it: one lookup, for the tip
+        github = FakePulls([], {'merge9': [self.pr(9, 'merge9')]})
+        github.parent_counts = {c['sha']: len(c['parents']) for c in compare['commits']}
+        merged, direct = audit.merges_in_push(github, pushed, 'merge9', 'main')
+        self.assertEqual((sorted(merged), direct, github.asked), ([9], False, ['merge9']))
+
+    def test_the_lookups_stop_at_their_time_budget_so_the_flag_is_still_written(self):
+        shas = [f'm{i}' for i in range(10)]
+        github = FakePulls([], {})
+        clock = iter([0, 1, 2, 100, 101, 102, 103, 104, 105, 106, 107, 108])
+        with mock.patch.object(audit.time, 'monotonic', side_effect=lambda: next(clock)):
+            merged, direct = audit.merges_in_push(github, shas, shas[-1], 'main')
+        self.assertEqual((merged, direct), ({}, True))
+        self.assertLess(len(github.asked), len(shas))  # out of budget after the first couple
+
+    def test_lookups_are_capped_and_a_failed_lookup_is_no_match(self):
+        shas = [f'c{i}' for i in range(120)]
+        github = FakePulls([], {})
+        audit.merges_in_push(github, shas, shas[-1], 'main')  # no compare data: every commit might be a merge
+        self.assertEqual(len(github.asked), audit.MAX_COMMIT_LOOKUPS)
+        broken = audit.GitHub('o/r')
+        calls = []
+        broken.api = lambda *a, **k: calls.append(a) or (_ for _ in ()).throw(RuntimeError('502'))
+        with mock.patch.object(audit.time, 'sleep'):
+            self.assertEqual(broken.pulls_for_commit('c1'), [])
+        self.assertEqual(len(calls), 2)  # one retry
+
+    def test_one_transient_failure_is_retried(self):
+        answers = iter([RuntimeError('502'), '[{"number": 3}]'])
+
+        def api(*args, **kwargs):
+            answer = next(answers)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        github = audit.GitHub('o/r')
+        github.api = api
+        with mock.patch.object(audit.time, 'sleep'):
+            self.assertEqual(github.pulls_for_commit('c1'), [{'number': 3}])
+
+    def test_the_sweep_reads_pages_until_it_passes_the_window(self):
+        import datetime
+        newer = [self.pr(i, f'm{i}', updated='2026-11-18T19:00:00Z') for i in range(250)]
+        older = [self.pr(9000 + i, f'o{i}', updated='2026-11-18T10:00:00Z') for i in range(250)]
+        github = FakePulls(newer + older)
+        found = github.recently_closed_into('main', datetime.datetime(2026, 11, 18, 18, 0, 0))
+        self.assertEqual(github.pages_read, 3)  # 100 + 100 + a page holding the first older PR
+        self.assertEqual(len(found), 300)
+        self.assertTrue({p['number'] for p in newer} <= {p['number'] for p in found})
+
+    def test_without_a_window_the_list_is_one_page(self):
+        github = FakePulls(self.busy_hour(250))
+        self.assertEqual(len(github.recently_closed_into('main')), 100)
+        self.assertEqual(github.pages_read, 1)
+
+
 class SweepTests(unittest.TestCase):
     """The sweep after each runner merge: the runner's token-made merges start no push run (decision 3)."""
 
@@ -151,12 +283,12 @@ class HandMergeTests(unittest.TestCase):
         self.assertEqual(self.gap([lane_report('INCONCLUSIVE'), codex_audit()]),
                          'the newest lane report on `f41b1de` is INCONCLUSIVE')
 
-    def test_a_failed_t3_on_the_head_holds_even_after_an_automerge_pass(self):
+    def test_a_t3_report_counts_neither_way(self):
+        # #4572: a T3 holds no merge, so its FAIL leaves no gap and its PASS stands in for no lane report.
         comments = [lane_report('FAIL', tier='T3'), lane_report('PASS', created_at='2026-10-01T16:45:00Z'),
                     codex_audit()]
-        self.assertEqual(self.gap(comments), 'the newest T3 lane report on `f41b1de` is FAIL')
-        comments.insert(1, lane_report('PASS', tier='T3', created_at='2026-10-01T16:42:00Z'))
         self.assertIsNone(self.gap(comments))
+        self.assertEqual(self.gap([lane_report('PASS', tier='T3'), codex_audit()]), 'no lane report on `f41b1de`')
 
     def test_reports_on_another_head_or_not_from_the_runner_dont_count(self):
         self.assertEqual(self.gap([lane_report('PASS', commit='5a59350' + 'b' * 33), codex_audit()]),
@@ -182,14 +314,80 @@ class HandMergeTests(unittest.TestCase):
                          'the label.')
 
 
+QUEUE_MERGE = 'd' * 40
+
+
+class QueueCheckTests(unittest.TestCase):
+    def run_named(self, name='merge policy', conclusion='success', app='github-actions'):
+        return {'name': name, 'conclusion': conclusion, 'app': {'slug': app}}
+
+    def test_only_a_passing_merge_policy_run_from_github_actions_counts(self):
+        self.assertTrue(audit.passed_queue_check([self.run_named()]))
+        for run in (self.run_named(conclusion='failure'), self.run_named(conclusion='cancelled'),
+                    self.run_named(name='hosted fast: portable'), self.run_named(app='some-other-app')):
+            with self.subTest(run=run):
+                self.assertFalse(audit.passed_queue_check([run]))
+        self.assertFalse(audit.passed_queue_check([]))
+
+    def test_the_reader_asks_about_the_merge_commit_and_a_failed_read_is_not_a_pass(self):
+        github = audit.GitHub('o/r')
+        asked = []
+
+        def answer(*args, check=True):
+            asked.append(args)
+            return json.dumps({'check_runs': [{'name': 'merge policy', 'conclusion': 'success',
+                                               'app': {'slug': 'github-actions'}}]})
+        github.api = answer
+        self.assertTrue(github.passed_merge_queue(QUEUE_MERGE))
+        self.assertIn(f'commits/{QUEUE_MERGE}/check-runs?check_name=merge%20policy', asked[0][0])
+        self.assertFalse(github.passed_merge_queue(None))
+
+        def broken(*args, check=True):
+            raise RuntimeError('HTTP 403')
+        github.api = broken
+        self.assertFalse(github.passed_merge_queue(QUEUE_MERGE))
+
+    @staticmethod
+    def status(state='success', context='merge policy', creator='github-actions[bot]'):
+        return {'context': context, 'state': state, 'creator': {'login': creator}}
+
+    def test_a_passing_merge_policy_status_from_github_actions_counts(self):
+        # #5162: the check is a commit status now; the API lists them newest first.
+        self.assertTrue(audit.passed_queue_status([self.status()]))
+        self.assertTrue(audit.passed_queue_status([self.status(), self.status('pending')]))
+        for statuses in ([self.status('pending')], [self.status('failure')], [self.status('error')],
+                         [self.status('failure'), self.status()], [self.status(context='main-t3')],
+                         [self.status(creator='mallory')], []):
+            with self.subTest(statuses=statuses):
+                self.assertFalse(audit.passed_queue_status(statuses))
+        # someone else's newer success can't stand in for the Actions one
+        self.assertFalse(audit.passed_queue_status([self.status(creator='mallory'), self.status('failure')]))
+
+    def test_the_reader_falls_back_to_the_statuses_of_the_merge_commit(self):
+        github = audit.GitHub('o/r')
+        asked = []
+
+        def answer(*args, check=True):
+            asked.append(args[0])
+            if '/check-runs' in args[0]:
+                return json.dumps({'check_runs': []})
+            return json.dumps([self.status()])
+        github.api = answer
+        self.assertTrue(github.passed_merge_queue(QUEUE_MERGE))
+        self.assertIn(f'repos/o/r/commits/{QUEUE_MERGE}/statuses?per_page=100', asked)
+
+
 class FakeGitHub:
     repo = 'uncomposed/spoken-margins-native'
 
-    def __init__(self, comments):
-        self.comments, self.flagged = comments, []
+    def __init__(self, comments, queued=False):
+        self.comments, self.flagged, self.queued = comments, [], queued
 
     def json_lines(self, path):
         return self.comments
+
+    def passed_merge_queue(self, merge_commit_sha):
+        return self.queued and merge_commit_sha == QUEUE_MERGE
 
     def flag_pull(self, number, head_sha, gap=None, base=None):
         self.flagged.append((number, gap))
@@ -207,6 +405,18 @@ class AuditPullTests(unittest.TestCase):
         github = FakeGitHub([lane_report('PASS')])
         audit.audit_pull(github, self.pull, dry_run=False)
         self.assertEqual(github.flagged, [(633, 'no Codex or Claude audit of `f41b1de`')])
+
+    def test_a_merge_queue_merge_is_not_flagged(self):
+        # 2026-11-20: with lane.yml disabled no lane report comes, so #4747 and #4746 were flagged though the queue's
+        # merge policy check, which enforces the audit and owner-tap rules, passed on the commit that reached main.
+        github = FakeGitHub([], queued=True)
+        audit.audit_pull(github, dict(self.pull, merge_commit_sha=QUEUE_MERGE), dry_run=False)
+        self.assertEqual(github.flagged, [])
+
+    def test_a_merge_the_queue_did_not_pass_is_still_flagged(self):
+        github = FakeGitHub([], queued=True)
+        audit.audit_pull(github, dict(self.pull, merge_commit_sha='e' * 40), dry_run=False)
+        self.assertEqual(len(github.flagged), 1)
 
     def test_the_runner_merge_check_still_passes(self):
         check = {'body': CHECK.replace('92533d3', 'f41b1de'), 'created_at': '2026-10-01T17:08:00Z', 'user': BOT}

@@ -2,9 +2,13 @@ import Foundation
 
 extension PlaybackNowMargins.Margin {
     /// Use the whole item's collection, including prior sessions. Response Margins have another clock.
-    public init?(own interjection: Interjection, itemID: String) {
+    /// `clock` is the map onto the playing file's clock when that is a spoken note's Shorter pauses version (#5288), read
+    /// off the main thread; nil when the recording, or anything else, plays. Saved times are on the recording's clock
+    /// (#4779), and the position is compared with the playhead, so it is moved onto the file playing.
+    public init?(own interjection: Interjection, itemID: String, clock: SpokenNoteCleanMap? = nil) {
         guard interjection.itemId == itemID, interjection.status == "active", interjection.targetType == .item,
-              let time = interjection.anchor.mediaTimeMs, time >= 0 else { return nil }
+              interjection.hasPlace, let saved = interjection.anchor.mediaTimeMs, saved >= 0 else { return nil }
+        let time = clock?.cleanMs(fromRecordedMs: saved) ?? saved
         self.init(id: "\(interjection.sessionId)::\(interjection.id)", position: Double(time) / 1_000, origin: .own)
     }
 

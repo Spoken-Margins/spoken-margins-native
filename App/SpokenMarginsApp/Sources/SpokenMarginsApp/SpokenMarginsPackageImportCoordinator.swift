@@ -29,6 +29,8 @@ import SessionKitSharing
 final class SpokenMarginsPackageImportCoordinator {
     /// Opens tapped share links into this flow (#488); the model reaches it as `shareLinkOpener`.
     let shareLinkOpener = ShareLinkOpener()
+    /// The sheet that says a friend's link or file could not be opened (#3801); the model reaches it as `packetOpenFailures`.
+    let openFailures = PacketOpenFailurePresenter()
     /// What the flow needs from the app. The live one is `Environment.live(model:)`.
     struct Environment {
         var requireStore: @MainActor () throws -> SQLiteSessionStore
@@ -38,6 +40,8 @@ final class SpokenMarginsPackageImportCoordinator {
         var reportSuccess: @MainActor (String) -> Void
         var reportConfirmation: @MainActor (String) -> Void
         var reportFailureMessage: @MainActor (String) -> Void
+        /// A friend's file that could not be opened, with the words of the failure sheet (#3801).
+        var presentOpenFailure: @MainActor (PacketOpenFailureSheetContent) -> Void
         var reportFailure: @MainActor (_ error: Error, _ context: String) -> Void
         var openItem: @MainActor (String) -> Void
         /// Makes the imported item the open one: active id, item detail, then the item screen, in that order. The Library
@@ -118,6 +122,7 @@ final class SpokenMarginsPackageImportCoordinator {
 
     init(environment: Environment) {
         self.environment = environment
+        openFailures.cancelRunningOpen = { [shareLinkOpener] in shareLinkOpener.cancel() }
     }
 
     // MARK: Background staging
@@ -258,7 +263,14 @@ final class SpokenMarginsPackageImportCoordinator {
             if error is CancellationError { return .rejected(needsNewerApp: false) }
             environment.recordDiagnostic("lastSpokenMarginsPackageImport", "rejected:\(SharedMarginsImportMessage.diagnosticDetail(error))")
             // A kept file is tried again at launch; the caller says when the listener has already been told.
-            if announcesRejection { environment.reportFailureMessage(SharedMarginsImportMessage.userFacing(error)) }
+            if announcesRejection {
+                // A file the archive refuses gets the failure sheet; other staging failures keep the banner (#3801).
+                if let archiveError = error as? SpokenMarginsPackageArchiveError {
+                    environment.presentOpenFailure(PacketOpenFailureSheetContent(archiveError.listenerOutcome))
+                } else {
+                    environment.reportFailureMessage(SharedMarginsImportMessage.userFacing(error))
+                }
+            }
             return .rejected(needsNewerApp: (error as? SpokenMarginsPackageArchiveError)?.listenerOutcome == .needsNewerApp)
         }
     }
@@ -750,6 +762,16 @@ final class SpokenMarginsPackageImportCoordinator {
             let digestsById = Dictionary(rows.compactMap { row in row.textDigests.map { (row.item.id, $0) } },
                                          uniquingKeysWith: { first, _ in first })
             guard let proposal = ListeningMapPacket.proposal(in: contents) else {
+                // Replies go to the row holding the Margins they answer, whatever edition the friend heard (#5286).
+                let parents = ReplyParentItemMatch.parents(in: contents.conversations)
+                if !parents.isEmpty, let replied = ReplyParentItemMatch.itemId(
+                    for: contents.manifest.item,
+                    holdingParents: try store.itemIdsHoldingOwnMargins(sharedAs: parents),
+                    among: items,
+                    ownedAudiobookDigest: { Self.ownedAudiobookDigest(for: $0, store: store) },
+                    textDigests: { digestsById[$0.id] }) {
+                    return PackageSourceMatch(itemId: replied)
+                }
                 return PackageSourceMatch(itemId: SharedPacketItemMatcher.matchingItemId(
                     for: contents.manifest.item, among: items,
                     ownedAudiobookDigest: { Self.ownedAudiobookDigest(for: $0, store: store) },

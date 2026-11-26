@@ -1,0 +1,59 @@
+{
+    "id": 2205533,
+    "version": 54,
+    "links": {
+        "self": {
+            "href": "https://api.zotero.org/groups/2205533",
+            "type": "application/json"
+        },
+        "alternate": {
+            "href": "https://www.zotero.org/groups/test_items_library",
+            "type": "text/html"
+        }
+    },
+    "meta": {
+        "created": "2018-07-14T10:09:53Z",
+        "lastModified": "2026-09-08T20:32:57Z",
+        "numItems": 1861
+    },
+    "data": {
+        "id": 2205533,
+        "version": 54,
+        "name": "Test Items Library",
+        "owner": 1386342,
+        "type": "PublicClosed",
+        "description": "",
+        "url": "",
+        "libraryEditing": "admins",
+        "libraryReading": "all",
+        "fileEditing": "admins",
+        "admins": [
+            34,
+            2433,
+            3884,
+            254032,
+            452233
+        ],
+        "members": [
+            2080646,
+            10136096,
+            25286,
+            789668,
+            1955352,
+            2278548,
+            2468945,
+            3245741,
+            5349559,
+            6058473,
+            6706487,
+            6935516,
+            7367301,
+            8230813,
+            9355096,
+            10555402,
+            16519579,
+            17154039,
+            20665590
+        ]
+    }
+}

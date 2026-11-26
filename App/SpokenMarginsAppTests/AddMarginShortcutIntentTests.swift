@@ -27,8 +27,11 @@ final class AddMarginShortcutIntentTests: XCTestCase {
     }
 
     /// #126: without an App Shortcut Siri can't run "Add Margin" until the listener builds a shortcut around it.
-    func testAddMarginIsOfferedToSiriAsAnAppShortcut() {
-        XCTAssertEqual(SpokenMarginsAppShortcuts.appShortcuts.count, 1)
+    /// #4923 added "Record a Margin" as the second one. An `AppShortcut` keeps its intent and phrases opaque at run
+    /// time, so this can only count what the provider registers; `scripts/tests/test_siri_phrases.py` reads the
+    /// source and checks that the two are Add Margin and Record a Margin, each with its own phrases (#4960).
+    func testAddMarginAndRecordAMarginAreOfferedToSiriAsAppShortcuts() {
+        XCTAssertEqual(SpokenMarginsAppShortcuts.appShortcuts.count, 2)
     }
 
     private let sampleId = Gate1AppModel.welcomeSampleItemId

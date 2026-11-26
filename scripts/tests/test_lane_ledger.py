@@ -4,19 +4,17 @@ The per-PR app builds ran 140 times from 2026-10-02 to 10-09 (about 3.4 min each
 caught no compile failure; nobody saw it until someone read a week of reports by hand (#1196).
 """
 import json
-import os
 import subprocess
 from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import test_lane_runner  # noqa: E402
-from test_lane_runner import FakeGitHub, HEAD, MERGE, NEWER, comment, lane  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import lane_ledger  # noqa: E402
 
+HEAD, NEWER = 'a' * 40, 'c' * 40
 BASE, OTHER_BASE = 'd' * 40, 'e' * 40
 
 
@@ -162,123 +160,6 @@ class LedgerFileTests(unittest.TestCase):
         lane_ledger.record_runs(self.state, [{'step': 's', 'result': 'pass', 'seconds': 1}], 1, HEAD)
         self.assertEqual((self.state / (lane_ledger.LEDGER + '.damaged')).read_text(), '{not json')
         self.assertEqual(json.loads((self.state / lane_ledger.LEDGER).read_text())['steps']['s']['runs'], 1)
-
-
-class RunnerStepTests(unittest.TestCase):
-    """lane-runner.py notes each step it runs, and posts the ledger's alarms on #337 once the job has reported."""
-
-    def setUp(self):
-        lane.STEP_RUNS.clear()
-        self.addCleanup(lane.STEP_RUNS.clear)
-
-    def test_host_tests_are_noted_with_their_verdict_time_and_base(self):
-        with tempfile.TemporaryDirectory() as evidence, mock.patch.object(lane, 'TESTED_BASE', BASE):
-            verdict, _ = lane.run_fast(Path(evidence), runner=lambda command, log, timeout: None)
-        self.assertEqual(verdict, 'INCONCLUSIVE')
-        self.assertEqual(len(lane.STEP_RUNS), 1)
-        run = lane.STEP_RUNS[0]
-        self.assertEqual((run['step'], run['verdict'], run['base']), ('host tests', 'INCONCLUSIVE', BASE))
-        self.assertGreaterEqual(run['seconds'], 0)
-
-    def test_a_failed_host_test_suite_is_named_from_the_manifest(self):
-        def failing(command, log, timeout):
-            output = Path(command[command.index('--output') + 1])
-            output.mkdir()
-            (output / 'manifest.json').write_text(json.dumps({'status': 'failed', 'steps': [
-                {'name': 'runner-tests', 'exit_code': 1}, {'name': 'swift', 'exit_code': 0},
-                {'name': 'xunit', 'exit_code': 1, 'tests': {'S/testA': {'status': 'failed'},
-                                                            'S/testB': {'status': 'passed'}}}]}))
-            return 1
-        with tempfile.TemporaryDirectory() as evidence:
-            lane.run_fast(Path(evidence), runner=failing)
-        self.assertEqual(lane.STEP_RUNS[0]['verdict'], 'FAIL')
-        self.assertEqual(lane.STEP_RUNS[0]['failed'], ['runner-tests', 'S/testA'])
-        self.assertEqual(lane.STEP_RUNS[0]['ran'], ['S/testA', 'S/testB'])  # #1830
-
-    def test_a_step_that_cannot_say_which_tests_ran_notes_none(self):
-        codes = iter([0, 0])
-        with tempfile.TemporaryDirectory() as evidence:
-            lane.run_t2(Path(evidence), runner=lambda *_: next(codes))
-        self.assertIsNone(lane.STEP_RUNS[0]['ran'])
-
-    def test_app_builds_name_the_build_that_failed(self):
-        codes = iter([0, 2])
-        with tempfile.TemporaryDirectory() as evidence:
-            lane.run_t2(Path(evidence), runner=lambda *_: next(codes))
-        self.assertEqual((lane.STEP_RUNS[0]['step'], lane.STEP_RUNS[0]['failed']), ('app builds', ['device build']))
-
-    def test_a_step_that_raises_is_noted_as_a_runner_fault(self):
-        with tempfile.TemporaryDirectory() as evidence, self.assertRaises(OSError):
-            lane.run_fast(Path(evidence), runner=mock.Mock(side_effect=OSError('no python')))
-        self.assertEqual(lane_ledger.outcome(lane.STEP_RUNS[0]['verdict']), 'fault')
-
-    def test_the_hot_file_ratchet_is_noted_by_the_automerge_checks(self):
-        lane.run_automerge({'tier': 'T0', 'why': []}, Path('/e'), ratchet=lambda: ['too big'])
-        self.assertEqual([(r['step'], r['verdict']) for r in lane.STEP_RUNS], [('hot-file ratchet', 'FAIL')])
-
-    def test_flush_posts_each_new_alarm_and_empties_the_job_s_runs(self):
-        posted = []
-        with tempfile.TemporaryDirectory() as state, mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': state}):
-            for pr in (1, 2, 3):
-                lane.note_step('app tests (T3)', 'INCONCLUSIVE', 600)
-                lane.flush_ledger(pr, HEAD, posted.append)
-                self.assertEqual(lane.STEP_RUNS, [])
-        self.assertEqual(len(posted), 1)
-        self.assertTrue(posted[0].startswith('**Lane step alarm: app tests (T3) failed'), posted[0])
-        self.assertIn('after PR #3', posted[0])
-
-    def test_flush_never_fails_the_job(self):
-        with tempfile.TemporaryDirectory() as state, mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': state}), \
-                mock.patch('builtins.print') as printed:
-            for _ in range(3):
-                lane.note_step('host tests', 'INCONCLUSIVE', 1)
-                lane.flush_ledger(1, HEAD, mock.Mock(side_effect=RuntimeError('gh: 502')))
-            # The ledger can't be written. chmod(0) would not do: root ignores it, so the failure branch never ran.
-            printed.reset_mock()
-            with mock.patch.object(lane_ledger, 'record_runs', side_effect=OSError('read-only file system')):
-                lane.note_step('host tests', 'PASS', 1)
-                self.assertEqual(lane.flush_ledger(1, HEAD, mock.Mock()), [])
-            self.assertEqual(lane.STEP_RUNS, [])
-        self.assertTrue(any('step ledger not updated' in str(call) and 'read-only file system' in str(call)
-                            for call in printed.call_args_list), printed.call_args_list)
-
-
-class MainPostsAlarmsTests(unittest.TestCase):
-    """A lane job notes its steps and, after its report, posts any new alarm on #337 (OPS_ISSUE)."""
-    run_main = test_lane_runner.MainFlowTests.run_main
-    conflicts, role, attempt = [], '', '1'
-
-    def test_three_jobs_in_a_row_with_a_runner_fault_post_one_alarm_on_337(self):
-        def t2(evidence):
-            lane.note_step('app builds', 'INCONCLUSIVE', 1800)
-            return 'INCONCLUSIVE', 'simulator build (timed out), device build (timed out)', []
-        with tempfile.TemporaryDirectory() as state:
-            self.state_dir, self.ops = state, mock.Mock()
-            reports = []
-            for _ in range(3):
-                github = FakeGitHub(comments=[comment('/lane T2')])
-                self.run_main(github, t2=t2)
-                reports += github.posted
-            ledger = json.loads((Path(state) / lane_ledger.LEDGER).read_text())
-        self.assertEqual(len(reports), 3)  # the reports went to the PR as before
-        self.assertEqual(ledger['steps']['app builds']['fault'], 3)
-        self.assertEqual(ledger['steps']['app builds']['open_fails'], {})
-        self.ops.comment.assert_called_once()
-        number, body = self.ops.comment.call_args.args
-        self.assertEqual(number, lane.OPS_ISSUE)
-        self.assertIn('app builds failed for the lane\'s own reasons 3 times in a row', body)
-        self.assertIn(f'PR #5 at `{HEAD[:7]}`', body)
-
-    def test_steps_are_noted_against_the_next_the_job_tested(self):
-        def t2(evidence):
-            lane.note_step('app builds', 'FAIL', 200, failed=['device build'])
-            return 'FAIL', 'simulator build (pass), device build (fail)', []
-        with tempfile.TemporaryDirectory() as state:
-            self.state_dir, self.ops = state, mock.Mock()
-            self.run_main(FakeGitHub(comments=[comment('/lane T2')]), t2=t2)
-            ledger = json.loads((Path(state) / lane_ledger.LEDGER).read_text())
-        self.assertEqual(ledger['failures'], {f'app builds|{MERGE}': {'device build': [5]}})
-        self.assertEqual(ledger['steps']['app builds']['open_fails'], {'5': {'head': HEAD, 'tests': ['device build'], 'seconds': 200, 'base': MERGE}})
 
 
 class Repo:
@@ -455,50 +336,6 @@ class CatchClassTests(unittest.TestCase):
                                          'failed': [], 'ran': ['A/a']}], 7, second, r.root)
         written = [json.loads(x) for x in (state / lane_ledger.CATCHES).read_text().splitlines()]
         self.assertEqual([(w['test'], w['class']) for w in written], [('A/a', 'catch')])
-
-    def test_the_lane_runner_tells_the_ledger_which_tests_a_run_executed(self):
-        # #1830: a host-test FAIL followed by a PASS that ran the failing test is a catch; a PASS that did not run
-        # it leaves it open. Both go through run_fast and flush_ledger, the lane's own path.
-        def manifest(statuses):
-            def run(command, log, timeout):
-                output = Path(command[command.index('--output') + 1])
-                output.mkdir(parents=True, exist_ok=True)
-                (output / 'manifest.json').write_text(json.dumps({
-                    'status': 'failed' if 'failed' in statuses.values() else 'verified', 'steps': [{
-                    'name': 'xunit', 'exit_code': 0, 'tests': {t: {'status': s} for t, s in statuses.items()}}]}))
-                return 1 if 'failed' in statuses.values() else 0
-            return run
-
-        def job(statuses, head):
-            with tempfile.TemporaryDirectory() as evidence:
-                lane.run_fast(Path(evidence), runner=manifest(statuses))
-            lane.flush_ledger(7, head, mock.Mock())
-
-        lane.STEP_RUNS.clear()  # a shared list: steps other tests noted in this process would flush with these jobs (#3535)
-        state = Path(self.tmp.name) / 'state'
-        state.mkdir()
-        bad = self.repo.git('rev-parse', 'HEAD')
-        fixed = self.repo.commit('App/A.swift')
-        cwd = os.getcwd()
-        try:
-            os.chdir(self.repo.root)
-            with mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}):
-                job({'A/a': 'failed', 'B/b': 'passed'}, bad)
-                job({'B/b': 'passed'}, fixed)  # the PASS did not run A/a: it stays open
-                self.assertFalse((state / lane_ledger.CATCHES).exists())
-                job({'A/a': 'passed', 'B/b': 'passed'}, fixed)  # now it ran
-        finally:
-            os.chdir(cwd)
-        written = [json.loads(x) for x in (state / lane_ledger.CATCHES).read_text().splitlines()]
-        self.assertEqual([(w['test'], w['class']) for w in written], [('A/a', 'catch')])
-        ledger = json.loads((state / lane_ledger.LEDGER).read_text())['steps']['host tests']
-        self.assertEqual((ledger['fail'], ledger['pass']), (1, 2))  # the later runs really were PASSes
-
-    def test_a_skipped_test_is_not_a_run_of_it(self):
-        with tempfile.TemporaryDirectory() as evidence:
-            (Path(evidence) / 'manifest.json').write_text(json.dumps({'steps': [{'name': 'x', 'exit_code': 0, 'tests': {
-                'A/a': {'status': 'skipped'}, 'B/b': {'status': 'passed'}}}]}))
-            self.assertEqual(lane.manifest_failures(Path(evidence)), ([], False, ['B/b']))
 
     def test_a_step_failure_without_test_names_is_recorded_under_the_step(self):
         lines = self.fail_then_pass(lambda: self.repo.commit('App/A.swift'), tests=())

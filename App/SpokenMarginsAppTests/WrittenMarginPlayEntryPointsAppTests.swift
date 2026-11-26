@@ -92,9 +92,9 @@ final class WrittenMarginPlayEntryPointsAppTests: XCTestCase {
         try await waitUntilHeard(fixture)
     }
 
-    // A spot whose only Margin is a note the voice cannot read has nothing to play. The tap still takes that Margin, so
-    // the listener gets the plain line and not silence, and no moment starts.
-    func testAHotSpotWhoseOnlyNoteCannotBeReadSaysSoAndStartsNoMoment() async throws {
+    // A spot whose only Margin is a note the voice cannot read has nothing to play. The tap still takes that Margin, and
+    // goes to its place with no voice (#4934), so the listener lands there and is not told it "can't be read": no moment starts.
+    func testAHotSpotWhoseOnlyNoteCannotBeReadGoesToItsPlaceWithNoVoiceAndStartsNoMoment() async throws {
         let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: "🎧")
         defer { fixture.cleanUp() }
         let model = fixture.model
@@ -103,9 +103,18 @@ final class WrittenMarginPlayEntryPointsAppTests: XCTestCase {
         let target = try XCTUnwrap(ReactionsPlayTarget.forHotSpot(spot, in: model.selectedItem))
         XCTAssertEqual(target.marginId, fixture.record.id, "with nothing playable the first Margin is taken, so the tap explains")
 
+        model.seekMedia(toMediaTimeMs: 20_000)
+        try await fixture.waitUntil("the source is playing near 20 s") {
+            model.snapshot.status == .playing && (model.snapshot.currentMediaTimeMs ?? 0) >= 19_900
+        }
         target.play(in: model.selectedItem, on: model)
-        XCTAssertEqual(model.lastError, "This Margin can't be read aloud on this iPhone.")
+        defer { model.pause() }
+        XCTAssertNil(model.lastError, "no failure line: the tap goes there")
         XCTAssertNil(model.marginMoment)
+        XCTAssertEqual(model.silentMarginLanding?.marginId, fixture.record.id)
+        try await fixture.waitUntil("the source is at the Margin's place and playing on") {
+            model.snapshot.status == .playing && (model.snapshot.currentMediaTimeMs ?? Int.max) < 5_000
+        }
     }
 
     // A voice Margin is still picked as before: with an unreadable note ahead of it in the spot, the tap takes the recording.
@@ -143,14 +152,123 @@ final class WrittenMarginPlayEntryPointsAppTests: XCTestCase {
         XCTAssertNil(model.lastError)
     }
 
-    // A note the voice cannot read has a disabled Play button in both lists, so no tap reaches the failure line there.
-    // The same Margin reached by another path (the Timeline) says why in plain words, which the Timeline tests cover.
-    func testThePlayButtonIsDisabledForANoteTheVoiceCannotRead() async throws {
+    // A note the voice cannot read has a disabled Play button in both lists, so no tap reaches the failure line there. Its
+    // row has a Go-to button instead (#4934): the tap moves the source to the Margin's place, plays on, starts no moment and
+    // reads nothing, and the pinned card on Now shows the words. Not marked heard: a voice downloaded later still has it to read (#3402).
+    func testTheGoToButtonIsEnabledForANoteTheVoiceCannotReadAndItsTapMovesWithNoVoice() async throws {
         let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: "🎧")
         defer { fixture.cleanUp() }
+        let model = fixture.model
         let unreadable = row(fixture)
         XCTAssertFalse(unreadable.canPlayFromNearbyList)
         XCTAssertFalse(unreadable.canPlayFromMarginsList)
+        XCTAssertTrue(unreadable.goesToFromList, "the row's button goes to the Margin's place instead")
+
+        model.seekMedia(toMediaTimeMs: 20_000) // the owner's #4447 position: well past the Margin
+        try await fixture.waitUntil("the source is playing near 20 s") {
+            model.snapshot.status == .playing && (model.snapshot.currentMediaTimeMs ?? 0) >= 19_900
+        }
+        model.goToSharedMargin(unreadable)
+        defer { model.pause() }
+
+        XCTAssertNil(model.lastError, "a go-to has no failure line")
+        XCTAssertNil(model.marginMoment, "no lead-in, no voice")
+        XCTAssertNil(model.pendingImportedCommentary)
+        XCTAssertNil(model.playingImportedCommentary)
+        XCTAssertEqual(model.screen, .playback)
+        try await fixture.waitUntil("the source is at the Margin's place and playing on") {
+            model.snapshot.status == .playing && (model.snapshot.currentMediaTimeMs ?? Int.max) < 5_000
+        }
+        let card = try XCTUnwrap(model.pinnedMarginCard, "the card on Now")
+        XCTAssertEqual(card.stage, .silentHere(words: "🎧", isApproximate: false))
+        XCTAssertEqual(card.headline, "Margin from Reviewer is here")
+        XCTAssertNil(model.selectedItem.importedCommentaryInterjections[fixture.layer.id]?.first?.firstHeardAt,
+                     "a note with no voice on this phone is not marked heard")
+
+        model.dismissSilentMarginLanding()
+        XCTAssertNil(model.shownSilentMarginLanding, "Dismiss hides the card")
+        XCTAssertEqual(model.snapshot.status, .playing, "and the source keeps playing")
+    }
+
+    // A friend's note nobody will read aloud is a place to go whoever turned reading off, and from a paused source as from a
+    // playing one: the sender's choice marks it heard on landing (the details sheet's own rule, #3427); the listener's turn-off
+    // already did when it was made. No path starts a moment or a voice.
+    func testAGoToLandsOnANoteReadingWasTurnedOffForFromPlayingAndFromPaused() async throws {
+        for senderOff in [true, false] {
+            for startsPaused in [false, true] {
+                let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: uniqueWords(), senderReadAloud: senderOff ? false : nil)
+                defer { fixture.cleanUp() }
+                let model = fixture.model
+                if !senderOff { model.setSharedMarginReadAloud(fixture.record, readAloud: false) }
+                let silent = row(fixture)
+                let chosen = try XCTUnwrap(model.selectedItem.importedCommentaryInterjections[fixture.layer.id]?.first)
+                XCTAssertFalse(SharedMarginAudio.canOffer(chosen), "senderOff \(senderOff): never read aloud")
+                let goingTo = SharedMarginRow(interjection: chosen, layer: silent.layer, itemTitle: silent.itemTitle)
+                XCTAssertTrue(goingTo.goesToFromList)
+                model.seekMedia(toMediaTimeMs: 20_000)
+                try await fixture.waitUntil("the source is at 20 s") { (model.snapshot.currentMediaTimeMs ?? 0) >= 19_900 }
+                if startsPaused {
+                    model.pause()
+                    try await fixture.waitUntil("the source is paused") { model.snapshot.status == .paused }
+                }
+
+                model.goToSharedMargin(goingTo)
+                defer { model.pause() }
+                let label = "senderOff \(senderOff), paused \(startsPaused)"
+                XCTAssertNil(model.lastError, label)
+                XCTAssertNil(model.marginMoment, label)
+                XCTAssertNil(model.playingImportedCommentary, label)
+                try await fixture.waitUntil("\(label): playing at the Margin's place") {
+                    model.snapshot.status == .playing && (model.snapshot.currentMediaTimeMs ?? Int.max) < 5_000
+                }
+                XCTAssertEqual(model.pinnedMarginCard?.stage, .silentHere(words: chosen.approvedTranscript, isApproximate: false), label)
+                try await fixture.waitUntil("\(label): marked heard") {
+                    model.selectedItem.importedCommentaryInterjections[fixture.layer.id]?.first?.firstHeardAt != nil
+                }
+            }
+        }
+    }
+
+    // The ways a go-to cannot start say so and move nothing: a source not in the Library, and a Margin with no place.
+    func testAGoToWithNothingToGoToSaysSoAndMovesNothing() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: "🎧")
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        var elsewhere = fixture.layer
+        elsewhere.itemId = nil
+        model.goToSharedMargin(SharedMarginRow(interjection: fixture.record, layer: elsewhere, itemTitle: "Missing"))
+        XCTAssertEqual(model.lastError, "The source for this shared Margin isn't in your Library.")
+        XCTAssertNil(model.silentMarginLanding)
+
+        let unplaced = ImportedCommentaryInterjection(
+            id: "unplaced", layerId: fixture.layer.id, packageScopedId: "unplaced", createdAt: Date(),
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: "🎧",
+            resolution: ImportedAnchorResolution(evidenceClass: .unresolved))
+        model.goToSharedMargin(SharedMarginRow(interjection: unplaced, layer: fixture.layer, itemTitle: "Real source"))
+        XCTAssertEqual(model.lastError, "This shared Margin has no position in the episode.")
+        XCTAssertNil(model.silentMarginLanding)
+        XCTAssertNil(model.marginMoment)
+    }
+
+    // The Library's tap on a friend's silent Margin while another item plays (#4934): the other item gives way and this one
+    // opens at the Margin's place, playing on with no voice, as `playSharedMarginMoment` opens the item first.
+    func testAGoToFromTheLibraryWhileAnotherItemPlaysOpensThisItemAtThePlace() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true, writtenWords: "🎧")
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        let silent = row(fixture)
+        model.startItem(id: "item-pill")
+        XCTAssertEqual(model.snapshot.itemId, "item-pill", "another item is open")
+
+        model.goToSharedMargin(silent)
+        defer { model.pause() }
+        XCTAssertNil(model.lastError)
+        XCTAssertEqual(model.snapshot.itemId, fixture.layer.itemId, "the Margin's own item is open now")
+        XCTAssertNil(model.marginMoment)
+        XCTAssertEqual(model.silentMarginLanding?.itemId, fixture.layer.itemId)
+        try await fixture.waitUntil("the source is at the Margin's place and playing") {
+            model.snapshot.status == .playing && (model.snapshot.currentMediaTimeMs ?? Int.max) < 5_000
+        }
     }
 
     // MARK: A reply's parent, and a note with no voice on this phone (#3402)
@@ -226,8 +344,9 @@ final class WrittenMarginPlayEntryPointsAppTests: XCTestCase {
         XCTAssertEqual(model.newSharedMargins(itemId: itemId).count, 0, "the offer and the item's screen")
         XCTAssertFalse(silent.canPlayFromNearbyList)
         XCTAssertFalse(silent.canPlayFromMarginsList)
+        XCTAssertTrue(silent.goesToFromList, "it is still somewhere to go, with no voice (#4934)")
 
-        model.playSharedMarginMoment(silent)
+        model.playSharedMarginMoment(silent) // the voice-only path still says why
         XCTAssertEqual(model.lastError, "This Margin can't be read aloud on this iPhone.")
         XCTAssertNil(model.marginMoment)
         XCTAssertTrue(fixture.record.isNewToListener, "not new is not heard: firstHeardAt stays empty")

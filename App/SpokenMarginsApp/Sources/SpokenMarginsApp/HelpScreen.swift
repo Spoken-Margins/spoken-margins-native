@@ -21,7 +21,7 @@ struct HelpScreen: View {
                             value: Double(model.onboardingCoreCompletedCount),
                             total: Double(OnboardingStep.core.count)
                         )
-                        .tint(AppColors.primaryAction)
+                        .tint(AppColors.evergreen)
                     }
                     .padding(.vertical, 4)
                     OnboardingChecklistRow(
@@ -46,6 +46,7 @@ struct HelpScreen: View {
                             .accessibilityIdentifier("help.onboarding.restoreCard.button")
                     }
                 }
+                FriendHelpSection(focus: nil)
                 Section("Bring In Your Content") {
                     Text("These are optional ways to build your library. You do not need to try every source type to finish onboarding.")
                         .foregroundStyle(AppColors.secondaryText)
@@ -74,7 +75,20 @@ struct HelpScreen: View {
                     Text("Tap the record button on the mini player, or Add a Margin on Now Playing, speak your note, then tap Save & resume. The Margin stays attached to the point you were hearing.")
                     Text("Playback restarts before transcription runs in the background. A short pause can still occur while the app saves the recording and switches the audio session back to playback.")
                     Text("Open the Margins tab and tap a Margin to hear its recording or read its transcript.")
-                    Text("Hands-free: say \"Add a Margin in Spoken Margins\", then say your thought. It goes into your live session, or onto what's playing.")
+                    Text("Hands-free: say \"Add a Margin in Spoken Margins\" or \"Spoken Margins add a Margin\", then say your thought. It goes into your live session, or onto what's playing.")
+                    Text("Not driving? Add Record a Margin from the Shortcuts app to Back Tap or the Action Button. It opens Spoken Margins and starts recording. Add a Margin stays the one for hands-free use.")
+                    Text("Hands-free ending: say \"stop margin\" or \"end margin\" when you're done. Pauses never end a Margin.")
+                    Text("After Siri says the Margin was added, Siri stays open until you dismiss it: press the side button or swipe it away. Spoken Margins has no way to close it. If your listening doesn't start again once Siri has closed, tap Play.")
+                }
+                if WatchMarginReceiver.watchSupported {
+                    Section("Apple Watch") {
+                        Text("To keep Spoken Margins on your wrist while you listen, turn on Return to App. On your Apple Watch:")
+                        ForEach(Array(WatchReturnToAppSteps.steps.enumerated()), id: \.offset) { index, step in
+                            Text("\(index + 1). \(step)")
+                                .accessibilityIdentifier("help.watch.step.\(index + 1)")
+                        }
+                        Text("If Spoken Margins isn't in that list, open the Watch app on your iPhone and install it under Available Apps.")
+                    }
                 }
                 Section("Optional AI") {
                     Text("Summarize Notes uses Apple’s on-device Foundation Model when available. Listening Maps use publisher chapters for podcasts and deterministic structure for native text.")
@@ -94,9 +108,14 @@ struct HelpScreen: View {
                     Text("Paste a podcast episode, RSS, or direct audio URL into Add to Library (the plus on the Library tab). For Spotify, share the specific episode; a show or podcast-page link does not identify one episode.")
                 }
                 Section("Share and Export") {
-                    Text("Share sends your Margins to a friend who also has Spoken Margins. Export takes the text out for yourself or your tools, as Markdown or JSON.")
+                    #if SM_SHARE_LINK_CREATION
+                    Text("Share sends your Margins to a friend. A link plays in their web browser, so they don't need the app, and a file opens in Spoken Margins. Export takes the text out for yourself or your tools, as Markdown or JSON.")
+                    #else
+                    Text("Share sends your Margins to a friend as a file. It opens in Spoken Margins, or in a web browser at app.spokenmargins.com. Export takes the text out for yourself or your tools, as Markdown or JSON.")
+                    #endif
                     Text("To export a listening session, tap Export in Listening options, in the menu on the Details screen or on the Timeline. Choose the session, format, and included material. Export Session opens the iOS share sheet; Copy puts the generated Markdown or JSON on the clipboard.")
                     Text("From Margins, tap Export for all your Margins in one file, or for one file per listening session. The share sheet lets you choose AirDrop, Save to Files or another app each time.")
+                    Text("To report a problem, use Share Diagnostics in Settings. To make the same file from a Shortcut, for example to send it with a screenshot, add the Export Diagnostics action from the Shortcuts app.")
                 }
             }
             .navigationTitle("Help")

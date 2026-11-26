@@ -47,11 +47,29 @@ public enum PodcastEnclosureIdentity {
                 break
             }
         }
-        guard let slash = remainder.firstIndex(of: "/") else { return remainder.lowercased() }
+        guard let slash = remainder.firstIndex(of: "/") else { return remainder.lowercased() + fileNamedInQuery(components) }
         let finalHost = remainder[..<slash].lowercased()
         var path = String(remainder[slash...])
         while path.hasSuffix("/") && path.count > 1 { path.removeLast() }
-        return finalHost + path
+        return finalHost + path + fileNamedInQuery(components)
+    }
+
+    private static let audioExtensions: Set<String> = ["mp3", "m4a", "m4b", "mp4", "aac", "opus", "ogg", "oga", "flac", "wav"]
+
+    /// Some hosts serve every episode through one script and name the file in the query
+    /// (`hub.hackerpublicradio.org/ccdn.php?filename=/eps/hpr4777/hpr4777.mp3`). Dropping the whole query made every
+    /// episode and every edition (MP3, Opus, Ogg) of that show "the same file" (#5286). A query value that ends in an
+    /// audio file's extension is the file, so it stays in the key; tracking parameters never look like that and are
+    /// still dropped.
+    private static func fileNamedInQuery(_ components: URLComponents) -> String {
+        let files = (components.queryItems ?? []).compactMap { item -> String? in
+            guard let value = item.value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+            let path = value.split(separator: "?", maxSplits: 1).first.map(String.init) ?? value
+            guard let dot = path.lastIndex(of: "."),
+                  audioExtensions.contains(path[path.index(after: dot)...].lowercased()) else { return nil }
+            return item.name.lowercased() + "=" + path
+        }
+        return files.isEmpty ? "" : "?" + files.sorted().joined(separator: "&")
     }
 
     public static func sameFile(_ lhs: String?, _ rhs: String?) -> Bool {

@@ -48,8 +48,8 @@ export const SUGGESTED_SHOWS: readonly SuggestedShow[] = [
 
 /** The suggestions the listener doesn't follow yet, in list order. */
 export function suggestionsToShow(followedFeedUrls: Iterable<string>): SuggestedShow[] {
-  const followed = new Set([...followedFeedUrls].map(normalize));
-  return SUGGESTED_SHOWS.filter((show) => !followed.has(normalize(show.feedUrl)));
+  const followed = new Set([...followedFeedUrls].map(normalizeFeedUrl));
+  return SUGGESTED_SHOWS.filter((show) => !followed.has(normalizeFeedUrl(show.feedUrl)));
 }
 
 /**
@@ -57,7 +57,7 @@ export function suggestionsToShow(followedFeedUrls: Iterable<string>): Suggested
  * tell feeds apart. `dwarkesh.com/feed` redirects to `www.dwarkesh.com/feed`, and a feed followed from a search
  * result may carry either.
  */
-function normalize(feedUrl: string): string {
+export function normalizeFeedUrl(feedUrl: string): string {
   try {
     const url = new URL(feedUrl);
     const host = url.hostname.toLowerCase().replace(/^www\./, '');
@@ -65,4 +65,13 @@ function normalize(feedUrl: string): string {
   } catch {
     return feedUrl.trim().toLowerCase();
   }
+}
+
+/**
+ * Whether two addresses name one feed, by `normalizeFeedUrl` (#4426). An address that normalizes to nothing (a friend's
+ * "Shared by" holder has `feedUrl: ''`) matches nothing, not even another empty one.
+ */
+export function sameFeed(a: string, b: string): boolean {
+  const left = normalizeFeedUrl(a);
+  return left !== '' && left === normalizeFeedUrl(b);
 }

@@ -534,9 +534,12 @@ class LaneSimTests(unittest.TestCase):
         gh.chmod(0o755)
         self.env = {'SM_LANE_STATE_DIR': str(folder / 'state'), 'SM_LANE_SIMCTL': str(fake),
                     'SM_LANE_CRASH_REPORTS': str(folder / 'reports'), 'FAKE_RECORD': str(self.record),
-                    'SM_LANE_MEMORY_PRESSURE': '1', 'SM_LANE_GH': str(gh)}
+                    'SM_LANE_MEMORY_PRESSURE': '1', 'SM_LANE_GH': str(gh),
+                    # The fake simctl has an iOS 26 runtime only. The hosted Mac's lane sets this to the iOS it ships
+                    # when it has no 26, and the helper subprocesses read it from the environment (#4643).
+                    'SM_LANE_IOS_MAJOR': '26'}
         patches = [mock.patch.dict(os.environ, self.env), mock.patch.object(lane_sim, 'CRASH_POLL_SECONDS', 0.05),
-                   mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05)]
+                   mock.patch.object(lane_sim, 'IOS_MAJOR', 26), mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05)]
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
@@ -575,6 +578,21 @@ class LaneSimTests(unittest.TestCase):
     def test_a_healthy_boot_returns_when_ready_and_marks_nothing(self):
         self.assertGreaterEqual(lane_sim.boot(UDID, 'test', out=self.quiet), 0)
         self.assertEqual([r.get('boot') for r in self.records() if 'boot' in r], [UDID])
+        self.assertEqual(lane_sim.unsafe_devices(), {})
+
+    def test_only_a_whole_udid_can_be_marked_unsafe_and_a_malformed_entry_holds_nothing(self):
+        # 2026-11-20: a one-letter `U` entry blocked every integration run through the guard's substring match (#4868).
+        for key in ('', 'U', 'u', ' ', UDID[:8], UDID[:13], UDID + ' ', UDID + '0', 'bad-0001'):
+            with self.subTest(mark=key), self.assertRaises(ValueError):
+                lane_sim.mark_unsafe(key, 'crashed during boot')
+            self.assertEqual(lane_sim.unsafe_devices(), {})
+        for key in (UDID, UDID.upper(), 'BAD-0001'):
+            with self.subTest(mark=key):
+                lane_sim.mark_unsafe(key, 'crashed during boot')
+                self.assertIn(key, lane_sim.unsafe_devices())
+        lane_sim.unsafe_path().write_text(json.dumps({'U': {'reason': 'x'}, UDID: {'reason': 'real'}, 'T': 'x'}))
+        self.assertEqual(set(lane_sim.unsafe_devices()), {UDID})  # `U` and `T` are read as nothing
+        lane_sim.unsafe_path().write_text('["U"]')
         self.assertEqual(lane_sim.unsafe_devices(), {})
 
     def test_a_finished_boot_marks_the_simulator_quiet_from_that_moment(self):
@@ -875,15 +893,17 @@ class LaneSimTests(unittest.TestCase):
 
     def test_the_runner_does_not_start_a_simulator_while_another_job_holds_the_slot(self):
         import importlib.util
-        spec = importlib.util.spec_from_file_location('lane_runner_for_slot', SCRIPTS / 'lane-runner.py')
+        spec = importlib.util.spec_from_file_location('lane_t3_for_slot', SCRIPTS / 'lane_t3.py')
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         with mock.patch.object(runner, 'RUNNER_SLOT_WAIT', 0.2), \
                 mock.patch.object(runner, 'prepare_t3_build', return_value=('PASS', ['prepared'])), \
+                mock.patch.object(lane_sim, 'newest_runtime', return_value='iOS-26-5'), \
                 mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '2'}), \
                 mock.patch.object(lane_sim, 'clone_temporary', side_effect=AssertionError('made a simulator')), \
                 lane_slots.simulator_slot('the Test Desk', out=self.quiet), mock.patch('sys.stdout', self.quiet):
-            verdict, _, _, details, _, _ = runner.run_t3(['ExperiencePresentationTests'], 'r1', Path(self.temporary.name))
+            verdict, _, _, details, _, _ = runner._run_t3_grouped({'app': ['ExperiencePresentationTests']}, 'r1',
+                                                                  Path(self.temporary.name))
         self.assertEqual(verdict, 'INCONCLUSIVE')
         self.assertIn('simulator slots stayed busy', details[0])
         self.assertIn('memory pressure is warn', details[0])
@@ -1215,7 +1235,7 @@ class LaneSimTests(unittest.TestCase):
 
     def test_the_runner_reports_why_it_could_not_boot(self):
         import importlib.util
-        spec = importlib.util.spec_from_file_location('lane_runner_for_sim', SCRIPTS / 'lane-runner.py')
+        spec = importlib.util.spec_from_file_location('lane_t3_for_sim', SCRIPTS / 'lane_t3.py')
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         with mock.patch.object(lane_sim, 'LOCK_WAIT', 0.2), \
@@ -1367,6 +1387,44 @@ class BootRetryTests(unittest.TestCase):
         self.assertIn('Boot stall recovered on a fresh device', posted)
         self.assertIn('verify-tests --plan app boot at abc1234', posted)
         self.assertIn(UDID, posted)
+
+
+class IosMajorTests(unittest.TestCase):
+    """main-t3.yml sets SM_LANE_IOS_MAJOR for the hosted Mac's runtime; unset, the lane's own major stands.
+    Moved from the retired test_lane_hosted_app.py (#4769)."""
+
+    def test_ios_major_follows_the_hosted_override(self):
+        code = 'import lane_sim; print(lane_sim.IOS_MAJOR)'
+        for value, expected in (('', '26'), ('27', '27')):
+            with self.subTest(value=value):
+                env = dict(os.environ, SM_LANE_IOS_MAJOR=value)
+                out = subprocess.check_output([sys.executable, '-c', code], cwd=SCRIPTS, text=True, env=env)
+                self.assertEqual(out.strip(), expected)
+
+
+class MemoryPressureReadingTests(unittest.TestCase):
+    """lane_slots.memory_pressure_level reads the kernel's level, as `memory_pressure` reports it. Every other test
+    replaces it. Moved from the retired test_lane_beside_simulator.py (#4769)."""
+
+    def level(self, output=None, error=None):
+        def sysctl(command, text):
+            self.assertEqual(command, ['sysctl', '-n', 'kern.memorystatus_vm_pressure_level'])
+            if error:
+                raise error
+            return output
+        with mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': ''}), \
+                mock.patch('subprocess.check_output', side_effect=sysctl):
+            return lane_slots.memory_pressure_level()
+
+    def test_the_kernel_s_levels_are_read(self):
+        self.assertEqual(self.level('1\n'), 1)
+        self.assertEqual(self.level('2\n'), 2)
+        self.assertEqual(self.level('4'), 4)
+
+    def test_an_unreadable_level_is_none(self):
+        self.assertIsNone(self.level('kern.memorystatus_vm_pressure_level: unknown oid\n'))
+        self.assertIsNone(self.level(error=subprocess.CalledProcessError(1, 'sysctl')))
+        self.assertIsNone(self.level(error=FileNotFoundError('sysctl')))
 
 
 if __name__ == '__main__':

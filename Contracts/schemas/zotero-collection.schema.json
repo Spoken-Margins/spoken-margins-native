@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "zotero-collection.schema.json",
+  "title": "One collection of a recorded Zotero web API reply (third-party)",
+  "description": "Zotero's `collections` list (an array of these) and one `collections/<key>` record, as recorded, so fields are open. Only what ZoteroCollectionReader reads is constrained: the key, the name and, for the listener's own library, the library's name.",
+  "type": "object",
+  "required": ["key", "data"],
+  "properties": {
+    "key": {"type": "string", "pattern": "^[A-Z0-9]{8}$"},
+    "library": {
+      "type": "object",
+      "properties": {"type": {"type": "string"}, "id": {"type": "integer"}, "name": {"type": "string"}}
+    },
+    "meta": {"type": "object", "properties": {"numItems": {"type": "integer", "minimum": 0}}},
+    "data": {
+      "type": "object",
+      "required": ["key", "name"],
+      "properties": {
+        "key": {"type": "string", "pattern": "^[A-Z0-9]{8}$"},
+        "name": {"type": "string"},
+        "parentCollection": {"type": ["string", "boolean"]}
+      }
+    }
+  }
+}

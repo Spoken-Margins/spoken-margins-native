@@ -4,11 +4,19 @@
 # Mac. scripts/merge_stall_watch.py decides: nothing on the trunk for an hour, and an armed PR that hasn't moved for an
 # hour. It then opens one issue that @mentions him, which the GitHub mobile app pushes, and closes it when something
 # merges. It runs nobody's PR code: the script comes from the trunk, and it reads PRs only through the API.
+#
+# Start (#4866): a stall is the absence of progress, so no event can announce it; what an event can do is look each time
+# a PR's hosted checks finish (`workflow_run`), which is when progress is made or isn't. The 15-minute cron GitHub dropped
+# (3 runs of 96 in the 24 hours to 2026-11-21) is replaced by the VPS (ops/dispatch-backstop/), which fires
+# `workflow_dispatch` when no run began in the last 15 minutes. The one daily tick is the last resort if the VPS is down.
 name: merge-stall
 
 on:
+  workflow_run:
+    workflows: [hosted-portable, hosted-web, hosted-sessionkit-linux]
+    types: [completed]
   schedule:
-    - cron: '7,22,37,52 * * * *'
+    - cron: '7 6 * * *'  # last resort only
   workflow_dispatch:
 
 permissions:
@@ -16,6 +24,7 @@ permissions:
   pull-requests: read
   issues: write
   checks: read
+  actions: read  # the budget warning lists the last hour's runs (#4990)
 
 concurrency:
   group: merge-stall
@@ -25,18 +34,48 @@ jobs:
   watch:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # The stall look reads as the GitHub App, whose API budget is larger than GITHUB_TOKEN's 1,000 requests an hour for
+    # the repository (exhausted on 2026-11-23, #5217). The alarm issue is still written with GITHUB_TOKEN
+    # (SM_WRITE_TOKEN), so it stays authored by github-actions[bot], which the script looks for. The budget step stays
+    # on GITHUB_TOKEN too: it exists to watch that token's budget.
+    environment:
+      name: agent-identity
+      deployment: false
     steps:
+      - id: app-token
+        # A failed mint falls back to GITHUB_TOKEN instead of failing the run.
+        continue-on-error: true
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.SM_APP_ID }}
+          private-key: ${{ secrets.SM_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: read
+          permission-issues: read
+          permission-checks: read
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
           sparse-checkout: |
             scripts/merge_stall_watch.py
+            scripts/api_budget_watch.py
             scripts/comment_trust.py
             scripts/trunk.py
           sparse-checkout-cone-mode: false
-      - name: Look for a stall
+      # #4990: warn the owner at 70% of the workflow token's hourly API budget, before checks fail on it. A step here,
+      # not a workflow of its own: this job already runs when PRs' checks finish and from the VPS every 15 minutes, so it
+      # adds no run. Cost and catch: one uncounted `rate_limit` read a run below 70%; at most 4 calls on the one run
+      # an hour window that warns, 2 on later runs in that window. It would have caught the holds of #4985 and #4983
+      # on 2026-11-22. Waste signal: no warning in 30 days and no rate-limit line in any `merge policy` log.
+      - name: Read the API budget
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/api_budget_watch.py  # exits 0 whatever GitHub answers, so the stall look always runs
+      - name: Look for a stall
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          SM_WRITE_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           SM_TRUNK: ${{ vars.SM_TRUNK || 'main' }}
         run: python3 scripts/merge_stall_watch.py

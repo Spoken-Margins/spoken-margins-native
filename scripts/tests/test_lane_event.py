@@ -4,13 +4,25 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_lane_runner import FakeGitHub, HEAD, MERGE, comment, lane, runner_report  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import lane_event  # noqa: E402
+from lane_t3 import duration  # noqa: E402
 
-BASE = 'd' * 40
+HEAD, BASE = 'a' * 40, 'd' * 40
+
+
+def report(request_id, verdict, head, base, tier, where, seconds, ran, details, crashes, evidence, not_verified,
+           wanted, event=''):
+    """A lane report in the words the retired lane-runner.py wrote (#4769). Its reports stay on old PRs, and
+    pipeline_events.py still reads them through lane_event.collect."""
+    lines = [f'Lane report {request_id} — {verdict}',
+             f'commit {head[:7]} (tested merged with main at {base[:7]}) · tier {tier} · {where} · {duration(seconds)}',
+             f'ran: {ran}', *details, f'crashes: {crashes}', f'evidence: {evidence} (on the Mac)',
+             f'not verified: {not_verified}']
+    return '\n'.join(lines) + f'\n<!-- lane-request: {json.dumps(wanted, sort_keys=True)} -->\n' + \
+        (f'{event}\n' if event else '')
 
 
 def runs():
@@ -144,7 +156,8 @@ class ParseTests(unittest.TestCase):
 
 
 class HoldTests(unittest.TestCase):
-    """#4089: a report held for T3 says so, and a hold is not a runner fault."""
+    """#4089: a report held for T3 said so, and a hold is not a runner fault. The runner holds nothing for T3 since
+    #4572, but lane_event still reads the key on the reports from before it."""
 
     def test_a_hold_is_not_a_fault_and_says_so(self):
         event = build(verdict='INCONCLUSIVE', hold=True, runs=[])
@@ -179,7 +192,7 @@ class HoldTests(unittest.TestCase):
         self.assertNotIn('hold', lane_event.parse(lane_event.note(dict(build(verdict='INCONCLUSIVE'), hold='yes'))))
 
     def test_the_prose_fallback_never_guesses_a_hold(self):
-        body = lane.report('pr1-r1', 'INCONCLUSIVE', HEAD, BASE, 'auto', 'hosted', 0, 'nothing',
+        body = report('pr1-r1', 'INCONCLUSIVE', HEAD, BASE, 'auto', 'hosted', 0, 'nothing',
                            ['not merged: held for T3: the /lane T3 request has no lane report yet'], 'none', '/e', 'n', {})
         event = lane_event.collect(body)
         self.assertEqual((event['source'], event['fault']), ('prose', True))
@@ -188,13 +201,13 @@ class HoldTests(unittest.TestCase):
 
 class CollectTests(unittest.TestCase):
     def test_the_line_wins_when_it_is_there(self):
-        body = lane.report('pr1-r1', 'FAIL', HEAD, BASE, 'T3', 'x', 345, 'x', [], 'none', '/e', 'n', {},
+        body = report('pr1-r1', 'FAIL', HEAD, BASE, 'T3', 'x', 345, 'x', [], 'none', '/e', 'n', {},
                            event=lane_event.note(build()))
         event = lane_event.collect(body)
         self.assertEqual((event['source'], event['verdict'], event['tests']['failed']), ('line', 'FAIL', 1))
 
     def test_a_report_without_the_line_falls_back_to_the_prose(self):
-        body = lane.report('pr1-r1', 'INCONCLUSIVE', HEAD, BASE, 'T3', 'no runner', 0, 'nothing', [], 'none', '/e', 'n',
+        body = report('pr1-r1', 'INCONCLUSIVE', HEAD, BASE, 'T3', 'no runner', 0, 'nothing', [], 'none', '/e', 'n',
                            {})
         event = lane_event.collect(body)
         self.assertEqual((event['source'], event['verdict'], event['fault'], event['tier']),
@@ -203,13 +216,13 @@ class CollectTests(unittest.TestCase):
         self.assertEqual(event['steps'], [])
 
     def test_an_older_report_whose_base_was_not_a_commit_still_gives_its_tier_and_head(self):
-        body = lane.report('pr1-r1', 'INCONCLUSIVE', HEAD, 'unknown', 'T3', 'no runner', 0, 'nothing', [], 'none', '/e',
+        body = report('pr1-r1', 'INCONCLUSIVE', HEAD, 'unknown', 'T3', 'no runner', 0, 'nothing', [], 'none', '/e',
                            'n', {})
         event = lane_event.collect(body)
         self.assertEqual((event['tier'], event['head'], event['trunk']), ('T3', HEAD[:7], ''))
 
     def test_a_forged_line_falls_back_to_the_prose_and_other_comments_are_none(self):
-        body = lane.report('pr1-r1', 'PASS', HEAD, BASE, 'T2', 'x', 5, 'x', [], 'none', '/e', 'n', {},
+        body = report('pr1-r1', 'PASS', HEAD, BASE, 'T2', 'x', 5, 'x', [], 'none', '/e', 'n', {},
                            event=lane_event.note(dict(build(), head='/Users/x')))
         self.assertEqual(lane_event.collect(body)['source'], 'prose')
         self.assertIsNone(lane_event.collect('Looks good to me'))
@@ -230,108 +243,6 @@ class TestRecordsTests(unittest.TestCase):
 
     def test_a_missing_folder_is_no_records(self):
         self.assertEqual(lane_event.test_records(Path('/nonexistent-evidence')), {})
-
-
-class RunnerTests(unittest.TestCase):
-    def setUp(self):
-        lane.STEP_RUNS.clear()
-        self.addCleanup(lane.STEP_RUNS.clear)
-
-    def test_the_report_ends_with_the_line_and_still_reads_as_before(self):
-        lane.note_step('host tests', 'PASS', 12.0)
-        note = lane.event_note('PASS', 'T2', HEAD, BASE, 20, None)
-        wanted = lane.identity('T2', HEAD, BASE, [])
-        body = lane.report('pr1-r1', 'PASS', HEAD, BASE, 'T2', 'x', 20, 'x', [], 'none', '/e', 'n', wanted, event=note)
-        self.assertTrue(body.rstrip().endswith('-->'))
-        self.assertEqual(body.rstrip().splitlines()[-1], note)
-        self.assertEqual(lane.report_identity(body), wanted)
-        self.assertEqual(body, lane.report('pr1-r1', 'PASS', HEAD, BASE, 'T2', 'x', 20, 'x', [], 'none', '/e', 'n',
-                                           wanted, event='') + note + '\n')
-
-    def test_the_visible_report_is_the_same_with_or_without_the_line(self):
-        without = lane.report('pr1-r1', 'PASS', HEAD, BASE, 'T2', 'x', 20, 'x', [], 'none', '/e', 'n', {})
-        with_line = lane.report('pr1-r1', 'PASS', HEAD, BASE, 'T2', 'x', 20, 'x', [], 'none', '/e', 'n', {},
-                                event=lane.event_note('PASS', 'T2', HEAD, BASE, 20, None))
-        self.assertTrue(with_line.startswith(without))
-
-    def test_the_queue_wait_is_the_time_from_the_request_to_the_job_start(self):
-        lane.note_step('host tests', 'PASS', 12.0)
-        with mock.patch.object(lane.time, 'gmtime', return_value=__import__('time').gmtime(1_700_000_300)):
-            note = lane.event_note('PASS', 'T3', HEAD, BASE, 100, None, '2023-11-14T22:13:20Z')  # 1_700_000_000
-        self.assertEqual(lane_event.parse(note)['queue_seconds'], 200)
-
-    def test_the_automerge_run_a_t3_pass_releases_counts_only_its_own_steps(self):
-        # The T3 job's steps are in STEP_RUNS when merge_after_t3 runs in the same process; its report must not repeat them.
-        t3_request = comment(f'/lane T3\ncommit: {HEAD[:7]}\ntests: SupertonicSpeechTests')
-        github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[t3_request])
-        lane.note_step('app tests (T3)', 'PASS', 300.0)
-        lane.note_step('LFS files', 'PASS', 2.0)
-
-        def auto(*args, **kwargs):
-            lane.note_step('host tests', 'PASS', 40.0)
-            return 'PASS', 'x', 'host tests', ['merged into main as abc1234']
-        github._comments.append(comment(lane.report('pr5-r1', 'INCONCLUSIVE', HEAD, MERGE, 'auto', 'x', 1, 'x',
-                                                    [lane.HELD_FOR_T3[0]], 'none', '/e', 'n',
-                                                    lane.identity('auto', HEAD, MERGE, []), event=''),
-                                        login='github-actions[bot]'))
-        github._comments.append(runner_report('PASS', lane.identity('T3', HEAD, MERGE, ['SupertonicSpeechTests'])))
-        with mock.patch.object(lane, 'run_auto', side_effect=auto), \
-                mock.patch.object(lane, 'fetch_base', return_value=MERGE), mock.patch.object(lane, 'clean_tree'), \
-                mock.patch('builtins.print'), tempfile.TemporaryDirectory() as evidence:
-            released = lane.merge_after_t3(github, 5, 'main', HEAD, 'pr5-r43-auto', Path(evidence), MERGE,
-                                           'started by the T3 PASS')
-        event = lane_event.parse(released)
-        self.assertIsNotNone(event, released)
-        self.assertEqual((event['tier'], [step['step'] for step in event['steps']]), ('auto', ['host tests']))
-
-    def test_held_for_t3_report_reads_the_line_the_auto_revert_reads(self):
-        held = ['not merged: held for T3: the /lane T3 request for this head (abc) has no lane report yet.']
-        self.assertTrue(lane.held_for_t3_report('INCONCLUSIVE', held))
-        self.assertTrue(lane.held_for_t3_report('INCONCLUSIVE', ['moved', *held]))
-        for verdict, lines in (('FAIL', held), ('PASS', held), ('INCONCLUSIVE', []),
-                               ('INCONCLUSIVE', ['no Mac build slot was free']),
-                               # other "not merged" holds are not the T3 hold (is_hold, the green/red rule, is broader)
-                               ('INCONCLUSIVE', ['not merged by the runner: it touches .github/']),
-                               ('INCONCLUSIVE', ['not merged: the PR moved on']),
-                               ('INCONCLUSIVE', ['not merged: no Codex or Claude audit of its head']),
-                               # words in the middle of a line, as the "checks did not finish" note has them: a fault
-                               ('INCONCLUSIVE', ['The checks did not finish, so: ' + held[0]]),
-                               ('INCONCLUSIVE', ['  not merged: held for T3: indented test output'])):
-            with self.subTest(verdict=verdict, lines=lines):
-                self.assertFalse(lane.held_for_t3_report(verdict, lines))
-
-    def test_a_held_report_is_no_fault_to_the_event_the_ledger_or_the_auto_revert(self):
-        lane.STEP_RUNS.clear()
-        held = ['not merged: held for T3: the /lane T3 request for this head (abc1234) has no lane report yet.']
-        wanted = lane.identity('auto', HEAD, BASE, [])
-        note = lane.event_note('INCONCLUSIVE', 'auto', HEAD, BASE, 0, None, hold=lane.held_for_t3_report('INCONCLUSIVE', held))
-        body = lane.report('pr1-r1', 'INCONCLUSIVE', HEAD, BASE, 'auto', 'hosted', 0, 'nothing', held, 'none', '/e', 'n',
-                           wanted, event=note)
-        event = lane_event.parse(body)
-        self.assertEqual((event['fault'], event['hold'], event['steps']), (False, True, []))
-        # The ledger takes its results from the step runs, and a hold ran no step: nothing for it to call a fault.
-        import lane_ledger
-        with tempfile.TemporaryDirectory() as state:
-            self.assertEqual(lane_ledger.record_runs(Path(state), list(lane.STEP_RUNS), 1, HEAD), [])
-            self.assertEqual(json.loads(lane_ledger.path(Path(state)).read_text())['steps'], {})
-        # The auto-revert already reads a hold as no fault (PENDING_T3_HOLD), and still reads a runner fault as one.
-        self.assertEqual(lane.lane_report_verdict(body)[0], False)
-        fault = lane.report('pr1-r2', 'INCONCLUSIVE', HEAD, BASE, 'auto', 'hosted', 0, 'nothing',
-                            ['The lane itself failed: x'], 'none', '/e', 'n', wanted)
-        self.assertEqual(lane.lane_report_verdict(fault)[0], True)
-        # "The checks did not finish" is a fault that also waits for T3: its event line keeps fault true.
-        unfinished = ['The checks did not finish, so: ' + held[0]]
-        self.assertFalse(lane.held_for_t3_report('INCONCLUSIVE', unfinished))
-        self.assertEqual(lane.lane_report_verdict(lane.report('pr1-r3', 'INCONCLUSIVE', HEAD, BASE, 'auto', 'x', 0, 'nothing',
-                                                              unfinished, 'none', '/e', 'n', wanted))[0], True)
-
-    def test_a_failing_measurement_leaves_the_report_without_a_line(self):
-        with mock.patch.object(lane_event, 'build', side_effect=RuntimeError('boom')):
-            self.assertEqual(lane.event_note('PASS', 'T2', HEAD, BASE, 1, None), '')
-
-    def test_a_pending_request_keeps_when_it_was_commented(self):
-        found = lane.pending_requests([dict(comment('/lane T2'), created_at='2026-10-23T01:02:03Z')])[0]
-        self.assertEqual(found['created_at'], '2026-10-23T01:02:03Z')
 
 
 if __name__ == '__main__':

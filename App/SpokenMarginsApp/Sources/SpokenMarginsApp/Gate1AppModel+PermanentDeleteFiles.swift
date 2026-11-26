@@ -45,7 +45,7 @@ extension Gate1AppModel {
     /// The Margin recordings (#1035, #2507) are found by the audio paths the deleted rows named. The rule is
     /// `MarginRecordingCleanup`'s: only a file under `SpokenMargins/`, where the recorder keeps them, and only once no
     /// Margin that stays names it. `store` is read for that on the removal step's background task, never on the main
-    /// thread. The leveled playback copies (#467) are the same voice and are found by the recording's content, so they
+    /// thread. A recording a live session still names is kept too (#4233). The leveled playback copies (#467) are the same voice and are found by the recording's content, so they
     /// go before the recording does. If the Margins that stay can't be read, nothing is removed and the record is kept.
     private func permanentDeletePurge(store: SQLiteSessionStore) -> PermanentDeletePurge? {
         guard let support = try? applicationSupportDirectory() else { return nil }
@@ -63,16 +63,21 @@ extension Gate1AppModel {
                       url: support.appending(path: "Audiobooks", directoryHint: .isDirectory)),
                 .init(name: ItemOwnedFiles.episodeMapsRoot,
                       url: support.appending(path: "SpokenMargins/EpisodeMaps", directoryHint: .isDirectory)),
+                .init(name: ItemOwnedFiles.itemOriginalsRoot,
+                      url: support.appending(path: "ItemOriginals", directoryHint: .isDirectory)),
+                .init(name: ItemOwnedFiles.pdfClipsRoot, url: Self.pdfClipStore(support: support).directory),
             ],
             marginRecordings: .init(
                 directory: support.appending(path: "SpokenMargins", directoryHint: .isDirectory),
                 resolve: { Self.resolvedInterjectionAudioURL(for: $0, applicationSupportDirectory: support) },
-                survivingAudioPaths: { try store.allMarginAudioPaths() },
+                // A live session's Margin names its recording too, and a Margin moved onto an item shares it with the live
+                // Margin Undo puts back (#4233 Design 2.9.3), so a file any live session names is kept as well.
+                survivingAudioPaths: { try store.allMarginAudioPaths() + LiveSessionCollection(root: support).namedAudioPaths() },
                 beforeRemoving: { leveledMargins.removeCopies(of: $0) }))
     }
 
     /// Runs `delete`, the call that removes the items' rows, and then removes the files only those items owned (their
-    /// prepared narration chunks, saved Listening Edition, episode-map folder, and the EPUB or audiobook the app copied in
+    /// prepared narration chunks, saved Listening Edition, episode-map folder, PDF clip pictures, and the EPUB or audiobook the app copied in
     /// from Files, and the spoken Margin recordings, named by `recordingPaths`: the audio paths of the Margins the delete
     /// takes away, read with the Margins before it, quarantined ones included) off the main thread. The copied files are
     /// named by the items' ledger rows (`ledgerRows`), which the caller reads before it removes anything, next to the Margin reads, because the rows go with the items

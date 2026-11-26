@@ -1,44 +1,34 @@
 import SessionKit
 import SwiftUI
 
-/// A friend who sent Margins, on Following (#3291): their initial, "Cole", "3 Margins on 1 episode" and ›, in the
-/// shows' row style. The rows come from `FollowingFriends`.
+/// A friend who sent Margins on Following (#3291): their initial with its "N new" tag, "Cole", "3 Margins on 1 episode" and
+/// ›, in the shows' row style. The rows come from `FollowingFriends`. At accessibility text sizes the row stacks like the
+/// show row (#4104, #4723): the initial and › on a top line, the text at full width below. The initial stays 56 pt, as the
+/// show's picture does.
 struct FollowingFriendRowView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    /// The avatar grows with the text but stops at 80 pt, so a row never becomes all picture (#3723).
-    @ScaledMetric(relativeTo: .headline) private var artworkSize: CGFloat = 56
     let friend: FollowingFriends.Friend
     let open: () -> Void
 
     var body: some View {
         Button(action: open) {
-            HStack(alignment: .center, spacing: 12) {
-                ShowArtworkView(url: nil, title: friend.name, size: min(artworkSize, 80))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(friend.name)
-                        .font(.headline)
-                        .foregroundStyle(AppColors.text)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                    Text(friend.summary)
-                        .font(.subheadline)
-                        .foregroundStyle(AppColors.secondaryText)
-                        .multilineTextAlignment(.leading)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 12) {
+                            initialWithTag
+                            Spacer(minLength: 0)
+                            chevron
+                        }
+                        textColumn
+                    }
+                } else {
+                    HStack(alignment: .center, spacing: 12) {
+                        initialWithTag
+                        textColumn
+                        chevron
+                    }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if let label = friend.newLabel { // the show row's capsule, so "new" reads the same (#4104)
-                    Text(label)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(AppColors.onEvergreen)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(AppColors.evergreen, in: Capsule())
-                }
-                Image(systemName: "chevron.right")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppColors.secondaryText)
-                    .frame(width: dynamicTypeSize.isAccessibilitySize ? nil : 44, height: 44)
-                    .accessibilityHidden(true)
             }
             .contentShape(Rectangle())
         }
@@ -50,6 +40,34 @@ struct FollowingFriendRowView: View {
         .accessibilityLabel([friend.name, friend.summary, friend.newLabel].compactMap { $0 }.joined(separator: ", "))
         .accessibilityHint(friend.items.count == 1 ? "Opens it." : "Shows what they shared.")
         .accessibilityIdentifier("sources.friend")
+    }
+
+    private var initialWithTag: some View {
+        ShowArtworkView(url: nil, title: friend.name, size: 56)
+            .followingNewBadge(friend.newBadgeText)
+    }
+
+    private var textColumn: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(friend.name)
+                .font(.headline)
+                .foregroundStyle(AppColors.text)
+                .multilineTextAlignment(.leading)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+            Text(friend.summary)
+                .font(.subheadline)
+                .foregroundStyle(AppColors.secondaryText)
+                .multilineTextAlignment(.leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var chevron: some View {
+        Image(systemName: "chevron.right")
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(AppColors.secondaryText)
+            .frame(width: dynamicTypeSize.isAccessibilitySize ? nil : 44, height: 44)
+            .accessibilityHidden(true)
     }
 }
 

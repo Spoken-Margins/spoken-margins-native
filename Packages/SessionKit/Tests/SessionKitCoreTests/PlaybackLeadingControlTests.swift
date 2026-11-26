@@ -8,8 +8,8 @@ final class PlaybackLeadingControlTests: XCTestCase {
         XCTAssertEqual(PlaybackLeadingControl.control(pane: .margins, timelineEditorHasFocus: false), .libraryExit)
     }
 
-    func testEveryTabWithAToolbarArrowLeavesExceptTheEditorCase() {
-        for pane in [PlaybackLeadingControl.Pane.timeline, .margins] {
+    func testEveryTabLeavesExceptTheEditorCase() {
+        for pane in [PlaybackLeadingControl.Pane.now, .timeline, .margins] {
             XCTAssertNotEqual(PlaybackLeadingControl.control(pane: pane, timelineEditorHasFocus: false), .returnToNow,
                               "\(pane) must not use the top-left arrow to switch tabs")
         }
@@ -20,8 +20,20 @@ final class PlaybackLeadingControlTests: XCTestCase {
     }
 
     func testEditorFocusChangesNothingOnTheOtherTabs() {
-        XCTAssertEqual(PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: true), .none)
-        XCTAssertEqual(PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: false), .none)
+        XCTAssertEqual(PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: true), .libraryExit)
         XCTAssertEqual(PlaybackLeadingControl.control(pane: .margins, timelineEditorHasFocus: true), .libraryExit)
+    }
+
+    /// #5329: on Now the bar's corner held an invisible copy of the arrow while the title row showed the real one, and
+    /// iOS 26 drew an empty glass pill around the copy. Now always gives the shown Library arrow in the corner.
+    func testNowAlwaysShowsTheLibraryArrowInTheCorner() {
+        for focus in [false, true] {
+            XCTAssertEqual(PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: focus), .libraryExit)
+        }
+    }
+
+    /// #5311: the J14 scripts tap the arrow by this identifier; there is one arrow, so nothing can shadow it.
+    func testTheLibraryArrowKeepsTheIdentifierTheScriptsTap() {
+        XCTAssertEqual(PlaybackLeadingControl.libraryExitIdentifier, "playback.exit.button")
     }
 }

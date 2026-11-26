@@ -92,12 +92,26 @@ final class ShareLinkUploadTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(ShareLinkPreview.self, from: opened.preview), preview)
     }
 
+    /// #4784: an introduction link's preview carries `answers: "none"`, made on the Mac. Every shipped build decodes it as
+    /// the preview it always did (Codable ignores unknown keys), so the new field breaks no reader.
+    func testAPreviewWithTheIntroductionMarkDecodesAsToday() throws {
+        let plain = try preview()
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: ShareLinkPreviewBuilder.encoded(plain)) as? [String: Any])
+        object["answers"] = "none"
+        let marked = try JSONSerialization.data(withJSONObject: object)
+        XCTAssertEqual(try JSONDecoder().decode(ShareLinkPreview.self, from: marked), plain)
+        object["answers"] = "box"
+        XCTAssertEqual(try JSONDecoder().decode(ShareLinkPreview.self, from: JSONSerialization.data(withJSONObject: object)), plain)
+    }
+
     func testNothingIsSealedOrSentWhileTheLinksSwitchIsNotOn() async throws {
         let reasons: [ServerFeatureOffReason] = [.noConfig, .malformedConfig, .switchedOff, .staleConfig, .buildTooOld(minimumBuild: 99)]
         for reason in reasons {
             let recorder = Recorder()
             let result = await client(recorder: recorder).makeLink(packet: Data([1, 2, 3]), preview: try preview(), linksState: .off(reason))
-            XCTAssertEqual(result, .useFile(.unavailable), "\(reason)")
+            // Below the minimum build, the line says to update (#4134); every other off reason is "not available".
+            let expected: ShareLinkFallback = if case .buildTooOld = reason { .updateNeeded } else { .unavailable }
+            XCTAssertEqual(result, .useFile(expected), "\(reason)")
             XCTAssertTrue(recorder.requests.isEmpty, "\(reason)")
         }
     }

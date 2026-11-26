@@ -68,8 +68,8 @@ extension Gate1AppModel {
     /// Plays the Margin a reply answers, with the same lead-in as tapping it anywhere else.
     func playMarginParent(_ context: MarginThreadPresentation.ParentContext) {
         switch context.parent {
-        case .local(let id):
-            if let row = marginRows.first(where: { $0.interjection.id == id }) { _ = playMarginMoment(row) }
+        case .local:
+            if let row = marginRows.first(where: { context.parent.isOwnMargin($0.interjection) }) { _ = playMarginMoment(row) }
         case .imported(let id):
             if let row = sharedMarginRows.first(where: { $0.interjection.id == id }) { playSharedMarginMoment(row) }
         }
@@ -92,6 +92,7 @@ extension Gate1AppModel {
     /// A Margin started from the Lock Screen, headphones or a Live Activity goes through the engine without a link;
     /// once it is recording, it names its screen and takes the suggestion the same way.
     func compactRecordingBegan() {
+        noteCatchUp(.recordingStarted) // only once the recording really began (#4785)
         marginCapture.setPresentationContext(RecordingPresentationContext(snapshot: snapshot, startedAt: Date()))
         suggestSharedMarginReply()
         engine?.changeReplyOfCurrentCapture(to: marginCapture.pendingReply?.link)

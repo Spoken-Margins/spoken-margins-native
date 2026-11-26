@@ -1,0 +1,36 @@
+{
+    "key": "DMKBHP6P",
+    "version": 5254,
+    "library": {
+        "type": "group",
+        "id": 2205533,
+        "name": "Test Items Library",
+        "links": {
+            "alternate": {
+                "href": "https://www.zotero.org/groups/test_items_library",
+                "type": "text/html"
+            }
+        }
+    },
+    "links": {
+        "self": {
+            "href": "https://api.zotero.org/groups/2205533/collections/DMKBHP6P",
+            "type": "application/json"
+        },
+        "alternate": {
+            "href": "https://www.zotero.org/groups/test_items_library/collections/DMKBHP6P",
+            "type": "text/html"
+        }
+    },
+    "meta": {
+        "numCollections": 0,
+        "numItems": 170
+    },
+    "data": {
+        "key": "DMKBHP6P",
+        "version": 5254,
+        "name": "APA, 6th edition",
+        "parentCollection": false,
+        "relations": {}
+    }
+}

@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SessionKit
 
-/// #4062: the Library row's progress words and Margins line, from the row alone.
+/// #4062, #4698: the Library row's length words and Margins tag, from the row alone.
 final class LibraryRowLinesTests: XCTestCase {
     // 14 characters a second at 1x: 21 000 characters is 25 min.
     private func text(percent: Int? = nil, completed: Bool = false, characters: Int? = 21_000, marginCount: Int = 0,
@@ -35,26 +35,26 @@ final class LibraryRowLinesTests: XCTestCase {
 
     func testTextInProgressSaysAboutHowMuchIsLeftAndFollowsTheSpeed() {
         // 52% of 21 000 characters heard leaves 10 080: 12 min at 1x, 6 min at 2x.
-        XCTAssertEqual(lines(text(percent: 52)).progress, "about 12 min left")
-        XCTAssertEqual(lines(text(percent: 52), speed: 2).progress, "about 6 min left")
+        XCTAssertEqual(lines(text(percent: 52)).progress, "12 min")
+        XCTAssertEqual(lines(text(percent: 52), speed: 2).progress, "6 min")
         XCTAssertEqual(lines(text(percent: 52)).progressSpoken, "52 percent listened, about 12 minutes left")
-        XCTAssertEqual(lines(text(percent: 99, characters: 21_000)).progress, "under 1 min left")
+        XCTAssertEqual(lines(text(percent: 99, characters: 21_000)).progress, "under 1 min")
         XCTAssertEqual(lines(text(percent: 99)).progressSpoken, "99 percent listened, less than a minute left")
     }
 
     func testAPodcastInProgressUsesItsFilesLengthMinusTheSavedPlace() {
         // 2 h episode, 1% in at 1:12 (72 s): 1 h 58 min 48 s left, which rounds to 1 h 59 min.
         let nearStart = lines(audio(percent: 1, placeMs: 72_000))
-        XCTAssertEqual(nearStart.progress, "1 h 59 min left")
+        XCTAssertEqual(nearStart.progress, "1 h 59 min")
         XCTAssertEqual(nearStart.progressSpoken, "1 percent listened, 1 hour 59 minutes left")
         // The percent is not used when the place is known: 43% on a 2 h file, but the place says 24 min left.
-        XCTAssertEqual(lines(audio(percent: 43, placeMs: 2 * 3_600_000 - 24 * 60_000)).progress, "24 min left")
+        XCTAssertEqual(lines(audio(percent: 43, placeMs: 2 * 3_600_000 - 24 * 60_000)).progress, "24 min")
         // Exactly an hour left is "1 h", not "1 h 0 min".
-        XCTAssertEqual(lines(audio(percent: 50, placeMs: 3_600_000)).progress, "1 h left")
-        XCTAssertEqual(lines(audio(percent: 99, placeMs: 2 * 3_600_000 - 30_000)).progress, "under 1 min left")
+        XCTAssertEqual(lines(audio(percent: 50, placeMs: 3_600_000)).progress, "1 h")
+        XCTAssertEqual(lines(audio(percent: 99, placeMs: 2 * 3_600_000 - 30_000)).progress, "under 1 min")
         XCTAssertEqual(lines(audio(percent: 99, placeMs: 2 * 3_600_000 - 30_000)).progressSpoken, "99 percent listened, less than a minute left")
         // A place past the end (a stale duration) is the end, never a negative.
-        XCTAssertEqual(lines(audio(percent: 99, placeMs: 3 * 3_600_000)).progress, "under 1 min left")
+        XCTAssertEqual(lines(audio(percent: 99, placeMs: 3 * 3_600_000)).progress, "under 1 min")
     }
 
     func testAnInProgressRowWithNothingToCountAgainstShowsThePercentAsToday() {
@@ -66,9 +66,9 @@ final class LibraryRowLinesTests: XCTestCase {
     }
 
     func testANotStartedRowShowsItsLengthOrNothing() {
-        XCTAssertEqual(lines(text()).progress, "about 25 min")
+        XCTAssertEqual(lines(text()).progress, "25 min")
         XCTAssertEqual(lines(text()).progressSpoken, "about 25 minutes")
-        XCTAssertEqual(lines(text(), speed: 2).progress, "about 13 min")
+        XCTAssertEqual(lines(text(), speed: 2).progress, "13 min")
         XCTAssertEqual(lines(text(characters: 300)).progress, "under 1 min")
         XCTAssertEqual(lines(text(characters: 300)).progressSpoken, "less than a minute")
         XCTAssertEqual(lines(audio(durationMs: 41 * 60_000)).progress, "41 min")
@@ -84,26 +84,32 @@ final class LibraryRowLinesTests: XCTestCase {
         var row = text(percent: 50, characters: 63_000) // 75 min total at 1x, 37.5 min left, rounds to 38
         row.mediaDurationMs = 10_000
         row.continuationMediaTimeMs = 9_000
-        XCTAssertEqual(lines(row).progress, "about 38 min left")
+        XCTAssertEqual(lines(row).progress, "38 min")
         var long = text(percent: 10, characters: 63_000) // 90% of 75 min is 67.5 min left, rounds to 68
         long.mediaDurationMs = 10_000
-        XCTAssertEqual(lines(long).progress, "about 1 h 8 min left")
+        XCTAssertEqual(lines(long).progress, "1 h 8 min")
         XCTAssertEqual(lines(long).progressSpoken, "10 percent listened, about 1 hour 8 minutes left")
     }
 
     func testASessionAtZeroPercentIsNotStarted() {
-        XCTAssertEqual(lines(text(percent: 0)).progress, "about 25 min")
+        XCTAssertEqual(lines(text(percent: 0)).progress, "25 min")
         XCTAssertNil(lines(text(percent: 0)).ringFraction)
         XCTAssertEqual(lines(audio(percent: 0, durationMs: 41 * 60_000, placeMs: 0)).progress, "41 min")
     }
 
-    func testAFinishedRowSaysCompletedWhateverElseItHolds() {
-        XCTAssertEqual(lines(text(percent: 99, completed: true)).progress, "Completed")
-        XCTAssertEqual(lines(audio(percent: 100, completed: true, placeMs: 5)).progress, "Completed")
-        XCTAssertEqual(lines(text(completed: true)).progress, "Completed", "marked complete with no session")
-        XCTAssertEqual(lines(text(completed: true), exported: true).progress, "Completed · Exported")
-        XCTAssertEqual(lines(text(completed: true), exported: true).progressSpoken, "Completed, exported")
-        XCTAssertEqual(lines(text(completed: true)).progressSpoken, "Completed")
+    func testAFinishedRowShowsItsWholeLengthAndSaysCompletedOnlyToVoiceOver() {
+        // #4698: "Completed" took the length's place on screen; the length stays and the check (or nothing) marks it.
+        XCTAssertEqual(lines(text(percent: 99, completed: true)).progress, "25 min")
+        XCTAssertEqual(lines(text(percent: 99, completed: true)).progressSpoken, "Completed, about 25 minutes")
+        XCTAssertEqual(lines(audio(percent: 100, completed: true, placeMs: 5)).progress, "2 h", "the whole length, not what was left")
+        XCTAssertEqual(lines(audio(percent: 100, completed: true, placeMs: 5)).progressSpoken, "Completed, 2 hours")
+        XCTAssertEqual(lines(text(completed: true)).progress, "25 min", "marked complete with no session")
+        XCTAssertEqual(lines(text(completed: true), exported: true).progress, "25 min · Exported")
+        XCTAssertEqual(lines(text(completed: true), exported: true).progressSpoken, "Completed, exported, about 25 minutes")
+        XCTAssertNil(lines(audio(completed: true, durationMs: nil)).progress, "no length and not exported: nothing on screen")
+        XCTAssertEqual(lines(audio(completed: true, durationMs: nil)).progressSpoken, "Completed")
+        XCTAssertEqual(lines(audio(completed: true, durationMs: nil), exported: true).progress, "Exported")
+        XCTAssertNil(lines(text(percent: 99, completed: true)).ringFraction)
     }
 
     func testTheRingShowsOnlyForAnItemInProgress() {
@@ -115,57 +121,50 @@ final class LibraryRowLinesTests: XCTestCase {
         XCTAssertNil(lines(text(percent: -5)).ringFraction)
     }
 
-    // MARK: Margins line
+    // MARK: Margins tag (#4698)
 
-    func testTheMarginsLineIsOneLineWithTheOwnPartShortenedBesideAFriends() {
-        let shared = SharedMarginTally(total: 3, new: 1)
-        let both = lines(text(marginCount: 2, shared: shared))
-        XCTAssertEqual(both.ownMargins, "2 yours")
-        XCTAssertEqual(both.friendMargins, "3 shared Margins · 1 new")
-        XCTAssertTrue(both.friendMarginsAreNew)
-        XCTAssertEqual(both.marginsSpoken, "2 of your Margins. 3 Margins from other listeners, 1 new to you")
-        XCTAssertTrue(both.hasMarginsLine)
+    func testTheTagCountsEveryMarginOnTheItemOnce() {
+        let shared = SharedMarginTally(total: 3, new: 1, senders: [.init(key: "c", name: "Cole", count: 3)])
+        let both = lines(text(marginCount: 11, shared: shared))
+        XCTAssertEqual(both.marginTag, "14")
+        XCTAssertTrue(both.hasNewMargins)
+        XCTAssertEqual(both.marginsSpoken, "14 Margins, 1 new from Cole")
 
         let own = lines(text(marginCount: 2))
-        XCTAssertEqual(own.ownMargins, "2 Margins")
-        XCTAssertNil(own.friendMargins)
-        XCTAssertFalse(own.friendMarginsAreNew)
-        XCTAssertEqual(own.marginsSpoken, "2 of your Margins")
-        XCTAssertEqual(lines(text(marginCount: 1)).ownMargins, "1 Margin")
-        XCTAssertEqual(lines(text(marginCount: 1)).marginsSpoken, "1 Margin of yours")
+        XCTAssertEqual(own.marginTag, "2")
+        XCTAssertFalse(own.hasNewMargins)
+        XCTAssertEqual(own.marginsSpoken, "2 Margins")
+        XCTAssertEqual(lines(text(marginCount: 1)).marginsSpoken, "1 Margin")
 
         let friends = lines(text(shared: shared))
-        XCTAssertNil(friends.ownMargins)
-        XCTAssertEqual(friends.friendMargins, "3 shared Margins · 1 new")
-        XCTAssertEqual(friends.marginsSpoken, "3 Margins from other listeners, 1 new to you")
+        XCTAssertEqual(friends.marginTag, "3")
+        XCTAssertEqual(friends.marginsSpoken, "3 Margins, 1 new from Cole")
 
         let none = lines(text())
-        XCTAssertFalse(none.hasMarginsLine)
+        XCTAssertNil(none.marginTag)
+        XCTAssertFalse(none.hasNewMargins)
         XCTAssertNil(none.marginsSpoken)
     }
 
-    func testNothingIsCalledNewUnlessItIs() {
-        let heard = lines(text(marginCount: 2, shared: SharedMarginTally(total: 3, new: 0)))
-        XCTAssertFalse(heard.friendMarginsAreNew)
-        XCTAssertEqual(heard.friendMargins, "3 shared Margins")
-        XCTAssertEqual(heard.ownMargins, "2 yours")
-        XCTAssertEqual(heard.marginsSpoken, "2 of your Margins. 3 Margins from other listeners")
-        XCTAssertFalse(lines(text(shared: .none)).friendMarginsAreNew)
-        XCTAssertFalse(lines(text(marginCount: -3)).hasMarginsLine, "a negative count is no count")
+    func testTheTagStopsAtNinetyNinePlus() {
+        XCTAssertEqual(lines(text(marginCount: 99)).marginTag, "99")
+        XCTAssertEqual(lines(text(marginCount: 60, shared: SharedMarginTally(total: 40, new: 0))).marginTag, "99+")
+        XCTAssertEqual(lines(text(marginCount: 60, shared: SharedMarginTally(total: 40, new: 0))).marginsSpoken, "100 Margins",
+                       "VoiceOver says the real count")
     }
 
-    func testTheFriendPartTakesWhateverWordsTheCallerPasses() {
-        // #3794 owns the friend line's words; the row keeps them whole.
-        let row = text(marginCount: 1, shared: SharedMarginTally(total: 2, new: 2))
-        let named = LibraryRowLines(row: row, friendLine: "2 new Margins from Sam", friendSpokenLine: "2 Margins from Sam, new to you")
-        XCTAssertEqual(named.friendMargins, "2 new Margins from Sam")
-        XCTAssertTrue(named.friendMarginsAreNew)
-        XCTAssertEqual(named.ownMargins, "1 yours")
-        XCTAssertEqual(named.marginsSpoken, "1 Margin of yours. 2 Margins from Sam, new to you")
-        // Without spoken words of its own, the visible words are spoken.
-        XCTAssertEqual(LibraryRowLines(row: row, friendLine: "From Sam").marginsSpoken, "1 Margin of yours. From Sam")
-        // A custom line with no tally behind it is never "new".
-        XCTAssertFalse(LibraryRowLines(row: text(), friendLine: "From Sam").friendMarginsAreNew)
+    func testTheNewOnesSayWhoTheyAreFrom() {
+        XCTAssertEqual(lines(text(shared: SharedMarginTally(total: 2, new: 2))).marginsSpoken, "2 Margins, 2 new from a friend")
+        let two = SharedMarginTally(total: 5, new: 2, senders: [.init(key: "c", name: "Cole", count: 3), .init(key: "s", name: "Sam", count: 2)])
+        XCTAssertEqual(lines(text(shared: two)).marginsSpoken, "5 Margins, 2 new from friends")
+    }
+
+    func testOnlyAFriendsUnheardMarginsLightTheDot() {
+        let heard = lines(text(marginCount: 2, shared: SharedMarginTally(total: 3, new: 0, senders: [.init(key: "c", name: "Cole", count: 3)])))
+        XCTAssertFalse(heard.hasNewMargins)
+        XCTAssertEqual(heard.marginTag, "5")
+        XCTAssertEqual(heard.marginsSpoken, "5 Margins")
+        XCTAssertNil(lines(text(marginCount: -3)).marginTag, "a negative count is no count")
     }
 
     // MARK: The builder fills the two new fields from what it already holds
@@ -192,7 +191,7 @@ final class LibraryRowLinesTests: XCTestCase {
         let mid = try XCTUnwrap(rows["mid"])
         XCTAssertEqual(mid.mediaDurationMs, 7_200_000)
         XCTAssertEqual(mid.continuationMediaTimeMs, 3_000_000)
-        XCTAssertEqual(LibraryRowLines(row: mid).progress, "1 h 10 min left", "7 200 s minus 3 000 s is 4 200 s")
+        XCTAssertEqual(LibraryRowLines(row: mid).progress, "1 h 10 min", "7 200 s minus 3 000 s is 4 200 s")
         let fresh = try XCTUnwrap(rows["fresh"])
         XCTAssertEqual(fresh.mediaDurationMs, 2_460_000)
         XCTAssertNil(fresh.continuationMediaTimeMs)

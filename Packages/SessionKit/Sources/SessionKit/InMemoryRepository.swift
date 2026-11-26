@@ -41,6 +41,7 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     public var sourceElements: [String: SourceElementsRecord] = [:]
     /// Publisher audio by item id (#545).
     public var publisherAudio: [String: PublisherAudio] = [:]
+    public var publisherAudioChoices: [String: PublisherAudioChoice] = [:]
     public var communityMapUploads: [String: CommunityMapUploadRecord] = [:]
 
     public init(
@@ -217,6 +218,7 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
         if interjection.firstHeardAt == nil { interjection.firstHeardAt = importedCommentaryInterjections[interjection.id]?.firstHeardAt }
         if interjection.listenerReadAloud == nil { interjection.listenerReadAloud = importedCommentaryInterjections[interjection.id]?.listenerReadAloud }
         interjection.keepNewerSenderReadAloud(from: importedCommentaryInterjections[interjection.id])
+        interjection.keepNewerSenderLeadIn(from: importedCommentaryInterjections[interjection.id])
         var aliases = importedCommentaryInterjections[interjection.id]?.alsoSharedAs ?? []
         for identity in interjection.alsoSharedAs ?? [] where !aliases.contains(identity) { aliases.append(identity) }
         interjection.alsoSharedAs = aliases.isEmpty ? nil : aliases
@@ -493,6 +495,9 @@ extension InMemorySessionRepository: CommunityMapUploadRepository {
 extension InMemorySessionRepository: PublisherAudioRepository {
     public func savePublisherAudio(_ audio: PublisherAudio) throws { publisherAudio[audio.itemId] = audio }
     public func loadPublisherAudio(itemId: String) throws -> PublisherAudio? { publisherAudio[itemId] }
+    public func loadPublisherAudioChoice(itemId: String) throws -> PublisherAudioChoice? { publisherAudioChoices[itemId] }
+    public func savePublisherAudioChoice(_ choice: PublisherAudioChoice) throws { publisherAudioChoices[choice.itemId] = choice }
+    public func deletePublisherAudioChoice(itemId: String) throws { publisherAudioChoices[itemId] = nil }
 }
 
 extension InMemorySessionRepository: SessionRecordCounting {

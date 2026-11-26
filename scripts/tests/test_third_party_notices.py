@@ -5,6 +5,7 @@ fails when a dependency, a bundled model or a bundled folder has no entry. These
 repository, then on a small copy with one gap opened at a time, so each gap is shown to fail the check.
 """
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -195,7 +196,9 @@ class ThirdPartyNoticesTests(unittest.TestCase):
         root = self.tree()
         swift = root / 'Packages/SessionKit/Package.swift'
         text = swift.read_text()
-        swift.write_text(text.replace('exact: "1.24.2"', 'exact: "1.99.0"'))
+        changed = re.sub(r'(onnxruntime-swift-package-manager\.git",\s*exact: )"[^"]+"', r'\1"1.99.0"', text)
+        self.assertNotEqual(changed, text)  # the pin moved (#4913); a stale literal must not make this pass vacuously
+        swift.write_text(changed)
         self.assertProblem(root, 'Swift package onnxruntime-swift-package-manager: Package.swift')
         swift.write_text(text)
         self.edit_json(root / 'package.json', lambda d: d['devDependencies'].update({'esbuild': '0.99.0'}))

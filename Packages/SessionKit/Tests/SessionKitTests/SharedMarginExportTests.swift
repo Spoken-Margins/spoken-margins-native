@@ -8,26 +8,6 @@ import XCTest
 final class SharedMarginExportTests: XCTestCase {
     private let date = Date(timeIntervalSince1970: 1_777_000_000)
 
-    func testAnchorWarningsKeepExactCopyAndOnlyWarnForNativeAudioWithoutEvidence() {
-        let cases: [(PodcastAnchorEvidenceCaptureStatus?, String?)] = [
-            (.pendingPostResumeSample, "High-reliability evidence is capturing. Continue podcast playback for about 12 seconds before sharing this Margin."),
-            (.pendingExactLocalCapture, "High-reliability evidence is being prepared from the podcast edition currently playing."),
-            (.ready, nil),
-            (.unavailable, "High-reliability anchor evidence was unavailable at capture. Transcript context may still resolve this Margin; a timestamp alone will not be treated as verified."),
-            (nil, "High-reliability anchor evidence was unavailable at capture. Transcript context may still resolve this Margin; a timestamp alone will not be treated as verified."),
-        ]
-        for (status, warning) in cases {
-            for evidence: [CapturedPodcastAnchorEvidence]? in [nil, [], [capturedEvidence]] {
-                var margin = margin()
-                margin.podcastAnchorEvidenceCaptureStatus = status
-                margin.podcastAnchorEvidence = evidence
-                XCTAssertEqual(SharedMarginExport.anchorWarning(for: margin, isNativeAudio: true),
-                               (evidence ?? []).isEmpty ? warning : nil, "\(String(describing: status)), \(String(describing: evidence))")
-                XCTAssertNil(SharedMarginExport.anchorWarning(for: margin, isNativeAudio: false))
-            }
-        }
-    }
-
     func testExactTextUsesCharacterOffsetsAndOnlyValidNonemptyRanges() {
         // The emoji and decomposed accent each occupy one Character, but multiple UTF-8 bytes.
         let text = "A👩🏽‍🚀e\u{301}Z"

@@ -178,7 +178,7 @@ final class PinnedMarginCardTests: XCTestCase {
         // `stopReview` pauses the source and goes back only to undo the review's own hop (`MarginMomentSequence.placeToReturnToWhenStopped`).
         // It is drawn only at a review's lead-in now, never while a voice plays.
         let stop = card(cole, .comingUp(msRemaining: 8_000), press: more).actions[1]
-        XCTAssertEqual(stop.title, "Stop")
+        XCTAssertEqual(stop.title, "Stop Margins", "it says what it stops (#4611); the hint says it also pauses")
         XCTAssertEqual(stop.hint, "Stops these Margins and pauses the episode. If none of them has played yet, it goes back to where you were.")
         XCTAssertFalse(stop.hint.contains("carries on"))
     }
@@ -210,12 +210,12 @@ final class PinnedMarginCardTests: XCTestCase {
 
     func testAReviewsLeadInMainButtonIsThePressAndItsExitIsStop() {
         let far = card(cole, .comingUp(msRemaining: 39 * 60_000), press: seek)
-        XCTAssertEqual(titles(far), ["Skip to just before Cole", "Stop"])
+        XCTAssertEqual(titles(far), ["Skip to just before Cole", "Stop Margins"])
         XCTAssertEqual(far.actions.map(\.job), [.goToNextMargin, .stopReview])
         XCTAssertEqual(far.actions[0].hint, "Moves the episode to about 20 seconds before this Margin.")
         for press in [NextMarginPress.playMarginNow, .unavailable, .skipVoice] {
             let near = card(cole, .comingUp(msRemaining: 8_000), press: press)
-            XCTAssertEqual(titles(near), ["Skip to Cole now", "Stop"], "\(press)")
+            XCTAssertEqual(titles(near), ["Skip to Cole now", "Stop Margins"], "\(press)")
             XCTAssertEqual(near.actions.map(\.job), [.playMomentNow, .stopReview])
         }
         for c in [far, card(cole, .comingUp(msRemaining: 8_000))] {
@@ -462,9 +462,10 @@ final class PinnedMarginCardTests: XCTestCase {
         XCTAssertEqual(card(cole, .upNext(msRemaining: 90_000, arrival: .playsByItself), press: .playMarginNow).actions[0].hint, "Plays the next Margin now.")
     }
 
-    func testOnlyTheNextMarginButtonFollowsTheRecordingLock() {
+    func testOnlyTheButtonsThatMoveThePlayheadFollowTheRecordingLock() {
         XCTAssertTrue(PinnedMarginCard.Action.Job.goToNextMargin.followsNavigationLock)
-        for job in [PinnedMarginCard.Action.Job.skipThisMargin, .retry, .playMomentNow, .keepListening, .stopReview, .stopPlayingMine, .listen, .dismiss] {
+        XCTAssertTrue(PinnedMarginCard.Action.Job.startEarlier.followsNavigationLock, "#4171: it seeks back, like Next Margin")
+        for job in [PinnedMarginCard.Action.Job.skipThisMargin, .retry, .playMomentNow, .keepListening, .stopReview, .stopPlayingMine, .listen, .dismiss, .dismissSilentMargin] {
             XCTAssertFalse(job.followsNavigationLock, "\(job)")
         }
     }

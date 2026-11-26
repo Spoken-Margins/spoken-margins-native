@@ -125,13 +125,17 @@ extension Gate1AppModel {
         }
     }
 
-    /// `items` are the Library's live items, taken from the read the caller already made (#2507).
-    func reconcileOnboardingEvidence(items: [LibraryItemSummary], store: SQLiteSessionStore) throws {
+    /// `items` are the Library's live items, taken from the read the caller already made (#2507). Returns whether the
+    /// Library holds a Margin, from the one read this already makes (the Watch card's "a Margin at launch", #4563).
+    @discardableResult
+    func reconcileOnboardingEvidence(items: [LibraryItemSummary], store: SQLiteSessionStore) throws -> Bool {
         var evidence = OnboardingEvidenceClassifier.sourceSteps(items: items)
-        if try store.hasActiveInterjection() {
+        let hasMargin = try store.hasActiveInterjection()
+        if hasMargin {
             evidence.insert(.firstInterjection)
         }
         markOnboardingSteps(evidence)
+        return hasMargin
     }
 
     func dismissOnboardingCard() {

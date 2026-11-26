@@ -27,7 +27,7 @@ struct NativeTextPeekView: View {
         _browser = State(initialValue: PlaybackTextReaderBrowser(text: text, chapters: chapters, opening: target))
     }
 
-    private var reader: PlaybackLivePassage.Reader { browser.current.reader }
+    private var reader: PlaybackLivePassage.Reader { browser.reader }
 
     var body: some View {
         NavigationStack {

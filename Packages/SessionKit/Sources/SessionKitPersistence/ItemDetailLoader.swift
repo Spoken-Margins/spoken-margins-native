@@ -48,7 +48,9 @@ public struct ItemDetailLoader {
         // take is added, so a time read back now could name other words (#3664). It keeps the words it was made on.
         let isNote = SpokenNoteItem.isSpokenNote(mediaType: item.mediaType)
         func placedByTime(_ margin: Interjection) -> Bool {
-            margin.targetType == .item && margin.anchor.mediaTimeMs != nil
+            // A moved Margin with no place stores a zero media time that names the episode's opening, not its moment
+            // (#4233): it keeps the empty context it has rather than words from the start of the episode.
+            margin.targetType == .item && margin.hasPlace && margin.anchor.mediaTimeMs != nil
                 && !(isNote && SpokenNoteMargins.isSentenceAnchored(margin.anchor))
         }
         // Only a Margin that is placed by media time needs the segments to name its surrounding words.
@@ -91,10 +93,12 @@ public struct ItemDetailLoader {
             }
             return Set(turn.sourceInterjectionIds).isSubset(of: activeInterjectionIDs)
         }
-        let sessionRows = sessions.map { session in
-            let notes = ((try? store.loadInterjections(sessionId: session.id)) ?? [])
-                .filter { $0.status == "active" }
-            return SessionPresentation(
+        let activeNotesBySession = sessions.map { session in
+            (session, ((try? store.loadInterjections(sessionId: session.id)) ?? []).filter { $0.status == "active" })
+        }
+        let itemOwnMargins = activeNotesBySession.flatMap { $0.1 }
+        let sessionRows = activeNotesBySession.map { session, notes in
+            SessionPresentation(
                 session: session,
                 interjectionCount: notes.count,
                 interjectionPreview: notes.reversed().compactMap { note in
@@ -143,6 +147,7 @@ public struct ItemDetailLoader {
             listeningMapSummarySpans: sceneStarts.summarySpans,
             mediaDurationMs: item.media?.durationMs ?? timelineSummary?.durationMs,
             isNativeAudio: isNativeAudio,
+            isSpokenNote: isNote,
             lengthMs: PlayableLength.ms(media: item.media),
             lengthTextCharacterCount: isNativeAudio ? nil : item.textCharacterCount,
             documentStructure: item.documentStructure,
@@ -150,6 +155,7 @@ public struct ItemDetailLoader {
             addedAgainAt: item.addedAgainAt,
             sessionRows: sessionRows,
             interjections: interjections,
+            itemOwnMargins: itemOwnMargins,
             importedCommentaryLayers: importedLayers,
             importedCommentaryInterjections: importedInterjections,
             sharedMarginPlacement: placementPasses.pass(itemId: item.id),

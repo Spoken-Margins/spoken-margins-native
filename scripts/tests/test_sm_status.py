@@ -96,7 +96,7 @@ def routes_for(*bundles, tip=HEAD):
         n, sha = b['pull']['number'], b['pull']['head']['sha']
         routes.update({f'pulls/{n}': b['pull'], f'issues/{n}/comments': b['comments'],
                        f'issues/{n}/events': b['events'], f'pulls/{n}/files': b['files'],
-                       f'commits/{sha}/check-runs': b['check_runs']})
+                       f'commits/{sha}/check-runs': b['check_runs'], f'commits/{sha}/statuses': b.get('statuses', [])})
     return routes
 
 
@@ -111,7 +111,7 @@ class RecordedPullRequests(unittest.TestCase):
         self.assertEqual(row['mergeable'], 'conflict')
         self.assertIn('red-on-head', codes(row))
         self.assertIn('conflict', codes(row))
-        self.assertIn('t3-held', codes(row))
+        self.assertNotIn('t3-held', codes(row))  # a T3 holds no merge since #4572
         self.assertIn('inconclusive-on-head', codes(row))
         self.assertEqual(row['issue'], 322)
         self.assertIn('lane', row['checks']['failing'])
@@ -182,8 +182,7 @@ class RedOnHead(unittest.TestCase):
     def test_a_t3_fail_on_the_head_is_red_even_after_a_later_automerge_pass(self):
         row = status.analyse(bundle([request(), report('FAIL', tier='T3', rid='pr1-r1'),
                                      report('PASS', tier='auto', rid='pr1-r2', at='2026-10-14T18:50:00Z')]))
-        self.assertIn('red-on-head', codes(row))
-        self.assertIn('t3-held', codes(row))
+        self.assertEqual(codes(row), ['red-on-head'])  # reported red, but no t3-held: it holds nothing (#4572)
 
     def test_a_failing_check_run_is_red_without_any_report(self):
         row = status.analyse(bundle(checks=[{'id': 5, 'name': 'sessionkit-core', 'status': 'completed',
@@ -202,6 +201,16 @@ class RedOnHead(unittest.TestCase):
         row = status.analyse(bundle(checks=[{'id': 5, 'name': 'automerge', 'status': 'in_progress', 'conclusion': None}]))
         self.assertEqual(row['checks']['running'], ['automerge'])
         self.assertEqual(row['flags'], [])
+
+    def test_the_merge_policy_commit_status_counts_as_a_check(self):
+        # #5162: `merge policy` is a commit status, newest first from the API.
+        def with_statuses(*states):
+            b = bundle()
+            b['statuses'] = [{'id': 10 - n, 'context': 'merge policy', 'state': s} for n, s in enumerate(states)]
+            return status.analyse(b)['checks']
+        self.assertEqual(with_statuses('failure', 'pending')['failing'], ['merge policy'])
+        self.assertEqual(with_statuses('pending')['running'], ['merge policy'])
+        self.assertEqual(with_statuses('success', 'failure')['failing'], [])
 
     def test_an_inconclusive_report_is_not_a_pass_and_is_flagged(self):
         row = status.analyse(bundle([report('INCONCLUSIVE')]))
@@ -316,34 +325,23 @@ class RunnerIdHasOneCopy(unittest.TestCase):
         self.assertEqual(own, [], 'import RUNNER_ID from runner_report_id instead of copying the pattern')
 
 
-class T3Gate(unittest.TestCase):
+class OptionalT3(unittest.TestCase):
+    """#4572: a T3 holds no merge, so sm_status says only when a request will never be answered."""
     QUEUED = ('automerge', 'lane:queued')
 
-    def test_a_request_with_no_report_holds_the_merge(self):
-        row = status.analyse(bundle([request()], labels=self.QUEUED))
-        self.assertEqual(codes(row), ['t3-held'])
+    def test_a_queued_request_with_no_report_is_not_flagged(self):
+        self.assertEqual(codes(status.analyse(bundle([request()], labels=self.QUEUED))), [])
+        self.assertEqual(codes(status.analyse(bundle([request()], labels=('automerge', 'lane:running')))), [])
 
     def test_a_request_nothing_will_run_is_called_out(self):
         # lane.yml runs on the label event: no lane:queued / lane:running means the request sits forever
-        self.assertEqual(codes(status.analyse(bundle([request()]))), ['t3-held', 't3-unqueued'])
-        self.assertEqual(codes(status.analyse(bundle([request()], labels=('automerge', 'lane:running')))), ['t3-held'])
+        self.assertEqual(codes(status.analyse(bundle([request()]))), ['t3-unqueued'])
 
-    def test_a_t3_pass_after_the_request_releases_it(self):
-        row = status.analyse(bundle([request(), report('PASS', tier='T3')]))
-        self.assertEqual(codes(row), [])
-        self.assertEqual(codes(status.analyse(bundle([request(), report('PASS', tier='T3')], labels=self.QUEUED))), [])
-
-    def test_a_t3_fail_on_an_earlier_commit_still_holds_a_new_head(self):
-        row = status.analyse(bundle([request(commit=OLD[:7]), report('FAIL', commit=OLD, tier='T3')]))
-        held = [f for f in row['flags'] if f['code'] == 't3-held']
-        self.assertEqual(held[0]['severity'], status.RED)
-        self.assertIn('not the head', held[0]['detail'])
-
-    def test_a_new_request_after_the_fail_is_waiting_not_red(self):
-        row = status.analyse(bundle([request(commit=OLD[:7]), report('FAIL', commit=OLD, tier='T3'),
-                                     request(at='2026-10-14T19:00:00Z')], labels=self.QUEUED))
-        held = [f for f in row['flags'] if f['code'] == 't3-held']
-        self.assertEqual([f['severity'] for f in held], [status.LOOK])
+    def test_a_t3_report_answers_it_and_a_fail_on_an_older_head_holds_nothing(self):
+        self.assertEqual(codes(status.analyse(bundle([request(), report('PASS', tier='T3')]))), [])
+        # the head itself has no report (older-head-only), but nothing is held for the T3
+        self.assertEqual(codes(status.analyse(bundle([request(commit=OLD[:7]), report('FAIL', commit=OLD, tier='T3')]))),
+                         ['older-head-only'])
 
 
 class Conflict(unittest.TestCase):
@@ -387,22 +385,10 @@ class HeldByTheRunner(unittest.TestCase):
         self.assertEqual(codes(status.analyse(bundle([old]))), ['older-head-only'])
 
 
-class ArmedWithoutARequest(unittest.TestCase):
-    def test_an_armed_app_change_with_no_t3_request_is_flagged(self):
-        row = status.analyse(bundle(files=[APP_FILE]))
-        self.assertEqual(codes(row), ['armed-no-lane-request'])
-
-    def test_a_request_or_a_t3_report_answers_it(self):
-        self.assertEqual(codes(status.analyse(bundle([request()], files=[APP_FILE], labels=('automerge', 'lane:queued')))),
-                         ['t3-held'])
-        self.assertEqual(codes(status.analyse(bundle([request(), report('PASS', tier='T3')], files=[APP_FILE]))), [])
-
-    def test_an_unarmed_pr_or_a_docs_change_is_not_flagged(self):
-        self.assertEqual(codes(status.analyse(bundle(files=[APP_FILE], labels=()))), [])
-        self.assertEqual(codes(status.analyse(bundle(files=['docs/journeys.md']))), [])
-
-    def test_a_lane_request_for_t4_does_not_count_as_a_t3_request(self):
-        self.assertEqual(codes(status.analyse(bundle([request('T4')], files=[APP_FILE]))), ['armed-no-lane-request'])
+class ArmedAppChange(unittest.TestCase):
+    def test_an_armed_app_change_with_no_t3_request_is_not_flagged(self):
+        # #4572: it merges without a T3, so "armed-no-lane-request" is gone.
+        self.assertEqual(codes(status.analyse(bundle(files=[APP_FILE]))), [])
 
     def test_an_unknown_scope_says_so_instead_of_judging_what_it_cannot_know(self):
         def broken(paths):
@@ -608,29 +594,26 @@ class Paging(unittest.TestCase):
 
 
 class LaneFormatsStayInStep(unittest.TestCase):
-    """sm_status mirrors a few lane-runner.py constants. If the runner changes them, these fail first."""
+    """sm_status mirrors a few constants of lane_merge_rules.py. If those change, these fail first."""
 
     @classmethod
     def setUpClass(cls):
-        cls.runner = (SCRIPTS / 'lane-runner.py').read_text()
+        cls.rules = (SCRIPTS / 'lane_merge_rules.py').read_text()  # moved out of the runner (#4769)
 
     def test_the_owner_tap_paths_match_the_runners(self):
-        self.assertIn("OWNER_TAP_FILES = {'scripts/lane-runner.py'}", self.runner)
-        self.assertIn("OWNER_TAP_PREFIXES = ('.github/',)", self.runner)
-        self.assertEqual(status.OWNER_TAP_FILES, {'scripts/lane-runner.py'})
+        self.assertIn("OWNER_TAP_FILES = {'scripts/lane_merge_rules.py'}", self.rules)
+        self.assertIn("OWNER_TAP_PREFIXES = ('.github/',)", self.rules)
+        self.assertEqual(status.OWNER_TAP_FILES, {'scripts/lane_merge_rules.py'})
         self.assertEqual(status.OWNER_TAP_PREFIXES, ('.github/',))
 
     def test_the_audited_kinds_match_the_runners(self):
-        runner = re.search(r"AUDITED = \{(.*?)\}", self.runner).group(1)
+        runner = re.search(r"AUDITED = \{(.*?)\}", self.rules).group(1)
         self.assertEqual(dict(re.findall(r"'(\w+)': '([^']+)'", runner)),
                          {'audio': 'the audio session', 'persistence': 'persistence', 'packet': 'packets'})
         self.assertEqual(set(status.AUDITED_CATEGORIES), {'audio', 'persistence', 'packet'})
 
-    def test_the_report_request_and_note_formats_match_the_runner(self):
-        self.assertIn("REPORT = re.compile(r'^Lane report \\S+ — (PASS|FAIL|INCONCLUSIVE)', re.M)", self.runner)
-        self.assertIn("REQUEST = re.compile(r'^\\s*/lane\\s+(T\\d)\\b', re.M)", self.runner)
-        self.assertIn("NOTE = '<!-- lane-note -->'", self.runner)
-        self.assertIn("BOT = ('github-actions[bot]'", self.runner)
+    def test_the_bot_matches_the_merge_rules(self):
+        self.assertIn("BOT = ('github-actions[bot]'", self.rules)
 
 
 class RequestHeaders(unittest.TestCase):

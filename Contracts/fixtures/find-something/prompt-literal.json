@@ -1,0 +1,7 @@
+{
+  "answers": {
+    "who": "friend",
+    "now": "{answer} $& $1 \"quoted\" <b> \ud83c\udf99 e\u0301"
+  },
+  "expected": "I want to send a friend one podcast episode that we'll both have something to say about. Help me pick.\n\nAbout them:\n- What they watch, read or listen to now: {answer} $& $1 \"quoted\" <b> \ud83c\udf99 e\u0301\n\nSuggest 3 or 4 specific episodes (not shows). Put each on one line in this form:\nShow — Episode title | length | clean or explicit | suggested timestamp for my comment | link\nUse an Apple Podcasts episode link when you can. For a Substack, give the post link. One link per line, nothing else on the line after the link.\nUnder each episode line, add one line starting \"Why:\" with one sentence on why it suits them and one question I could end my comment with.\nBefore you answer, look up each link and confirm it opens that exact episode. Never write a link from memory or guess an ID. If you can't confirm an episode link, give the show's Apple Podcasts link and add (show link) before it."
+}

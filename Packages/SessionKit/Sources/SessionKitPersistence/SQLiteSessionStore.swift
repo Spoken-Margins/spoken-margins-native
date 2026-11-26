@@ -21,9 +21,13 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     public static let currentSchemaVersion = 5
     /// The Library read, audio preparation, the map preparer and the placement passes can read together, and the main thread beside them.
     private static let readConnectionLimit = 6
-    private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job"]
+    private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job", MovedMarginOrigin.recordKind]
     var db: OpaquePointer?
     let connectionLock = NSRecursiveLock()
+    /// How long a save waits for another connection or process (an extension, say) that holds SQLite's write lock before
+    /// it gives up. A cache write for a read turns it off (`writeCacheForRead`) and puts this back. A test sets it high to
+    /// tell a read that waits from one that does not, on state and not on a clock (#4761).
+    var writeBusyTimeoutMs: Int32 = 1_000
     /// Test hook (#4308): called on a thread that finds `connectionLock` held, just before it waits, so a test that forces
     /// two writers to overlap can wait for the second to be blocked instead of sleeping. nil, and so a no-op, outside tests.
     var onWaitingForWriteLock: (@Sendable () -> Void)?
@@ -79,7 +83,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         }
         // WAL permits concurrent readers, but only one connection may write.
         // Allow brief independent transactions to finish instead of dropping a save.
-        sqlite3_busy_timeout(db, 1_000)
+        sqlite3_busy_timeout(db, writeBusyTimeoutMs)
         try migrate()
         // WAL lets readers run beside the writer. Without it (a file system that can't, or an in-memory database) a
         // second connection would see a different database or lock the writer out, so reads stay on the one connection.
@@ -305,6 +309,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         case "listening_map": return columns(ListeningMap.self, item: { $0.itemId })
         case "session": return columns(Session.self, session: { $0.id }, item: { $0.itemId })
         case "interjection": return columns(Interjection.self, session: { $0.sessionId }, item: { $0.itemId })
+        case MovedMarginOrigin.recordKind: return columns(MovedMarginOrigin.self, session: { $0.sessionId }, item: { $0.itemId })
         case "turn": return columns(ConversationTurn.self, session: { $0.sessionId }, item: { _ in nil })
         case "ai_job": return columns(AIJob.self, session: { $0.sessionId }, item: { $0.itemId })
         case "interjection_share_revision": return columns(InterjectionShareRevision.self, session: { $0.sessionId }, item: { $0.itemId })
@@ -317,7 +322,14 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         case "owned_offline_asset": return columns(OwnedOfflineAsset.self, item: { $0.itemId })
         case "feed_subscription": return columns(FeedSubscription.self, item: { _ in nil })
         case "feed_entry": return columns(FeedEntry.self, item: { _ in nil })
+        case "rule_suggestion_state": return columns(RuleSuggestionState.self, item: { _ in nil })
         case "item_collection": return columns(ItemCollection.self, item: { _ in nil })
+        case LibraryFolderRecord.recordKind: return columns(LibraryFolderRecord.self, item: { _ in nil })
+        case PaperSourceRecord.recordKind: return columns(PaperSourceRecord.self, item: { _ in nil })
+        case "follow_list": return columns(FollowList.self, item: { _ in nil })
+        case "follow_list_link": return columns(ListLink.self, item: { _ in nil })
+        case "listening_rule": return columns(ListeningRule.self, item: { _ in nil })
+        case "show_less_mark": return columns(ShowLessMark.self, item: { _ in nil })
         case TranscriptTimes.recordKind: return columns(TranscriptTimes.self, item: { $0.itemId })
         default: return nil
         }
@@ -409,7 +421,10 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     public func loadInterjections(sessionId: String) throws -> [Interjection] {
-        try loadBySession(kind: "interjection", sessionId: sessionId)
+        let rows: [StoredMarginRow] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind IN (?, ?) AND session_id = ? ORDER BY updated_at, id;",
+            ["interjection", MovedMarginOrigin.recordKind, sessionId])
+        return StoredMarginRow.margins(in: rows)
     }
 
     /// Makes a saved Margin a reply to `link`'s Margin, or independent when `link` is nil (#473). Only the link changes;
@@ -507,7 +522,10 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
 
     /// The Margin rows `deleteItem(id:)` removes with the item: every row filed under it.
     public func loadInterjections(itemId: String) throws -> [Interjection] {
-        try loadByItem(kind: "interjection", itemId: itemId)
+        let rows: [StoredMarginRow] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind IN (?, ?) AND item_id = ? ORDER BY updated_at, id;",
+            ["interjection", MovedMarginOrigin.recordKind, itemId])
+        return StoredMarginRow.margins(in: rows)
     }
 
     /// Settles the voice Margins left "pending" by an earlier run of the app as "failed", so they offer Retry
@@ -720,17 +738,18 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return revisions.filter { $0.interjectionId == interjectionId }
     }
 
-    /// For each Margin of an item that was ever shared as text, the read-aloud choice its newest share carried (#3472).
+    /// For each Margin of an item that was ever shared as text, the read-aloud choice its newest share carried (#3472),
+    /// keyed by `Interjection.sessionScopedId` (#4688): each pass numbers its Margins from "ij-001".
     /// One read for the item's shares that pulls only the Margin id and the choice out of each row, so the share sheet
     /// decodes no transcripts and reads no share once per Margin. Shares are saved once and never changed. `updated_at`
     /// counts whole seconds and share ids are random, so two shares saved in the same second are ordered by `rowid`,
     /// which is the order they were inserted in, not by `id`.
     public func loadLastSentReadAloud(itemId: String) throws -> [String: Bool] {
-        struct Row: Decodable { let margin: String; let choice: Int }
+        struct Row: Decodable { let session: String?; let margin: String; let choice: Int }
         var choices: [String: Bool] = [:]
         try readTexts(
             """
-            SELECT json_object('margin', json_extract(payload, '$.interjectionId'), 'choice', json_extract(payload, '$.sentReadAloud'))
+            SELECT json_object('session', json_extract(payload, '$.sessionId'), 'margin', json_extract(payload, '$.interjectionId'), 'choice', json_extract(payload, '$.sentReadAloud'))
             FROM records WHERE kind = 'interjection_share_revision' AND item_id = ?
               AND CASE WHEN json_valid(payload)
                        THEN json_extract(payload, '$.sentReadAloud') IS NOT NULL AND json_extract(payload, '$.interjectionId') IS NOT NULL
@@ -739,9 +758,32 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             """, [itemId], name: "last_sent_read_aloud"
         ) { text in
             guard let row = try? decoder.decode(Row.self, from: Data(text.utf8)) else { return }
-            choices[row.margin] = row.choice != 0
+            choices[Interjection.sessionScopedId(sessionId: row.session ?? "", id: row.margin)] = row.choice != 0
         }
         return choices
+    }
+
+    /// For each Margin of an item whose newest shares wrote a run-up length (#4171), the length its newest such share
+    /// wrote, keyed by `Interjection.sessionScopedId`. Same shape and ordering as `loadLastSentReadAloud`: one read that pulls out only the Margin id and the
+    /// length. A share that wrote none (the Margin was at 20 s and never shared at another length) is skipped, so it
+    /// leaves an earlier length where it was, as a recording leaves the read-aloud choice.
+    public func loadLastSentLeadIns(itemId: String) throws -> [String: Int] {
+        struct Row: Decodable { let session: String?; let margin: String; let leadIn: Int }
+        var lengths: [String: Int] = [:]
+        try readTexts(
+            """
+            SELECT json_object('session', json_extract(payload, '$.sessionId'), 'margin', json_extract(payload, '$.interjectionId'), 'leadIn', json_extract(payload, '$.sentLeadInMs'))
+            FROM records WHERE kind = 'interjection_share_revision' AND item_id = ?
+              AND CASE WHEN json_valid(payload)
+                       THEN json_extract(payload, '$.sentLeadInMs') IS NOT NULL AND json_extract(payload, '$.interjectionId') IS NOT NULL
+                       ELSE 0 END
+            ORDER BY updated_at ASC, rowid ASC;
+            """, [itemId], name: "last_sent_lead_ins"
+        ) { text in
+            guard let row = try? decoder.decode(Row.self, from: Data(text.utf8)) else { return }
+            lengths[Interjection.sessionScopedId(sessionId: row.session ?? "", id: row.margin)] = row.leadIn
+        }
+        return lengths
     }
 
     public func importCommentaryLayer(
@@ -891,6 +933,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
             // The same for the listener's read-aloud choice: a copy loaded before they made it must not undo it (#3427).
             if interjection.listenerReadAloud == nil { interjection.listenerReadAloud = stored?.listenerReadAloud }
             interjection.keepNewerSenderReadAloud(from: stored)
+            interjection.keepNewerSenderLeadIn(from: stored)
             var aliases = stored?.alsoSharedAs ?? []
             for identity in interjection.alsoSharedAs ?? [] where !aliases.contains(identity) { aliases.append(identity) }
             interjection.alsoSharedAs = aliases.isEmpty ? nil : aliases
@@ -1567,6 +1610,179 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try deleteRecord(kind: "item_collection", id: id)
     }
 
+    /// A followed reading list (#4341). Its own record kind with no item_id: no table or index changes and schema 5 stays,
+    /// an older build never queries the kind, and deleting an item never deletes one.
+    public func savePaperSource(_ record: PaperSourceRecord) throws {
+        try save(kind: PaperSourceRecord.recordKind, id: record.id, sessionId: nil, itemId: nil, value: record)
+    }
+
+    /// In the order they were followed.
+    public func loadPaperSources() throws -> [PaperSourceRecord] {
+        let records: [PaperSourceRecord] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;",
+            [PaperSourceRecord.recordKind]
+        )
+        return records.sorted { ($0.followedAt, $0.id) < ($1.followedAt, $1.id) }
+    }
+
+    public func deletePaperSource(id: String) throws {
+        try deleteRecord(kind: PaperSourceRecord.recordKind, id: id)
+    }
+
+    /// The read and the save in one transaction: a delete waits for it or goes first, never between.
+    @discardableResult
+    public func updatePaperSource(id: String, _ change: (inout PaperSourceRecord) throws -> Void) throws -> PaperSourceRecord? {
+        try withTransaction {
+            guard var record = try loadPaperSources().first(where: { $0.id == id }) else { return nil }
+            try change(&record)
+            try savePaperSource(record)
+            return record
+        }
+    }
+
+    /// A Library folder's own details (#3769), beside its `ItemCollection` under the same ID. A new record kind with no
+    /// item_id: no table or index changes and schema 5 stays, an older build never queries the kind, and deleting an item
+    /// never deletes one.
+    public func saveLibraryFolder(_ folder: LibraryFolderRecord) throws {
+        try save(kind: LibraryFolderRecord.recordKind, id: folder.id, sessionId: nil, itemId: nil, value: folder)
+    }
+
+    /// Oldest import first, so the order is stable.
+    public func loadLibraryFolders() throws -> [LibraryFolderRecord] {
+        let folders: [LibraryFolderRecord] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;",
+            [LibraryFolderRecord.recordKind]
+        )
+        return folders.sorted { ($0.importedAt, $0.id) < ($1.importedAt, $1.id) }
+    }
+
+    /// Removes only the record. The collection and every item and Margin stay.
+    public func deleteLibraryFolder(id: String) throws {
+        try deleteRecord(kind: LibraryFolderRecord.recordKind, id: id)
+    }
+
+    /// Follow lists (#4046) are their own record kind with no item_id, so Build 29 and the later shipped builds, which read
+    /// every record by an explicit kind, never see them. The record id is the list id, so a rename keeps it.
+    public func saveFollowList(_ list: FollowList) throws {
+        try save(kind: "follow_list", id: list.id, sessionId: nil, itemId: nil, value: list)
+    }
+
+    /// Oldest first, then by id, so the order is the same on every read. Chips sort by name themselves
+    /// (`FollowListName.chipOrder`).
+    public func loadFollowLists() throws -> [FollowList] {
+        let lists: [FollowList] = try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;", ["follow_list"])
+        return lists.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
+    }
+
+    public func loadFollowList(id: String) throws -> FollowList? {
+        try loadOptional(kind: "follow_list", id: id)
+    }
+
+    /// Deleting a list never unfollows a show. Its web addresses go with it, in the same transaction, so a deleted list can
+    /// never be checked again (#4046 PR 6).
+    public func deleteFollowList(id: String) throws {
+        try withTransaction {
+            for link in try loadListLinks() where link.listId == id { try deleteRecord(kind: "follow_list_link", id: link.id) }
+            try deleteRecord(kind: "follow_list", id: id)
+        }
+    }
+
+    /// List links (#4046 PR 6): a list's web address with its last accepted copy and any waiting change. Their own record
+    /// kind with no item_id, so the shipped builds' readers never see them. The record id is the link id.
+    public func saveListLink(_ link: ListLink) throws {
+        try save(kind: "follow_list_link", id: link.id, sessionId: nil, itemId: nil, value: link)
+    }
+
+    /// Oldest address first by id, so the order is the same on every read.
+    public func loadListLinks() throws -> [ListLink] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;", ["follow_list_link"])
+    }
+
+    public func loadListLink(id: String) throws -> ListLink? {
+        try loadOptional(kind: "follow_list_link", id: id)
+    }
+
+    public func deleteListLink(id: String) throws {
+        try deleteRecord(kind: "follow_list_link", id: id)
+    }
+
+    /// Writes a check's result onto the link as it is stored now, in one transaction (`ListLink.merging`), so what the
+    /// listener changed while the network answered is kept. A link deleted meanwhile stays deleted. Returns what was saved.
+    @discardableResult
+    public func saveCheckedListLink(_ checked: ListLink) throws -> ListLink? {
+        try withTransaction {
+            guard let current = try loadListLink(id: checked.id) else { return nil }
+            let merged = current.merging(checked: checked)
+            try saveListLink(merged)
+            return merged
+        }
+    }
+
+    /// Takes a show out of every list it is in, in one transaction (unfollow does this). A list left with no members stays.
+    /// Returns the ids of the lists that changed.
+    @discardableResult
+    public func removeFromFollowLists(feedKey: String?, podcastGUID: String? = nil) throws -> [String] {
+        try withTransaction {
+            var changed: [String] = []
+            for var list in try loadFollowLists() where list.remove(feedKey: feedKey, podcastGUID: podcastGUID) {
+                try saveFollowList(list)
+                changed.append(list.id)
+            }
+            return changed
+        }
+    }
+
+    /// Listening rules (#4046) are their own record kind with no item_id, so the shipped builds' readers never see them. A rule
+    /// does nothing until `isOn`. The record id is the rule id.
+    public func saveListeningRule(_ rule: ListeningRule) throws {
+        try save(kind: "listening_rule", id: rule.id, sessionId: nil, itemId: nil, value: rule)
+    }
+
+    /// Oldest first, then by id, so the order is the same on every read.
+    public func loadListeningRules() throws -> [ListeningRule] {
+        let rules: [ListeningRule] = try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;", ["listening_rule"])
+        return rules.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
+    }
+
+    public func loadListeningRule(id: String) throws -> ListeningRule? {
+        try loadOptional(kind: "listening_rule", id: id)
+    }
+
+    public func deleteListeningRule(id: String) throws {
+        try deleteRecord(kind: "listening_rule", id: id)
+    }
+
+    /// Show less marks (#4046). A mark's id is its entry id (else its item id), so marking an episode twice keeps one mark.
+    public func saveShowLessMark(_ mark: ShowLessMark) throws {
+        try save(kind: "show_less_mark", id: mark.id, sessionId: nil, itemId: nil, value: mark)
+    }
+
+    /// Oldest mark first, then by id.
+    public func loadShowLessMarks() throws -> [ShowLessMark] {
+        let marks: [ShowLessMark] = try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;", ["show_less_mark"])
+        return marks.sorted { ($0.markedAt, $0.id) < ($1.markedAt, $1.id) }
+    }
+
+    /// "Undo Show less". Takes the mark for the entry or, with none, the item.
+    public func deleteShowLessMark(entryId: String?, itemId: String?) throws {
+        try deleteRecord(kind: "show_less_mark", id: ShowLessMark.id(entryId: entryId, itemId: itemId))
+    }
+
+    /// Rule suggestion states (#4046): "Not now" and "Don't suggest this". Their own record kind with no item_id, so the shipped
+    /// builds' readers never see them. The record id is the suggestion's key, so putting one off twice keeps one record.
+    public func saveRuleSuggestionState(_ state: RuleSuggestionState) throws {
+        try save(kind: "rule_suggestion_state", id: state.key, sessionId: nil, itemId: nil, value: state)
+    }
+
+    /// In key order, so the order is the same on every read.
+    public func loadRuleSuggestionStates() throws -> [RuleSuggestionState] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;", ["rule_suggestion_state"])
+    }
+
+    public func deleteRuleSuggestionState(key: String) throws {
+        try deleteRecord(kind: "rule_suggestion_state", id: key)
+    }
+
     public func loadFeedSubscriptions() throws -> [FeedSubscription] {
         try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at DESC, id;", ["feed_subscription"])
     }
@@ -1724,12 +1940,12 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     /// The kinds whose live save path files the row under the item named in its payload (`item_id`). A kind
     /// that deliberately outlives its item, such as `community_map_upload`, is not here (#1466).
     private static let itemScopedQuarantineKinds = """
-        'item', 'listening_map', 'session', 'interjection', 'ai_job', 'interjection_share_revision', \
+        'item', 'listening_map', 'session', 'interjection', '\(MovedMarginOrigin.recordKind)', 'ai_job', 'interjection_share_revision', \
         'imported_commentary_layer', 'canonical_source', 'audio_asset', 'source_transcript_timeline', \
         'podcast_download', 'owned_offline_asset', 'episode_map_preparation_job', 'audio_preparation_job', \
         'prepared_audio_manifest', 'edition_fingerprint_spine', 'transcript_phrase_sketch', \
         'resolved_listening_map_projection', 'watch_audio_package', 'watch_sync_event', 'watch_package_request', \
-        '\(TranscriptTimes.recordKind)'
+        '\(TranscriptTimes.recordKind)', 'publisher_audio_choice'
         """
 
     private static let quarantinedRowBelongsToItem = """
@@ -2339,6 +2555,44 @@ public struct MarginNoteChanges: Equatable, Sendable {
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
+/// A row of a Margin read: a Margin, or the origin record of a moved Margin (#4233). One read gets both, so a Margin read
+/// costs the queries it always did. The two are told apart by `liveMarginId`, which only an origin has; a row of either
+/// kind that doesn't decode is set aside by `query` under its own kind and id.
+private enum StoredMarginRow: Decodable {
+    case margin(Interjection)
+    case origin(MovedMarginOrigin)
+
+    private enum Probe: String, CodingKey { case liveMarginId }
+
+    init(from decoder: Decoder) throws {
+        if try decoder.container(keyedBy: Probe.self).contains(.liveMarginId) {
+            self = .origin(try MovedMarginOrigin(from: decoder))
+        } else {
+            self = .margin(try Interjection(from: decoder))
+        }
+    }
+
+    /// The Margins, in the order read, each with its origin when it has one. Nothing is attached when no origin was read,
+    /// which is every Library until the Move feature ships.
+    static func margins(in rows: [StoredMarginRow]) -> [Interjection] {
+        var margins: [Interjection] = []
+        var origins: [String: MovedMarginOrigin] = [:]
+        for row in rows {
+            switch row {
+            case .margin(let margin): margins.append(margin)
+            case .origin(let origin): origins["\(origin.sessionId)::\(origin.marginId)"] = origin
+            }
+        }
+        guard !origins.isEmpty else { return margins }
+        return margins.map { margin in
+            guard let origin = origins["\(margin.sessionId)::\(margin.id)"] else { return margin }
+            var attached = margin
+            attached.movedOrigin = origin
+            return attached
+        }
+    }
+}
+
 private struct ImportedWatchSyncEvent: Codable {
     var id: String
     var importedAt: Date
@@ -2376,8 +2630,49 @@ extension SQLiteSessionStore: SessionRecordCounting {
 extension SQLiteSessionStore: InterjectionByIdReading {
     /// A Margin row is keyed by its session and id (`storageID`), so this is one primary-key read.
     public func loadInterjection(id: String, sessionId: String) throws -> Interjection? {
-        let stored: Interjection? = try loadOptional(kind: "interjection", id: storageID(kind: "interjection", id: id, sessionId: sessionId))
-        return stored.flatMap { $0.id == id && $0.sessionId == sessionId ? $0 : nil }
+        // The Margin and its origin share one storage id, so one read gets both.
+        let rows: [StoredMarginRow] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind IN (?, ?) AND id = ?;",
+            ["interjection", MovedMarginOrigin.recordKind, storageID(kind: "interjection", id: id, sessionId: sessionId)])
+        return StoredMarginRow.margins(in: rows).first { $0.id == id && $0.sessionId == sessionId }
+    }
+}
+
+/// The origin records of Margins moved from a live session onto an item (#4233), in the existing records table as kind
+/// "moved_margin_origin", one row per moved Margin, filed under the Margin's session and item like the Margin. No table or
+/// column changes and schema_version stays 5: a build that predates the kind selects records by kind and never reads it,
+/// and `deleteItem` removes the row with the item's others. A Margin that is deleted keeps its origin, so Undo brings back
+/// "Moved from".
+extension SQLiteSessionStore: MovedMarginOriginRepository {
+    public func saveMovedMarginOrigin(_ origin: MovedMarginOrigin) throws {
+        try save(kind: MovedMarginOrigin.recordKind, id: origin.marginId, sessionId: origin.sessionId, itemId: origin.itemId, value: origin)
+    }
+
+    public func deleteMovedMarginOrigin(marginId: String, sessionId: String) throws {
+        try deleteRecord(kind: MovedMarginOrigin.recordKind, id: storageID(kind: MovedMarginOrigin.recordKind, id: marginId, sessionId: sessionId))
+    }
+
+    public func loadMovedMarginOrigins() throws -> [MovedMarginOrigin] {
+        // The Margin and its origin share one storage id, so the join is on `id`. A row that isn't valid JSON is left out.
+        try query("""
+            SELECT kind, id, payload FROM records AS origin
+            WHERE kind = ? AND EXISTS (
+                SELECT 1 FROM records AS margin
+                WHERE margin.kind = 'interjection' AND margin.id = origin.id
+                  AND CASE WHEN json_valid(margin.payload) THEN json_extract(margin.payload, '$.status') = 'active' ELSE 0 END
+            ) ORDER BY updated_at, id;
+            """, [MovedMarginOrigin.recordKind])
+    }
+
+    /// Only a Margin that has an origin is deleted: a call with an ordinary Margin's id does nothing, so it can't destroy one.
+    public func deleteMovedMargin(id: String, sessionId: String) throws {
+        try withSessionTransaction {
+            let origin: MovedMarginOrigin? = try loadOptional(
+                kind: MovedMarginOrigin.recordKind, id: storageID(kind: MovedMarginOrigin.recordKind, id: id, sessionId: sessionId))
+            guard origin != nil else { return }
+            try deleteRecord(kind: "interjection", id: storageID(kind: "interjection", id: id, sessionId: sessionId))
+            try deleteRecord(kind: MovedMarginOrigin.recordKind, id: storageID(kind: MovedMarginOrigin.recordKind, id: id, sessionId: sessionId))
+        }
     }
 }
 
@@ -2476,6 +2771,34 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         }
     }
 
+    /// A copy of the listener's own Margin that an imported packet carried back (#4697) is not "from a friend": the same
+    /// rows every shared-Margin read below uses leave it out, so the Library row, its New count, the names and the Shared
+    /// Margins filter count only what other people made. It is the rule of `OwnMarginEchoes`, written for SQL: an own
+    /// Margin on the same item went out under the packet identity this Margin arrived as (its layer's digest and its
+    /// `packageScopedId`), or under one it also arrived as (`alsoSharedAs`, #858). Words and labels play no part. Only
+    /// active Margins that were shared at all are parsed (a string search skips the rest first), as the reply graph takes
+    /// only the listener's active Margins, so the row and the review agree. A broken payload matches nothing (`json_each`
+    /// throws on malformed text), a list element that is not an object is skipped by its `type` column (`json_type` on
+    /// the value would throw), and the own-Margin lookup is the `(kind, item_id)` index. There is no `;` in it: `newNotesSQL` adds the
+    /// hidden-list conditions by replacing its trailing one. Read-only: the stored copy is not touched.
+    static let notAnEchoOfOwnMarginSQL = """
+          AND NOT EXISTS (
+              SELECT 1 FROM records AS mine
+              JOIN json_each(CASE WHEN json_valid(mine.payload) THEN mine.payload ELSE '{}' END, '$.sharedAs') AS identity
+              WHERE mine.kind = 'interjection' AND mine.item_id = layer.item_id
+                AND instr(mine.payload, '"sharedAs"') > 0
+                AND CASE WHEN json_valid(mine.payload) THEN json_extract(mine.payload, '$.status') = 'active' ELSE 0 END
+                AND identity.type = 'object'
+                AND (
+                    (json_extract(identity.value, '$.packageDigest') = CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.packageDigest') END
+                     AND json_extract(identity.value, '$.packageScopedId') = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.packageScopedId') END)
+                    OR EXISTS (
+                        SELECT 1 FROM json_each(CASE WHEN json_valid(note.payload) THEN note.payload ELSE '{}' END, '$.alsoSharedAs') AS also
+                        WHERE also.type = 'object'
+                          AND json_extract(also.value, '$.packageDigest') = json_extract(identity.value, '$.packageDigest')
+                          AND json_extract(also.value, '$.packageScopedId') = json_extract(identity.value, '$.packageScopedId'))))
+"""
+
     /// Margins other people shared, counted per item for the Library rows (#1792). One query in SQL:
     /// opening the Library must not decode every imported recording, transcript and anchor. Only a
     /// layer the listener hasn't deleted counts, as on the Margins screens (which ignore the on/off switch).
@@ -2498,6 +2821,59 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
          AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
         WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
           AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        \(SQLiteSessionStore.notAnEchoOfOwnMarginSQL)
+        GROUP BY layer.item_id;
+        """
+
+    /// Who sent them (#3794): per item and layer, the sender's id and name as the layer saved them, and how many Margins
+    /// of that layer count. The same rows as `sharedMarginTalliesSQL`, so a deleted layer, a hidden sender and a hidden
+    /// Margin leave the names exactly as they leave the count. One grouped read in the Library's snapshot, no query per
+    /// row; the layer match stays a plain equality on the primary key for the same reason. Swift merges the layers of
+    /// one friend (`SharedMarginTally.Sender`).
+    static let sharedMarginSendersSQL = """
+        SELECT layer.item_id, json_extract(layer.payload, '$.senderId'), json_extract(layer.payload, '$.displayLabel'), COUNT(note.id)
+        FROM records AS note
+        JOIN records AS layer
+          ON layer.kind = ?2
+         AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
+        WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
+          AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        \(SQLiteSessionStore.notAnEchoOfOwnMarginSQL)
+        GROUP BY layer.item_id, layer.id;
+        """
+
+    /// How many of the counted Margins are replies to the listener's own Margins, per item (#3794). A reply is one whose
+    /// reply link names a packet identity one of the listener's own Margins on that item was shared as (`sharedAs`), the
+    /// same match the reply graph makes (`MarginReplyGraph`). Only Margins that carry reply links reach the join, so a
+    /// Library with none reads nothing more. The same rows as `sharedMarginTalliesSQL` otherwise: the layer match is a
+    /// plain equality on the primary key, a broken payload gives an empty list rather than an error (`json_each` throws on
+    /// malformed text), and the hidden-list conditions are added to the same WHERE. A Margin naming several parents
+    /// counts once. A fork whose first resolvable parent is another friend's Margin counts here too if any parent is the
+    /// listener's: a small difference from the review's own label, which takes the first, and only in the count.
+    /// Only the listener's active Margins are parents (the reply graph drops a deleted one: it is neither a parent nor a
+    /// reply), and only those that were shared at all are parsed for their identities. Parents are looked for on the same
+    /// item, as the review's own context is (`SharedMarginReview.ownMargins(itemId:)`); the graph looks across the
+    /// Library, so a reply imported under another row of the same episode is a reply there and not here. A list element
+    /// that is not an object (a shape a later build might write) matches nothing instead of failing the read.
+    static let sharedMarginRepliesSQL = """
+        SELECT layer.item_id, COUNT(DISTINCT note.id)
+        FROM records AS note
+        JOIN records AS layer
+          ON layer.kind = ?2
+         AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
+        JOIN json_each(CASE WHEN json_valid(note.payload) THEN note.payload ELSE '{}' END, '$.replyLinks') AS link
+        JOIN records AS own ON own.kind = 'interjection' AND own.item_id = layer.item_id
+         AND CASE WHEN json_valid(own.payload)
+                  THEN json_extract(own.payload, '$.status') = 'active' AND json_extract(own.payload, '$.sharedAs') IS NOT NULL
+                  ELSE 0 END
+        JOIN json_each(CASE WHEN json_valid(own.payload) THEN own.payload ELSE '{}' END, '$.sharedAs') AS identity
+          ON CASE WHEN json_type(identity.value) = 'object' AND json_type(link.value) = 'object'
+                  THEN json_extract(identity.value, '$.packageDigest') = json_extract(link.value, '$.parentPackageDigest')
+                   AND json_extract(identity.value, '$.packageScopedId') = json_extract(link.value, '$.parentPackageScopedId')
+                  ELSE 0 END
+        WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
+          AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        \(SQLiteSessionStore.notAnEchoOfOwnMarginSQL)
         GROUP BY layer.item_id;
         """
 
@@ -2512,7 +2888,9 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
          AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
         WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
           AND CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.firstHeardAt') IS NULL AND json_extract(note.payload, '$.audioPath') IS NULL ELSE 0 END
-          AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END;
+          AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        \(SQLiteSessionStore.notAnEchoOfOwnMarginSQL)
+        ;
         """
 
     /// The same SQL with the listener's hidden senders and hidden Margins left out (#3469): the layers of a hidden
@@ -2564,10 +2942,55 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
                 anyNewNote = anyNewNote || sqlite3_column_int64(statement, 3) > 0
             }
             let unmet = anyNewNote ? try newNotesNobodyCanMeet(connection, hidden: hidden) : [:]
+            let senders = counts.isEmpty ? [:] : try sharedMarginSenders(connection, hidden: hidden)
+            let replies = counts.isEmpty ? [:] : try sharedMarginReplies(connection, hidden: hidden)
             return counts.reduce(into: [:]) { tallies, entry in
-                tallies[entry.key] = SharedMarginTally(total: entry.value.total, new: entry.value.new - (unmet[entry.key] ?? 0))
+                tallies[entry.key] = SharedMarginTally(
+                    total: entry.value.total, new: entry.value.new - (unmet[entry.key] ?? 0),
+                    senders: senders[entry.key] ?? [], replies: replies[entry.key] ?? 0)
             }
         }
+    }
+
+    /// Per item, how many counted Margins reply to the listener's own, from `sharedMarginRepliesSQL`.
+    private func sharedMarginReplies(_ connection: OpaquePointer?, hidden: HiddenSenders) throws -> [String: Int] {
+        let (sql, bindings) = Self.hidingFromSharedMarginSQL(Self.sharedMarginRepliesSQL, before: "GROUP BY layer.item_id;", hidden: hidden)
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_shared_margin_replies")
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement, index: 1, value: "imported_commentary_interjection")
+        bind(statement, index: 2, value: "imported_commentary_layer")
+        for (offset, value) in bindings.enumerated() { bind(statement, index: Int32(3 + offset), value: value) }
+        var replies: [String: Int] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let item = sqlite3_column_text(statement, 0) else { continue }
+            replies[String(cString: item)] = Int(sqlite3_column_int64(statement, 1))
+        }
+        return replies
+    }
+
+    /// Per item, who sent the counted Margins (#3794), from `sharedMarginSendersSQL`.
+    private func sharedMarginSenders(_ connection: OpaquePointer?, hidden: HiddenSenders) throws -> [String: [SharedMarginTally.Sender]] {
+        let (sql, bindings) = Self.hidingFromSharedMarginSQL(Self.sharedMarginSendersSQL, before: "GROUP BY layer.item_id, layer.id;", hidden: hidden)
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_shared_margin_senders")
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement, index: 1, value: "imported_commentary_interjection")
+        bind(statement, index: 2, value: "imported_commentary_layer")
+        for (offset, value) in bindings.enumerated() { bind(statement, index: Int32(3 + offset), value: value) }
+        var senders: [String: [SharedMarginTally.Sender]] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let item = sqlite3_column_text(statement, 0) else { continue }
+            let id = sqlite3_column_text(statement, 1).map { String(cString: $0) }
+            let name = sqlite3_column_text(statement, 2).map { String(cString: $0) }
+            senders[String(cString: item), default: []].append(
+                SharedMarginTally.Sender(key: id, name: name, count: Int(sqlite3_column_int64(statement, 3))))
+        }
+        return senders
     }
 
     /// Per item, when the newest friend layer that has a counted Margin was imported (#4101), for the Library's Recently
@@ -2581,6 +3004,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
          AND layer.id = CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') END
         WHERE note.kind = ?1 AND layer.item_id IS NOT NULL
           AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
+        \(SQLiteSessionStore.notAnEchoOfOwnMarginSQL)
         GROUP BY layer.item_id;
         """
 
@@ -2637,10 +3061,10 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
 
     /// SQLite's plan for `loadSharedMarginTallies`, one line per step, so a test can tell a primary-key
     /// lookup of each layer from a scan of every layer.
-    func sharedMarginTalliesQueryPlan() throws -> [String] {
+    func sharedMarginTalliesQueryPlan(of sql: String = SQLiteSessionStore.sharedMarginTalliesSQL) throws -> [String] {
         try withReadConnection { connection in
             var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(connection, "EXPLAIN QUERY PLAN " + Self.sharedMarginTalliesSQL, -1, &statement, nil) == SQLITE_OK else {
+            guard sqlite3_prepare_v2(connection, "EXPLAIN QUERY PLAN " + sql, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_shared_margin_tallies_plan")
             }
             defer { sqlite3_finalize(statement) }
@@ -2685,6 +3109,22 @@ extension SQLiteSessionStore: PublisherAudioRepository {
     public func loadPublisherAudio(itemId: String) throws -> PublisherAudio? {
         try loadOptional(kind: Self.publisherAudioKind, id: itemId)
     }
+
+    /// The listener's voice choice (#4640), kind "publisher_audio_choice", one row per item, linked by the item id
+    /// like the recording's record. No table, column or schema_version change.
+    static let publisherAudioChoiceKind = "publisher_audio_choice"
+
+    public func loadPublisherAudioChoice(itemId: String) throws -> PublisherAudioChoice? {
+        try loadOptional(kind: Self.publisherAudioChoiceKind, id: itemId)
+    }
+
+    public func savePublisherAudioChoice(_ choice: PublisherAudioChoice) throws {
+        try save(kind: Self.publisherAudioChoiceKind, id: choice.itemId, sessionId: nil, itemId: choice.itemId, value: choice)
+    }
+
+    public func deletePublisherAudioChoice(itemId: String) throws {
+        try deleteRecord(kind: Self.publisherAudioChoiceKind, id: itemId)
+    }
 }
 
 /// Community map uploads (#552) live in the records table as kind "community_map_upload", one
@@ -2710,3 +3150,5 @@ extension SQLiteSessionStore: CommunityMapUploadRepository {
 
 /// SQLite serializes its own connection, so a streamed reply's cursor can be saved off the main thread (#2509).
 extension SQLiteSessionStore: ConcurrentSessionRepository {}
+
+extension SQLiteSessionStore: PaperSourceStoring {}

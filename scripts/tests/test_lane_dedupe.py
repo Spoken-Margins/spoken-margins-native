@@ -424,40 +424,5 @@ class DedupeTests(unittest.TestCase):
         self.assertIsNone(dedupe.parse_run_name(None))
 
 
-class WorkflowWiringTests(unittest.TestCase):
-    workflow = (SCRIPTS.parent / '.github/workflows/lane.yml').read_text()
-
-    def test_queues_are_chosen_before_dedupe_and_handed_to_it(self):
-        # #1194: dedupe compares the queue this run would use, so routing has to have written its file first.
-        route = self.workflow.split('\n  route:\n')[1].split('\n  lane:\n')[0]
-        self.assertLess(route.index('- name: Choose queues'), route.index('- name: Drop stale and duplicate runs'))
-        self.assertIn('--queues "$RUNNER_TEMP/route.json"', route)
-
-    def test_the_run_name_has_the_format_the_helper_parses(self):
-        name = self.workflow.split('run-name: >-\n')[1].split('\non:')[0]
-        flat = ' '.join(part.strip() for part in name.splitlines())
-        self.assertRegex(flat, r'^lane pr=\$\{\{ [^}]+ \}\} head=\$\{\{ [^}]+ \}\} lane=\$\{\{ [^}]+ \}\} auto=\$\{\{ [^}]+ \}\}$')
-
-    def test_the_route_job_cancels_and_both_mac_jobs_obey_it(self):
-        route = self.workflow.split('\n  route:\n')[1].split('\n  lane:\n')[0]
-        self.assertIn('actions: write', route)
-        self.assertIn('scripts/lane_dedupe.py', route)
-        self.assertIn("needs.route.outputs.skip_lane != 'true'", self.workflow)
-        self.assertIn("needs.route.outputs.skip_automerge != 'true'", self.workflow)
-        self.assertIn('timeout-minutes: 3', route)
-
-    def test_dedupe_has_a_total_timeout_with_room_for_routing_and_fallback(self):
-        route = self.workflow.split('\n  route:\n')[1].split('\n  lane:\n')[0]
-        match = re.search(r'if timeout (\d+)s python3 scripts/lane_dedupe\.py', route)
-        self.assertIsNotNone(match, 'Serial API calls must share an overall helper timeout')
-        discovery_budgets = [int(value) for value in re.findall(r'timeout (\d+)s gh api', route)]
-        job_budget = int(re.search(r'timeout-minutes: (\d+)', route)[1]) * 60
-        self.assertLessEqual(sum(discovery_budgets) + int(match[1]), job_budget - 60)
-        # A timeout must take the same unset-output fallback as a missing helper or API failure.
-        step = route.split('      - name: Drop stale and duplicate runs\n')[1]
-        self.assertIn('>> "$GITHUB_OUTPUT"\n          else\n', step)
-        self.assertIn('Lane dedupe unavailable; running as before.', step)
-
-
 if __name__ == '__main__':
     unittest.main()

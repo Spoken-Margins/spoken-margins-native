@@ -460,7 +460,8 @@ struct ReturnFixture {
     /// `writtenWords` makes the friend's Margin a written one (no recording, #3365); `unplaced` makes its layer a podcast
     /// still waiting for its placement pass, so the Margin has only the sender's time (#3059).
     /// `isMuted: false` lets the friend's Margin sound its tone; the default keeps it silent, as these tests always had it (#4444).
-    static func make(sourcePlaying: Bool, voiceIsReadable: Bool = true, writtenWords: String? = nil, unplaced: Bool = false, isMuted: Bool = true) async throws -> ReturnFixture {
+    /// `senderReadAloud: false` is a written Margin its sender asked not to be read aloud (#3427).
+    static func make(sourcePlaying: Bool, voiceIsReadable: Bool = true, writtenWords: String? = nil, unplaced: Bool = false, isMuted: Bool = true, senderReadAloud: Bool? = nil) async throws -> ReturnFixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "margin-return-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let sourceURL = try makeWAV(duration: 30)
@@ -494,7 +495,8 @@ struct ReturnFixture {
             audioPath: writtenWords == nil ? voiceURL.path : nil, audioDurationMs: writtenWords == nil ? 30_000 : nil,
             resolution: unplaced
                 ? ImportedAnchorResolution(evidenceClass: .unresolved, localMediaTimeMs: nil, confidence: 0)
-                : ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 1_000, confidence: 1))
+                : ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 1_000, confidence: 1),
+            senderReadAloud: senderReadAloud) // the sender's choice, when a test is about a Margin the sender asked not to be read (#4934)
         // In the store, not only on the model: pause, seek and every transport call refresh the selected item
         // from the store, which would otherwise empty its Margins and make Listen and jump find nothing.
         _ = try store.importCommentaryLayer(layer, interjections: [record])

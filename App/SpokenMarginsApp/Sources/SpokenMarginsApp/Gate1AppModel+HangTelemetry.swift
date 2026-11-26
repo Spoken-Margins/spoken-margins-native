@@ -7,6 +7,7 @@ extension Gate1AppModel {
     func startHangTelemetry() {
         guard !Self.isRunningUnitTests else { return }
         defer { hangTelemetry.setForeground(true) }
+        hangTelemetry.hangObserver = { LaunchRecorder.shared?.noteHang($0) } // a launch's first minute (#3752)
         hangTelemetry.start(
             record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) },
             context: { [weak self] in
@@ -40,6 +41,7 @@ extension Gate1AppModel {
         if marginVoiceIsHeldForRecording {
             recordDeveloperDiagnostic("transport.refused", ["command": CompactControlCommand.togglePlayPause.rawValue, "reason": "margin_recording"])
         }
+        noteCatchUp(.play) // Play after a catch-up run puts the caught-up card away (#4785)
         hangTelemetry.labels.scoped("playPauseTapped") { playPause() }
     }
 
@@ -83,15 +85,11 @@ extension Gate1AppModel {
         labels.scoped("snapshot.captureWatch") {
             if oldValue.isRecording, !snapshot.isRecording {
                 endCaptureWatch()
-                #if SM_MARGIN_END_PHRASE_SPIKE
-                endMarginEndPhraseSpike() // every way a recording ends, not only the ones that clear its screen (#3940)
-                #endif
+                endMarginEndPhraseListening() // every way a recording ends, not only the ones that clear its screen (#3940)
             }
             if !oldValue.isRecording, snapshot.isRecording {
                 startCaptureWatch()
-                #if SM_MARGIN_END_PHRASE_SPIKE
-                beginMarginEndPhraseSpike() // every way a recording starts (in-app, Lock Screen, headset, Live Activity), as the end below (#3940)
-                #endif
+                beginMarginEndPhraseListening() // every way a recording starts (in-app, Lock Screen, headset, Live Activity), as the end above (#3940)
             }
         }
         labels.scoped("snapshot.speechResume") { settleSpeechInterruptionResume() }

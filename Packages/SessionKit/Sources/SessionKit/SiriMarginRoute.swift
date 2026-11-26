@@ -53,6 +53,37 @@ public enum SiriMarginRoute: Equatable, Sendable {
         "Margin added to \(name)."
     }
 
+    /// What happened to the screenshot or photo handed to Add Margin or Add Voice Margin (#4925). A picture is never
+    /// dropped silently: each outcome other than `.noneGiven` and `.kept` says so in one plain sentence.
+    public enum PictureOutcome: Equatable, Sendable {
+        /// No picture was given.
+        case noneGiven
+        /// Kept with the Margin, on this phone.
+        case kept
+        /// The Margin went to a Library item, which has no place for a picture.
+        case notKeptOnItem
+        /// The file could not be read as a picture, or it is too large to take.
+        case unreadable
+        /// The picture was read but could not be stored; the Margin is saved without it.
+        case couldNotKeep
+
+        /// The sentence added to Siri's line, nil when no picture was given.
+        public var sentence: String? {
+            switch self {
+            case .noneGiven: nil
+            case .kept: "The picture is kept with it on this phone."
+            case .notKeptOnItem: "The picture was not kept, because a picture stays only with a Margin in a live session."
+            case .unreadable: "The picture could not be read, so it was not kept."
+            case .couldNotKeep: "The picture could not be saved, so it was not kept."
+            }
+        }
+    }
+
+    /// "Margin added to <name>." and, when a picture came with it, what became of the picture.
+    public static func confirmation(named name: String, picture: PictureOutcome) -> String {
+        [confirmation(named: name), picture.sentence].compactMap { $0 }.joined(separator: " ")
+    }
+
     public static let emptyText = "The Margin was empty, so nothing was saved."
     public static let writingInProgress = "You're already writing a Margin in Spoken Margins. Save or cancel it, then ask again."
     /// Only for the narrow case where the player's session ended between the decision and the save: the route itself no

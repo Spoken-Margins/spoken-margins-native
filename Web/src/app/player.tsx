@@ -4,10 +4,14 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Episode, Margin, PlaybackPosition } from '../shared/model.ts';
 import { useData, type DataApi } from './data.tsx';
-import { friendMargins, readsAloud } from './logic/arrival.ts';
+import { friendMargins, readingIntro, readsAloud } from './logic/arrival.ts';
 import { clipRejection, EPISODE_FAILED, failureNoticeShown, nextFailure, type FailureEvent } from './logic/episode-failure.ts';
 import { CrossingClock } from './logic/margin-autoplay.ts';
+import { MarginTurns, endTurnWhenPlaying as endWhenPlaying, pauseUnderReading } from './logic/margin-turns.ts';
+import { arrival, hearingOf, pendingStart, startSurvivesSeek } from './logic/margins-control-center.ts';
 import { MESSAGES, plainError } from './logic/messages.ts';
+import { attemptToast, attemptWithoutAudio } from './logic/episode-voice-words.ts';
+import { episodeVoice } from './logic/playability.ts';
 import { newestPlayableMessage, playCandidates, playNewestAvailable, type PlayAttempt } from './logic/newest-playable.ts';
 import { browserStorage, MIRROR_EVERY_MS, mirrorPosition } from './logic/position-mirror.ts';
 import { NotSavedError } from './logic/storage.ts';
@@ -15,7 +19,7 @@ import { FINISHED_WITHIN_SECONDS } from './logic/library.ts';
 import { services } from './services.ts';
 import { PaidPostNoVoice } from '../sources/read.ts';
 import { ended, NOTHING_HEARD, replyForComposer, started, type ReplyMemory } from './logic/reply-memory.ts';
-import { readWrittenMargin, type Reading } from './speech.ts';
+import { primeSpeech, readWrittenMargin, tone, type Reading } from './speech.ts';
 import { useRelay, useUi } from './ui.tsx';
 
 export const SKIP_SECONDS = 15;
@@ -41,6 +45,17 @@ export interface OpenOptions {
    * length of the voice that plays the post, and a Substack post's page often gives none (#4421).
    */
   placeMargins?: (episode: Episode, data: Pick<DataApi, 'margins' | 'addMargin'>) => Promise<void>;
+  /** A start the listener tapped on the arrival preview: these Margins play, in order, when playback reaches `atSeconds`. */
+  start?: MarginStart;
+}
+
+/**
+ * Margins the listener asked to hear (part of #3216): a row's start control, Next Margin, or an arrival button. They play,
+ * in order, when playback reaches `atSeconds`, whatever Autoplay says; the player never moves there by itself.
+ */
+export interface MarginStart {
+  atSeconds: number;
+  queue: readonly string[];
 }
 
 export interface PlayerApi {
@@ -49,6 +64,13 @@ export interface PlayerApi {
   loading: boolean;
   time: number;
   duration: number | undefined;
+  /**
+   * The length of the copy loaded now, in seconds: the first finite, positive length the audio reports for a load,
+   * kept unchanged until the next load clears it, so a Margin made on this copy and the note on a friend's Margin never
+   * renumber when the browser refines it. Never the stored length in `duration`, which can be a feed's or a packet's
+   * (#4175, #4614).
+   */
+  measuredLengthSeconds: number | undefined;
   rate: number;
   /**
    * Opens an episode. `at` jumps to a moment (a Margin); otherwise it resumes where the listener left off. `episode`
@@ -57,9 +79,27 @@ export interface PlayerApi {
   open(episodeId: string, options?: OpenOptions): Promise<void>;
   /** A show's play button: starts the newest of these (newest first) that can actually play, and says so if it isn't the first. */
   openNewestPlayable(newestFirst: readonly Episode[]): Promise<void>;
+  /** The main Play/Pause button: pauses whatever is sounding (the episode or a friend's Margin), or carries it on. */
   toggle(): void;
+  /**
+   * Play, never Pause: for a button that means start (a landing offer, a Skip, carrying on after recording). It checks
+   * what is sounding now rather than a render's `playing`, which can lag a clip that has just started (#4473).
+   */
+  play(): void;
+  /** Pause, never Play: for a caller that needs quiet (recording, hearing a voice Margin on its own). */
+  pause(): void;
+  /**
+   * A start control the listener tapped on the Margins tab (part of #3216): stops whatever Margin is sounding, moves to
+   * `seekTo` and plays, and plays `start`'s Margins when playback reaches them.
+   */
+  startMargins(seekTo: number, start: MarginStart): void;
   skip(seconds: number): void;
   seek(seconds: number): void;
+  /**
+   * Ends the friend's Margin that is sounding or held, as if it had finished: the next queued Margin plays, or the
+   * episode carries on from where it was. Pause only holds a Margin; this is how to be done with it (#4473).
+   */
+  skipMargin(): void;
   setRate(rate: number): void;
   /** The current time, read straight from the audio element (for a Margin's anchor). */
   now(): number;
@@ -89,16 +129,54 @@ export interface PlayerApi {
 
 const PlayerContext = createContext<PlayerApi | null>(null);
 
+/** A tenth of a second of silence, as a WAV address: what `primeClip` plays from a tap to ready the clip element. */
+const SILENCE_WAV = (() => {
+  const samples = 800;
+  const bytes = new Uint8Array(44 + samples);
+  const view = new DataView(bytes.buffer);
+  const text = (at: number, value: string) => [...value].forEach((c, i) => view.setUint8(at + i, c.charCodeAt(0)));
+  text(0, 'RIFF');
+  view.setUint32(4, 36 + samples, true);
+  text(8, 'WAVEfmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 8000, true);
+  view.setUint32(28, 8000, true);
+  view.setUint16(32, 1, true);
+  view.setUint16(34, 8, true);
+  text(36, 'data');
+  view.setUint32(40, samples, true);
+  bytes.fill(128, 44);
+  return `data:audio/wav;base64,${btoa(String.fromCharCode(...bytes))}`;
+})();
+
+/** Takes a finished or stopped clip's handlers off the shared clip element, so the next clip's events are its own. */
+function detachClip(element: HTMLAudioElement): void {
+  element.onended = null;
+  element.onerror = null;
+  element.onplay = null;
+  element.onpause = null;
+}
+
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const data = useData();
   const { toast, notice } = useUi();
   const relay = useRelay();
   const audioRef = useRef<HTMLAudioElement>(null);
   const [episodeId, setEpisodeId] = useState<string>();
-  const [playing, setPlaying] = useState(false);
+  // Whether the episode's own element is playing. `playing`, below, is what the listener hears (#4473).
+  const [episodePlaying, setPlaying] = useState(false);
+  // Whether a friend's Margin is sounding on its own: a clip, or the voice reading a written one while the episode can't
+  // play. A written Margin read over the episode needs no flag of its own: the episode plays (turned down) under it.
+  const [marginPlaying, setMarginPlaying] = useState(false);
+  // One play state for whatever is sounding, so the main button, the mini player and the lock screen show Pause while a
+  // friend's Margin plays, and Pause pauses it (#4473).
+  const playing = episodePlaying || marginPlaying;
   const [loading, setLoading] = useState(false);
   const [time, setTime] = useState(0);
   const [mediaDuration, setMediaDuration] = useState<number>();
+  const [measuredLengthSeconds, setMeasuredLengthSeconds] = useState<number>();
   const lastSave = useRef(0);
   const lastMirror = useRef(0);
   const pendingSeek = useRef<number | undefined>(undefined);
@@ -118,8 +196,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const crossing = useRef(new CrossingClock());
   // What to do after a blocked clip is played from the tap (the rest of a run of Margins without the episode).
   const blockedDone = useRef<(() => void) | undefined>(undefined);
-  const clip = useRef<{ element: HTMLAudioElement; url: string } | null>(null);
-  const clipQueue = useRef<Margin[]>([]);
+  // `end` finishes the clip as if it had played out: what comes next (a queued Margin, the episode) follows.
+  const clip = useRef<{ element: HTMLAudioElement; url: string; end: () => void } | null>(null);
+  // Margins that come up together take turns: each begins when the one before it is done (part of #3216). `beginTurn`,
+  // below, begins one; `turnDone` ends a written one's turn early, for Skip.
+  const beginTurnRef = useRef<(margin: Margin, done: () => void) => void>(() => undefined);
+  const turns = useRef(new MarginTurns<Margin>((margin, done) => beginTurnRef.current(margin, done)));
+  const turnDone = useRef<(() => void) | undefined>(undefined);
   // The voice reading a friend's written Margin aloud, while it does.
   const reading = useRef<Reading | undefined>(undefined);
   // Margins that have come up since the last seek. A browser may resume the episode a hair before the moment it paused
@@ -128,6 +211,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // The last friend's Margin heard, so a Margin begun while it sounds or just after answers it (#4107; reply-memory.ts).
   const replyMemory = useRef<ReplyMemory>(NOTHING_HEARD);
   const shownTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // The Margins the listener last asked to hear, waiting for playback to reach them (MarginStart), and where that tap
+  // moved to: any other seek leaves it behind (startSurvivesSeek).
+  const pendingStartRef = useRef<(MarginStart & { episodeId: string; seekTo: number }) | undefined>(undefined);
   const dataRef = useRef(data);
   dataRef.current = data;
 
@@ -154,6 +240,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     lastMirror.current = Date.now();
     mirrorPosition(browserStorage(), place);
   }, [placeNow]);
+
+  /** The first finite, positive length this load reports is the copy's length; later refinements don't change it (#4175). */
+  const keepFirstLength = useCallback((seconds: number) => {
+    if (Number.isFinite(seconds) && seconds > 0) setMeasuredLengthSeconds((kept) => kept ?? seconds);
+  }, []);
 
   /** Hands the waiting article Margins the length of the audio that just loaded, once. */
   const placeWhenLengthKnown = useCallback(
@@ -186,20 +277,73 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     current?.cancel();
   }, []);
 
+  /** Drops the Margin taking its turn and those waiting: called before a reading stops, whose end would begin the next. */
+  const clearTurns = useCallback(() => {
+    turns.current.clear();
+    turnDone.current = undefined;
+  }, []);
+
+  /** Ends a written Margin's turn, but only while the episode plays: Pause holds the Margins waiting their turn. */
+  const endTurnWhenPlaying = useCallback((done: () => void) => {
+    endWhenPlaying(
+      { current: () => turnDone.current === done, paused: () => audioRef.current?.paused ?? false, done },
+      (check) => setTimeout(check, 500),
+    );
+  }, []);
+
   const stopClip = useCallback(() => {
     runId.current++;
     setWithoutEpisode((w) => (w === 'playing' ? 'idle' : w));
+    clearTurns();
     stopReading();
-    clipQueue.current = [];
+    setMarginPlaying(false);
     const current = clip.current;
     clip.current = null;
     if (!current) return;
-    current.element.onended = null;
+    detachClip(current.element);
     current.element.pause();
     URL.revokeObjectURL(current.url);
-  }, [stopReading]);
+  }, [stopReading, clearTurns]);
 
-  /** Plays a voice Margin's clip with the episode paused, then resumes the episode (or the next queued clip). */
+  /**
+   * The one element every friend's clip plays in (#4472). Safari, and every browser on an iPhone, lets page code start
+   * an element's sound only from a tap, unless that element has already played from one. A new element per clip was
+   * refused whenever its Margin came up more than a moment after the last tap: after "Skip to just before", 20 s of
+   * lead-in later. `primeClip` plays it once, silently, from the listener's tap, so it may play every clip after.
+   */
+  const clipElement = useRef<HTMLAudioElement | undefined>(undefined);
+  const clipPrimed = useRef(false);
+  const clipPlayer = useCallback((): HTMLAudioElement => {
+    clipElement.current ??= new Audio();
+    return clipElement.current;
+  }, []);
+
+  /** Called inside the listener's taps (Play, Pause, Skip, a seek, opening an item): readies the clip element once. */
+  const primeClip = useCallback(() => {
+    if (clipPrimed.current || clip.current || typeof Audio === 'undefined') return;
+    const element = clipPlayer();
+    // The voice that reads a written Margin has the same rule; the arrival page's Play readied it, other ways in didn't.
+    primeSpeech();
+    try {
+      element.src = SILENCE_WAV;
+      const started = element.play();
+      clipPrimed.current = true;
+      // A refusal here means this tap didn't count; the next one tries again. The silence ends by itself.
+      void started?.catch?.(() => {
+        if (!clip.current) clipPrimed.current = false;
+      });
+    } catch {
+      // Nothing to ready.
+    }
+  }, [clipPlayer]);
+
+  /** A friend's Margin started sounding: it is heard from now on (part of #3216). Reading its words never does this. */
+  const markHeard = useCallback((margin: Margin) => {
+    if (!margin.author) return;
+    dataRef.current.setHeard(margin.id).catch(() => undefined);
+  }, []);
+
+  /** Plays a voice Margin's clip with the episode paused, then `onDone`, or with none the episode resumes. */
   const playClip = useCallback((margin: Margin, onDone?: () => void) => {
     const audio = audioRef.current;
     if (!audio || !margin.voice) return;
@@ -207,28 +351,53 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     clearTimeout(shownTimer.current);
     setArrived({ margin, blocked: false });
     const url = URL.createObjectURL(margin.voice.blob);
-    const element = new Audio(url);
-    clip.current = { element, url };
+    const element = clipPlayer();
+    const previous = clip.current;
+    if (previous) URL.revokeObjectURL(previous.url);
+    const mine = { element, url, end: () => undefined as void };
+    clip.current = mine;
+    detachClip(element);
+    element.src = url;
     const finish = () => {
-      if (clip.current?.element !== element) return;
+      if (clip.current !== mine) return;
       clip.current = null;
+      detachClip(element);
+      setMarginPlaying(false);
       URL.revokeObjectURL(url);
-      const next = clipQueue.current.shift();
       // Nothing is speaking once the clip has ended: the card goes, so the countdown, or "That was X's last Margin",
-      // shows again (#3797). A next Margin sets its own card, and a run without the episode sets or clears the next.
-      if (!next) setArrived((a) => (a?.margin.id === margin.id ? undefined : a));
-      if (next) playClip(next, onDone);
-      else if (onDone) onDone();
+      // shows again (#3797). A next Margin, in its turn or in a run without the episode, sets its own card.
+      setArrived((a) => (a?.margin.id === margin.id ? undefined : a));
+      if (onDone) onDone();
       else void audio.play().catch(() => undefined);
+    };
+    mine.end = () => {
+      element.pause();
+      finish();
     };
     element.onended = finish;
     element.onerror = finish;
+    // The clip's own play and pause are the play state while it is the thing sounding (#4473). Said at once, too, so
+    // the button doesn't flash Play between the episode pausing and the clip starting.
+    element.onplay = () => {
+      setMarginPlaying(clip.current === mine);
+      // Listening to any part of a friend's Margin marks it heard (part of #3216).
+      if (clip.current === mine) markHeard(margin);
+    };
+    element.onpause = () => {
+      if (clip.current === mine && !element.ended) setMarginPlaying(false);
+    };
+    setMarginPlaying(true);
     element.play().catch((error: unknown) => {
-      if (clip.current?.element !== element) return;
-      if (clipRejection(error instanceof DOMException ? error.name : undefined) === 'wait-for-tap') {
+      if (clip.current !== mine) return;
+      setMarginPlaying(false);
+      const meaning = clipRejection(error instanceof DOMException ? error.name : undefined);
+      // Paused before it had loaded (a Pause tapped as it came up): it holds, with its card, until Play (#4473).
+      if (meaning === 'held') return;
+      if (meaning === 'wait-for-tap') {
         // The browser won't start the clip without a tap: the episode stays paused at the Margin, with a Play. A run
         // of Margins without the episode carries on with the rest from that tap.
         clip.current = null;
+        detachClip(element);
         URL.revokeObjectURL(url);
         blockedDone.current = onDone;
         setArrived({ margin, blocked: true });
@@ -236,39 +405,49 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
       finish();
     });
-  }, []);
+  }, [clipPlayer, markHeard]);
 
-  /** A friend's Margins whose moment playback just reached: written ones appear, spoken ones play. */
-  const fire = useCallback(
-    (due: Margin[]) => {
-      for (const margin of due) {
-        if (margin.voice) {
-          if (clip.current) clipQueue.current.push(margin);
-          else playClip(margin);
-        } else {
-          setArrived({ margin, blocked: false });
-          clearTimeout(shownTimer.current);
-          shownTimer.current = setTimeout(() => setArrived((a) => (a?.margin.id === margin.id ? undefined : a)), WRITTEN_SHOWN_MS);
-          // The sender asked that this one not be read aloud: the words stay up, and nothing else changes (#3445).
-          if (!readsAloud(margin)) continue;
-          // A tone, then "Cole wrote:" and the words in this browser's own voice, with the episode turned down.
-          reading.current?.cancel();
-          const audio = audioRef.current;
-          const heard = readWrittenMargin(margin.author, margin.text ?? '', {
+  /** One Margin's turn in the episode: a spoken one plays with the episode paused, a written one appears and is read over it. */
+  const beginTurn = useCallback(
+    (margin: Margin, done: () => void) => {
+      const audio = audioRef.current;
+      if (margin.voice) {
+        playClip(margin, () => {
+          done();
+          // A written Margin next is read over the episode, and with none next the episode carries on: either way it plays.
+          if (!clip.current) void audio?.play().catch(() => undefined);
+        });
+        return;
+      }
+      turnDone.current = done;
+      setArrived({ margin, blocked: false });
+      clearTimeout(shownTimer.current);
+      shownTimer.current = setTimeout(() => setArrived((a) => (a?.margin.id === margin.id ? undefined : a)), WRITTEN_SHOWN_MS);
+      // A tone, then "Cole wrote:" and the words in this browser's own voice, with the episode turned down. Not when the
+      // sender asked that it not be read aloud (#3445): the words stay up, and nothing else changes.
+      const heard = readsAloud(margin)
+        ? readWrittenMargin(readingIntro(margin), margin.text ?? '', {
             onStart: () => {
               if (audio) audio.volume = DUCKED_VOLUME;
+              markHeard(margin);
             },
             onEnd: () => {
               if (audio) audio.volume = 1;
               if (reading.current === heard) reading.current = undefined;
+              endTurnWhenPlaying(done);
             },
-          });
-          reading.current = heard;
-        }
-      }
+          })
+        : undefined;
+      reading.current = heard;
+      // Shown and not read (asked not to be, or this browser has no voice): its turn is its time on screen.
+      if (!heard) setTimeout(() => endTurnWhenPlaying(done), WRITTEN_SHOWN_MS);
     },
-    [playClip],
+    [playClip, markHeard, endTurnWhenPlaying],
   );
+  beginTurnRef.current = beginTurn;
+
+  /** Margins whose moment playback just reached, or that the listener started: each takes its turn. */
+  const fire = useCallback((due: Margin[]) => turns.current.add(due), []);
 
   /** Feeds the one failure state an event; shows the problem only when this event is the one that made it fail. */
   const apply = useCallback(
@@ -317,6 +496,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const at = Number.isFinite(audio.currentTime) && audio.currentTime > 0 ? audio.currentTime : undefined;
       pendingSeek.current = at;
       setLoading(true);
+      // A reload asks for the file again, and a dynamic-ad podcast can answer with another copy: measure it afresh (#4175).
+      setMeasuredLengthSeconds(undefined);
       audio.load();
       void audio.play().catch(onPlayRejected);
     },
@@ -346,21 +527,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       } else {
         setArrived({ margin, blocked: false });
         // Not read aloud (#3445): the words show for the usual time, then the run moves on, as with no voice.
-        const heard = readsAloud(margin) ? readWrittenMargin(margin.author, margin.text ?? '', {
-          onStart: () => undefined,
+        const heard = readsAloud(margin) ? readWrittenMargin(readingIntro(margin), margin.text ?? '', {
+          onStart: () => markHeard(margin),
           onEnd: () => {
             if (run !== runId.current) return;
             if (reading.current === heard) reading.current = undefined;
+            setMarginPlaying(false);
             next();
           },
         }) : undefined;
         reading.current = heard;
+        // With no episode under it, the voice is what is sounding: Pause holds it (#4473).
+        if (heard) setMarginPlaying(true);
         // A browser with no voice leaves the words up for the usual time, then moves on.
         if (!heard) shownTimer.current = setTimeout(() => run === runId.current && next(), WRITTEN_SHOWN_MS);
       }
     };
     step(0);
-  }, [stopClip, playClip]);
+  }, [stopClip, playClip, markHeard]);
 
   // One effect on `arrived` tells the memory every start and end, whichever path set or cleared it: a clip ending, a
   // written card's timer, the voice finishing, another Margin, a seek away or a new episode. A clip the browser blocked
@@ -380,14 +564,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   );
 
   const interruptForRecording = useCallback((): { resume: boolean } => {
-    if (!arrived || arrived.blocked || (!clip.current && !reading.current)) return { resume: false };
+    if (!arrived || arrived.blocked || (!clip.current && !reading.current)) {
+      // Nothing sounding, but Margins may be waiting their turn behind a shown one: none may start into the microphone.
+      clearTurns();
+      return { resume: false };
+    }
     // Read before `stopClip`, which ends the run of Margins without the episode: that run has no episode to resume.
     const resume = withoutEpisode !== 'playing';
     stopClip();
     clearTimeout(shownTimer.current);
     setArrived(undefined);
     return { resume };
-  }, [arrived, withoutEpisode, stopClip]);
+  }, [arrived, withoutEpisode, stopClip, clearTurns]);
 
   const playArrived = useCallback(() => {
     const margin = arrived?.margin;
@@ -410,14 +598,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           retry(audio);
           return 'played';
         }
+        pendingStartRef.current = options.start && { ...options.start, episodeId: id, seekTo: options.at ?? audio.currentTime };
         if (options.at !== undefined) audio.currentTime = options.at;
-        await audio.play().catch(() => undefined);
+        const starting = audio.play().catch(() => undefined);
+        // After play() has started, never before: an await ahead of it loses the tap's gesture (Safari). #4425
+        void dataRef.current.addToLibrary(id, { quiet: true });
+        await starting;
         return 'played';
       }
       save();
       stopClip();
       setArrived(undefined);
-      if (!target.audioUrl && target.pageUrl) {
+      if (episodeVoice(target) === 'post-lookup' && target.pageUrl) {
         // A Substack post: its voice is looked up now, because the listener tapped it (owner, 2026-10-21).
         setLoading(true);
         try {
@@ -437,22 +629,48 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           setLoading(false);
         }
       }
-      if (!target.audioUrl) return 'no-voice';
+      if (episodeVoice(target) === 'apple-lookup' && target.pageUrl) {
+        // An Apple Podcasts episode page with no audio address: Apple's public lookup names that episode's audio. It is
+        // asked on the listener's tap (or when they opened the link), never in the background (#4783).
+        setLoading(true);
+        try {
+          const pageUrl = target.pageUrl;
+          const title = target.title;
+          // The show's feed is read only when Apple's lookup doesn't list the episode, and through the server only with the listener's OK.
+          const found = await relay((relayAllowed) => services.sources.findAppleEpisodeAudio(pageUrl, { relayAllowed, title }));
+          if (found) {
+            // The packet's own length is the edition its Margins were made on; Apple's only fills a length it lacks.
+            target = { ...target, audioUrl: found.audioUrl, audioOrigin: found.audioOrigin, durationSeconds: target.durationSeconds ?? found.durationSeconds };
+            await dataRef.current.updateEpisode(target);
+          }
+        } catch (error) {
+          // A dead connection or a refusal says so once (it is not "no audio"); a storage failure has already shown its own.
+          if (!(error instanceof NotSavedError)) toast(plainError(error), 'problem');
+          return 'stopped';
+        } finally {
+          setLoading(false);
+        }
+      }
+      if (!target.audioUrl) return attemptWithoutAudio(episodeVoice(target));
       const resume = dataRef.current.positions.find((p) => p.episodeId === id)?.seconds;
       const finished = target.durationSeconds && resume && resume >= target.durationSeconds - FINISHED_WITHIN_SECONDS;
       pendingSeek.current = options.at ?? (finished ? 0 : resume);
       crossing.current.reset();
       loadedId.current = id;
+      pendingStartRef.current = options.start && { ...options.start, episodeId: id, seekTo: pendingSeek.current ?? 0 };
       // Margins on the post's words are placed on the audio's own length, which only the audio can say (#4421).
       placement.current = options.placeMargins ? { id, episode: target, place: options.placeMargins } : undefined;
       apply({ kind: 'source-changed' });
       setEpisodeId(id);
       setMediaDuration(undefined);
+      setMeasuredLengthSeconds(undefined);
       setTime(pendingSeek.current ?? 0);
       audio.src = target.audioUrl;
       audio.playbackRate = dataRef.current.settings.playbackRate;
       setLoading(true);
-      await audio.play().catch(onPlayRejected);
+      const starting = audio.play().catch(onPlayRejected);
+      void dataRef.current.addToLibrary(id, { quiet: true });
+      await starting;
       return 'played';
     },
     [relay, save, toast, stopClip, apply, retry, onPlayRejected, placeWhenLengthKnown],
@@ -460,50 +678,167 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const open = useCallback(
     async (id: string, options: OpenOptions = {}) => {
+      primeClip();
       const result = await attemptOpen(id, options);
-      if (result === 'paid') toast(MESSAGES.paidPost, 'problem');
-      if (result === 'no-voice') toast(MESSAGES.noVoice, 'problem');
+      const words = attemptToast(result);
+      if (words) toast(words, 'problem');
     },
-    [attemptOpen, toast],
+    [attemptOpen, toast, primeClip],
   );
 
   const openNewestPlayable = useCallback(
     async (newestFirst: readonly Episode[]) => {
+      primeClip();
       const result = await playNewestAvailable(playCandidates(newestFirst), (episode) => attemptOpen(episode.id));
       const message = newestPlayableMessage(result);
       if (message) toast(message.text, message.tone);
     },
-    [attemptOpen, toast],
+    [attemptOpen, toast, primeClip],
   );
 
-  const toggle = useCallback(() => {
+  // Read by the play controls between renders: whether a run's voice is sounding, and the card on screen.
+  const marginPlayingRef = useRef(marginPlaying);
+  marginPlayingRef.current = marginPlaying;
+  const arrivedRef = useRef(arrived);
+  arrivedRef.current = arrived;
+
+  /**
+   * Whether anything is sounding now (#4473): a friend's clip, the voice reading a written Margin in a run without the
+   * episode, or the episode (with a written Margin read over it, turned down).
+   */
+  const anythingSounding = useCallback((): boolean => {
+    const current = clip.current;
+    if (current) return !current.element.paused;
+    if (failedRef.current) return marginPlayingRef.current;
+    return audioRef.current ? !audioRef.current.paused : false;
+  }, []);
+
+  /** Pause: holds whatever is sounding where it is, so Play carries it on (#4473). */
+  const pauseSound = useCallback(() => {
+    const current = clip.current;
+    if (current) {
+      // The friend's clip holds; its card stays up, as the Margin is still being heard.
+      current.element.pause();
+      return;
+    }
+    pauseUnderReading({ episode: () => audioRef.current?.pause(), reading: () => reading.current?.pause() });
+    if (failedRef.current) setMarginPlaying(false);
+  }, []);
+
+  /** Play: carries on what was paused: the friend's clip, the voice reading a written Margin, then the episode. */
+  const resumeSound = useCallback(() => {
     const audio = audioRef.current;
     if (!audio || !audio.src) return;
-    // A tap on Play while a Margin's clip is playing (or was blocked) goes to the episode: the clip is dropped, and its
-    // card with it, so the reply memory sees the end (a card left up would keep answering that Margin for good, #4107).
-    const cutClip = clip.current !== null;
-    stopClip();
-    setArrived((a) => (a?.blocked || failedRef.current || cutClip ? undefined : a));
-    // A tap on Play after the episode failed is a retry.
+    const current = clip.current;
+    if (current) {
+      void current.element.play().catch(() => undefined);
+      return;
+    }
     if (failedRef.current) {
+      // A run of the Margins without the episode, paused on a written one: its voice carries on.
+      if (reading.current) {
+        reading.current.resume();
+        setMarginPlaying(true);
+        return;
+      }
+      // A tap on Play after the episode failed is a retry.
+      stopClip();
+      setArrived(undefined);
       retry(audio);
       return;
     }
-    if (audio.paused) void audio.play().catch(() => undefined);
-    else audio.pause();
+    if (arrivedRef.current?.blocked) {
+      // A clip the browser wouldn't start: the main Play goes on with the episode and drops the card (and the Margins
+      // queued behind it), so the reply memory sees the end (#4107). The card's own Play is how to hear the clip.
+      stopClip();
+      setArrived((a) => (a?.blocked ? undefined : a));
+    }
+    reading.current?.resume();
+    void audio.play().catch(() => undefined);
   }, [stopClip, retry]);
+
+  const toggle = useCallback(() => {
+    primeClip();
+    if (anythingSounding()) pauseSound();
+    else resumeSound();
+  }, [anythingSounding, pauseSound, resumeSound, primeClip]);
+
+  const play = useCallback(() => {
+    primeClip();
+    if (!anythingSounding()) resumeSound();
+  }, [anythingSounding, resumeSound, primeClip]);
+
+  const pause = useCallback(() => {
+    if (anythingSounding()) pauseSound();
+  }, [anythingSounding, pauseSound]);
+
+  /**
+   * Done with the friend's Margin that is sounding or held (#4473): a clip ends as if it had played out, so the next
+   * queued Margin or the episode follows; a written one that is being read stops being read and its card goes.
+   */
+  const skipMargin = useCallback(() => {
+    primeClip();
+    const current = clip.current;
+    if (current) {
+      current.end();
+      return;
+    }
+    clearTimeout(shownTimer.current);
+    const audio = audioRef.current;
+    // This written Margin's turn, taken first: the stopped reading may end it itself and begin the next, whose card and
+    // turn must stay. A reading stopped before its tone ended doesn't end it, so it is ended here.
+    const done = turnDone.current;
+    setArrived((a) => (a?.blocked ? a : undefined));
+    if (reading.current) stopReading();
+    if (audio) audio.volume = 1;
+    done?.();
+  }, [primeClip, stopReading]);
 
   const seek = useCallback((seconds: number) => {
     const audio = audioRef.current;
     if (!audio || !audio.src) return;
+    // A Skip or a scrub is the listener's tap: the clip element is readied in it, for the Margin coming up (#4472).
+    primeClip();
+    // Moving to another place leaves the friend's Margin behind: it stops, and the episode plays from the new place
+    // if the Margin was sounding (a Margin held by Pause leaves the episode held too). Otherwise the clip and the
+    // episode would sound together, with controls for only the clip (#4473).
+    const current = clip.current;
+    let resume = false;
+    if (!failedRef.current && (current || reading.current)) {
+      resume = current ? !current.element.paused : !audio.paused;
+      stopClip();
+      clearTimeout(shownTimer.current);
+      audio.volume = 1;
+      setArrived((a) => (a?.blocked ? a : undefined));
+    }
     const max = Number.isFinite(audio.duration) ? audio.duration : Number.POSITIVE_INFINITY;
     audio.currentTime = Math.min(Math.max(0, seconds), max);
     setTime(audio.currentTime);
+    if (resume) void audio.play().catch(() => undefined);
     // The scrub itself is the place, even if the page goes before the browser reports the seek finished (#4096).
     remember();
-  }, [remember]);
+  }, [remember, primeClip, stopClip]);
 
   const skip = useCallback((seconds: number) => seek((audioRef.current?.currentTime ?? 0) + seconds), [seek]);
+
+  const startMargins = useCallback(
+    (seekTo: number, start: MarginStart) => {
+      const audio = audioRef.current;
+      const id = loadedId.current;
+      if (!audio || !audio.src || !id) return;
+      // The listener chose where to go: whatever Margin is sounding stops, as a scrub would leave it.
+      if (clip.current || reading.current) {
+        stopClip();
+        clearTimeout(shownTimer.current);
+        setArrived(undefined);
+      }
+      seek(seekTo);
+      // Where the seek landed, clamped to the episode: the seek event that follows is this tap's own.
+      pendingStartRef.current = { ...start, episodeId: id, seekTo: audio.currentTime };
+      play();
+    },
+    [seek, play, stopClip],
+  );
 
   const setRate = useCallback((value: number) => {
     if (audioRef.current) audioRef.current.playbackRate = value;
@@ -536,8 +871,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       artwork: show?.artworkUrl ? [{ src: show.artworkUrl, sizes: '600x600' }] : [{ src: './icons/icon-512.png', sizes: '512x512', type: 'image/png' }],
     });
     const handlers: Array<[MediaSessionAction, MediaSessionActionHandler]> = [
-      ['play', () => void audioRef.current?.play()],
-      ['pause', () => audioRef.current?.pause()],
+      // The lock screen's Play and Pause act on whatever is sounding, as the main button does (#4473).
+      ['play', resumeSound],
+      ['pause', pauseSound],
       ['seekbackward', (d) => skip(-(d.seekOffset ?? SKIP_SECONDS))],
       ['seekforward', (d) => skip(d.seekOffset ?? SKIP_SECONDS)],
       ['seekto', (d) => d.seekTime !== undefined && seek(d.seekTime)],
@@ -549,7 +885,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         // Not every browser supports every action.
       }
     }
-  }, [episode, data.shows, skip, seek]);
+  }, [episode, data.shows, skip, seek, resumeSound, pauseSound]);
 
   useEffect(() => {
     if (!('mediaSession' in navigator)) return;
@@ -564,8 +900,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [episode, playing, duration, rate, time]);
 
   const api = useMemo<PlayerApi>(
-    () => ({ episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, skip, seek, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard }),
-    [episode, playing, loading, time, duration, rate, open, openNewestPlayable, toggle, skip, seek, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard],
+    () => ({ episode, playing, loading, time, duration, measuredLengthSeconds, rate, open, openNewestPlayable, toggle, play, pause, startMargins, skip, seek, skipMargin, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard }),
+    [episode, playing, loading, time, duration, measuredLengthSeconds, rate, open, openNewestPlayable, toggle, play, pause, startMargins, skip, seek, skipMargin, setRate, now, arrived, playArrived, replyParent, interruptForRecording, failed, withoutEpisode, playWithoutEpisode, registerFailureCard],
   );
 
   return (
@@ -578,6 +914,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         onLoadedMetadata={(event) => {
           const audio = event.currentTarget;
           if (Number.isFinite(audio.duration)) setMediaDuration(audio.duration);
+          keepFirstLength(audio.duration);
           placeWhenLengthKnown(audio);
           if (pendingSeek.current !== undefined) {
             audio.currentTime = Math.min(pendingSeek.current, Number.isFinite(audio.duration) ? audio.duration : pendingSeek.current);
@@ -587,10 +924,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         onDurationChange={(event) => {
           const d = event.currentTarget.duration;
           if (Number.isFinite(d)) setMediaDuration(d);
+          keepFirstLength(d);
           placeWhenLengthKnown(event.currentTarget);
         }}
         onSeeking={(event) => {
+          // Moving leaves the Margins waiting their turn behind; cleared first, so the reading's end begins none of them.
+          clearTurns();
           stopReading();
+          const asked = pendingStartRef.current;
+          if (asked && !startSurvivesSeek(asked.seekTo, event.currentTarget.currentTime)) pendingStartRef.current = undefined;
           crossing.current.seeking(event.currentTarget.currentTime);
           comeUp.current.clear();
         }}
@@ -619,12 +961,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           const audio = event.currentTarget;
           setTime(audio.currentTime);
           if (!audio.paused && !audio.seeking && loadedId.current) {
-            const due = crossing.current.update(
-              dataRef.current.margins.filter((m) => m.episodeId === loadedId.current && !comeUp.current.has(m.id)),
-              audio.currentTime,
-            );
+            const episodeMargins = dataRef.current.margins.filter((m) => m.episodeId === loadedId.current);
+            // Margins the listener asked to hear play when playback reaches them, whatever Autoplay says (part of #3216).
+            const asked = pendingStartRef.current;
+            let started: Margin[] = [];
+            if (asked && asked.episodeId === loadedId.current) {
+              const step = pendingStart(asked.atSeconds, audio.currentTime);
+              if (step !== 'wait') pendingStartRef.current = undefined;
+              if (step === 'play') {
+                started = asked.queue.flatMap((id) => episodeMargins.filter((m) => m.id === id));
+                for (const m of started) comeUp.current.add(m.id);
+              }
+            }
+            // Every Margin's moment counts; the Margins tab's Autoplay says which play and which get a tone (part of #3216).
+            const due = crossing.current.update(episodeMargins.filter((m) => !comeUp.current.has(m.id)), audio.currentTime, () => true);
             for (const m of due) comeUp.current.add(m.id);
-            if (due.length > 0) fire(due);
+            const autoplay = dataRef.current.settings.marginAutoplay;
+            const plays = due.filter((m) => arrival({ hearing: hearingOf(m) }, autoplay) === 'plays');
+            const queued = [...started, ...plays];
+            if (queued.length > 0) fire(queued);
+            else if (due.length > 0) void tone();
           }
           const now = Date.now();
           if (now - lastSave.current > SAVE_EVERY_MS) save();

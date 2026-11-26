@@ -211,7 +211,7 @@ def reland_body(number: int, title: str, sha: str, report: str, revert: str, fai
         + ', '.join(f'`{t}`' for t in failed) + f'. Revert: {revert}. Report: {report}', '',
         '## What the diagnosis found', *[block.strip() + '\n' for block in prose], '',
         '**Done when**',
-        f'1. The change from #{number} lands again in a new PR into next, with the failing tests above passing.',
+        f'1. The change from #{number} lands again in a new PR into main, with the failing tests above passing.',
         '2. A test that fails without the fix covers the cause (the integration run found it; the PR gates did not).', '',
         '**Must not break:** the journeys the original PR touched, packets, the database, and the owner\'s Library.', ''])
 

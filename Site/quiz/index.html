@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Find an episode to talk about · Spoken Margins</title>
+<meta name="description" content="Answer a few questions about a friend, or yourself, and get a prompt for your own AI assistant that suggests podcast episodes worth talking about.">
+<meta property="og:title" content="Find an episode to talk about · Spoken Margins">
+<style>
+:root{--paper:#f5f0e6;--ink:#17372f;--muted:#4f5f58;--line:#cfc7b6;--tile:#fffaf0;--blue:#0a66d6;--blueink:#fff;--orange:#d9754b}
+@media (prefers-color-scheme:dark){:root{--paper:#10231e;--ink:#f5f0e6;--muted:#bdc8c2;--line:#3b5149;--tile:#18332b;--blue:#5aa2ff;--blueink:#06182f;--orange:#f09a72}}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+body{margin:0;background:var(--paper);color:var(--ink);font:19px/1.45 ui-sans-serif,-apple-system,system-ui,sans-serif;-webkit-text-size-adjust:100%}
+main{max-width:560px;margin:0 auto;padding:max(28px,env(safe-area-inset-top)) 16px max(40px,env(safe-area-inset-bottom))}
+h1{font-size:clamp(34px,10vw,48px);line-height:1.05;letter-spacing:-.03em;margin:.5em 0 .2em}
+.intro{font-size:19px;margin:0 0 24px}
+h2{font-size:24px;line-height:1.2;margin:32px 0 12px;letter-spacing:-.01em}
+.hint{font-size:16px;color:var(--muted);margin:4px 0 0}
+fieldset{border:0;margin:0 0 28px;padding:0;min-width:0}
+.q{margin:0 0 28px}
+legend,.q label{font-size:20px;font-weight:700;padding:0;display:block}
+legend{margin-bottom:8px}
+.choice{display:flex;align-items:center;gap:12px;width:100%;min-height:48px;margin:0 0 8px;padding:10px 14px;background:var(--tile);border:2px solid var(--muted);border-radius:14px;font-size:19px;font-weight:400}
+.choice input{width:22px;height:22px;flex:none;margin:0}
+.choice:has(:checked){border:3px solid var(--ink);padding:9px 13px}
+input[type=text]{display:block;width:100%;min-height:48px;margin-top:8px;padding:8px 12px;font:inherit;color:var(--ink);background:var(--tile);border:2px solid var(--muted);border-radius:10px}
+.fills{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.fill{min-height:44px;padding:8px 16px;font:inherit;font-size:17px;color:var(--ink);background:transparent;border:2px solid var(--muted);border-radius:999px;cursor:pointer}
+#make,#copy{display:flex;align-items:center;justify-content:center;width:100%;min-height:56px;margin-top:12px;padding:12px 16px;border:0;border-radius:14px;background:var(--blue);color:var(--blueink);font:inherit;font-weight:700;cursor:pointer}
+#start-over,#retry{min-height:44px;padding:8px 18px;font:inherit;color:var(--ink);background:transparent;border:2px solid var(--ink);border-radius:12px;cursor:pointer}
+#retry{display:block;margin-top:12px}
+#quiz-message,#quiz-status{margin:16px 0 0;padding:14px 16px;border-left:6px solid var(--orange);background:var(--tile);border-radius:0 14px 14px 0;font-size:18px}
+#prompt-text{display:block;width:100%;font:16px/1.4 ui-monospace,Menlo,monospace;color:var(--ink);background:var(--tile);border:2px solid var(--muted);border-radius:10px;padding:12px;resize:vertical}
+#copy-status,#follow-up-status{margin:8px 0 0;font-size:16px;color:var(--muted)}
+h3{font-size:20px;line-height:1.25;margin:24px 0 10px}
+.field-label{display:block;font-size:20px;font-weight:700;margin:0 0 8px}
+#answer-text,#follow-up-text{display:block;width:100%;font:16px/1.4 ui-monospace,Menlo,monospace;color:var(--ink);background:var(--tile);border:2px solid var(--muted);border-radius:10px;padding:12px;resize:vertical}
+#check,#copy-follow-up{display:flex;align-items:center;justify-content:center;width:100%;min-height:56px;margin-top:12px;padding:12px 16px;border:0;border-radius:14px;background:var(--blue);color:var(--blueink);font:inherit;font-weight:700;cursor:pointer}
+#check-message{margin:12px 0 0;font-size:18px}
+#check-message:empty,#follow-up-status:empty{margin:0}
+#check-results{list-style:none;margin:12px 0 0;padding:0}
+.check-row{margin:0 0 10px;padding:12px 14px;background:var(--tile);border:2px solid var(--line);border-left-width:6px;border-radius:12px;overflow-wrap:anywhere}
+.check-row.works{border-left-color:var(--blue)}
+.check-row.look{border-left-color:var(--orange)}
+.check-row p{margin:0}
+.check-name{font-weight:700}
+.check-link{font-size:16px}
+.check-link a{color:var(--blue);text-underline-offset:3px}
+.check-status{margin-top:4px !important}
+.check-icon{display:inline-block;min-width:1.2em;font-weight:700}
+.works .check-icon{color:var(--blue)}
+.look .check-icon{color:var(--orange)}
+#none-worked{margin:12px 0 0;padding:14px 16px;border-left:6px solid var(--orange);background:var(--tile);border-radius:0 14px 14px 0;font-size:18px}
+#quiz-message:empty,#quiz-status:empty{margin:0;padding:0;border:0}
+#copy-status:empty{margin:0}
+.reset{margin:24px 0 0}
+.pitch{margin:24px 0 0;padding-top:16px;border-top:1px solid var(--line)}
+.pitch a{color:var(--blue);font-weight:700;text-decoration:underline;text-underline-offset:3px;display:inline-block;min-height:44px;padding:10px 0}
+footer{margin-top:24px;font-size:16px;color:var(--muted)}
+footer a{color:var(--muted);text-underline-offset:3px}
+button:focus-visible,input:focus-visible,textarea:focus-visible,a:focus-visible,#prompt-heading:focus-visible{outline:4px solid var(--ink);outline-offset:3px}
+</style></head><body><main>
+<h1>Find an episode to talk about</h1>
+<p class="intro">Answer a few questions about someone, or about yourself. We'll write a prompt for your own AI assistant, and it will suggest podcast episodes worth talking about. Your answers stay in this browser.</p>
+<noscript><p>This page needs JavaScript to build your prompt. Nothing you type is sent anywhere.</p></noscript>
+<p id="quiz-status" role="status"></p>
+<form id="quiz" novalidate></form>
+<section id="prompt" hidden>
+<h2 id="prompt-heading" tabindex="-1">Your prompt</h2>
+<textarea id="prompt-text" readonly rows="14" aria-labelledby="prompt-heading"></textarea>
+<button type="button" id="copy">Copy prompt</button>
+<p id="copy-status" aria-live="polite"></p>
+<p>Paste it into your own assistant, like ChatGPT, Claude or Gemini, with web search turned on. Then paste its answer below to check the links.</p>
+<h2 id="check-heading">Check the links</h2>
+<label for="answer-text" class="field-label">Your assistant's answer</label>
+<textarea id="answer-text" rows="8" autocomplete="off" spellcheck="false"></textarea>
+<button type="button" id="check">Check links</button>
+<p id="check-message" aria-live="polite"></p>
+<ul id="check-results" aria-labelledby="check-heading" hidden></ul>
+<p id="none-worked" hidden></p>
+<div id="follow-up" hidden>
+<h3 id="follow-up-heading">Ask again for the ones that didn't work</h3>
+<textarea id="follow-up-text" readonly rows="8" aria-labelledby="follow-up-heading"></textarea>
+<button type="button" id="copy-follow-up">Copy follow-up prompt</button>
+<p id="follow-up-status" aria-live="polite"></p>
+</div>
+</section>
+<p class="reset" hidden><button type="button" id="start-over">Start over</button></p>
+<p class="pitch">Have the conversation in Spoken Margins: pause the episode and leave a spoken note, a Margin, at the moment you want to talk about. It's in private beta. <a href="/join/">Try Spoken Margins</a></p>
+<footer>The questions and the prompt are <a href="https://github.com/Spoken-Margins/spoken-margins-native/blob/main/Contracts/quiz/find-something.v1.json">open source</a>. · <a href="/privacy/">Privacy Policy</a> · <a href="/copyright/">Copyright and DMCA</a> · <a href="/content-policy/">Content policy</a></footer>
+</main>
+<script>
+window.addEventListener("load", function () {
+  if (document.documentElement.dataset.quiz) return;
+  var status = document.getElementById("quiz-status");
+  if (status) status.textContent = "The questions didn't load. Check your connection, then try again.";
+});
+</script>
+<script type="module" src="./page.js"></script>
+</body></html>

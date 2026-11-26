@@ -768,15 +768,16 @@ def _check_link(report, value, where):
 
 
 def zip_entry_type(info):
-    """ZIPFoundation's Entry.type (0.9.20): from the Unix mode when the archive was made on Unix or macOS, else
-    from a trailing slash (and the MS-DOS directory bit). The Swift reader reads only `file` entries, so a symlink
+    """ZIPFoundation's Entry.type (0.9.21): from the Unix mode when the archive was made on Unix or macOS, else
+    from a trailing slash (and the MS-DOS directory bit). Since 0.9.21 a trailing slash wins over a regular-file
+    mode. The Swift reader reads only `file` entries, so a symlink
     stored at an allowed path is refused, not read as data."""
     directory = info.filename.endswith('/')
     host = info.create_system
     if host in (3, 19):
         mode = (info.external_attr >> 16) & 0o170000
         if mode == 0o100000:
-            return 'file'
+            return 'directory' if directory else 'file'
         if mode == 0o040000:
             return 'directory'
         if mode == 0o120000:
@@ -1127,7 +1128,8 @@ def _check_sketch(report, sketch, where):
 
 
 INTERJECTION_KEYS = frozenset({'packageScopedId', 'createdAt', 'anchor', 'defaultRepresentationId', 'representations',
-                               'readAloud'})
+                               'readAloud', 'leadInMs'})
+LEAD_IN_MAX_MS = 300_000  # SenderLeadIn.range: readers clamp to 0...300000
 ANCHOR_KEYS = frozenset({'anchorType', 'startChar', 'endChar', 'exactText', 'prefix', 'suffix', 'mediaTimeMs',
                          'roughPercent', 'transcriptSegmentId', 'chapterTitle', 'machineEvidenceAssetIds'})
 REPRESENTATION_KEYS = frozenset({'id', 'kind', 'approvedTranscript', 'assetId', 'provenance'})
@@ -1147,6 +1149,13 @@ def _check_layer(report, layer, assets_by_id):
         at = f'{where} Margin {index + 1}'
         for key in sorted(set(margin) - INTERJECTION_KEYS):
             report.warn('ignored-field', f'{key!r} is not a Margin field; shipped readers ignore it', at)
+        lead_in = margin.get('leadInMs')
+        if lead_in is not None:
+            # SharedInterjectionPackageRecord.leadInMs is an Int?: Codable refuses a string, a fraction or a boolean.
+            if isinstance(lead_in, bool) or not isinstance(lead_in, int) or abs(lead_in) >= 2 ** 63:  # Swift Int is 64-bit
+                _refuse(report, 'invalid-manifest', 'a Margin field is absent or out of bounds', at)
+            elif not 0 <= lead_in <= LEAD_IN_MAX_MS:
+                report.warn('lead-in-clamped', f'leadInMs {lead_in} is outside 0-{LEAD_IN_MAX_MS}; readers clamp it', at)
         anchor = margin['anchor']
         for key in sorted(set(anchor) - ANCHOR_KEYS):
             report.warn('ignored-field', f'{key!r} is not an anchor field; shipped readers ignore it', at)
@@ -1652,6 +1661,13 @@ def corpus(sources=EXAMPLES):
     layer['interjections'][0]['anchor']['futureAnchorHint'] = 7
     artifacts[layer_path] = encode_manifest(layer)
     out['unknown-commentary-fields.spokenmargins'] = write_packet(manifest, artifacts, assets)
+
+    manifest, artifacts, assets = copy(podcast)
+    layer_path = next(d['path'] for d in manifest['artifacts'] if d['kind'] == 'commentary_layer')
+    layer = json.loads(artifacts[layer_path])
+    layer['interjections'][0]['leadInMs'] = 60_000
+    artifacts[layer_path] = encode_manifest(layer)
+    out['lead-in-per-margin.spokenmargins'] = write_packet(manifest, artifacts, assets)
 
     manifest, artifacts, assets = copy(podcast)
     manifest['assets'].append({'id': 'asset-broken', 'mimeType': 'audio/mp4', 'path': 'assets/audio/broken.m4a',

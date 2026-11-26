@@ -15,12 +15,28 @@ struct ExperienceMarginDetailView: View {
     @State private var showsExportQuestion = false
     @State private var showsRecordingLeftOut = false
     @State private var isPreparingMarkdown = false
+    @StateObject private var tidy = MarginTidyCardModel()
+    /// Saved live-session photos (#4180), observed directly so the photo appears once the launch load finishes.
+    @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
+    /// 40% of this screen, for the photo's height, as on the live session's Margin screen; measured, not read from the device.
+    @State private var photoMaxHeight: CGFloat = 320
     let row: MarginRow
 
     private enum NavigationIntent { case moment, item, share }
     private var current: MarginRow { model.marginRows.first { $0.id == row.id } ?? row }
 
     private var isStarred: Bool { current.interjection.isStarredForSharing == true }
+
+    /// The details screen's Paper note row (#4340): setting a role takes the Margin into that slot; None takes it out.
+    private var paperRoleBinding: Binding<PaperNoteRole?> {
+        Binding(
+            get: { current.interjection.paperRole },
+            set: { role in
+                guard role != current.interjection.paperRole else { return }
+                model.setPaperRole(role, for: current.interjection)
+            }
+        )
+    }
 
     private var playButton: some View {
         let playing = model.isPlayingInterjectionAudio(current.interjection)
@@ -32,7 +48,7 @@ struct ExperienceMarginDetailView: View {
 
     private var starButton: some View {
         Button(isStarred ? "Starred" : "Star", systemImage: isStarred ? "star.fill" : "star") {
-            model.setMarginStarred(current, starred: !isStarred)
+            model.toggleStarredForSharing(current.interjection, place: .detail)
         }
         .accessibilityLabel(isStarred ? "Unstar Margin" : "Star Margin")
         .accessibilityIdentifier("marginDetail.star.button")
@@ -100,7 +116,7 @@ struct ExperienceMarginDetailView: View {
             .buttonStyle(.automatic)
             .accessibilityIdentifier("marginDetail.copyWithContext.button")
             // Share means another listener (#3211): this opens the friend sheet with only this Margin.
-            if ItemShareSessionSelection.isShareable(current.interjection) {
+            if MarginPlacePresentation.offersShare(current.interjection) {
                 Button("Share this Margin", systemImage: "square.and.arrow.up") {
                     pendingNavigation = .share // the friend sheet opens once this screen has closed
                     dismiss()
@@ -135,16 +151,47 @@ struct ExperienceMarginDetailView: View {
     var body: some View {
         NavigationStack {
             List {
+                SpeechAskCardInList(surface: .detail)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 Section {
+                    // The live session's photo comes first, above the words (#4180). No lookup entry (any other Margin,
+                    // or before the lookup loads) shows nothing, never the missing-file line.
+                    if let photo = photoIndex.photo(forMarginId: current.interjection.id) {
+                        LiveSessionPhotoDetail(
+                            photo: photo.photo, altText: photo.altText(for: current.interjection), maxHeight: photoMaxHeight
+                        )
+                    }
                     Text(current.fullText)
                         .font(.system(.title3, design: .serif))
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
+                    if tidy.showsCard(for: current.interjection) {
+                        MarginTidyCard(margin: current.interjection, card: tidy)
+                    }
                     Text("\(current.isWritten ? "Written Margin" : "Voice Margin") · \(current.itemTitle)")
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                     LabeledContent("Attached to", value: current.targetDescription)
                     LabeledContent("Position", value: InterjectionPositionPresentation.detailDescription(for: current.interjection, durationMs: nil))
+                    // Which slot of the paper's Paper note this Margin fills, for an item-level Margin on a PDF (#4340).
+                    if current.interjection.targetType == .item, model.offersPaperNote(itemId: current.interjection.itemId) {
+                        Picker("Paper note", selection: paperRoleBinding) {
+                            Text("None").tag(PaperNoteRole?.none)
+                            ForEach(PaperNoteRole.allCases, id: \.self) { role in
+                                Text(PaperNoteSlots.roleName(role)).tag(PaperNoteRole?.some(role))
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .accessibilityIdentifier("marginDetail.paperNote.picker")
+                    }
+                    if let movedFrom = MarginPlacePresentation.movedFromLine(for: current.interjection) {
+                        Text(movedFrom)
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("marginDetail.movedFrom.label")
+                    }
                     if current.needsAttention {
                         Label(current.attentionDescription, systemImage: "exclamationmark.triangle")
                             .foregroundStyle(AppColors.coral)
@@ -157,7 +204,7 @@ struct ExperienceMarginDetailView: View {
                 }
                 if current.interjection.replyTo != nil {
                     Section("Replying to") {
-                        if let context = model.marginParentContext(of: .local(current.interjection.id), itemId: current.interjection.itemId) {
+                        if let context = model.marginParentContext(of: .local(current.interjection.sessionScopedId), itemId: current.interjection.itemId) {
                             MarginParentContextView(context: context)
                         } else {
                             Text(MarginThreadPresentation.missingParentNote)
@@ -190,7 +237,12 @@ struct ExperienceMarginDetailView: View {
                                 .textSelection(.enabled)
                         }
                     }
-                    if current.canRetryTranscription {
+                    if current.transcriptWaitsForAnswer {
+                        Button("Get Transcript", systemImage: "text.bubble") {
+                            SpeechAskController.shared.getTranscript(on: .detail, model: model)
+                        }
+                        .accessibilityIdentifier("marginDetail.getTranscript.button")
+                    } else if current.canRetryTranscription {
                         Button(model.isRetryingInterjectionTranscription(current.interjection) ? "Transcribing…" : "Retry Transcription", systemImage: "arrow.clockwise") {
                             model.retryInterjectionTranscription(current.interjection)
                         }
@@ -203,7 +255,7 @@ struct ExperienceMarginDetailView: View {
                         .accessibilityIdentifier("marginDetail.openSettings.button")
                     }
                     if !current.isWritten, current.interjection.anchorContextStatus == .unavailable {
-                        Button(model.isRetryingAnchorContext(current.interjection) ? "Recovering Context…" : "Retry Context", systemImage: "arrow.clockwise") {
+                        Button(model.isRetryingAnchorContext(current.interjection) ? "Finding Source Words…" : "Retry Finding Source Words", systemImage: "arrow.clockwise") {
                             model.retryAnchorContext(current.interjection)
                         }
                         .disabled(model.isRetryingAnchorContext(current.interjection))
@@ -216,7 +268,16 @@ struct ExperienceMarginDetailView: View {
                 }
             }
             .buttonStyle(MarginDetailActionButtonStyle())
-            .marginExportShareSheet($exportShare)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { photoMaxHeight = max(160, $0 * 0.4) }
+            .task(id: MarginTidyCardModel.key(for: current.interjection)) {
+                await tidy.refresh(for: current.interjection, using: model)
+            }
+            .marginExportShareSheet($exportShare) { completed, activityType, failed in
+                // Save to Files leaves nothing on screen; say it worked. A cancel or a failure says nothing here (#5051).
+                if let message = ExportSavedConfirmation.message(completed: completed, activityType: activityType, failed: failed) {
+                    model.reportConfirmation(message)
+                }
+            }
             .confirmationDialog("What do you want to export?", isPresented: $showsExportQuestion, titleVisibility: .visible) {
                 Button("Text only") { exportThisMargin(.textOnly) }
                     .accessibilityIdentifier("marginDetail.export.textOnly")
@@ -252,20 +313,24 @@ struct ExperienceMarginDetailView: View {
                 model.refreshMarginRowsInBackground(forItem: row.interjection.itemId)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                Button("Go to this moment in the source", systemImage: "arrow.turn.down.right") {
-                    pendingNavigation = .moment
-                    dismiss()
+                // A Margin with no place has no moment to go to (#4233).
+                if MarginPlacePresentation.offersGoToMoment(current.interjection) {
+                    Button("Go to this moment in the source", systemImage: "arrow.turn.down.right") {
+                        pendingNavigation = .moment
+                        dismiss()
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("marginDetail.playMoment.button")
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity)
+                    .background(AppColors.bone)
                 }
-                .buttonStyle(PrimaryButtonStyle())
-                .accessibilityIdentifier("marginDetail.playMoment.button")
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity)
-                .background(AppColors.bone)
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("marginDetail.screen")
             .navigationTitle("Margin")
+            .onDisappear { SpeechAskController.shared.surfaceLeft(.detail) }
             .navigationBarTitleDisplayMode(.inline)
             .scrollContentBackground(.hidden)
             .background(AppColors.bone)

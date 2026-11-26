@@ -54,7 +54,25 @@ extension Gate1AppModel {
         importInbox = entries
     }
 
-    func retryImportInboxEntry(_ entry: ImportInboxEntry) {
+    /// "See why" on a failure banner: the Settings tab, showing the Import Inbox page (#4781). It refuses while a
+    /// Margin is being recorded or written, and then leaves no request behind for a later visit to Settings.
+    func openImportInbox() {
+        guard !rejectNavigationOrSessionMutationWhileRecording("open_import_inbox") else { return }
+        requestedSettingsPage = .importInbox
+        showSettingsTab()
+    }
+
+    /// The page "See why" asked Settings to show, once: reading it clears it.
+    func takeSettingsPageRequest() -> SettingsPage? {
+        // Every Settings visit asks; setting nil over nil would still publish to every screen's feed (#4028).
+        guard let page = requestedSettingsPage else { return nil }
+        requestedSettingsPage = nil
+        return page
+    }
+
+    /// True when the retry was queued, so the Inbox page can hold that entry's Retry while its import runs.
+    @discardableResult
+    func retryImportInboxEntry(_ entry: ImportInboxEntry) -> Bool {
         do {
             switch entry.kind {
             case .sourceLink:
@@ -62,10 +80,15 @@ extension Gate1AppModel {
             case .browserText:
                 try resolvedBrowserTextHandoffStore().retryFailed(payloadID: entry.payloadID)
             }
+            // The entry leaves the list now, so if it fails the same way again it comes back as a change and the
+            // Inbox page turns its Retry back on (#4781).
+            refreshImportInbox()
             importPendingSourceLinkHandoffs()
             reportConfirmation("Import retry queued.")
+            return true
         } catch {
             reportFailure(error, context: "Import retry failed")
+            return false
         }
     }
 
@@ -143,10 +166,13 @@ extension Gate1AppModel {
         // A request made while a drain runs (Retry, a link opened) makes it go round once more; before, it was
         // dropped and the "queued" banner was false (#2136).
         guard pendingHandoffDrainGate.request() else { return }
-        defer { refreshImportInbox() }
         repeat {
             await drainPendingHandoffsOnce()
         } while pendingHandoffDrainGate.finishPass() != nil
+        refreshImportInbox() // before the link lists, so a failed share shows in the inbox while a long arrival runs
+        // Link lists the Shortcuts action saved (#4683). After the share pass has released its gate, so a long list never
+        // holds up a Safari share.
+        await drainLinkListHandoffs()
     }
 
     private func drainPendingHandoffsOnce() async {
@@ -169,6 +195,12 @@ extension Gate1AppModel {
 
         do {
             let handoffStore = try resolvedSourceLinkHandoffStore()
+            // What the share extension did with the last share (#5338): the route, what each representation yielded and
+            // the handoff id, which matches the `pending…Payload:<id>` result below. Read on every drain, so it is in an
+            // export made after a relaunch too.
+            let root = handoffStore.rootDirectory
+            let lastShare = try await Self.offMain { ShareExtensionShareRecord.load(fromAppGroupRoot: root) }
+            if let lastShare { diagnostics["lastShareExtension"] = lastShare.diagnosticValue }
             let payloadIDs = try await Self.offMain { try handoffStore.pendingPayloadIDs() }
             diagnostics["pendingSourceLinkPayloads"] = "\(payloadIDs.count)"
             // A connection failure leaves the link pending for the next activation or the network's
@@ -210,9 +242,11 @@ extension Gate1AppModel {
                     case .transcript(let itemId): addedItemIds.append(itemId)
                     case .refused(let message): transcriptRefusals.append(message)
                     case .ordinary:
-                        addedItemIds.append(try hangTelemetry.labels.scoped("pendingBrowserTextImport") {
-                            try importBrowserTextInBackground(handoff)
-                        })
+                        // The item write keeps its label; the Library read after it runs off the main thread (#2256).
+                        let imported = try hangTelemetry.labels.scoped("pendingBrowserTextImport") {
+                            try browserTextImportEngine().importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff))
+                        }
+                        addedItemIds.append(try await finishBackgroundBrowserTextImportOffMain(imported, handoff: handoff))
                     }
                     try await Self.offMain { try handoffStore.deletePayload(payloadID: payloadID) }
                     diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "imported"
@@ -262,6 +296,14 @@ extension Gate1AppModel {
         guard let first = failures.first else { return }
         let lead = failures.count == 1 ? "A shared link couldn't be imported" : "\(failures.count) shared links couldn't be imported"
         let reason = first.hasSuffix(".") ? first : first + "."
-        reportFailure("\(lead): \(reason) Retry or remove it in Settings, Import Inbox.")
+        reportFailure(
+            "\(lead): \(reason) Retry or remove it in Settings, Import Inbox.",
+            action: UserFeedbackEvent.Action(
+                title: "See why",
+                accessibilityLabel: "See why the shared \(failures.count == 1 ? "link" : "links") couldn't be imported",
+                identifier: "feedback.sharedLinkFailed.seeWhy",
+                perform: { [weak self] in self?.openImportInbox() }
+            )
+        )
     }
 }

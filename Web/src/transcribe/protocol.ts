@@ -13,5 +13,7 @@ export type FromWorker =
   | { type: 'progress'; loaded: number; total: number }
   | { type: 'ready'; device: Device; loadMs: number }
   | { type: 'load-failed'; message: string }
+  /** One segment of a run is done: a long Margin shows it is moving, so only a run that goes quiet is stuck. */
+  | { type: 'segment'; id: number; done: number; total: number }
   | { type: 'result'; id: number; text: string; ms: number; device: Device }
   | { type: 'failed'; id: number; message: string };

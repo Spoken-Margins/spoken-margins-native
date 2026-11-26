@@ -6,6 +6,7 @@ final class UITestingLaunchSeedTests: XCTestCase {
     private let everySeedVariable = [
         "SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY": "1",
         "SPOKEN_MARGINS_UI_TEST_COOP": "1",
+        "SPOKEN_MARGINS_UI_TEST_COOP_SILENT": "1",
         "SPOKEN_MARGINS_UI_TEST_LISTENER_SHARED": "1",
         "SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT": "Some text.",
         "SPOKEN_MARGINS_UI_TEST_PODCAST": "1",
@@ -36,6 +37,7 @@ final class UITestingLaunchSeedTests: XCTestCase {
         XCTAssertFalse(UITestingLaunchSeed.podcastStartsCompleted(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
         XCTAssertEqual(UITestingLaunchSeed(arguments: ["SpokenMarginsApp"], environment: everySeedVariable), .none)
         XCTAssertFalse(UITestingLaunchSeed.importsCoopLayer(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
+        XCTAssertFalse(UITestingLaunchSeed.importsSilentCoopMargin(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
         XCTAssertFalse(UITestingLaunchSeed.marksListenerMarginShared(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
         XCTAssertFalse(UITestingLaunchSeed.seedsFollowedShow(arguments: ["SpokenMarginsApp"], environment: everySeedVariable))
     }
@@ -219,6 +221,20 @@ final class UITestingLaunchSeedTests: XCTestCase {
         XCTAssertEqual(UITestingLaunchSeed(arguments: ["--ui-testing"], environment: [keep: "1", coop: "1"]), .keepLibrary)
     }
 
+    // #4934: the silent switch picks the Margin's kind and nothing else, and never imports on its own.
+    func testTheSilentCoopSwitchNeedsTheCoopRelaunchAndTheValueOne() {
+        let keep = "SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY", coop = "SPOKEN_MARGINS_UI_TEST_COOP", silent = "SPOKEN_MARGINS_UI_TEST_COOP_SILENT"
+        func silentImport(_ arguments: [String], _ environment: [String: String]) -> Bool {
+            UITestingLaunchSeed.importsSilentCoopMargin(arguments: arguments, environment: environment)
+        }
+        XCTAssertTrue(silentImport(["--ui-testing"], [keep: "1", coop: "1", silent: "1"]))
+        XCTAssertFalse(silentImport(["--ui-testing"], [keep: "1", coop: "1"]), "the voiced Margin stays the default")
+        XCTAssertFalse(silentImport(["--ui-testing"], [keep: "1", coop: "1", silent: "0"]))
+        XCTAssertFalse(silentImport(["--ui-testing"], [keep: "1", silent: "1"]), "alone it imports nothing")
+        XCTAssertFalse(silentImport([], [keep: "1", coop: "1", silent: "1"]), "a normal launch never changes")
+        XCTAssertEqual(UITestingLaunchSeed(arguments: ["--ui-testing"], environment: [keep: "1", coop: "1", silent: "1"]), .keepLibrary)
+    }
+
     func testTheCoopMarginIsOneNewVoiceMarginReviewCanOffer() throws {
         let layer = UITestingLaunchSeed.coopLayer(importedAt: Date(timeIntervalSince1970: 1_700_000_000))
         let margin = UITestingLaunchSeed.coopInterjection(
@@ -381,5 +397,38 @@ final class UITestingLaunchSeedTests: XCTestCase {
         XCTAssertEqual(added, added.sorted(by: >), "Each filler is added before the one above it")
         XCTAssertTrue(UITestingLaunchSeed.libraryFillerItems(count: 0, fixtureAddedAt: fixtureAddedAt).isEmpty)
         XCTAssertTrue(UITestingLaunchSeed.libraryFillerItems(count: -1, fixtureAddedAt: fixtureAddedAt).isEmpty)
+    }
+}
+
+/// #4934: the seed for a friend's Margin that is never read aloud.
+final class UITestingLaunchSeedSilentCoopTests: XCTestCase {
+    func testTheSilentCoopMarginIsNotOfferedButHasAPlaceOnTheSeededPodcast() throws {
+        let when = Date(timeIntervalSince1970: 1_700_000_000)
+        let silent = UITestingLaunchSeed.coopSilentInterjection(createdAt: when)
+        let voiced = UITestingLaunchSeed.coopInterjection(audioPath: "SpokenMargins/interjections/ui-test-coop.m4a", createdAt: when)
+        XCTAssertNil(silent.audioPath, "no recording")
+        XCTAssertEqual(silent.senderReadAloud, false)
+        XCTAssertTrue(silent.isWritten)
+        XCTAssertFalse(SharedMarginAudio.canOffer(silent), "Skim's voiced list and the Margins tab's Play must not take it")
+        XCTAssertTrue(SharedMarginAudio.canOffer(voiced))
+        let layer = UITestingLaunchSeed.coopLayer(importedAt: when)
+        XCTAssertEqual(silent.layerId, layer.id)
+        XCTAssertEqual(silent.id, voiced.id, "the same place in the library: a script launches with one or the other")
+        XCTAssertEqual(SharedMarginPlaybackPosition(silent)?.mediaTimeMs, UITestingLaunchSeed.coopMarginMediaTimeMs)
+        XCTAssertEqual(SharedMarginPlaybackPosition(silent)?.isApproximate, false)
+        XCTAssertTrue(SharedMarginListPlay.canGo(silent, in: layer))
+        XCTAssertFalse(SharedMarginListPlay.canPlay(silent, in: layer))
+        XCTAssertEqual(silent.approvedTranscript, "A friend's UI test Margin.")
+    }
+
+    func testTheSilentCoopMarginIsASilentSkimStopAtTheCoopPlace() throws {
+        let when = Date(timeIntervalSince1970: 1_700_000_000)
+        let stops = SkimStopRouting.stops(
+            textChapters: [], mediaChapters: [], ownMargins: [], sharedMargins: [],
+            silentSharedMargins: [UITestingLaunchSeed.coopSilentInterjection(createdAt: when)], unit: .milliseconds)
+        let stop = try XCTUnwrap(stops.stops.first)
+        XCTAssertEqual(stops.stops.count, 1)
+        XCTAssertTrue(stop.isSilent)
+        XCTAssertEqual(stop.position, UITestingLaunchSeed.coopMarginMediaTimeMs)
     }
 }

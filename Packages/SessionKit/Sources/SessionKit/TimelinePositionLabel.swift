@@ -19,8 +19,11 @@ public enum TimelinePositionLabel {
         public var corner: String
         /// What VoiceOver reads for the corner: "1 hour, 7 minutes, 30 seconds" or "65 percent".
         public var spoken: String
-        /// A chapter card's detail line: "Chapter · 1:07:30", "Chapter · about 65%" or, on text, "Chapter · 56%".
-        public var chapterDetail: String
+
+        public init(corner: String, spoken: String) {
+            self.corner = corner
+            self.spoken = spoken
+        }
     }
 
     /// The label for one card.
@@ -32,18 +35,39 @@ public enum TimelinePositionLabel {
         // A negative start is not a real chapter time: it falls back to the fraction rather than showing an exact 0:00.
         if kind == .media, let startMs, startMs >= 0 {
             let time = PlaybackPositionText.visible(ms: startMs)
-            return Label(corner: time, spoken: PlaybackPositionText.spoken(ms: startMs), chapterDetail: "Chapter · \(time)")
+            return Label(corner: time, spoken: PlaybackPositionText.spoken(ms: startMs))
         }
-        let shown = PlaybackPositionText.visible(percent: percent)
-        return Label(
-            corner: shown, spoken: PlaybackPositionText.spoken(percent: percent),
-            chapterDetail: kind == .media ? "Chapter · about \(shown)" : "Chapter · \(shown)")
+        return Label(corner: PlaybackPositionText.visible(percent: percent), spoken: PlaybackPositionText.spoken(percent: percent))
+    }
+
+    /// The label for a chapter card (#4778). A chapter card shows its place once, in the corner, so a chapter on a timed
+    /// item with no usable exact start says "about 65%" there ("about 65 percent" to VoiceOver): a rough place never reads
+    /// as an exact one (#3862). Everything else is `label(kind:startMs:percent:)`.
+    public static func chapterLabel(kind: ItemKind, startMs: Int?, percent: Int) -> Label {
+        let label = label(kind: kind, startMs: startMs, percent: percent)
+        let hasExactStart = startMs.map { $0 >= 0 } ?? false
+        guard kind == .media, !hasExactStart else { return label }
+        return Label(corner: "about \(label.corner)", spoken: "about \(label.spoken)")
     }
 
     /// The whole percent the listener is through a media item, rounded down so 99.6% shows 99% until the item is finished.
     /// Nil when the duration is not known, so no number is made up.
     public static func mediaPercent(currentMs: Int, durationMs: Int?) -> Int? {
         durationMs.flatMap { PlaybackPositionText.percent(position: currentMs, length: $0) }
+    }
+
+    /// The percent a text item's scrubber prints for a character offset: nearest whole percent, 0...100, and 0 while the length is
+    /// unknown. The playback screen's scrubber and the Timeline's current line both call this, so they can't disagree (#3862).
+    public static func textScrubberPercent(offset: Double, length: Int) -> Int {
+        guard length > 0 else { return 0 }
+        return max(0, min(100, Int((offset / Double(length) * 100).rounded())))
+    }
+
+    /// The media scrubber's VoiceOver value with the listener's percent added: "1:06:48 of 1:43:00, 64 percent". The value is
+    /// returned unchanged while the duration is unknown, so no number is made up.
+    public static func appendingSpokenPercent(to value: String, currentMs: Int, durationMs: Int?) -> String {
+        guard let percent = mediaPercent(currentMs: currentMs, durationMs: durationMs) else { return value }
+        return "\(value), \(PlaybackPositionText.spoken(percent: percent))"
     }
 
     /// The current card's line: the current label with the listener's position, on whatever kind of card is current.

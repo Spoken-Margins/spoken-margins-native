@@ -67,6 +67,8 @@ final class PinnedMarginCardLayoutTests: XCTestCase {
                 // The saved-answer card with a long name, which draws the inline share icon (#3905). The height budgets above
                 // bound it at accessibility3; the icon itself is proved by the Test Desk's screenshots, not by this table.
                 ("answerSaved long name", .answerSaved(atMs: 65_000, sentTo: longName), .none, .unavailable),
+                ("savedHere", .savedHere(atMs: 65_000), .none, .unavailable),
+                ("hearItLand comingUp", .comingUp(msRemaining: 5_000), .hearItLand, .unavailable),
                 ("lastMargin", .lastMargin(senders: 1), .none, .unavailable),
                 ("lastMargin many", .lastMargin(senders: 3), .none, .unavailable),
                 ("moment comingUp", .comingUp(msRemaining: 8_000), .moment, .unavailable),
@@ -79,6 +81,28 @@ final class PinnedMarginCardLayoutTests: XCTestCase {
                     subject: subject, stage: stage, position: "2 of 3", voiceTime: "0:14 of 0:41", noun: .episode,
                     nextPress: press, run: run)
                 found.append(("\(who) \(stageName)", card, run == .review))
+            }
+        }
+        return found.map { (name: $0.0, card: $0.1, isReview: $0.2) } + startEarlierCards()
+    }
+
+    /// The stages that carry "Start a minute earlier" (#4171), for a friend with a short and a long name. The listener's own
+    /// Margin never has it, so it has no rows here.
+    private static func startEarlierCards() -> [(name: String, card: PinnedMarginCard, isReview: Bool)] {
+        var found: [(name: String, card: PinnedMarginCard, isReview: Bool)] = []
+        for (who, subject) in [("short", PinnedMarginCard.Subject.friend("Cole")), ("long", .friend(longName))] {
+            let stages: [(String, PinnedMarginCard.Stage, PinnedMarginCard.Run, NextMarginPress)] = [
+                ("speaking", .speaking, .none, .unavailable),
+                ("moment speaking", .speaking, .moment, .skipVoice),
+                ("review speaking", .speaking, .review, .skipVoice),
+                ("moment comingUp", .comingUp(msRemaining: 8_000), .moment, .unavailable),
+                ("review comingUp near", .comingUp(msRemaining: 8_000), .review, .playMarginNow),
+            ]
+            for (stageName, stage, run, press) in stages {
+                let card = PinnedMarginCard(
+                    subject: subject, stage: stage, position: "2 of 3", voiceTime: "0:14 of 0:41", noun: .episode,
+                    nextPress: press, run: run, canStartEarlier: true)
+                found.append((name: "\(who) \(stageName) with Start a minute earlier", card: card, isReview: run == .review))
             }
         }
         return found
@@ -105,7 +129,8 @@ final class PinnedMarginCardLayoutTests: XCTestCase {
                 XCTAssertEqual(detailNode.label, detail, "\(context): the detail's spoken label is not the card's plain words")
                 let buttons = mounted.nodes().filter { $0.traits.contains(.button) }
                     .sorted { ($0.frame.minY, $0.frame.minX) < ($1.frame.minY, $1.frame.minX) }
-                XCTAssertEqual(buttons.map { $0.label ?? "" }, card.actions.map(\.title),
+                // At accessibility3 "Start a minute earlier" is left off (#4171): the card draws `shownActions`, not every action.
+                XCTAssertEqual(buttons.map { $0.label ?? "" }, card.shownActions(atAccessibility3OrLarger: size >= .accessibility3).map(\.title),
                                "\(context): the buttons' labels differ from the actions' titles")
                 for button in buttons {
                     // `mount` draws the card from the window's top, so the card spans 0 to `height`.
@@ -117,6 +142,45 @@ final class PinnedMarginCardLayoutTests: XCTestCase {
                                            "\(context): \"\(button.label ?? "")\" is \(button.frame.width) pt wide")
                 }
             }
+        }
+    }
+
+    /// #4175: the countdown card's detail can now be the copy-length note, about 85 characters against the generic
+    /// caution's 53. The longest note (a 14-character name, the biggest difference said in seconds) must keep every
+    /// countdown stage under the same height budgets. If this breaks the `.large` budget, the fix is the short wording
+    /// the Design on #4175 names: "Your copy is about 35 seconds shorter than Cole's." and, far apart, "Your copy is about
+    /// 20 minutes shorter than Cole's; Margins may not line up.", not a taller budget.
+    func testTheLongestCopyLengthNoteKeepsTheCountdownCardUnderItsBudgets() throws {
+        let note = try XCTUnwrap(SharedMarginPlacementWording.pinnedCardLine(
+            for: .roughly(mediaTimeMs: 300_000), atSenderClock: true, senderCopyMs: 1_800_000, listenerCopyMs: 1_915_000,
+            subject: .friend("Fourteen chars")))
+        XCTAssertTrue(note.contains("about 115 seconds longer than Fourteen chars's"), note)
+        let cards = Self.cards().filter {
+            !$0.name.hasPrefix("own") && ($0.name.hasSuffix("upNext playsByItself") || $0.name.hasSuffix("upNext toneThenTap"))
+        }
+        XCTAssertEqual(cards.count, 4, "the countdown stages the note can appear on")
+        for (size, sizeLabel, maxHeight) in Self.budgets {
+            for (name, card, isReview) in cards {
+                let body = PinnedMarginCardBody(
+                    card: card, detail: note, isReview: isReview, navigationLocked: false, perform: { _ in })
+                let height = Self.height(of: body, size: size)
+                XCTAssertLessThanOrEqual(height, maxHeight, "\(name) at \(sizeLabel) with the longest note: \(height) pt; the budget is \(maxHeight) pt")
+            }
+        }
+    }
+
+    /// #4171 Design: the stages with "Start a minute earlier" also hold at the largest size below the accessibility sizes,
+    /// where it is still drawn (three stacked buttons in the run-up). The budget there is the accessibility3 one, half the
+    /// screen. If a row goes over, the Design says to stop and report it, not to trim the other buttons.
+    func testTheStartEarlierRowsFitAtTheLargestTextSizeThatStillShowsIt() throws {
+        let cards = Self.startEarlierCards()
+        XCTAssertEqual(cards.count, 10)
+        for (name, card, isReview) in cards {
+            XCTAssertTrue(card.shownActions(atAccessibility3OrLarger: false).contains { $0.job == .startEarlier }, name)
+            XCTAssertFalse(card.shownActions(atAccessibility3OrLarger: true).contains { $0.job == .startEarlier }, name)
+            let body = PinnedMarginCardBody(card: card, detail: card.detail, isReview: isReview, navigationLocked: false, perform: { _ in })
+            let height = Self.height(of: body, size: .xxxLarge)
+            XCTAssertLessThanOrEqual(height, 430, "\(name) at xxxLarge: \(height) pt; the budget is 430 pt")
         }
     }
 

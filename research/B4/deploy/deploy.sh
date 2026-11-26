@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Deploys smserver to the Spoken Margins VPS. Run from the Mac:
 #
-#   research/B4/deploy/deploy.sh --dry-run root@<vps>   # show every change; change nothing
-#   research/B4/deploy/deploy.sh root@<vps>             # apply (after the owner approves the dry run)
+#   research/B4/deploy/deploy.sh --dry-run <user>@<vps>   # show every change; change nothing
+#   research/B4/deploy/deploy.sh <user>@<vps>           # apply (after the owner approves the dry run)
+#
+# <ssh-host> is a normal user with sudo and a password (#2478), e.g. smdeploy@<vps>; root@<vps> still works. Run it in a
+# terminal: the root steps ask for the sudo password. See remote-root.sh and ../README.md ("Server access").
 #
 # Environment: SM_SERVER_PORT (default 8795; 8787 is taken on the box),
 # SM_SERVER_ROOT (default /srv/www/spokenmargins-server), SM_SSH_KEY.
@@ -30,6 +33,8 @@ server_root="${SM_SERVER_ROOT:-/srv/www/spokenmargins-server}"
 site_host="spokenmargins.com"
 legacy_site_host="spokenmargins.proximitytoprogress.com"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=remote-root.sh
+source "${here}/remote-root.sh"
 
 stage="$(mktemp -d "${TMPDIR:-/tmp}/smserver-deploy.XXXXXX")"
 control="${stage}.ssh"
@@ -59,20 +64,30 @@ master=(-M -fnNT -o ControlPersist=120 -o ServerAliveInterval=15)
 if [[ -n "${SM_SSH_KEY:-}" ]]; then master+=(-i "${SM_SSH_KEY}" -o IdentitiesOnly=yes); fi
 echo "== connecting to ${host}"
 ssh "${ssh_opts[@]}" "${master[@]}" "${host}"
+SM_REMOTE_UID="$(ssh "${ssh_opts[@]}" "${host}" 'id -u' | tr -d '\r')"
+[[ "${SM_REMOTE_UID}" =~ ^[0-9]+$ ]] || { echo "could not read the login's user id on ${host}" >&2; exit 1; }
+if [[ "${SM_REMOTE_UID}" == 0 ]]; then
+  echo "== logged in as root (the old way; see #2478)"
+else
+  echo "== logged in as uid ${SM_REMOTE_UID}; root steps run through sudo and will ask for its password"
+fi
+root_flags=()
+if [[ -n "$(sm_remote_root_ssh_flags)" ]]; then root_flags=("$(sm_remote_root_ssh_flags)"); fi
 remote_dir="$(ssh "${ssh_opts[@]}" "${host}" 'mktemp -d /tmp/smserver-deploy.XXXXXX')"
 tar -C "${stage}" -czf - . | ssh "${ssh_opts[@]}" "${host}" "tar -xzf - -C '${remote_dir}'"
 
 if ((dry_run)); then
-  ssh "${ssh_opts[@]}" "${host}" "bash '${remote_dir}/remote-install.sh' dry-run '${port}' '${server_root}'"
+  ssh ${root_flags[@]+"${root_flags[@]}"} "${ssh_opts[@]}" "${host}" "$(sm_remote_root_command "bash '${remote_dir}/remote-install.sh' dry-run '${port}' '${server_root}'" "${remote_dir}")"
   echo "== dry run finished. Nothing on ${host} was changed. Rerun without --dry-run once the owner approves."
   exit 0
 fi
 
 log="${stage}/apply.log"
-ssh "${ssh_opts[@]}" "${host}" "bash '${remote_dir}/remote-install.sh' apply '${port}' '${server_root}'" | tee "${log}"
-backup="$(sed -n 's/^BACKUP=//p' "${log}")"
-bin_backup="$(sed -n 's/^BIN_BACKUP=//p' "${log}")"
-unit_backup="$(sed -n 's/^UNIT_BACKUP=//p' "${log}")"
+ssh ${root_flags[@]+"${root_flags[@]}"} "${ssh_opts[@]}" "${host}" "$(sm_remote_root_command "bash '${remote_dir}/remote-install.sh' apply '${port}' '${server_root}'" "${remote_dir}")" | tee "${log}"
+# A terminal (-t) ends every line with a carriage return; the backup names must not carry it.
+backup="$(tr -d '\r' <"${log}" | sed -n 's/^BACKUP=//p')"
+bin_backup="$(tr -d '\r' <"${log}" | sed -n 's/^BIN_BACKUP=//p')"
+unit_backup="$(tr -d '\r' <"${log}" | sed -n 's/^UNIT_BACKUP=//p')"
 
 echo "== checking from this machine"
 failed=""
@@ -88,7 +103,8 @@ for url in "https://${site_host}/" "https://${site_host}/api/v1/health" "https:/
 done
 if [[ -n "${failed}" ]]; then
   echo "== ${failed} failed from outside; rolling the Caddyfile and smserver back" >&2
-  ssh "${ssh_opts[@]}" "${host}" "SM_SERVER_PORT='${port}' bash '${remote_dir}/remote-install.sh' rollback '${backup}' '${bin_backup}' '${unit_backup}'"
+  echo "   (sudo asks for the password again here, in a new terminal session. If it times out, run on the box: sudo bash ${remote_dir}/remote-install.sh rollback '${backup}' '${bin_backup}' '${unit_backup}')" >&2
+  ssh ${root_flags[@]+"${root_flags[@]}"} "${ssh_opts[@]}" "${host}" "$(sm_remote_root_command "SM_SERVER_PORT='${port}' bash '${remote_dir}/remote-install.sh' rollback '${backup}' '${bin_backup}' '${unit_backup}'" "${remote_dir}")"
   exit 1
 fi
 echo "== deployed. Backups on the box: Caddyfile ${backup}, smserver ${bin_backup:-none}, unit ${unit_backup:-none}"

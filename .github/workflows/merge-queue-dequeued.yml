@@ -1,0 +1,65 @@
+# When a PR leaves GitHub's merge queue: tell its author why, and free the hosted Macs of dead merge groups (#4693,
+# step 5 of the merge queue move). scripts/merge_queue_dequeued.py says what it does and why.
+#
+# `pull_request_target`, not `pull_request`: a `pull_request` workflow never runs on a PR with a merge conflict, and a
+# conflict is one of the ways a PR leaves the queue. So the workflow and the script come from main, never from the
+# PR; nothing from the PR is checked out, built or run. The PR reaches the script only through the event file.
+#
+# Cost and catch: one Linux job of under a minute per dequeue (no Mac minutes, no tokens). It catches (1) an author
+# who never learns their PR was removed, so it sits unmerged, as armed PRs sat for hours in #4693; (2) Mac runs of
+# destroyed groups that keep a slot of five until they finish (GitHub suggests cancelling them; Actions does not).
+# Waste signal: after a month, no comment that led to a fix push and no cancelled run.
+name: merge-queue-dequeued
+
+on:
+  pull_request_target:
+    types: [dequeued]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write    # the comment and the needs-fix label
+  actions: write   # cancelling dead merge-group runs
+
+concurrency:
+  group: merge-queue-dequeued-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  dequeued:
+    name: merge queue dequeued
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Main only (GITHUB_REF is the default branch under pull_request_target), no deployment record.
+    environment:
+      name: agent-identity
+      deployment: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          persist-credentials: false
+          sparse-checkout: scripts/merge_queue_dequeued.py
+          sparse-checkout-cone-mode: false
+      - name: Act as the spoken-margins-agent App
+        id: app-token
+        # A failed mint falls back to MERGE_QUEUE_TOKEN below instead of failing the run.
+        continue-on-error: true
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.SM_APP_ID }}
+          private-key: ${{ secrets.SM_APP_PRIVATE_KEY }}
+          # No owner or repositories: the action then scopes the token to this repository alone.
+          permission-contents: write
+          permission-pull-requests: write
+          # Setting a PR that edits .github/workflows/ to merge again needs it (#5189).
+          permission-workflows: write
+      - name: Tell the author, cancel dead group runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Only for setting a PR to merge again after a group nothing failed in (#4937): an enqueue by GITHUB_TOKEN
+          # may get merge groups whose checks never start (merge-queue-label-bridge.yml says why). The App token,
+          # else MERGE_QUEUE_TOKEN (a PAT without `workflow` scope), else the script uses GH_TOKEN.
+          QUEUE_TOKEN: ${{ steps.app-token.outputs.token || secrets.MERGE_QUEUE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/merge_queue_dequeued.py --event "$GITHUB_EVENT_PATH"

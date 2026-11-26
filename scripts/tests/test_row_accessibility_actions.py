@@ -17,7 +17,7 @@ ROW_MENUS = {
     "PlaybackTimelineListView.swift": 1,
     "ExperienceMarginsScreen.swift": 2,  # own Margin rows, and shared Margin rows (Play this moment, Details)
     "ExperienceLibraryScreen.swift": 1,
-    "ExperienceSourcesScreen.swift": 1,
+    "ExperienceSourcesScreen.swift": 3,  # the row menu, the row "Lists…" menu and the chip Rename/Delete menu (#4046)
 }
 
 
@@ -34,10 +34,16 @@ class RowAccessibilityActionTests(unittest.TestCase):
                 self.assertRegex(text, r"\.accessibilityActions?\b", f"{name} has a row menu but no accessibility action")
 
     def test_timeline_and_margin_rows_reuse_their_menu_content(self):
-        self.assertIn(".accessibilityActions { details(entry.action) }", _read("PlaybackTimelineListView.swift"))
+        # One `.accessibilityActions` block after the row's `.contextMenu`, holding the menu's own content first: the
+        # chain the long-press menu had when it last dismissed on the Test Desk (#4778; cause not yet proven).
+        timeline = _read("PlaybackTimelineListView.swift")
+        self.assertEqual(timeline.count(".accessibilityActions"), 1)
+        self.assertRegex(timeline, r"\.contextMenu \{ details\(entry\.action\) \}\s*\.accessibilityActions \{\s*details\(entry\.action\)\n")
         margins = _read("ExperienceMarginsScreen.swift")
-        self.assertIn(".contextMenu { ownMarginActions(row) }", margins)
-        self.assertIn(".accessibilityActions { ownMarginActions(row) }", margins)
+        self.assertIn(".contextMenu { ownMarginActions(row, repair: repair) }", margins)
+        self.assertIn(".accessibilityActions { ownMarginActions(row, repair: repair) }", margins)
+        # The Retry beside a "needs retry" status is also a row action, under the button's label (#3856).
+        self.assertIn('Button(Self.retryLabel(repair), systemImage: "arrow.clockwise")', margins)
         self.assertIn('Button("Play this moment") { model.playSharedMarginMoment(row) }', margins)
         self.assertIn('Button("Details") { selectedSharedMargin = row }', margins)
 

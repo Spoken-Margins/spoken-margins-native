@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitPersistence
 
 struct SourceLinkCandidateReviewState: Identifiable, Equatable {
     let request: LinkResolutionRequest
@@ -48,4 +49,9 @@ struct ObsidianImportBatch: Sendable {
     let failures: [String]
     /// The same failures with the raw error text, for diagnostics only (#1965).
     var rawFailures: [String] = []
+    /// Each imported PDF's or Word document's staged copy by item id: a file address and a hash, never the bytes (#4338,
+    /// #4594). It becomes the item's original once the item is saved, and is removed if it does not.
+    var staged: [String: PDFOriginalStore.Staged] = [:]
+    /// Why a file's copy could not be staged; the import itself goes on without an original.
+    var stagingFailures: [String] = []
 }

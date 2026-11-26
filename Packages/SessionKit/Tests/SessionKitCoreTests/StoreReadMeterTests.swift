@@ -427,10 +427,15 @@ final class StoreReadMeterTests: XCTestCase {
         "importedCommentaryRecordsMention",   // a miss is the common answer: it scans every record
         "marginNoteChanges", "itemRevision", "isLiveImportedCommentaryLayer", "transcriptTimelineStamp",
         "listDeletedItems",                   // the trash starts empty
+        "loadLibraryFolders",                 // only an imported folder has a record; a Library with none reads none (#3769)
+        "loadPaperSources",                   // only a followed Zotero reading list has a record; most Libraries follow none (#4341)
+        "loadMovedMarginOrigins",             // no Margin is moved until the Move feature ships (#4233); then only a cut-short move has one to finish
         "loadTranscriptTimes",                // only an imported meeting transcript has a record; the screens read it only for one (#2997)
         "loadLastSentReadAloud",              // only a Margin shared as text carries a choice, so a healthy Library mostly misses (it filters inside SQLite)
+        "loadLastSentLeadIns",                // only a Margin shared at a length other than 20 s carries one, so a healthy Library mostly misses (it filters inside SQLite)
         "latestPendingSummaryTurnId",         // no summary is waiting in a healthy Library; a miss is the common answer
-        "holdsImportedListeningMap"           // few layers carry a friend's map; a miss is the common answer (it still reads the item's layers inside SQLite)
+        "holdsImportedListeningMap",         // few layers carry a friend's map; a miss is the common answer (it still reads the item's layers inside SQLite)
+        "loadPublisherAudioChoice"            // only an item whose listener chose the app voice over its recording has one; a miss is the common answer (#4640)
     ]
 
     /// Answered from memory, not SQLite: nothing for the meter to see.

@@ -39,6 +39,14 @@ export function withStar(margin: Margin, on: boolean): Margin {
  * older copy must not take the star off. A Margin that says nothing about a star takes the stored one; starring or
  * unstarring is `withStar` through the store's own write, never this.
  */
+/**
+ * A rewritten friend's Margin keeps the heard mark the stored one has (part of #3216): opening the same packet again, or
+ * any older copy written back, never makes a Margin the listener has heard read as unheard.
+ */
+export function keepingHeard(margin: Margin, stored: Margin | undefined): Margin {
+  return stored?.heard === true && margin.heard !== true ? { ...margin, heard: true } : margin;
+}
+
 export function keepingStar(margin: Margin, stored: Margin | undefined): Margin {
   return stored !== undefined && isStarred(stored) && !isStarred(margin) ? withStar(margin, true) : margin;
 }

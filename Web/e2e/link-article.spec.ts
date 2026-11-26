@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
-import { feedFixture, serveAudio, serveFixtures } from './fixtures.ts';
+import { feedFixture, serveAudio, serveFixtures, startFromBeginning } from './fixtures.ts';
 
 const STUB = 'http://127.0.0.1:4174';
 const vector = JSON.parse(
@@ -48,7 +48,7 @@ test('a share link for a Substack post plays its voice and puts the sender’s M
   expect(pageReads).toHaveLength(0);
 
   // 2. Play finds the post's voice (the one page read) and plays it from the beginning.
-  await arrival.getByRole('button', { name: 'Play' }).click();
+  await startFromBeginning(page, 'Play');
   const playing = page.getByRole('dialog', { name: TITLE });
   await expect(playing).toBeVisible();
   await expect.poll(() => audioTime(page), { timeout: 10_000 }).toBeGreaterThan(0.3);

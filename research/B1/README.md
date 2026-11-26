@@ -16,3 +16,11 @@ The head of every feed and every artwork check are recorded under `recorded/<dat
 ```
 
 To publish a new catalog, edit `shows.json`, bump `--content-version` so apps holding the old one take the new one, delete the old `recorded/` folder (the test replays the newest) and commit the new one.
+
+## Persona packs (#4285)
+
+`packs.json` lists the first-run drawer's packs: for each, its id, title (40 characters at most), one-line summary (90 at most), the subjects its new shows take, its podcasts and newsletters in order, and same-kind alternates. Every feed is the publisher's own, from its site or feed page, never Apple's lookup (#1732). A show with no `feed` has none found yet.
+
+- A pack show already in `shows.json` keeps its entry and subjects; the pack only names its id. Any other pack show the build uses becomes an entry: a podcast takes the union of its packs' subjects, a newsletter takes `writers`.
+- A candidate is replaced by the next alternate of the same kind when it has no feed, its feed doesn't resolve, it is explicit, it has no artwork of its own, it has no item in the 60 days before `generatedAt`, or (a podcast) none of its newest 20 items carries audio. A pack ships with at least 5 sources. The build prints each replacement and lists it in `last-build-report.json` under `packReplacements`.
+- Each pack source gets `recentPublishedAt`: the publish dates of its newest 20 items, which the phone counts for the pace line. Only the dates are recorded in `fetch-log.json` (under `dates`), not the feed bodies.

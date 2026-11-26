@@ -18,6 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 STATE = Path.home() / 'SpokenMarginsOps' / 'integration-precheck' / 'state.json'
 REPO = 'Spoken-Margins/spoken-margins-native'
 OWNER_LOGIN = 'uncomposed'  # the owner's GitHub login, not the repo's owner (#2169)
+# The agents' GitHub App (#4915). The integration run and this precheck post from the Mac; once agents' gh calls act
+# as the App, their reports and blocker notes arrive as `<slug>[bot]`, and reading only the owner's login would miss
+# them. Kept equal to scripts/comment_trust.py's list by scripts/tests/test_app_identity_trust.py.
+TRUSTED_APP_SLUGS = ('spoken-margins-agent',)
 PROMPT_MARKER = '[SM-INTEGRATION-PRECHECK]'
 LEGACY_TASK_PREFIXES = tuple(
     f'You are the Spoken Margins integration run, for the repo {repo}'
@@ -76,7 +80,9 @@ def skip_head(comment: dict) -> str | None:
 
 
 def trusted(comment: dict) -> bool:
-    return (comment.get('user') or {}).get('login', '').casefold() == OWNER_LOGIN.casefold()
+    """The owner's login, or the agents' App (exact login: GitHub reserves the `[bot]` suffix for Apps)."""
+    login = (comment.get('user') or {}).get('login') or ''
+    return login.casefold() == OWNER_LOGIN.casefold() or login in tuple(f'{slug}[bot]' for slug in TRUSTED_APP_SLUGS)
 
 
 def report_author(comment: dict) -> bool:

@@ -181,7 +181,9 @@ struct ReactionsPlayTarget: Equatable {
             guard let layer = item.importedCommentaryLayers.first(where: { $0.id == layerId }),
                   let margin = item.importedCommentaryInterjections[layerId]?.first(where: { $0.id == marginId })
             else { return }
-            model.playSharedMarginMoment(SharedMarginRow(interjection: margin, layer: layer, itemTitle: item.title))
+            // A spot of Margins that are never read aloud goes to the first of them with no voice (#4934); a voiced one plays its moment.
+            let row = SharedMarginRow(interjection: margin, layer: layer, itemTitle: item.title)
+            if SilentMarginWords.friendGoesTo(margin, in: layer) { model.goToSharedMargin(row) } else { model.playSharedMarginMoment(row) }
         } else if let margin = item.interjections.first(where: { $0.id == marginId }) {
             MarginMomentTap.start(MarginRow(interjection: margin, itemTitle: item.title, sessionDate: nil), model: model)
         }

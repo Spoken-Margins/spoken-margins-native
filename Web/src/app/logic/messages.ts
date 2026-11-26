@@ -10,7 +10,9 @@ import { SearchError } from '../../sources/search.ts';
 
 export const MESSAGES = Object.freeze({
   feedGone: 'Nothing is at that feed address any more. Check the address, or search for the show by name.',
-  feedRefused: 'That feed’s site refused to send it. Try again later, or search for the show by name.',
+  // The app's refused sentence (#4176): a paid show's private RSS link that lapsed is the case a fresh link fixes, and
+  // "try again later" covers a public feed that turns browsers away.
+  feedRefused: 'The feed turned this link down. Try again later, or for a paid show, copy a fresh RSS link from the creator’s page.',
   feedSiteError: 'That feed’s site isn’t answering properly right now. Try again later.',
   notAFeed: 'That address isn’t a podcast or Substack feed. Feed addresses often end in /feed or .rss.',
   tooLarge: 'That feed is too large for the web app to read.',
@@ -25,7 +27,11 @@ export const MESSAGES = Object.freeze({
   offline: 'No connection. Check you’re online, then try again.',
   paidPost: 'This post is for paid subscribers. The web app reads posts without your Substack sign-in, so it can’t play this one.',
   newestSkipped: 'Its newest post can’t be played here, so this is the newest one that can.',
+  // The newest item was an episode saved from a page the web can't play, not a post (#4767).
+  newestEpisodeSkipped: 'Its newest episode can’t be played here, so this is the newest one that can.',
   noVoice: 'This post has no voice to play: neither the writer nor Substack offers one.',
+  // An episode saved from an Apple Podcasts, Spotify or other page: the page was never a post, so "no voice" would blame the wrong thing (#4767).
+  noWebAudio: 'The web app can’t find this episode’s audio from its page. The Spoken Margins app on iPhone can play it.',
   searchFailed: 'Search isn’t answering right now. Try again, or paste the show’s feed address.',
   micBlocked: 'The microphone is blocked for this site. Allow it in your browser’s site settings, then try again. Written Margins still work.',
   micMissing: 'No microphone was found. Connect one, then try again. Written Margins still work.',

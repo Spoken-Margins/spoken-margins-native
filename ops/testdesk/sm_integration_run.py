@@ -43,6 +43,7 @@ RUN_BY = 'integration script'
 HOSTED_RUN_BY = 'hosted integration'   # hosted-integration.yml on a GitHub-hosted Mac (#1389)
 HOSTED_VARIABLE = 'LANE_HOSTED_APP'    # the repository variable that switches hosted app tests on
 HOSTED_WORKFLOW = 'hosted-integration.yml'
+MAIN_T3_WORKFLOW = 'main-t3.yml'      # the trunk's one scheduled simulator run since #4573
 JOURNEY_TARGET = 'SpokenMarginsAppUITests'  # scripted journeys; the Mac's confirm run re-runs app tests only
 HOSTED_GRACE_SECONDS = 5 * 60        # how long a new tip waits for its hosted run to appear before the Mac tests it
 LANE_YIELD_SECONDS = 3 * 60 * 60     # lane app tests go first, unless the trunk has gone this long untested
@@ -139,24 +140,17 @@ def hosted_fail_to_handle(comments: list[dict], handled: dict) -> Optional[dict]
 
 
 def hosted_cover(sha: str, reports_by_hosted: list[str], runs: Optional[list[dict]], tip_age: float) -> tuple[bool, str]:
-    """Whether the hosted run has this tip, and why (#2127). Pushes made with the workflow token (the lane
-    runner's merges) start no workflows, so a tip can have no hosted run at all; the Mac must not take its
-    silence for a pass. Covered: a hosted report for the tip, or a run for it not yet finished. A run that
-    finished without a report, no run at all, or an unreadable run list leaves the tip to the Mac, after a
-    short grace for a run GitHub hasn't listed yet."""
+    """Whether the hosted side has this tip, and why (#2127). Since #4573 every tip is covered while hosted is on:
+    hosted-integration.yml no longer runs on a push to the trunk (manual dispatch only), and main-t3.yml tests the
+    trunk's head on a schedule and records a `main-t3` commit status. Before, a tip with no hosted run went to the
+    Mac, so retiring the per-push run without this change would have put --plan app on every tip back on the Mac.
+    `runs` and `tip_age` stay for the callers; a hand-dispatched hosted run in flight is still named."""
     if sha[:7] in reports_by_hosted:
         return True, f'the hosted run reported {sha[:7]}'
-    if runs is None:
-        return False, f'the {HOSTED_WORKFLOW} runs could not be read'
-    live = [r for r in runs if r.get('status') != 'completed']
+    live = [r for r in runs or [] if r.get('status') != 'completed']
     if live:
         return True, f"a {HOSTED_WORKFLOW} run for {sha[:7]} is {live[0].get('status')}"
-    if runs:
-        return False, (f'the {HOSTED_WORKFLOW} run for {sha[:7]} finished '
-                       f"({runs[0].get('conclusion')}) without a report")
-    if tip_age < HOSTED_GRACE_SECONDS:
-        return True, f'{sha[:7]} landed {tip_age / 60:.0f} min ago; waiting for its {HOSTED_WORKFLOW} run'
-    return False, f'{sha[:7]} has no {HOSTED_WORKFLOW} run (a push by the workflow token starts none)'
+    return True, f'{MAIN_T3_WORKFLOW} tests the trunk on a schedule (#4573); the Mac tests no tip while hosted is on'
 
 
 def failing_tests(body: str) -> list[str]:
@@ -694,9 +688,13 @@ def default_run(cmd: list, cwd: Optional[Path] = None, timeout: Optional[float] 
 
 @contextlib.contextmanager
 def exclusive_slot():
-    """Reserve the simulator nonblocking under the lane's decision lock, as the Codex Test Desk did.
+    """Reserve the simulator nonblocking under the lane's decision lock, then let the decision lock go (#4736).
 
-    Both descriptors go to verify-tests so a parent exit cannot unlock a running child."""
+    The job starts only when no other simulator job runs, and it takes the first slot. Only the slot's descriptor goes
+    to verify-tests, so a parent exit cannot unlock a running child. The decision lock is released once the slot is
+    taken: a Test Desk boot then gets the second slot under the normal second-slot rule instead of waiting out the
+    whole run (35 minutes on 2026-11-19). The shared "SpokenMargins Test Runner" this job tests on is guarded by its
+    own Mac-wide lock, which verify-tests takes for every run without --device (lane_slots.acquire_test_runner)."""
     folder = lane_slots.state_dir()
     folder.mkdir(parents=True, exist_ok=True)
     with (folder / lane_slots.SIMULATOR_DECISION).open('a+') as decision:
@@ -708,10 +706,10 @@ def exclusive_slot():
             raise TimeoutError('Mac-wide simulator slot is busy')
         handle, _, _ = lane_slots.acquire([lane_slots.SIMULATOR_SLOT], 'simulator slot',
                                          'Integration script', max_wait=0)
-        try:
-            yield (handle.fileno(), decision.fileno())
-        finally:
-            lane_slots.release_handle(handle)
+    try:
+        yield (handle.fileno(),)
+    finally:
+        lane_slots.release_handle(handle)
 
 
 class Ops:

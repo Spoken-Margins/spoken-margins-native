@@ -11,11 +11,31 @@ cd research/B4/server && go test ./...                      # unit and end-to-en
 research/B4/scripts/demo.sh                                 # health, one attested request, block one install, kill switch
 CADDY=caddy SMSERVER=smserver research/B4/deploy/test-edit-caddyfile.sh   # Caddyfile edit, validate, local routing
 research/B4/deploy/test-server-rollback.sh   # deploy keeps the old smserver and puts it back on rollback
-research/B4/deploy/deploy.sh --dry-run root@<vps>           # from the Mac: show every change on the box, change nothing
-research/B4/deploy/deploy-web.sh --dry-run root@<vps>       # from the Mac: build Web/ and list what would change, change nothing
+research/B4/deploy/test-remote-root.sh       # the non-root deploy's sudo wrapper and its two on-box scripts
+research/B4/deploy/deploy.sh --dry-run <user>@<vps>         # from the Mac: show every change on the box, change nothing
+research/B4/deploy/deploy-web.sh --dry-run <user>@<vps>     # from the Mac (fallback): build Web/ and list what would change, change nothing
 ```
 
-The web app (`Web/`, #3020) is served by the same Caddy from `https://app.spokenmargins.com` (the old `app.spokenmargins.proximitytoprogress.com` answers a 301 to it, `deploy/caddy-legacy-web.caddy`): `deploy.sh` adds that site block (`deploy/caddy-web.caddy`, no access log) and an empty `/srv/www/spokenmargins-web`, and `deploy-web.sh` builds the committed `Web/` with `VITE_RELAY_ORIGIN` set to this server and copies it there. The unit lists both app origins, new and old, in `-relay-origins` and `-link-origins` during the move; the relay still answers 503 until `smserver switch ... relay on`.
+## Web player and website deploys (#4982)
+
+The web player and the website deploy from GitHub, not from the Mac. A merge to `main` that changes `Web/` (or the share-link opener it builds from `server/internal/links/`, or `deploy/deploy-web.sh`) starts `.github/workflows/deploy-web.yml`; one that changes `Site/` (or `scripts/deploy-spoken-margins-site.sh`) starts `.github/workflows/deploy-site.yml`. Each run first comments on the merged PR, @mentioning the owner with what is shipping and a link to the run. Its deploy job then waits in the `web-deploy` or `site-deploy` environment until the owner taps Review deployments and Approve; it runs the same script the Mac runs, with that environment's key for the normal deploy login, and fails unless `scripts/sm_live.py` then reads this commit as live. Nobody needs to remember to run anything; a fix that sits undeployed is a run waiting for the owner's tap. A run can also be started by hand from the Actions tab (Run workflow, on `main`).
+
+The Mac scripts stay as the fallback, for when GitHub Actions is down or the server's key has changed: `deploy-web.sh <user>@<vps>` and `scripts/deploy-spoken-margins-site.sh` work as before. The voice mirror still goes up from the Mac (`scripts/voice-catalog publish --apply`, ops/voice-catalog/README.md); the GitHub site deploy never deletes it. `deploy.sh` (the server itself, Caddy, systemd) still needs a person at a terminal, as below.
+
+The web app (`Web/`, #3020) is served by the same Caddy from `https://app.spokenmargins.com` (the old `app.spokenmargins.proximitytoprogress.com` answers a 301 to it, `deploy/caddy-legacy-web.caddy`): `deploy.sh` adds that site block (`deploy/caddy-web.caddy`, no access log) and an empty `/srv/www/spokenmargins-web`, and `deploy-web.sh` (run by `deploy-web.yml`, above) builds the committed `Web/` with `VITE_RELAY_ORIGIN` set to this server and copies it there. The unit lists both app origins, new and old, in `-relay-origins` and `-link-origins` during the move; the relay still answers 503 until `smserver switch ... relay on`.
+
+## Server access (#2478)
+
+Deploys log in as a normal user (`<user>` above, e.g. `smdeploy`), not as root. The user owns the two web folders (`/srv/www/spokenmargins`, `/srv/www/spokenmargins-web`), so `deploy-web.sh` and `scripts/deploy-spoken-margins-site.sh` need no root. The steps that do (smserver, the Caddy global block, systemd, journald) run through `sudo`, which asks for the user's password at the terminal (`deploy/remote-root.sh`). So a stolen SSH key alone is not root, and a server deploy needs a person at a terminal: an unattended session cannot run `deploy.sh`. `root@<vps>` still works until root login is switched off.
+
+One-time setup, on the box, in this order (about fifteen minutes; keep a second session open the whole time):
+
+1. As root: `bash create-deploy-user.sh --dry-run <user> '<your .pub line>'`, read it, then run it without `--dry-run`. It makes the user, adds it to the sudo group, installs the public key, hands over the two web folders and asks you to choose the sudo password. It does not touch sshd.
+2. From the Mac, in a new window: `ssh <user>@<vps>` and `sudo -v` must both work.
+3. As root: `bash harden-ssh.sh <user>`. It refuses unless step 2 is true right now, writes one sshd drop-in (`PermitRootLogin no`, `PasswordAuthentication no`), checks what sshd would really use, and reloads. If the check fails it removes the file.
+4. From the Mac, in a third window: `ssh <user>@<vps>` works and `ssh root@<vps>` is refused. Then change `User root` to the new user in `~/.ssh/config`.
+
+The host check for kept addresses needs root for some counts: `scp deploy/check-visitor-ips.sh <user>@<vps>:/tmp/ && ssh -t <user>@<vps> 'sudo bash /tmp/check-visitor-ips.sh'`.
 
 `deploy/deploy.sh` without `--dry-run` deploys; the owner approves the dry-run diff first. Admin on the box runs as the service user, e.g. `runuser -u smserver -- smserver switch -public /srv/www/spokenmargins-server attest off`.
 
@@ -79,8 +99,33 @@ week, a month, then permanent) has someone to pause. The flow:
    today's behaviour and the default, so the app that exists keeps working. With
    `serve -links-require-permit` an upload with none is 403 `permit_required`. The
    app sends permits since #4130, but don't turn it on yet: older builds, phones
-   without App Attest and any phone whose sender check fails send none, and the app
-   shows that refusal as "busy". #4134 lists what has to land first.
+   without App Attest and any phone whose sender check fails send none. Follow
+   "Turning on link permits" below.
+
+#### Turning on link permits (#4134)
+
+Builds 35 to 37 send no permit, and the app before #4134 shows `permit_required` as
+"busy" (35) or the generic failure (36). Since #4134 the app shows it as "Links can't
+be made from this iPhone right now", with no retry, and a build below the `links`
+service's `minimumBuild` hides "Share link" and says to update. Builds 35 and 36
+already read `minimumBuild` and hide the button below it (Build 37 has no tag in the
+repository; this plan assumes it matches 36). So the order is:
+
+1. Ship build N: the first build with #4134, refuse mode on and the App Attest
+   entitlement (#1593). Refuse mode is the app target's Info.plist key
+   `SMShareLinkRefuseUnchecked: $(SM_SHARE_LINK_REFUSE_UNCHECKED)` in `project.yml`,
+   with the build setting `YES` in the Release configuration only, so Debug and
+   Simulator builds keep making links (the Simulator can't attest). Neither is in
+   `project.yml` today, which is off.
+2. `smserver switch -public DIR -minimum-build N links on`. Older builds lose
+   "Share link" and keep "Send as a file".
+3. Only then restart `serve` with `-links-require-permit`.
+4. To undo, reverse the order: drop `-links-require-permit` first, then lower or
+   remove the minimum build (`-minimum-build 0`).
+
+When steps 2 and 3 happen is the owner's call. His answer of 2026-11-21 (option B,
+`docs/decisions.md`): keep permits off until he has looked at which builds his testers
+are on and says the old ones are gone.
 
 DeviceCheck (#1728) keeps the ladder step across a reinstall. Off by default; start
 `serve -devicecheck-key AuthKey_XXXX.p8 -devicecheck-key-id XXXX` (the team id is read

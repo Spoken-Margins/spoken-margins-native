@@ -1,7 +1,7 @@
 import Foundation
 
 /// Sending replies back (#3221, step 6-8 of the sharing loop #3216). After a listener has heard a friend's Margins and
-/// answered some, the Share action offers "Send replies to <friend>": the replies are chosen, the listener's other new
+/// answered some, the Share action offers "Share replies with <friend>": the replies are chosen, the listener's other new
 /// Margins on the item are offered unselected, and nothing the friend sent goes back. The packet itself is the ordinary
 /// one; a reply already carries its link to the parent (#472), so Builds 32 and 34 import it as before.
 public struct ReplyBackOffer: Equatable, Sendable {
@@ -14,19 +14,31 @@ public struct ReplyBackOffer: Equatable, Sendable {
     public let friendLabels: [String]
 
     public var friendName: String { ReplyBackOffer.names(friendLabels) }
-    public var title: String { "Send replies to \(friendName)" }
+    /// The row's words and the sheet's heading (#3906): Share, the one verb for sending to a person, and what the
+    /// sheet holds. "Share replies with Ana" when a Margin answers a friend's; "Share your Margins with Ana" when the
+    /// listener's new Margins are not replies, so the row never calls them replies.
+    public var title: String {
+        replies.isEmpty ? "Share your Margins with \(friendName)" : "Share replies with \(friendName)"
+    }
+    /// The line under the sheet's heading when it shares replies (#4785): the sender's worry was that the friend would
+    /// have to hunt for a third reply among old Margins. Both receivers mark an imported Margin new and can play only
+    /// the new ones, so it says so. Nil for "Share your Margins with", which holds no reply.
+    public var caption: String? {
+        replies.isEmpty ? nil : "These arrive marked new, so \(friendName) can hear just them."
+    }
     /// Every Margin the share sheet lists, in the order they were made.
     public var candidates: [Interjection] { (replies + others).sorted(by: ReplyBackOffer.madeBefore) }
     /// Whether the sheet starts with this Margin included. With linked replies, those and only those (#3221). With none,
     /// the ordinary Share's own rule: the Margins starred for sharing if any candidate is starred, otherwise every
     /// candidate, so the sheet never opens with nothing picked (#3792, Design 2026-11-10, piece 2).
     public func isPreselected(_ interjection: Interjection) -> Bool {
-        if !replies.isEmpty { return replyIds.contains(interjection.id) }
+        if !replies.isEmpty { return replyIds.contains(interjection.sessionScopedId) }
         let anyStarred = others.contains { $0.isStarredForSharing == true }
         return !anyStarred || interjection.isStarredForSharing == true
     }
 
-    private var replyIds: Set<String> { Set(replies.map(\.id)) }
+    /// By session and id (#4688): the offer spans the item's passes, and each numbers its Margins from "ij-001".
+    private var replyIds: Set<String> { Set(replies.map(\.sessionScopedId)) }
 
     /// The offer for an item, or nil when the listener has made no Margin since they imported a friend's packet.
     ///
@@ -65,7 +77,7 @@ public struct ReplyBackOffer: Equatable, Sendable {
     }
 
     private static func madeBefore(_ lhs: Interjection, _ rhs: Interjection) -> Bool {
-        lhs.createdAt == rhs.createdAt ? lhs.id < rhs.id : lhs.createdAt < rhs.createdAt
+        lhs.createdAt == rhs.createdAt ? lhs.sessionScopedId < rhs.sessionScopedId : lhs.createdAt < rhs.createdAt
     }
 
     static func names(_ labels: [String]) -> String {
@@ -83,6 +95,7 @@ extension SharedMarginReview {
     public struct ReplyContext: Sendable, Equatable {
         public enum Parent: Sendable, Equatable {
             /// The listener's own Margin: the common case, when a friend answers what was sent to them.
+            /// `interjectionId` is the Margin's `Interjection.sessionScopedId` (#5133): a replay's first Margin is "ij-001" too.
             case yours(interjectionId: String, mediaTimeMs: Int?)
             /// Another shared Margin in this Library.
             case shared(marginId: String, label: String, mediaTimeMs: Int?)
@@ -139,7 +152,7 @@ extension SharedMarginReview {
     /// place on this copy. The parent then keeps its own place, exact, and the reply follows it there (still marked
     /// approximate: how far after the parent the friend spoke isn't known).
     public static func playlist(for entries: [Entry], ownMargins: [Interjection]) -> [Step] {
-        let own = Dictionary(ownMargins.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let own = Dictionary(ownMargins.map { ($0.sessionScopedId, $0) }, uniquingKeysWith: { first, _ in first })
         var parentPlaces: [String: Int] = [:]  // where each played parent's step sits, for its later replies
         var steps: [Step] = []
         for entry in entries {
@@ -147,7 +160,7 @@ extension SharedMarginReview {
             if case .yours(let id, let ms)? = entry.replyContext?.parent, let parent = own[id], parent.isSpokenItemMargin {
                 // A guessed reply goes where its parent plays: the parent's own place on this copy, or where an earlier
                 // reply already put the parent's step.
-                let place = parentPlaces[id] ?? (entry.isApproximate ? parent.anchor.mediaTimeMs : nil)
+                let place = parentPlaces[id] ?? (entry.isApproximate && parent.hasPlace ? parent.anchor.mediaTimeMs : nil)
                 if parentPlaces[id] == nil {
                     let caption = "Your Margin" + (ms.map { " at \(ReplyContext.clock($0))" } ?? "")
                     let at = place ?? entry.mediaTimeMs
@@ -155,7 +168,10 @@ extension SharedMarginReview {
                     steps.append(Step(
                         anchor: MarginMomentAnchor(
                             marginId: parentMarginId(id), mediaTimeMs: at,
-                            isApproximate: place == nil && entry.isApproximate, caption: caption, isYours: true
+                            isApproximate: place == nil && entry.isApproximate, caption: caption, isYours: true,
+                            // The run-up before the pair is the sender's for the reply it leads into (#4171): the parent sorts
+                            // first at that place, so the review's start and the first hop are counted from it.
+                            leadInMs: entry.interjection.senderLeadInMs
                         ),
                         entry: nil, ownParent: parent
                     ))
@@ -163,7 +179,8 @@ extension SharedMarginReview {
                 if entry.isApproximate, let place = parentPlaces[id] {
                     replyAnchor = MarginMomentAnchor(
                         marginId: entry.marginId, mediaTimeMs: place, label: entry.senderLabel, isApproximate: true,
-                        caption: entry.replyContext?.caption, isReadAloud: entry.interjection.isWritten
+                        caption: entry.replyContext?.caption, isReadAloud: entry.interjection.isWritten,
+                        leadInMs: entry.interjection.senderLeadInMs
                     )
                 }
             }
@@ -205,14 +222,15 @@ extension SharedMarginReview {
         let all = layers.flatMap { records[$0.id] ?? [] }
         guard all.contains(where: { !($0.replyLinks ?? []).isEmpty }) else { return [:] }
         let graph = MarginReplyGraph.build(localMargins: ownMargins, layers: layers, importedMargins: all)
-        let own = Dictionary(ownMargins.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let own = Dictionary(ownMargins.map { ($0.sessionScopedId, $0) }, uniquingKeysWith: { first, _ in first })
         let layerById = Dictionary(layers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let importedById = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         func context(_ parent: MarginReplyParent) -> ReplyContext {
             switch parent.parent {
             case .local(let id)?:
-                return ReplyContext(parent: .yours(interjectionId: id, mediaTimeMs: own[id]?.anchor.mediaTimeMs))
+                // A reply to an own Margin that has no place (#4233) names the Margin without a time: its stored zero is not one.
+                return ReplyContext(parent: .yours(interjectionId: id, mediaTimeMs: own[id].flatMap { $0.hasPlace ? $0.anchor.mediaTimeMs : nil }))
             case .imported(let id)?:
                 guard let margin = importedById[id], let layer = layerById[margin.layerId] else { return ReplyContext(parent: .missing) }
                 return ReplyContext(parent: .shared(

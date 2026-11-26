@@ -15,6 +15,7 @@ final class BackgroundRefreshGate {
     private var mustPublishPending = false
     private var publishedLibraryGeneration = 0
     private var announcePending = false
+    private var episodeLengthBackfillTaken = false
     private var isPublishingItem = false
     private var openGeneration = 0
     private var openTask: Task<Void, Never>?
@@ -33,6 +34,12 @@ final class BackgroundRefreshGate {
         libraryTask?.cancel()
         mustPublishPending = mustPublishPending || mustPublish
         return (libraryGeneration, mustPublishPending)
+    }
+
+    /// True once per launch: the feed-length backfill (#4186) starts with the first Library rows published.
+    func takeEpisodeLengthBackfill() -> Bool {
+        defer { episodeLengthBackfillTaken = true }
+        return !episodeLengthBackfillTaken
     }
 
     func beginLibrary() -> Int { beginLibraryReload(mustPublish: false).generation }
@@ -203,6 +210,7 @@ extension Gate1AppModel {
             scheduleAutomaticAudioPreparationIfNeeded()
             submitAutomaticEpisodeMapPreparationIfNeeded()
         }
+        backfillStatedEpisodeLengthsOnce(store: store)
     }
 
     /// The Preparing Audio lists from the Library read just published, so the reload costs the main thread no second
@@ -223,6 +231,7 @@ extension Gate1AppModel {
     func publishLibrary(_ data: LibraryReadSnapshot) {
         let rows = LibraryRowBuilder.rows(from: data, context: startupAudioContext)
         if libraryItems != rows { libraryItems = rows }
+        if let stored = data.collections { libraryCollections.publish(stored, folders: data.libraryFolders) } // read with the rows, so the chips never snap in (#4343)
         let deleted = Self.recentlyDeletedRows(from: data)
         if recentlyDeletedItems != deleted { recentlyDeletedItems = deleted }
     }
@@ -257,6 +266,7 @@ extension Gate1AppModel {
         let hidden = hiddenSenders.current
         let data = try hangTelemetry.labels.scoped("loadLibraryRows") { try LibraryReadSnapshot.read(store: store, hiddenSenders: hidden) }
         libraryItems = LibraryRowBuilder.rows(from: data, context: startupAudioContext)
+        if let stored = data.collections { libraryCollections.publish(stored, folders: data.libraryFolders) }
         recentlyDeletedItems = Self.recentlyDeletedRows(from: data)
         try applyAudioPreparationPresentation(from: data, store: store)
     }

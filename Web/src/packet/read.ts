@@ -5,7 +5,7 @@
 
 import { fromUtf8, sha256Hex } from './bytes.ts';
 import { KIND_SWIFT_TYPE, decodeProblem } from './decode.ts';
-import { PacketError, damaged, mismatch, newerApp, tooLarge } from './errors.ts';
+import { LISTENING_MAP_DETAIL, PacketError, damaged, mismatch, newerApp, tooLarge } from './errors.ts';
 import {
   ARTIFACT_KEYS, ASSET_KEYS, AUDIO_REPRESENTATIONS, COMMENTARY_LAYER_VERSION, CONVERSATION_VERSION,
   EMBEDDED_TEXT_ITEM_VERSION, FILE_EXTENSION, ITEM_KEYS, LIMITS, MANIFEST_KEYS, MAP_PACKET_CAPABILITY, PACKAGE_VERSION,
@@ -279,7 +279,7 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
   }
   for (const capability of m.requiredCapabilities) {
     if (capability === MAP_PACKET_CAPABILITY) {
-      throw new PacketError('needsNewerApp', 'Listening Map packet',
+      throw new PacketError('needsNewerApp', LISTENING_MAP_DETAIL,
         'This file holds a Listening Map. Open it in the Spoken Margins iPhone app; the web app reads Margins only.');
     }
     if (!SUPPORTED_REQUIRED.has(capability)) throw newerApp(`required capability ${capability}`);
@@ -364,7 +364,10 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
       && lengthOK(anchor.transcriptSegmentId, 300)
       && lengthOK(anchor.chapterTitle, 500)
       // The app's record declares `readAloud: Bool?`, so another type refuses the packet there (#3445).
-      && (record.readAloud == null || typeof record.readAloud === 'boolean');
+      && (record.readAloud == null || typeof record.readAloud === 'boolean')
+      // `leadInMs: Int?` in the app's record (#4171): a string, a fraction or a boolean refuses the packet there. A number
+      // outside the range decodes and is clamped when it is read.
+      && (record.leadInMs == null || (typeof record.leadInMs === 'number' && Number.isSafeInteger(record.leadInMs)));
     if (!bounded) throw mismatch('a Margin field is absent or out of bounds');
     for (const evidence of anchor.machineEvidenceAssetIds) {
       if (asset(evidence)?.role !== ROLE_SIGNATURE) throw mismatch(`anchor evidence ${evidence} is not an acoustic signature`);
@@ -549,8 +552,17 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
     }
     if (sender) margin.author = sender;
     if (replyToId) margin.replyToId = replyToId;
+    // The source text before it, for the Margins tab's "After …" line (part of #3216). Kept in this browser only.
+    if (anchor.prefix != null && anchor.prefix.trim() !== '') margin.leadIn = anchor.prefix;
     // The sender's "don't read this aloud" holds for a written Margin only; a voice Margin is the sender's own voice.
     if (record.readAloud === false && !margin.voice) margin.readAloud = false;
+    // The sender's run-up, clamped as the app and the reference reader do (#4171). Absent means each run-up's own length.
+    if (record.leadInMs != null) margin.leadInSeconds = Math.min(Math.max(record.leadInMs, 0), LIMITS.leadInMs) / 1000;
+    // The length of the sender's copy, so the player can say when the listener's copy differs (#4614). Not on a percent
+    // Margin: it is placed by a percent of the listener's own length, so a different length doesn't move it.
+    if (!textAnchored && item.itemType === 'podcast' && typeof item.durationMs === 'number' && item.durationMs > 0) {
+      margin.copyLengthSeconds = item.durationMs / 1000;
+    }
     if (textAnchored) percentMargins.push({ margin, percent: anchor.roughPercent as number });
     else margins.push(margin);
   }

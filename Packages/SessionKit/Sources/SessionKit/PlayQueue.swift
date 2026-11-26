@@ -20,6 +20,26 @@ public struct PlayQueue: Codable, Equatable, Sendable {
         itemIds.insert(itemId, at: 0)
     }
 
+    /// Puts `itemIds` first, in the order given (#3769, Play all). An item already queued moves forward to its place among
+    /// them, one that appears twice in `itemIds` counts once, and everything else keeps its order behind them. Called twice
+    /// with the same ids, it leaves the queue as it was.
+    public mutating func playNext(contentsOf itemIds: some Sequence<String>) {
+        var seen = Set<String>()
+        let front = itemIds.filter { seen.insert($0).inserted }
+        guard !front.isEmpty else { return }
+        self.itemIds.removeAll { seen.contains($0) }
+        self.itemIds.insert(contentsOf: front, at: 0)
+    }
+
+    /// Puts each of `itemIds` last, in the order given (#4720, Add to Queue). An item already queued keeps its place.
+    /// Returns how many were added, for the banner's count.
+    @discardableResult
+    public mutating func append(contentsOf itemIds: some Sequence<String>) -> Int {
+        let before = self.itemIds.count
+        for itemId in itemIds { append(itemId) }
+        return self.itemIds.count - before
+    }
+
     /// Puts `itemId` last. An item already queued keeps its place.
     public mutating func append(_ itemId: String) {
         guard !itemIds.contains(itemId) else { return }
@@ -104,6 +124,51 @@ public enum PlayQueueAdvance {
               let itemId = current.itemId, previous.itemId == itemId,
               let sessionId = current.sessionId, previous.sessionId == sessionId else { return false }
         return true
+    }
+
+    /// What the queue does at a snapshot change, for the advance and for Diagnostics (#5358). `nil` for the ordinary
+    /// change that is no end at all, so Diagnostics gets one line per end, never one per tick.
+    ///
+    /// - `advance`: the finish edge with a queued item ready, and no sleep timer running.
+    /// - `skipped(.sleepTimer)`: the finish edge while a sleep timer runs; the listener asked for the audio to stop.
+    /// - `skipped(.queueEmpty)`: the finish edge with nothing available in the queue.
+    /// - `skipped(.noFinishEdge)`: the same session stopped at its end (paused, at the end percent) without moving
+    ///   into `.finished`, so the queue could not see a finish. This was the #5358 skip to the end of an article.
+    public static func decision(
+        from previous: SessionSnapshot, to current: SessionSnapshot, sleepTimerActive: Bool, queueHasNext: Bool
+    ) -> Decision? {
+        if shouldAdvance(from: previous, to: current) {
+            if sleepTimerActive { return .skipped(.sleepTimer) }
+            return queueHasNext ? .advance : .skipped(.queueEmpty)
+        }
+        guard previous.status.isPlaybackActive, current.status == .paused, current.phase != .finished,
+              current.currentPlaybackProgressPercent >= ItemFinishedRule.atEndPercent,
+              let sessionId = current.sessionId, previous.sessionId == sessionId,
+              let itemId = current.itemId, previous.itemId == itemId,
+              current.targetId == previous.targetId else { return nil }
+        return .skipped(.noFinishEdge)
+    }
+
+    public enum Decision: Equatable, Sendable {
+        case advance
+        case skipped(SkipReason)
+
+        /// The Diagnostics fields: the outcome and, for a skip, its reason. No ids or titles.
+        public var diagnosticFields: [String: String] {
+            switch self {
+            case .advance: return ["outcome": "advanced"]
+            case .skipped(let reason): return ["outcome": "skipped", "reason": reason.rawValue]
+            }
+        }
+    }
+
+    public enum SkipReason: String, Equatable, Sendable {
+        case sleepTimer = "sleep_timer"
+        case queueEmpty = "queue_empty"
+        case noFinishEdge = "no_finish_edge"
+        /// The queued item was taken off the queue but did not start (recording a Margin, an episode that can't
+        /// play offline). Recorded by the app after its start, not by `decision`.
+        case startRefused = "start_refused"
     }
 }
 

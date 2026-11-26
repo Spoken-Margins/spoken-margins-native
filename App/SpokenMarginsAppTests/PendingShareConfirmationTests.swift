@@ -92,7 +92,12 @@ final class PendingShareConfirmationTests: XCTestCase {
         let model = try makeModel(sharing: [])
 
         model.importPendingSourceLinkHandoffs()
-        try await Task.sleep(nanoseconds: 300_000_000)
+        // The drain records each stage's count as it goes: the browser-text stage, then the transcript stage, which
+        // is the last one before it reports what it added. Wait for the end of the drain, then check it said nothing.
+        try await pollUntil {
+            model.diagnostics["pendingTranscriptHandoffs"] != nil || model.diagnostics["pendingTranscriptHandoffsKept"] != nil
+        }
+        try await pollUntil { !model.isImportingPendingSourceLinkHandoffs }
 
         XCTAssertNil(model.feedbackEvent)
     }

@@ -26,6 +26,8 @@ public enum FollowingFriends {
         public let summary: String
         /// "2 new" when any of their Margins are unheard; nil otherwise. Words carry it, never a colour alone.
         public var newLabel: String? { newCount > 0 ? "\(newCount) new" : nil }
+        /// The tag on the friend's initial, capped like the show row's (#4723).
+        public var newBadgeText: String? { FollowingNewBadge.text(count: newCount) }
 
         public struct Item: Identifiable, Hashable, Sendable {
             public let id: String
@@ -120,18 +122,17 @@ public enum FollowingFriends {
 
     static func dated(_ date: Date) -> Date? { date == .distantPast ? nil : date }
 
-    /// A friend's item as a Library row reads it (#3343): site or author, kind, then listening progress, with the
-    /// item's length first when it has one. Built from the same wording the Library row uses.
+    /// A friend's item as a Library row reads it (#3343): the progress words first (time left, the item's length, or
+    /// "Completed", from `LibraryRowLines` so this screen and the Library agree, #4062), then site or author and kind.
     public static func itemDetail(_ row: LibraryItemRow, playbackSpeed: Double) -> LibraryRowDetail {
-        let listening: String? = row.isCompleted ? "Completed" : row.continuationProgressPercent.map { "\($0)%" }
-        return LibraryRowDetail(
+        LibraryRowDetail(
             byline: LibraryRowWording.byline(sourceTitle: row.sourceTitle, author: row.author, title: row.title),
             kind: LibraryRowWording.kindLabel(
                 mediaType: row.mediaType, sourceReference: row.sourceReference,
                 sourceReferenceType: row.sourceReferenceType, usesNewReader: row.usesNewReader
             ),
-            length: ListeningTimeEstimator.libraryTotalText(textCharacterCount: row.textCharacterCount, playbackSpeed: playbackSpeed),
-            listening: listening,
+            length: LibraryRowLines(row: row, playbackSpeed: playbackSpeed).progress,
+            listening: nil,
             status: nil
         )
     }

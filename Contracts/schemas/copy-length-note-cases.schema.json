@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "copy-length-note-cases.schema.json",
+  "title": "Copy-length note case (#4614, #4175)",
+  "description": "One row of the table of cases (the file is an array of rows) for the rule that says a listener's copy of a podcast episode is a different length from the sender's. The web test and SessionKit's test both read it, so the rule can't drift. Lengths are whole milliseconds; a listener length of \"Infinity\" or \"NaN\" stands for a value JSON cannot hold.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "note",
+    "senderMs",
+    "listenerMs",
+    "expect",
+    "farApart",
+    "amount"
+  ],
+  "properties": {
+    "note": {
+      "type": "string",
+      "minLength": 1
+    },
+    "senderMs": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "listenerMs": {
+      "anyOf": [
+        {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        {
+          "enum": [
+            "Infinity",
+            "NaN"
+          ]
+        }
+      ]
+    },
+    "expect": {
+      "enum": [
+        "none",
+        "shorter",
+        "longer"
+      ]
+    },
+    "farApart": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "amount": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^about [0-9]+ (seconds|minutes)$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "expect": {
+            "const": "none"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "farApart": {
+            "type": "null"
+          },
+          "amount": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "farApart": {
+            "type": "boolean"
+          },
+          "amount": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
+}

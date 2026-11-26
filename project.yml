@@ -14,12 +14,12 @@ configFiles:
 settings:
   base:
     EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
-    # Phone-build-only spikes (#3086, #3940). Both phone builds (scripts/phone-build, .github/workflows/phone-build.yml) turn
+    # Phone-build-only spikes (#3086). Both phone builds (scripts/phone-build, .github/workflows/phone-build.yml) turn
     # SM_PHONE_BUILD on through `-xcconfig Config/PhoneBuild.xcconfig`, the one list they share (#3354); Debug turns
     # it on so the lane compiles and tests the code. It writes the app's Info.plist key SMPhoneBuild, which both
     # phone builds check. An upload is a Release archive without the file, so nothing listed here reaches testers or
     # App Review (2026-10-17: gates are build-time).
-    SM_PHONE_BUILD_CONDITIONS_YES: SM_LOCKED_MARGIN_SPIKE SM_MARGIN_END_PHRASE_SPIKE
+    SM_PHONE_BUILD_CONDITIONS_YES: SM_LOCKED_MARGIN_SPIKE
     SM_PHONE_BUILD_CONDITIONS_NO: ""
     # Share-link creation (#2236), set when the app is built, never at run time (2026-10-17). It writes the app's
     # Info.plist key SMShareLinkCreation ("YES" or "NO"), which scripts/release_gate.py reads before a build goes to
@@ -131,6 +131,10 @@ targets:
         product: SessionKitEPUB
       - package: SessionKit
         product: SessionKitFeeds
+      # The PDFKit half of exporting Margins as comments in a copy of a PDF (#4338). Linked now so the export sheet's
+      # PR adds no project change; nothing calls it yet.
+      - package: SessionKit
+        product: SessionKitPDF
       - package: PhononTTS
         product: ptts
       - package: KokoroCoreML
@@ -194,6 +198,12 @@ targets:
               - com.spokenmargins.subrip
               - org.openxmlformats.wordprocessingml.document
               - public.plain-text
+          # A list of shows from another podcast app or a friend (#4046 PR 5). Alternate: one more choice in Open In.
+          - CFBundleTypeName: Podcast list
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - org.opml.opml
         UTExportedTypeDeclarations:
           - UTTypeIdentifier: com.spokenmargins.package
             UTTypeDescription: Spoken Margins Package
@@ -217,6 +227,16 @@ targets:
                 - srt
               public.mime-type:
                 - application/x-subrip
+          # OPML (.opml): the system declares no type for it, so an .opml file could not be opened in the app (#4046 PR 5).
+          - UTTypeIdentifier: org.opml.opml
+            UTTypeDescription: OPML podcast list
+            UTTypeConformsTo:
+              - public.xml
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - opml
+              public.mime-type:
+                - text/x-opml
         LSRequiresIPhoneOS: true
         LSSupportsOpeningDocumentsInPlace: true
         ITSAppUsesNonExemptEncryption: false

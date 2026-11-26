@@ -116,6 +116,11 @@ test('the vector preview passes the page check, which keeps only the shown field
   });
 });
 
+test('#4784 a preview with the introduction mark passes the page check and returns today\'s shape', () => {
+  const plain = checkPreview(vectorPreview());
+  for (const answers of ['none', 'box', 7, null]) assert.deepEqual(checkPreview({ ...vectorPreview(), answers }), plain, String(answers));
+});
+
 test('excerpts are held to their ceilings on each side, in code points', () => {
   for (const [side, max] of [['before', MAX_BEFORE_CHARACTERS], ['after', MAX_AFTER_CHARACTERS]]) {
     for (const [name, text, valid] of [

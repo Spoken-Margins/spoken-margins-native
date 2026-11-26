@@ -3,7 +3,8 @@
 import { readPacket } from '../packet/read.ts';
 import { recordVoiceMargin } from '../packet/record.ts';
 import { writePacket } from '../packet/write.ts';
-import { readFeed, readSubstackVoice, searchPodcasts } from '../sources/index.ts';
+import { packetShowFor } from './logic/import.ts';
+import { findAppleEpisodeAudio, readFeed, readSubstackVoice, searchPodcasts } from '../sources/index.ts';
 import { downloadSizeLabel } from '../transcribe/catalog.ts';
 import { createTranscriber } from '../transcribe/client.ts';
 import type { PacketPort, RecorderPort, Services, SourcesPort, TranscriberPort } from './ports.ts';
@@ -31,6 +32,15 @@ const sources: SourcesPort = {
       ...(voice.durationSeconds !== undefined && { durationSeconds: voice.durationSeconds }),
     };
   },
+  async findAppleEpisodeAudio(pageUrl, { relayAllowed, title }) {
+    const found = await findAppleEpisodeAudio(pageUrl, { feed: { title, consent: relayAllowed, ...relayBase() } });
+    if (!found) return null;
+    return {
+      audioUrl: found.audioUrl,
+      audioOrigin: found.audioOrigin,
+      ...(found.durationSeconds !== undefined && { durationSeconds: found.durationSeconds }),
+    };
+  },
 };
 
 const recorder: RecorderPort = {
@@ -50,7 +60,9 @@ const packets: PacketPort = {
       percentMargins: read.percentMargins,
     };
   },
-  async writePacket(episode, margins, show, sender) {
+  async writePacket(episode, margins, holder, sender) {
+    // A "Shared by …" holder is not the episode's show; the packet names the show the friend's packet named (#4689).
+    const show = packetShowFor(holder, episode);
     const written = await writePacket(episode, margins, { ...(show && { show }), ...(sender && { sender }) });
     return {
       bytes: written.bytes,

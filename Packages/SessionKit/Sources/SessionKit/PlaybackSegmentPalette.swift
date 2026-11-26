@@ -5,19 +5,19 @@ import Foundation
 /// selected option is a pill drawn on that tray. Foundation only, so the views and the contrast audit in
 /// `ExperienceColorContrast.swift` read the same numbers.
 ///
-/// The values here are what the views drew before the audit could see them. A later change moves them, and the
-/// audit's pairs and its known failures move with them.
+/// The selected option is an opaque white pill with plate-green words, and the selected pane has a short bar under its
+/// words as a second cue (#3735). The pairs in `ExperienceColorContrast.swift` measure these numbers.
 public enum PlaybackSegmentPalette {
     /// The colour the tray and the pills are drawn in, each at its own alpha over what is under it.
     public static let fill = AppSemanticColorRGB.white
     /// The tray behind the options, over the listening plate.
     public static let trayAlpha = 0.06
-    /// The selected pane's pill, over the tray.
-    public static let paneSelectedFillAlpha = 0.18
-    /// The selected filter's pill, over the tray.
-    public static let filterSelectedFillAlpha = 0.40
-    /// The words of the selected option.
-    public static let selectedLabel = AppSemanticColorRGB.white
+    /// The selected pane's pill, over the tray: opaque, a luminance step that reads without hue.
+    public static let paneSelectedFillAlpha = 1.0
+    /// The selected filter's pill, over the tray: the same pill as the pane switch, so the two controls look alike.
+    public static let filterSelectedFillAlpha = 1.0
+    /// The words of the selected option, its symbol and the bar under it: the plate's own dark green, on the pill.
+    public static let selectedLabel = AppSemanticColorRGB.listeningBackground
     /// The words of an option that is not selected, on the tray.
     public static let unselectedLabel = AppSemanticColorRGB.white
 

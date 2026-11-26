@@ -86,7 +86,7 @@ async function load(model: TranscriptionModel, wanted: Device): Promise<void> {
   throw lastError;
 }
 
-async function transcribeSegments(segments: Float32Array[]): Promise<string> {
+async function transcribeSegments(id: number, segments: Float32Array[]): Promise<string> {
   if (!loaded) throw new Error('The speech model isn’t loaded.');
   const texts: string[] = [];
   for (const segment of segments) {
@@ -94,6 +94,7 @@ async function transcribeSegments(segments: Float32Array[]): Promise<string> {
     // Moonshine's own cap is 6 tokens per whole second, which gives a 0.9-second "yes" no tokens at all.
     const output = await loaded.run(segment, { max_new_tokens: Math.max(12, Math.ceil(seconds * 7)) });
     texts.push((Array.isArray(output) ? output[0]?.text : output.text) ?? '');
+    scope.postMessage({ type: 'segment', id, done: texts.length, total: segments.length });
   }
   return joinSegmentTexts(texts);
 }
@@ -113,12 +114,12 @@ scope.onmessage = (event) => {
       try {
         let text: string;
         try {
-          text = await transcribeSegments(message.segments);
+          text = await transcribeSegments(message.id, message.segments);
         } catch (error) {
           // A GPU that loads the model but fails a run (lost device, an unsupported op) gets one try on WebAssembly.
           if (loaded?.device !== 'webgpu') throw error;
           await load(loaded.model, 'wasm');
-          text = await transcribeSegments(message.segments);
+          text = await transcribeSegments(message.id, message.segments);
         }
         scope.postMessage({ type: 'result', id: message.id, text, ms: Math.round(performance.now() - started), device: loaded?.device ?? 'wasm' });
       } catch (error) {

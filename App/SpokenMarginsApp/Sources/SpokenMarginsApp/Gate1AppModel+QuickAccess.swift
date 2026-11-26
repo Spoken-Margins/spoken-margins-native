@@ -31,16 +31,10 @@ extension Gate1AppModel {
         )
     }
 
-    var isRefreshingQuickAddFeed: Bool {
-        quickAccess.isRefreshing || isRefreshingFollowedSources
-    }
-
-    /// Connects the folder state to the model at launch: change forwarding, diagnostics, and the inbox that feeds the
-    /// play queue after each refresh (#1990).
+    /// Connects the folder state to the model at launch: change forwarding and diagnostics.
     func wireQuickAccessFolder() {
         quickAccess.forwardWillChange(to: objectWillChange)
         quickAccess.recordDiagnostic = { [weak self] key, value in self?.diagnostics[key] = value }
-        quickAccess.onFilesRefreshed = { [weak self] in self?.quickFolderInboxRefreshed() }
     }
 
     func dismissQuickAccessFile(_ file: QuickAccessFile) { quickAccess.dismiss(file) }
@@ -57,6 +51,21 @@ extension Gate1AppModel {
             reportFailure(error, context: "Quick folder setup failed")
         }
     }
+
+    /// Settings' "Choose Folder Again" (#3770): the same folder keeps what the last scan learned and its dismissed files;
+    /// any other folder is a fresh baseline, as `configureQuickAccessFolder`. The confirmation is the same.
+    func reconnectQuickAccessFolder(url: URL) {
+        do {
+            try quickAccess.reconnect(url: url) {
+                reportSuccess("Quick folder set to \(url.lastPathComponent).")
+            }
+        } catch {
+            reportFailure(error, context: "Quick folder setup failed")
+        }
+    }
+
+    /// Settings' "Remove Folder" (#3770). Nothing in the Library or the play queue is touched.
+    func removeQuickAccessFolder() { quickAccess.remove() }
 
     func refreshQuickAccessFolder() { quickAccess.refresh() }
 
@@ -80,16 +89,26 @@ extension Gate1AppModel {
                 quickAccessFileToDismiss: file))
     }
 
-    func refreshQuickAddFeed(force: Bool = true) {
+    func refreshQuickAddFeed(force: Bool = true, trigger: FollowedRefreshTrigger) {
+        // Coming forward is when a link list that waited offline or failed is tried again (#4683).
+        if trigger == .foreground { linkListArrival.releaseHeldFiles() }
         refreshQuickAccessFolder()
-        refreshFollowedSources(force: force)
+        refreshFollowedSources(force: force, trigger: trigger)
     }
 
-    /// Pull-down refresh on Following (#1438): the toolbar button's refresh, awaited so the spinner stays until
-    /// the feeds are read. The refresh runs in its own task so that SwiftUI cancelling the gesture's task when
-    /// the list redraws can't cut it short; a pull while a refresh runs returns at once and starts no second one.
+    /// Pull-down refresh on Following (#1438), its only manual refresh since #4955. It is awaited so the spinner stays until
+    /// the feeds are read. The refresh runs in its own task, so SwiftUI cancelling the gesture's task when the list redraws
+    /// can't cut it short. A pull while a refresh runs starts no second pass: that pass goes round once more, and the pull
+    /// waits for it to end (#4955).
     func pullToRefreshFollowing() async {
         refreshQuickAccessFolder()
-        _ = await Task { [self] in await self.performFollowedSourceRefresh(force: true) }.value
+        await Task { [self] in
+            // The gate refuses only while a pass runs, and the flag goes true with no await after the gate accepts, so a nil
+            // with the flag set means a running pass took this request; a nil from a store that couldn't open comes after
+            // the pass's `defer` cleared the flag, so the pull returns at once.
+            if await self.performFollowedSourceRefresh(force: true, trigger: .pull) == nil, self.isRefreshingFollowedSources {
+                await self.followedSourcePassEnd.waitForEnd()
+            }
+        }.value
     }
 }

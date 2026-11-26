@@ -328,6 +328,8 @@ final class NarrationFootnotePlanTests: XCTestCase {
         let elapsed = Date().timeIntervalSince(started)
         XCTAssertEqual(asideChunks(plan).count, 150)
         XCTAssertEqual(plan.chunks.filter { if case .definition = $0.footnote { true } else { false } }.isEmpty, false)
+        // Performance budget (#4573, scripts/test_clock_ceilings_allowlist.json): about 0.55 s on a Mac in a debug build (2026-11-20); the ceiling is at
+        // least 5x that and guards a planner that rescans the notes per claim.
         XCTAssertLessThan(elapsed, 5, "planning 150 notes must not scale badly")
         for chunk in plan.chunks {
             XCTAssertLessThanOrEqual(chunk.text.reduce(0) { $0 + RenderedSpeechChunker.spokenCost(of: $1) }, RenderedSpeechChunker.spokenCostBudget + 8)

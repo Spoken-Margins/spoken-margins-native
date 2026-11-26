@@ -38,7 +38,7 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
             ("Gate1AppModel.swift", "func performGate2CompactCommand(", "func synchronizeStreamingSpeechAnchorIfNeeded(")
         ] {
             let route = try body(appSource(file), from: start, to: end)
-            XCTAssertTrue(route.contains("transcribeAndRecordSavedSpokenMargin()"), start)
+            XCTAssertTrue(route.contains("transcribeAndRecordSavedSpokenMargin("), start) // with or without `endedByPhrase:` (#3940)
             XCTAssertTrue(route.contains("recordSpokenMarginSavedBeforeFailure(engine"),
                           "\(start): a Margin saved before resuming playback failed still counts")
         }
@@ -56,9 +56,30 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
             XCTAssertFalse(builds.isEmpty, "\(file) no longer builds the coordinator: update this guard")
             for build in builds {
                 let line = String(build.prefix { $0 != "\n" })
-                XCTAssertTrue(line.contains("signals: .app)"), "\(file): the coordinator needs the app's signal log, got: \(line)")
+                // `signals: .app` ends the call or is followed by more arguments (`suppressedEntry:`, #4285).
+                XCTAssertTrue(Self.passesTheAppSignalLog(line), "\(file): the coordinator needs the app's signal log, got: \(line)")
             }
         }
+    }
+
+    static func passesTheAppSignalLog(_ line: String) -> Bool {
+        line.range(of: #"\bsignals: \.app\s*[,)]"#, options: .regularExpression) != nil
+    }
+
+    func testTheSignalLogPatternAcceptsTrailingArgumentsAndRejectsAMissingLog() {
+        let accepted = [
+            "FollowedSourceCoordinator(repository: store, signals: .app)",
+            "FollowedSourceCoordinator(repository: store, setAside: x, signals: .app, suppressedEntry: notForMeSuppressedEntry)",
+        ]
+        for line in accepted { XCTAssertTrue(Self.passesTheAppSignalLog(line), line) }
+        let rejected = [
+            "FollowedSourceCoordinator(repository: store)",
+            "FollowedSourceCoordinator(repository: store, suppressedEntry: notForMeSuppressedEntry)",
+            "FollowedSourceCoordinator(repository: store, signals: .none, suppressedEntry: x)",
+            "FollowedSourceCoordinator(repository: store, signals: .appTest)",
+            "FollowedSourceCoordinator(repository: store, othersignals: .app)",
+        ]
+        for line in rejected { XCTAssertFalse(Self.passesTheAppSignalLog(line), line) }
     }
 
     // The item_published signal itself is proven by a recorded row in FollowedSourceSignalTests (#1896).

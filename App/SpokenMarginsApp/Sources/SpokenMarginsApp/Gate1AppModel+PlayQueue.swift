@@ -127,78 +127,30 @@ extension Gate1AppModel {
     }
 
     /// Starts the next queued item when the one that was playing reaches its end. Not while a sleep timer is running:
-    /// the listener asked for the audio to stop, and a queued item would play on past it.
+    /// the listener asked for the audio to stop, and a queued item would play on past it. Each end is recorded in
+    /// Diagnostics as `playQueue.advance` (advanced, or skipped with its reason; no ids or titles), so an export says why
+    /// a queue did not move on (#5358).
     func playQueueSnapshotChanged(from previous: SessionSnapshot, to current: SessionSnapshot) {
-        guard PlayQueueAdvance.shouldAdvance(from: previous, to: current), !sleepTimerIsActive else { return }
         let available = Set(libraryItems.map(\.id))
+        let isAvailable: (String) -> Bool = { available.contains($0) }
+        guard let decision = PlayQueueAdvance.decision(
+            from: previous, to: current, sleepTimerActive: sleepTimerIsActive,
+            queueHasNext: PlayQueueController.current(self).peekNext(isAvailable: isAvailable) != nil
+        ) else { return }
+        guard decision == .advance else {
+            recordDeveloperDiagnostic("playQueue.advance", decision.diagnosticFields)
+            return
+        }
         var next: String?
-        PlayQueueController.update(self) { next = $0.popNext(isAvailable: { available.contains($0) }) }
+        PlayQueueController.update(self) { next = $0.popNext(isAvailable: isAvailable) }
         guard let next else { return }
-        // After this snapshot change has settled: starting a session writes the snapshot again.
+        // After this snapshot change has settled: starting a session writes the snapshot again. The queue moved on
+        // by itself, so no new publisher page is read for it (#4640, the 2026-10-21 rule).
         Task { @MainActor [weak self] in
             guard let self else { return }
-            hangTelemetry.labels.scoped("playQueueAdvance") { startItem(id: next) }
+            hangTelemetry.labels.scoped("playQueueAdvance") { _ = startItem(id: next, trigger: .queueAdvance) }
+            let started = snapshot.itemId == next // `activeItemId` is set before a start that can still be refused
+            recordDeveloperDiagnostic("playQueue.advance", (started ? decision : .skipped(.startRefused)).diagnosticFields)
         }
-    }
-}
-
-/// The Quick Folder as an inbox (#1990 slice 3): with the setting on, files that newly appear in the folder are imported
-/// through the same Quick Folder import and appended to the play queue in filename order. It runs after each folder
-/// refresh, including the one at launch, so a file added while the app was closed is queued the next time it opens.
-extension Gate1AppModel {
-    func quickFolderInboxRefreshed() {
-        guard quickAccess.inboxFeedsQueue, !quickAccess.isRefreshing else { return }
-        // The whole folder, not the Quick Add list's eight: a batch of more than eight new files arrives in passes (#3767).
-        let plan = QuickFolderInbox.plan(
-            files: quickAccess.inboxFiles,
-            seenKeys: quickAccess.inboxSeenFileIds,
-            dismissedKeys: quickAccess.dismissedFileKeys,
-            seenCoversWholeFolder: quickAccess.inboxSeenCoversWholeFolder
-        )
-        if !plan.grandfatheredKeys.isEmpty {
-            quickAccess.inboxSeenFileIds = (quickAccess.inboxSeenFileIds ?? []).union(plan.grandfatheredKeys)
-        }
-        // A baseline taken now covers the folder, and so does a plan that saw files. An empty listing against an existing
-        // seen set may be a folder still syncing, which proves nothing about which files were already there.
-        if !quickAccess.inboxFiles.isEmpty || quickAccess.inboxSeenFileIds == nil {
-            quickAccess.inboxSeenCoversWholeFolder = true
-        }
-        guard !plan.toImport.isEmpty else {
-            if quickAccess.inboxSeenFileIds == nil { quickAccess.inboxSeenFileIds = plan.newSeenKeys }
-            return
-        }
-        // One import at a time; the next refresh picks these up again because they are not marked seen yet.
-        guard sourceImportTask == nil, let folderURL = quickAccess.resolvedFolderURL() else { return }
-        // Link lists (#3767) go first and alone: their links are added to the Library, in file order. The files that
-        // are not marked seen yet are picked up by the refresh that import ends with, so text files follow right after.
-        let linkLists = plan.toImport.filter(Self.isQuickFolderLinkList)
-        if !linkLists.isEmpty {
-            quickAccess.inboxSeenFileIds = (quickAccess.inboxSeenFileIds ?? []).union(linkLists.map(\.id))
-            importQuickFolderLinkLists(linkLists, folderURL: folderURL)
-            return
-        }
-        quickAccess.inboxSeenFileIds = (quickAccess.inboxSeenFileIds ?? []).union(plan.newSeenKeys)
-        let files = plan.toImport
-        // A `.txt` that reads as a meeting transcript is saved as a transcript item and queued like any other (#2997).
-        importFilesWithTranscriptRule(
-            urls: files.map { folderURL.appending(path: $0.relativePath) },
-            route: quickFolderInboxRoute(files: files, folderURL: folderURL))
-    }
-
-    /// How the inbox imports its new files: no navigation, "Queued N new Quick Folder files." for text files, and every
-    /// item the pick saved appended to the queue in the order of `files`, with the files dismissed. A failed file was
-    /// already reported by the import.
-    func quickFolderInboxRoute(files: [QuickAccessFile], folderURL: URL) -> TranscriptPickRoute {
-        TranscriptPickRoute(
-            securityScopedURLs: [folderURL],
-            refreshQuickFolderWhenFinished: true,
-            navigatesWhenFinished: false,
-            confirmationOverride: { "Queued \($0) new Quick Folder file\($0 == 1 ? "" : "s")." },
-            onFinished: { [weak self] outcome in
-                guard let self, !outcome.itemIds.isEmpty else { return }
-                PlayQueueController.update(self) { queue in outcome.itemIds.forEach { queue.append($0) } }
-                files.forEach { self.dismissQuickAccessFile($0) }
-                self.diagnostics["quickFolderInboxQueued"] = "\(outcome.itemIds.count)"
-            })
     }
 }

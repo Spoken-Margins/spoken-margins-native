@@ -12,6 +12,7 @@ import ast
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -98,6 +99,66 @@ def pr(**kw):
     return base
 
 
+class OnePrPerCheckFinish(unittest.TestCase):
+    """#4990: a start from one PR's checks reads that PR; every open PR is read once the last sweep is old."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.path = Path(self.dir.name) / "last-sweep"
+        self.prs = [{"number": 1, "headRefOid": "a" * 40}, {"number": 2, "headRefOid": "b" * 40}]
+
+    def test_no_record_or_an_unreadable_one_means_a_sweep(self):
+        self.assertTrue(A.sweep_due(1000.0, self.path))
+        self.path.write_text("not a number")
+        self.assertTrue(A.sweep_due(1000.0, self.path))
+
+    def test_a_sweep_is_due_only_once_the_last_one_is_old(self):
+        A.record_sweep(1000.0, self.path)
+        self.assertFalse(A.sweep_due(1000.0, self.path))
+        self.assertFalse(A.sweep_due(1000.0 + A.SWEEP_EVERY - 1, self.path))
+        self.assertTrue(A.sweep_due(1000.0 + A.SWEEP_EVERY, self.path))
+
+    def test_a_run_in_the_same_second_as_the_sweep_does_not_sweep_again(self):
+        A.record_sweep(1000.6, self.path)
+        self.assertFalse(A.sweep_due(1000.7, self.path))
+
+    def test_a_record_from_the_future_does_not_hold_sweeps_off(self):
+        A.record_sweep(5000.0, self.path)
+        self.assertTrue(A.sweep_due(1000.0, self.path))
+
+    def test_a_head_narrows_the_run_to_its_pr_unless_a_sweep_is_due(self):
+        self.assertEqual(A.scope_to_head(self.prs, "b" * 40, due=False), ([self.prs[1]], False))
+        self.assertEqual(A.scope_to_head(self.prs, "b" * 40, due=True), (self.prs, True))
+
+    def test_no_head_reads_every_pr(self):
+        self.assertEqual(A.scope_to_head(self.prs, None, due=False), (self.prs, True))
+        self.assertEqual(A.scope_to_head(self.prs, "", due=False), (self.prs, True))
+
+    def test_a_head_no_open_pr_has_reads_none(self):
+        self.assertEqual(A.scope_to_head(self.prs, "c" * 40, due=False), ([], False))
+
+    def test_main_reads_one_pr_then_all_and_a_dry_run_records_nothing(self):
+        seen = []
+        with patch.object(A, "SWEEP_PATH", self.path), patch.object(A, "OPS_DIR", Path(self.dir.name)), \
+                patch.object(A, "LOCK_PATH", Path(self.dir.name) / "lock"), patch.object(A, "log", lambda *a, **k: None), \
+                patch.object(A, "fetch_open_prs", lambda only: list(self.prs)), patch.object(A, "rearm_pass", lambda prs, dry: None), \
+                patch.object(A, "audit_prs", lambda prs, dry, tag, t0, force=False: seen.append([p["number"] for p in prs]) or 0), \
+                patch.object(A.usage, "recover", lambda *a, **k: None):
+            A.main(["--dry-run", "--head", "b" * 40])
+            self.assertFalse(self.path.exists())
+            A.main(["--head", "b" * 40])   # nothing recorded yet: every PR, and the sweep is recorded
+            A.main(["--head", "b" * 40])   # a fresh sweep: only the PR at that head
+            A.main([])                     # a schedule or dispatch: every PR
+        self.assertEqual(seen, [[1, 2], [1, 2], [2], [1, 2]])
+
+    def test_the_workflow_passes_the_finished_head_and_keeps_the_sweep_record(self):
+        text = (Path(__file__).resolve().parents[2] / ".github/workflows/claude-audit.yml").read_text()
+        self.assertIn("EVENT_HEAD: ${{ github.event.workflow_run.head_sha }}", text)
+        self.assertIn('${EVENT_HEAD:+--head "$EVENT_HEAD"}', text)
+        self.assertEqual(text.count(".sm-ops/codex-audit/" + A.SWEEP_PATH.name), 4)
+
+
 class ShaInComment(unittest.TestCase):
     def test_audit_on_old_head_does_not_count_for_new_head(self):
         self.assertFalse(A.audited_on(FIXTURE["comments_audited_old_head"], HEAD))
@@ -131,10 +192,10 @@ class ShaInComment(unittest.TestCase):
         self.assertFalse(A.is_audit_comment(reply))
         self.assertIsNone(A.head_audit([reply], HEAD))
 
-    def test_audit_headings_match_the_lane_runner(self):
-        runner = (Path(__file__).resolve().parents[2] / "scripts" / "lane-runner.py").read_text()
-        m = re.search(r"^AUDITS = .*$", runner, re.M)
-        self.assertIsNotNone(m, "scripts/lane-runner.py no longer defines AUDITS on one line")
+    def test_audit_headings_match_the_merge_rules(self):
+        rules = (Path(__file__).resolve().parents[2] / "scripts" / "lane_merge_rules.py").read_text()
+        m = re.search(r"^AUDITS = .*$", rules, re.M)
+        self.assertIsNotNone(m, "scripts/lane_merge_rules.py no longer defines AUDITS on one line")
         self.assertEqual(ast.literal_eval(ast.parse(m.group(0)).body[0].value), A.AUDIT_HEADINGS)
 
     def test_comment_not_starting_with_codex_audit_is_ignored(self):
@@ -206,10 +267,13 @@ class CandidateFilter(unittest.TestCase):
         }
         for p, area in paths.items():
             self.assertIn(area, A.risky_areas([p]), p)
-        self.assertEqual(A.risky_areas(["App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackScreen.swift"]), [])
+        # An app file is audio by its name (test-scope.py APP_AUDIO), so the merge policy holds PlaybackScreen.swift
+        # for an audit; this list used to say it was not risky, and #4666 waited on an audit nobody ran (#4843).
+        self.assertEqual(A.risky_areas(["App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackScreen.swift"]), ["audio"])
+        self.assertEqual(A.risky_areas(["App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift"]), [])
 
     LANE_PATHS = [
-        ".github/workflows/lane.yml", ".github/workflows/hosted-portable.yml", "scripts/lane-runner.py",
+        ".github/workflows/main-t3.yml", ".github/workflows/hosted-portable.yml", "scripts/lane_t3.py",
         "scripts/lane_sim.py", "scripts/lane_slots.py", "scripts/lane_guard.py", "scripts/lane-sim-boot",
         "scripts/xcodebuild-lane", "scripts/host-test-lane", "scripts/install-lane-guard.py",
         "scripts/test-scope.py", "scripts/hot_file_ratchet.py", "scripts/merge_audit.py",
@@ -220,7 +284,7 @@ class CandidateFilter(unittest.TestCase):
         # Owner rule 2026-10-01: lane PRs get the same audit as sharing, persistence and audio PRs.
         for p in self.LANE_PATHS:
             self.assertEqual(A.risky_areas([p]), ["lane"], p)
-        lane_pr = [{"filename": "scripts/lane-runner.py", "additions": 40, "deletions": 3}]
+        lane_pr = [{"filename": "scripts/lane_t3.py", "additions": 40, "deletions": 3}]
         ok, why = A.evaluate_pr(pr(), FIXTURE["comments_audited_old_head"], lane_pr)
         self.assertEqual((ok, why), (True, "risky: lane"))
 
@@ -238,14 +302,14 @@ class CandidateFilter(unittest.TestCase):
             self.assertTrue(scope.is_lane_path(p), p)
             self.assertEqual(A.risky_areas([p]), ["lane"], f"{p} is held for an audit by the runner but not risky here")
         # and the other way round, on the paths named in these tests: the audit adds no lane path of its own
-        for p in self.LANE_PATHS + ["scripts/tests/test_lane_runner.py", "TestPlans/scripted-journeys.json",
+        for p in self.LANE_PATHS + ["scripts/tests/test_lane_t3.py", "TestPlans/scripted-journeys.json",
                                     "scripts/phone-build", "ops/claude/sm_claude_worker.py"]:
             self.assertEqual("lane" in A.risky_areas([p]), scope.is_lane_path(p), p)
 
     def test_ordinary_paths_stay_off_the_lane(self):
         # The audit count for ordinary PRs must not rise: the lane's tests, the Test Desk's journey list,
         # other scripts, the ops tools and the lane docs don't make a PR risky.
-        for p in ["scripts/tests/test_lane_runner.py", "TestPlans/scripted-journeys.json",
+        for p in ["scripts/tests/test_lane_t3.py", "TestPlans/scripted-journeys.json",
                   "TestPlans/Release.xctestplan", "scripts/phone-build", "scripts/validate-contracts.py",
                   "scripts/setup-worktree.sh", "docs/workstreams/test-lane.md", ".claude/skills/lane-request/SKILL.md",
                   ".github/ISSUE_TEMPLATE/bug.yml", "ops/claude/sm_claude_worker.py",
@@ -743,6 +807,61 @@ class FailureMemory(unittest.TestCase):
         self.assertFalse(A.asks_for_audit("This doesn't need a Claude audit."))
 
 
+class RepeatedHeading(unittest.TestCase):
+    """#5332: a model answer that repeats the audit heading must still post its verdict as the first line after it.
+
+    Read back with the merge policy's own parser (`scripts/lane_merge_rules.audit_blocker`), which is what held #5180.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "lane_merge_rules_for_5332", Path(__file__).resolve().parents[2] / "scripts" / "lane_merge_rules.py")
+        cls.lane = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.lane)
+
+    def blocker(self, body):
+        return self.lane.audit_blocker([{"body": body}], HEAD)
+
+    CLEAN_SECTIONS = (
+        "**Claude audit on `e5f6547`**\n\nNo blocking findings.",  # #5180's comment 7150447827, another sha
+        "**Claude audit on `68fc333`**\n\n**Claude audit on `68fc333`**\n\nNo blocking findings.",
+        "Claude audit on `68fc333`\nNo blocking findings.",
+        "## Claude audit\n\nNo blocking findings.",
+        "**Claude audit:**\n\n**No blocking findings.**",
+        "**Codex audit (Astra) on `68fc333`**\n\nNo blocking findings.",
+        "### Codex audit\nNo findings.",
+        "**No blocking findings.**",
+        "No blocking findings.**",  # #5180's `c061f77` audit: a stray closing mark
+        "**Claude audit on `68fc333`**\n\nNo blocking findings.**",
+    )
+
+    def test_a_clean_answer_that_repeats_the_heading_clears_merge_policy(self):
+        for reviewer in ("Claude", "Codex"):
+            for section in self.CLEAN_SECTIONS:
+                with self.subTest(reviewer=reviewer, section=section):
+                    body = A.build_comment(366, HEAD, section, [366], reviewer=reviewer)
+                    self.assertEqual(sum("audit" in line and "`68fc333`" in line for line in body.splitlines()), 1, body)
+                    self.assertTrue(body.splitlines()[2].startswith("No blocking findings") or
+                                    body.splitlines()[2].startswith("No findings"), body)
+                    self.assertIsNone(self.blocker(body))
+
+    def test_findings_stay_blocking_with_or_without_a_repeated_heading(self):
+        for section in ("**Claude audit on `68fc333`**\n\n1. **High:** it loses data",
+                        "## Claude audit\n**Blocking:** packet won't import",
+                        "1. **Plausible:** No blocking findings in the parser, but the store drops a row",
+                        "**Claude audit on `68fc333`**",  # only the heading: nothing reads as clean
+                        "Claude audit on the head: one blocking finding\n1. it loses data"):
+            with self.subTest(section=section):
+                body = A.build_comment(366, HEAD, section, [366])
+                self.assertIsNotNone(self.blocker(body))
+                self.assertIn("blocking findings", self.blocker(body))
+
+    def test_split_sections_uses_the_same_rule(self):
+        out = "### PR #366\n**Claude audit on `68fc333`**\n\n**No blocking findings.**\n\nNotes."
+        self.assertEqual(A.split_sections(out, [366])[366], "No blocking findings.**\n\nNotes.")
+
+
 class HeadFiles(unittest.TestCase):
     def export(self, files, blobs):
         """blobs: path -> (mode, size, text or an Exception for show)."""
@@ -798,6 +917,28 @@ class HeadFiles(unittest.TestCase):
         self.assertNotIn("git show", block)
         self.assertIn("cannot run commands", A.build_prompt([dict(pr(number=7), lines=3)], [block], OLD))
 
+    def test_a_long_description_reaches_the_model_whole(self):
+        # #5274: a 9,324-character description lost its closing "Cost and catch" section at the old 6,000 cap.
+        body = "Closes #705.\n\n" + "Detail line.\n" * 700 + "## Cost and catch\n\n1. Cost per run: nothing."
+        self.assertGreater(len(body), 9000)
+        block = A.pr_context_block(dict(pr(number=7, body=body), lines=3, issues=[]), {}, ".sm-audit/pr-7.diff", OLD, OLD)
+        self.assertIn("## Cost and catch\n\n1. Cost per run: nothing.", block)
+        self.assertNotIn("Description truncated", block)
+
+    def test_a_description_past_the_cap_says_it_was_cut(self):
+        body = "Closes #705. " + "x" * A.PR_BODY_CHARS + " TAIL"
+        text = A.pr_description_text(body)
+        self.assertNotIn("TAIL", text)
+        self.assertIn(f"Description truncated at {A.PR_BODY_CHARS} of {len(body)} characters", text)
+        self.assertEqual(A.pr_description_text("  "), "(none)")
+        self.assertEqual(A.pr_description_text(None), "(none)")
+        exact = "y" * A.PR_BODY_CHARS
+        self.assertEqual(A.pr_description_text(exact), exact)
+
+    def test_an_edit_between_the_old_and_new_caps_is_a_description_change(self):
+        base = "Closes #705. " + "x" * 7000
+        self.assertNotEqual(A.audit_input_hash("t", base), A.audit_input_hash("t", base + " Cost and catch added"))
+
     def test_prompt_says_pr_and_issue_text_is_data(self):
         block = A.pr_context_block(dict(pr(number=7), lines=3, issues=[]), {}, ".sm-audit/pr-7.diff", OLD, OLD)
         prompt = A.build_prompt([dict(pr(number=7), lines=3)], [block], OLD)
@@ -808,6 +949,37 @@ class HostedAudit(unittest.TestCase):
     """The audit on hosted Linux (#2170): the token, forks, and starting runs with a workflow's own token."""
 
     WORKFLOW = {"GITHUB_ACTIONS": "true"}
+
+    def test_reads_keep_gh_token_and_writes_use_the_write_token(self):
+        """#5217: reads run on the App's token; writes on GITHUB_TOKEN so a label change starts no run."""
+        reads = [["gh", "api", "--paginate", "repos/o/r/issues/1/comments"], ["gh", "pr", "view", "1"],
+                 ["gh", "pr", "list", "--repo", "o/r"], ["gh", "api", "repos/o/r/issues/1"]]
+        writes = [["gh", "pr", "comment", "1", "--body", "x"], ["gh", "pr", "edit", "1", "--add-label", "automerge"],
+                  ["gh", "workflow", "run", "lane.yml"], ["gh", "run", "rerun", "9"],
+                  ["gh", "api", "-X", "POST", "repos/o/r/issues/1/labels", "-f", "labels[]=x"],
+                  ["gh", "api", "-X", "DELETE", "repos/o/r/issues/1/labels/x"]]
+        for cmd in reads:
+            self.assertFalse(A.is_gh_write(cmd), cmd)
+        for cmd in writes:
+            self.assertTrue(A.is_gh_write(cmd), cmd)
+        seen = []
+
+        def fake(cmd, **kwargs):
+            seen.append(kwargs.get("env"))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        with patch.dict(os.environ, {"GH_TOKEN": "app", "SM_WRITE_TOKEN": "wf"}), \
+                patch.object(A.subprocess, "run", fake):
+            A.run(reads[0])
+            A.run(writes[0])
+        self.assertIsNone(seen[0])
+        self.assertEqual(seen[1]["GH_TOKEN"], "wf")
+        with patch.dict(os.environ, {"GH_TOKEN": "app"}), patch.object(A.subprocess, "run", fake):
+            os.environ.pop("SM_WRITE_TOKEN", None)
+            A.run(writes[0])
+        self.assertIsNone(seen[2])
+
+    def test_the_write_token_never_reaches_claude(self):
+        self.assertIn('"GITHUB_TOKEN", "SM_WRITE_TOKEN")', Path(A.__file__).read_text())
 
     def test_the_workflow_s_secret_is_used_and_the_keychain_never_asked(self):
         with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": " tok\n"}), patch.object(A, "run") as run:
@@ -967,16 +1139,30 @@ class HostedAudit(unittest.TestCase):
         # is run for each way the workflow starts, so a guard turned into a comment or into `true` fails (#3704).
         workflow = W.load("claude-audit.yml")
         job = workflow["jobs"]["audit"]
-        for event, conclusion, runs in (("workflow_run", "skipped", False), ("workflow_run", "success", True),
-                                        ("workflow_run", "failure", True), ("workflow_run", "cancelled", True),
-                                        ("workflow_dispatch", "", True), ("schedule", "", True)):
-            with self.subTest(event=event, conclusion=conclusion):
+        for event, conclusion, source, runs in (
+                ("workflow_run", "skipped", "pull_request", False), ("workflow_run", "success", "pull_request", True),
+                ("workflow_run", "failure", "pull_request", True), ("workflow_run", "cancelled", "pull_request", True),
+                ("workflow_run", "success", "workflow_dispatch", True),
+                ("workflow_run", "success", "merge_group", False), ("workflow_run", "failure", "merge_group", False),
+                ("workflow_dispatch", "", "", True), ("schedule", "", "", True)):
+            with self.subTest(event=event, conclusion=conclusion, source=source):
                 self.assertEqual(W.evaluate_condition(
                     job.get("if", True), github_event_name=event,
-                    github_event_workflow_run_conclusion=conclusion), runs)
+                    github_event_workflow_run_conclusion=conclusion,
+                    github_event_workflow_run_event=source), runs)
         # The group is the job's own, so the skipped run is dropped before it can replace the run waiting in it.
         self.assertEqual(job["concurrency"], {"group": "claude-audit", "cancel-in-progress": False})
         self.assertNotIn("concurrency", workflow)
+
+    def test_a_pr_s_hosted_checks_finishing_starts_the_audit(self):
+        # With lane.yml disabled for the merge queue (2026-11-20) the lane report never comes, and the schedule ran 3
+        # times in 24 hours, so the hosted checks finishing must start the audit themselves.
+        workflow = W.load("claude-audit.yml")
+        on = workflow.get("on") or workflow.get(True)
+        self.assertEqual(on["workflow_run"]["types"], ["completed"])
+        for name in ("hosted-portable", "hosted-web"):
+            self.assertIn(name, on["workflow_run"]["workflows"])
+            self.assertEqual(W.load(f"{name}.yml")["name"], name)
 
     def test_on_the_mac_the_label_event_starts_it_and_nothing_is_dispatched(self):
         with patch.dict(os.environ):
@@ -997,6 +1183,34 @@ class HostedAudit(unittest.TestCase):
         self.assertEqual(command[:4], ["gh", "workflow", "run", "owner-tap-alert.yml"])
         self.assertIn("pr=7", command)
         self.assertEqual(run.call_count, 1)  # no label change: it would start nothing
+
+    def test_after_an_audit_the_merge_policy_check_on_the_head_runs_again(self):
+        # #4693: a workflow_dispatch check doesn't satisfy a required check, so the PR's own pull_request run reruns.
+        head = "a" * 40
+        runs = {"workflow_runs": [{"id": 11, "status": "completed", "created_at": "2026-11-19T10:00:00Z"},
+                                  {"id": 12, "status": "completed", "created_at": "2026-11-19T11:00:00Z"}]}
+        calls = []
+
+        def run(cmd, **kwargs):
+            calls.append(cmd)
+            return SimpleNamespace(returncode=0, stdout=json.dumps(runs), stderr="")
+        with patch.object(A, "run", side_effect=run):
+            self.assertEqual(A.rerun_merge_policy(head), "merge policy check re-run")
+        self.assertIn(f"event=pull_request&head_sha={head}", calls[0][2])
+        self.assertIn("merge-policy.yml", calls[0][2])
+        self.assertEqual(calls[1][:4], ["gh", "run", "rerun", "12"])
+
+    def test_the_merge_policy_rerun_leaves_a_running_check_and_a_missing_workflow_alone(self):
+        for answer, said in ((SimpleNamespace(returncode=0, stdout=json.dumps({"workflow_runs": [
+                                 {"id": 1, "status": "in_progress", "created_at": "x"}]}), stderr=""),
+                              "merge policy check still running"),
+                             (SimpleNamespace(returncode=0, stdout='{"workflow_runs": []}', stderr=""),
+                              "no merge policy check to re-run"),
+                             (SimpleNamespace(returncode=1, stdout="", stderr="HTTP 404: Not Found"),
+                              "no merge policy check to re-run")):
+            with self.subTest(said=said), patch.object(A, "run", return_value=answer) as run:
+                self.assertEqual(A.rerun_merge_policy("b" * 40), said)
+                self.assertEqual(run.call_count, 1)
 
     def test_a_tap_alert_that_can_t_be_dispatched_is_tried_again_and_said_on_the_pr(self):
         # Nothing asks again for this audit, so the PR would wait for a tap nobody was told about.
@@ -1030,13 +1244,18 @@ class HostedAudit(unittest.TestCase):
             self.assertIs(options.get("persist-credentials"), False, job)
         # The parsed file, not its text: `secrets[...]` and `toJSON(secrets)` count, and a comment does not (#3704).
         named = W.mentions_of(workflow, "secrets")
-        self.assertEqual(len(named), 1, named)
+        # Two: the Claude token, and (#5217) the App's private key, which only the mint step reads (the App token it
+        # makes reaches the Audit step as GH_TOKEN; the script strips it from Claude's environment).
+        self.assertEqual(len(named), 2, named)
+        mint = [m for m in named if m.endswith("/app-token.with/private-key")]
+        self.assertEqual(len(mint), 1, named)
+        self.assertEqual(len([m for m in named if "/Audit.env/" in m]), 1, named)
         # Its token is an environment secret only main may use: a repository secret reaches any branch's workflow.
         self.assertEqual(workflow["jobs"]["audit"]["environment"], "claude-audit")
         audit = next(step for step in workflow["jobs"]["audit"]["steps"] if step.get("name") == "Audit")
         self.assertEqual(audit["env"]["CLAUDE_CODE_OAUTH_TOKEN"], "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}")
         self.assertNotIn("uses", audit)  # the repository's own script, never a third party's action
-        self.assertTrue(named[0].endswith("/Audit.env/CLAUDE_CODE_OAUTH_TOKEN"), named)
+        self.assertTrue(any(m.endswith("/Audit.env/CLAUDE_CODE_OAUTH_TOKEN") for m in named), named)
         # One exact version, so a new release can't change the merge gate unannounced.
         self.assertRegex(text, r"@anthropic-ai/claude-code@\d+\.\d+\.\d+")
 
@@ -1047,7 +1266,7 @@ class OwnerTapAlertDispatch(unittest.TestCase):
     def test_which_prs_dispatch(self):
         rows = [
             ([{"filename": ".github/workflows/lane.yml"}], True),
-            ([{"filename": "scripts/lane-runner.py"}], True),
+            ([{"filename": "scripts/lane_merge_rules.py"}], True),
             ([{"filename": "docs/x.yml", "previous_filename": ".github/x.yml"}], True),
             ([{"path": ".github/ISSUE_TEMPLATE/bug.yml"}], True),
             ([{"filename": "scripts/lane_slots.py"}], False),
@@ -1059,9 +1278,9 @@ class OwnerTapAlertDispatch(unittest.TestCase):
             with self.subTest(files=files):
                 self.assertEqual(A.touches_owner_tap(files), want)
 
-    def test_same_paths_as_the_runner(self):
+    def test_same_paths_as_the_merge_rules(self):
         spec = importlib.util.spec_from_file_location(
-            "lane_runner_for_tap", Path(__file__).resolve().parents[2] / "scripts" / "lane-runner.py")
+            "lane_merge_rules_for_tap", Path(__file__).resolve().parents[2] / "scripts" / "lane_merge_rules.py")
         lane = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(lane)
         self.assertEqual(A.OWNER_TAP_FILES, lane.OWNER_TAP_FILES)
@@ -1081,6 +1300,95 @@ class OwnerTapAlertDispatch(unittest.TestCase):
         self.assertIn(f"github.event.label.name == '{A.OWNER_TAP_LABEL}'",
                       (root / ".github" / "workflows" / "owner-tap-alert.yml").read_text())
         self.assertIn(f"LABEL = '{A.OWNER_TAP_LABEL}'", (root / "scripts" / "owner_tap_alert.py").read_text())
+
+
+class MergePolicyHeldPrAudit(unittest.TestCase):
+    """The audit script audits every PR the merge policy holds for an audit, not only the paths in its own list (#4843).
+
+    The policy reads test-scope.py's categories (lane-runner.py merge_blockers, AUDITED). Six armed PRs sat red on
+    `merge policy` for hours because an app file named Playback*, *Audio*, Share* or *Packet* is audio or packets
+    there and was not on RISKY_PATTERNS, so the script never read their finished checks and skipped them."""
+    ROOT = Path(__file__).resolve().parents[2]
+    APP = "App/SpokenMarginsApp/Sources/SpokenMarginsApp/"
+    # The files of the stuck PRs: #4666 (the Now screen's star), #4811 (a link with text around it) and #4822.
+    STUCK = {
+        "#4666": [APP + "Gate1RootView.swift", APP + "PlaybackMarginRowView.swift", APP + "PlaybackMarginShareStarButton.swift",
+                  APP + "PlaybackMarginsView.swift", APP + "PlaybackNowView.swift", APP + "PlaybackScreen.swift",
+                  "App/SpokenMarginsAppTests/MarginShareStarRowTests.swift",
+                  "Packages/SessionKit/Sources/SessionKit/ExperienceColorContrast.swift",
+                  "Packages/SessionKit/Sources/SessionKit/ShareStarPlace.swift",
+                  "Packages/SessionKit/Tests/SessionKitCoreTests/ShareStarOfferTests.swift", "docs/journeys.md"],
+        "#4811": [APP + "Gate1AppModel+SourceLinkForm.swift", APP + "Gate1AppModel.swift",
+                  "App/SpokenMarginsShareExtension/Sources/SourceLinkShareViewController.swift",
+                  "Packages/SessionKit/Sources/SessionKit/ClipboardIntakeClassifier.swift",
+                  "Packages/SessionKit/Sources/SessionKit/PasteIntake.swift",
+                  "Packages/SessionKit/Tests/SessionKitCoreTests/PasteIntakeTests.swift"],
+    }
+
+    def find(self, files, state="ok", comments=()):
+        with patch.object(A, "fetch_comments", return_value=list(comments)), patch.object(A, "fetch_files", return_value=files), \
+             patch.object(A, "head_checks_state", return_value=(state, [])), patch.object(A, "FAILURES", {}):
+            return A.find_candidates([pr()])
+
+    @staticmethod
+    def as_files(paths):
+        return [{"filename": p, "additions": 3, "deletions": 1} for p in paths]
+
+    def scope(self):
+        spec = importlib.util.spec_from_file_location("scope_for_audit_test_4843", self.ROOT / "scripts" / "test-scope.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_stuck_prs_file_sets_are_risky_in_the_area_the_policy_names(self):
+        self.assertEqual(A.risky_areas(self.STUCK["#4666"]), ["audio", "sharing"])
+        self.assertEqual(A.risky_areas(self.STUCK["#4811"]), ["sharing"])
+
+    def test_a_pr_the_policy_holds_is_a_candidate_once_its_checks_finish(self):
+        for number, paths in self.STUCK.items():
+            with self.subTest(pr=number):
+                cands, skips, _ = self.find(self.as_files(paths))
+                self.assertEqual([c["number"] for c in cands], [366])
+                self.assertTrue(cands[0]["reason"].startswith("risky: "), cands[0]["reason"])
+                self.assertEqual(skips, {})
+
+    def test_it_still_waits_for_its_checks_and_an_ordinary_app_file_is_still_skipped(self):
+        for state in ("pending", "failed"):
+            with self.subTest(state=state):
+                cands, skips, _ = self.find(self.as_files(self.STUCK["#4666"]), state)
+                self.assertEqual((cands, skips), ([], {f"checks {state}": 1}))
+        cands, skips, _ = self.find(self.as_files([self.APP + "Gate1RootView.swift", "docs/journeys.md"]))
+        self.assertEqual((cands, skips), ([], {"no lane report": 1}))
+
+    def test_a_rename_is_read_on_both_sides_and_a_bare_path_does_not_stop_the_run(self):
+        # The policy diffs with --no-renames, so renaming PlaybackFoo.swift to Foo.swift is held as audio.
+        renamed = [{"filename": self.APP + "Foo.swift", "previous_filename": self.APP + "PlaybackFoo.swift",
+                    "additions": 0, "deletions": 0}]
+        self.assertEqual(A.risky_areas(A.changed_paths(renamed)), ["audio"])
+        cands, skips, _ = self.find(renamed)
+        self.assertEqual(([c["number"] for c in cands], skips), ([366], {}))
+        self.assertEqual(A.risky_areas(["Packages/SessionKit/Sources", "Packages/SessionKit/Sources/"]), [])
+
+    def test_every_kind_the_policy_audits_is_read_from_test_scope(self):
+        # lane_merge_rules.py AUDITED is the policy's list of kinds (lane-runner.py imports it, and #4775 removes
+        # lane-runner.py). A kind added there without a line in SCOPE_AUDIT_AREAS would hold PRs for an audit this
+        # script never runs.
+        spec = importlib.util.spec_from_file_location("lane_merge_rules_for_audit_test_4843",
+                                                      self.ROOT / "scripts" / "lane_merge_rules.py")
+        rules = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rules)
+        self.assertEqual(set(A.SCOPE_AUDIT_AREAS), set(rules.AUDITED))
+
+    def test_no_tracked_file_is_held_by_the_policy_but_not_risky_here(self):
+        # The class guard: the policy's own classification of every file in the tree, against risky_areas.
+        scope = self.scope()
+        tracked = subprocess.run(["git", "ls-files", "-z"], cwd=self.ROOT, capture_output=True, text=True,
+                                 check=True).stdout.split("\0")
+        nowhere = Path("/nonexistent-tree-for-scope-categories")
+        held = [p for p in tracked if p and scope.classify_path(nowhere, p).category in A.SCOPE_AUDIT_AREAS]
+        self.assertGreater(len(held), 50)  # the tree has audio, persistence and packet files; fewer means the walk broke
+        for p in held:
+            self.assertTrue(A.risky_areas([p]), f"{p} is held for an audit by the merge policy but not risky here")
 
 
 class OwnerTapPrAudit(unittest.TestCase):
@@ -1123,6 +1431,24 @@ class OwnerTapPrAudit(unittest.TestCase):
         cands, skips, _ = self.find([], self.APP_FILES)
         self.assertEqual((cands, skips), ([], {"no lane report": 1}))
 
+    RISKY_FILES = [{"filename": "Packages/SessionKit/Sources/SessionKitPersistence/Store.swift",
+                    "additions": 3, "deletions": 1}]
+
+    def test_a_risky_pr_with_finished_checks_is_audited_without_a_lane_report(self):
+        """The lane is off for the merge queue (#4693): no PR gets a lane report, so a risky head was never audited."""
+        for comments in ([], [self.OLD_LANE]):
+            with self.subTest(comments=comments):
+                cands, skips, _ = self.find(comments, self.RISKY_FILES)
+                self.assertEqual([c["number"] for c in cands], [366])
+                self.assertTrue(cands[0]["reason"].startswith("risky: "), cands[0]["reason"])
+                self.assertEqual(skips, {})
+
+    def test_a_risky_pr_waits_while_checks_run_or_after_one_failed(self):
+        for state in ("pending", "failed"):
+            with self.subTest(state=state):
+                cands, skips, _ = self.find([], self.RISKY_FILES, state)
+                self.assertEqual((cands, skips), ([], {f"checks {state}": 1}))
+
     def test_the_checks_are_read_only_for_a_pr_that_could_be_audited(self):
         with patch.object(A, "head_checks_state") as checks:
             self.find([self.AUDIT], self.TAP_FILES)  # audited: no checks call, one audit per head
@@ -1141,6 +1467,19 @@ class OwnerTapPrAudit(unittest.TestCase):
         failed = '{"name": "t1", "status": "completed", "conclusion": "failure"}'
         with patch.object(A, "run", return_value=SimpleNamespace(stdout=failed)), patch.object(A, "gh_json_lines", return_value=[]):
             self.assertEqual(A.head_checks_state(HEAD), ("failed", ["t1"]))
+
+    def test_a_cancelled_lane_conflicts_check_does_not_keep_a_risky_pr_from_its_audit(self):
+        # #5249: required checks green, lane-conflicts' `check` cancelled by its own concurrency group. The audit skipped
+        # #5161 as "checks failed: 1" (run 45319588167); it must read the head as ok and audit it.
+        runs = "\n".join(json.dumps(r) for r in (
+            {"name": "hosted fast: portable", "status": "completed", "conclusion": "success"},
+            {"name": "hosted fast: scope", "status": "completed", "conclusion": "success"},
+            {"name": "check", "status": "completed", "conclusion": "cancelled"}))
+        with patch.object(A, "run", return_value=SimpleNamespace(stdout=runs)), patch.object(A, "gh_json_lines", return_value=[]):
+            self.assertEqual(A.head_checks_state(HEAD), ("ok", []))
+        required = '{"name": "hosted fast: portable", "status": "completed", "conclusion": "cancelled"}'
+        with patch.object(A, "run", return_value=SimpleNamespace(stdout=required)), patch.object(A, "gh_json_lines", return_value=[]):
+            self.assertEqual(A.head_checks_state(HEAD), ("failed", ["hosted fast: portable"]))
 
 
 class UsageRecording(unittest.TestCase):
@@ -1253,7 +1592,7 @@ class ReauditAfterDescriptionFix(unittest.TestCase):
         self.assertEqual(A.evaluate_pr(same, [self.LANE, self.blocked()], self.FILES), (False, "already audited on head"))
 
     def test_an_edit_past_what_the_model_reads_is_not_a_description_change(self):
-        long_read = pr(body="Closes #705. " + "x" * A.BODY_CHARS)
+        long_read = pr(body="Closes #705. " + "x" * A.PR_BODY_CHARS)
         past = pr(body=long_read["body"] + " edited past the cap")
         self.assertEqual(A.evaluate_pr(past, [self.LANE, self.audit(self.BLOCKING, "2026-10-15T02:44:00Z", read=long_read)],
                                        self.FILES), (False, "already audited on head"))

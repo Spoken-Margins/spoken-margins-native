@@ -58,6 +58,17 @@ export const SkipIcon = () => (
     <path d="M5 5.5v13l8-6.5zM13 5.5v13l8-6.5z" fill="currentColor" />
   </Icon>
 );
+/** SkipIcon pointing back: "Jump to this Margin" for a Margin behind the playhead (part of #3216). */
+export const SkipBackIcon = () => (
+  <Icon>
+    <path d="M19 5.5v13l-8-6.5zM11 5.5v13l-8-6.5z" fill="currentColor" />
+  </Icon>
+);
+export const CheckIcon = ({ size }: { size?: number }) => (
+  <Icon size={size}>
+    <path d="M5 12.5l4.5 4.5L19 7.5" strokeWidth="2.2" />
+  </Icon>
+);
 export const BackIcon = () => (
   <Icon>
     <path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4" />
@@ -139,5 +150,14 @@ export const ShareIcon = () => (
   <Icon>
     <path d="M12 15V4M8 7.5L12 4l4 3.5" />
     <path d="M7 11H5.5v9h13v-9H17" />
+  </Icon>
+);
+
+/** Three dots, for a row's "More" button. */
+export const MoreIcon = () => (
+  <Icon>
+    <circle cx="5.5" cy="12" r="1.5" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+    <circle cx="18.5" cy="12" r="1.5" fill="currentColor" stroke="none" />
   </Icon>
 );

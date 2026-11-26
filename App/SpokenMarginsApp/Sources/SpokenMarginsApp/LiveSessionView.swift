@@ -1,4 +1,5 @@
 import SessionKit
+import SessionKitPersistence
 import SwiftUI
 
 /// Live session (#1989, #2481, prototype): Margins on a clock while a meeting, an audiobook in another app or
@@ -57,6 +58,11 @@ struct LiveSessionView: View, Equatable {
     }
 
     private struct MarginTarget: Identifiable { let id: String }
+    /// Move to an Item for these Margins, or every Margin that can move when `marginIds` is nil (#4233).
+    private struct MoveRequest: Identifiable {
+        let id = UUID()
+        let marginIds: Set<String>?
+    }
 
     // Setup
     @State private var kind: ElsewhereKind = .meeting
@@ -69,6 +75,7 @@ struct LiveSessionView: View, Equatable {
     /// When the pencil was tapped: the Margin is placed at that moment, not at the moment Save is tapped.
     @State private var writingStartedAt = Date()
     @State private var openMargin: MarginTarget?
+    @State private var moveRequest: MoveRequest?
     /// Set by a Live Activity tap once the screen has presented; the change handler opens the writing sheet.
     @State private var wantsWrite = false
     /// Set by a Live Activity Photo tap once the screen has presented; the change handler opens the camera (#2708).
@@ -103,6 +110,7 @@ struct LiveSessionView: View, Equatable {
     var body: some View {
         #if DEBUG
         let _ = ScreenRedrawProbe.record("liveSession")
+        let _ = ScreenRedrawProbe.printsChanges.contains("liveSession") ? Self._printChanges() : ()
         #endif
         NavigationStack {
             Group {
@@ -121,6 +129,8 @@ struct LiveSessionView: View, Equatable {
             .navigationTitle("Live session")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(isRunningScreen ? AppColors.listeningBackground : AppColors.bone, for: .navigationBar)
+            // As on the player (#4607): the dark scheme reaches the status bar only while the bar's background is shown.
+            .toolbarBackground(isRunningScreen ? .visible : .automatic, for: .navigationBar)
             .toolbarColorScheme(isRunningScreen ? .dark : nil, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -240,6 +250,12 @@ struct LiveSessionView: View, Equatable {
         // by itself before the listener could answer (#2831). Only its own End and Cancel close it.
         .trackedSheet(isPresented: $showsEndCard) { endSheet }
         .trackedSheet(item: $openMargin) { target in marginScreen(target) }
+        .trackedSheet(item: $moveRequest) { request in
+            if let session = controller.session {
+                LiveMarginMoveSheetHost(make: { makeMoveSheet(session, marginIds: request.marginIds) }, isRoot: true, moved: marginsMoved)
+                    .environmentObject(model)
+            }
+        }
         .alert("Live session", isPresented: Binding(get: { controller.errorMessage != nil }, set: { if !$0 { controller.errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -252,8 +268,18 @@ struct LiveSessionView: View, Equatable {
                 dismiss()
             }
         }
+        // This screen is a full-screen cover, so the root's banner is behind it: a move's "Moved 3 Margins" and its Undo
+        // show here (#4233 Design 2.7).
+        .modifier(SheetFeedbackPresentation())
         // Outermost, so the mini player and every sheet and cover this screen opens have the model to watch themselves.
         .environmentObject(model)
+        #if DEBUG
+        // What redraws this screen, by source, for `LiveSessionRedrawTests` (#4379).
+        .recordsPublishes(screen: "liveSession", of: [
+            "controller": controller.objectWillChange, "feed": feed.objectWillChange, "finish": finish.objectWillChange,
+            "links": links.objectWillChange, "capture": capture.objectWillChange,
+        ])
+        #endif
     }
 
     /// Back to where the listener came from. The session keeps running; a spoken Margin still recording is saved, not
@@ -388,7 +414,9 @@ struct LiveSessionView: View, Equatable {
     private func paneContent(_ session: LiveSession) -> some View {
         switch pane {
         case .margins:
-            LiveSessionMarginsPane(session: session, select: { openMargin = MarginTarget(id: $0.id) }, pauseOtherAudio: pauseSource)
+            LiveSessionMarginsPane(
+                session: session, select: { openMargin = MarginTarget(id: $0.id) }, pauseOtherAudio: pauseSource,
+                move: { moveRequest = MoveRequest(marginIds: $0) })
         case .session:
             LiveSessionSessionPane(
                 session: session, isRunning: controller.isRunning,
@@ -514,7 +542,7 @@ struct LiveSessionView: View, Equatable {
             switch wanted {
             case .liveRecording: controller.isRecordingSpoken
             case .camera: isTakingPhoto && controller.isRunning && !controller.isRecordingSpoken
-            case .liveWriting: controller.isRunning && !controller.isRecordingSpoken
+            case .liveWriting: !controller.isRecordingSpoken && (controller.isRunning || keepsBegunPhoto())
             }
         }
         Task {
@@ -608,14 +636,32 @@ struct LiveSessionView: View, Equatable {
 
     private func openRecorder(with staged: LiveSessionPhotoStore.Staged) {
         isTakingPhoto = false
-        // The session may have ended or started a recording while the camera was open.
-        guard controller.isRunning, !controller.isRecordingSpoken else {
+        // The session may have ended or started a recording while the camera was open. A photo taken as it ended is
+        // kept: the microphone must not start past the End, so the Margin is written, in the ended session (#3847).
+        switch LiveSessionBegunMargin.afterPhoto(
+            isRunning: controller.isRunning, isRecordingSpoken: controller.isRecordingSpoken,
+            photoAt: photoTappedAt, in: controller.session
+        ) {
+        case .record:
+            controller.startSpokenMargin(photo: staged, placedAt: photoTappedAt)
+            cover = .liveRecording
+        case .write:
+            // A direct swap from the camera cover, as the recording branch does. `present` would give up with the
+            // camera cover still set and drop the photo.
+            writingPhoto = staged
+            writingNotice = nil
+            writingStartedAt = photoTappedAt
+            cover = .liveWriting
+        case .discard:
             controller.discardPhoto(staged)
             cover = nil
-            return
         }
-        controller.startSpokenMargin(photo: staged, placedAt: photoTappedAt)
-        cover = .liveRecording
+    }
+
+    /// Whether a photo is waiting for words and the session still takes a Margin begun at `writingStartedAt`: it has
+    /// ended, but is not saved to the Library (#3847).
+    private func keepsBegunPhoto() -> Bool {
+        writingPhoto != nil && controller.checkBegunMargin(markedAt: writingStartedAt) != .refused
     }
 
     /// Throws away a photo that was waiting for a written Margin that can no longer be opened.
@@ -638,7 +684,7 @@ struct LiveSessionView: View, Equatable {
     private func beginWriting(startedAt: Date? = nil) {
         // A spoken Margin still recording keeps its screen; a Write link can't swap it for the writing sheet and
         // leave the microphone on.
-        guard controller.isRunning, !controller.isRecordingSpoken, cover != .camera else {
+        guard controller.isRunning || keepsBegunPhoto(), !controller.isRecordingSpoken, cover != .camera else {
             dropWaitingPhoto() // nothing will take it now, so it is not left to the next launch's sweep
             return
         }
@@ -718,12 +764,40 @@ struct LiveSessionView: View, Equatable {
             LiveSessionMarginDetailView(
                 margin: margin, sessionTitle: session.title,
                 position: LiveSessionMarginsList.positionLabel(for: margin, in: session),
+                photoPage: session.photoPageOffer(forMarginId: margin.id),
                 keepHeardPlace: { controller.keepHeardPlace(id: margin.id) },
                 declineHeardPlace: { controller.declineHeardPlace(id: margin.id) },
                 saveText: { controller.updateText(id: margin.id, text: $0) },
                 delete: { controller.removeMargin(id: margin.id) },
-                pauseOtherAudio: pauseSource)
+                pauseOtherAudio: pauseSource,
+                makeMove: LiveMarginMove.movability(margin: margin, in: session) == nil
+                    ? { makeMoveSheet(session, marginIds: [margin.id]) } : nil,
+                moveUnavailableReason: LiveMarginMove.movability(margin: margin, in: session)?.reason,
+                moved: marginsMoved)
+            .environmentObject(model)
         }
+    }
+
+    // MARK: Moving Margins to an item (#4233)
+
+    private func makeMoveSheet(_ session: LiveSession, marginIds: Set<String>?) -> LiveMarginMoveSheetModel {
+        LiveMarginMoveSheetModel(
+            session: session, marginIds: marginIds,
+            loadChoices: { [model] in
+                let store = try model.requireStore()
+                return try await StoreReader(store).shortcutItemChoices(startedOnly: true)
+            },
+            makePlan: { [model] margins, itemId in
+                try await LiveMarginMoving.plan(margins: margins, sessionId: session.id, itemId: itemId, model: model)
+            })
+    }
+
+    /// The Margins are on the item: this screen's copy lets them go. A Quick session the move emptied is gone, so the screen
+    /// closes and the banner shows on the Library; any other stays open with the banner over it.
+    private func marginsMoved(_ moved: LiveMarginMoving.Moved) {
+        openMargin = nil
+        controller.takeOutMoved(ids: moved.plan.liveMarginIds, removedSession: moved.removedSession)
+        if moved.removedSession { dismiss() }
     }
 
     // MARK: Ending
@@ -772,6 +846,7 @@ struct LiveSessionView: View, Equatable {
                 Label("Line Up with a Transcript", systemImage: "text.alignleft").frame(maxWidth: .infinity, minHeight: 44)
             }
             .filledActionButton()
+            .disabled(session.margins.isEmpty) // it would make an empty notes item
             Button {
                 guard finish.beginSaving() else { return }
                 Task {
@@ -791,8 +866,22 @@ struct LiveSessionView: View, Equatable {
             }
             .buttonStyle(.bordered)
             .tint(.white)
-            .disabled(finish.isSaving)
-            Button("Discard Session", role: .destructive) { confirmsDiscard = true }
+            .disabled(finish.isSaving || session.margins.isEmpty)
+            if session.savedItemId == nil, LiveMarginMove.offersMove(in: session) {
+                Button { moveRequest = MoveRequest(marginIds: nil) } label: {
+                    Label("Move Margins to an Item…", systemImage: "folder").frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .tint(.white)
+                .accessibilityIdentifier("liveSession.finish.move.button")
+            }
+            // The destructive role alone is the system red, which is dim on this dark card (#4443). The icon keeps it a
+            // button for a listener who can't tell the red from the card.
+            Button(role: .destructive) { confirmsDiscard = true } label: {
+                Label("Discard Session", systemImage: "trash").frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .tint(AppColors.watchDanger)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)

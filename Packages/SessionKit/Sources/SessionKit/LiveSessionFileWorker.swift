@@ -42,6 +42,9 @@ public actor LiveSessionFileWorker {
         public var pending: PendingWatchCapture?
         /// The listener chose "On this episode" on the Watch (#3494): the answer says so.
         public var aimedAtItem: Bool = false
+        /// Where it was meant to go, kept on the Margin if the item refuses it and it files into a session instead
+        /// (#4233 Design 2.9.1 case 2). Nil reads as `itemId` at `positionMs` from the player.
+        public var playingThen: LiveSessionPlayingThen?
     }
 
     /// What a deferred Watch Margin needs to be answered and cleared once it is placed.
@@ -425,17 +428,35 @@ public actor LiveSessionFileWorker {
     /// returns nil when none runs, the text is empty or the save failed, and never starts or reopens one.
     @discardableResult
     public func addWrittenMargin(text: String, markedAt: Date) -> LiveSession? {
+        fileWrittenMargin(text: text, markedAt: markedAt, staged: nil).session
+    }
+
+    /// The same with a picture handed to Add Margin (#4925). The picture is moved into place first and the Margin that
+    /// names it saved after; when the Margin can't be saved the file goes again. The staged file is always consumed: kept
+    /// with the Margin or deleted. A picture that can't be kept never costs the words (`photoFailed`).
+    public func addWrittenMargin(text: String, markedAt: Date, staged: LiveSessionPhotoStore.Staged) -> PhotoFiling {
+        fileWrittenMargin(text: text, markedAt: markedAt, staged: staged)
+    }
+
+    private func fileWrittenMargin(text: String, markedAt: Date, staged: LiveSessionPhotoStore.Staged?) -> PhotoFiling {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !words.isEmpty, let before = runningSession() else { return nil }
+        guard !words.isEmpty, let before = runningSession() else {
+            if let staged { photoStore?.discard(staged) }
+            return PhotoFiling(session: nil, photoFailed: false)
+        }
+        var margin = LiveSessionMargin(id: "siri-\(makeId())", text: words, markedAt: markedAt)
+        let photo = staged.flatMap { commitPhoto($0, sessionId: before.id, marginId: margin.id) }
+        margin.photo = photo
         var session = before
-        session.add(LiveSessionMargin(id: "siri-\(makeId())", text: words, markedAt: markedAt))
+        session.add(margin)
         noteUnseen(from: before, to: session)
         do {
             try persist([session])
         } catch {
-            return nil
+            if let photo { photoStore?.remove(photo) }
+            return PhotoFiling(session: nil, photoFailed: staged != nil)
         }
-        return session
+        return PhotoFiling(session: session, photoFailed: staged != nil && photo == nil)
     }
 
     /// Files a written Margin (dictated to Siri, #3880 slice 2) when no live session runs and the player has nothing: by
@@ -446,16 +467,90 @@ public actor LiveSessionFileWorker {
     public func fileWrittenMarginAsQuick(text: String, markedAt: Date, now: Date = Date()) -> LiveSession? {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !words.isEmpty else { return nil }
+        return fileIntoQuickSession(LiveSessionMargin(id: "siri-\(makeId())", text: words, markedAt: markedAt), now: now).session
+    }
+
+    /// The same with a picture handed to Add Margin (#4925); the staged file is consumed as for `addWrittenMargin`.
+    public func fileWrittenMarginAsQuick(
+        text: String, markedAt: Date, now: Date = Date(), staged: LiveSessionPhotoStore.Staged
+    ) -> PhotoFiling {
+        let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty else {
+            photoStore?.discard(staged)
+            return PhotoFiling(session: nil, photoFailed: false)
+        }
+        return fileIntoQuickSession(LiveSessionMargin(id: "siri-\(makeId())", text: words, markedAt: markedAt), now: now, staged: staged)
+    }
+
+    /// Files a spoken Margin recorded on the phone when nothing runs (Record a Margin with no live session and no item
+    /// in the player, #4927): by the same rule as `fileWrittenMarginAsQuick`, so it joins a quick session that holds
+    /// this moment, else starts one, and never goes to a Library item. `markedAt` is when the recording began. Returns
+    /// the session it went into, or nil when the Margin was deleted meanwhile, is already filed or the save failed.
+    /// Like a written one, a screen save that hasn't seen it keeps it (`keepingUnseen`).
+    @discardableResult
+    public func fileSpokenMarginAsQuick(
+        marginId: String, audioPath: String, markedAt: Date, durationMs: Int?, spokenOn: String, now: Date = Date()
+    ) -> LiveSession? {
+        spokenMarginForQuick(marginId: marginId, audioPath: audioPath, markedAt: markedAt, durationMs: durationMs, spokenOn: spokenOn)
+            .flatMap { fileIntoQuickSession($0, now: now).session }
+    }
+
+    /// The same with a picture handed to Add Voice Margin (#4925); the staged file is consumed as for `addWrittenMargin`.
+    public func fileSpokenMarginAsQuick(
+        marginId: String, audioPath: String, markedAt: Date, durationMs: Int?, spokenOn: String, now: Date = Date(),
+        staged: LiveSessionPhotoStore.Staged
+    ) -> PhotoFiling {
+        guard let margin = spokenMarginForQuick(
+            marginId: marginId, audioPath: audioPath, markedAt: markedAt, durationMs: durationMs, spokenOn: spokenOn
+        ) else {
+            photoStore?.discard(staged)
+            return PhotoFiling(session: nil, photoFailed: false)
+        }
+        return fileIntoQuickSession(margin, now: now, staged: staged)
+    }
+
+    /// The Margin to file, or nil when it was deleted meanwhile or is already filed.
+    private func spokenMarginForQuick(
+        marginId: String, audioPath: String, markedAt: Date, durationMs: Int?, spokenOn: String
+    ) -> LiveSessionMargin? {
         sessions() // loads the deletions too
-        let margin = LiveSessionMargin(id: "siri-\(makeId())", text: words, markedAt: markedAt)
+        guard !deletions.marginIds.contains(marginId),
+              !sessions().values.contains(where: { $0.margins.contains { $0.id == marginId } }) else { return nil }
+        var margin = LiveSessionMargin(id: marginId, text: "", markedAt: markedAt)
+        margin.audioPath = audioPath
+        margin.durationMs = durationMs
+        margin.spokenOn = spokenOn
+        return margin
+    }
+
+    /// The one rule for a Margin that goes to a quick session with the player left out. A staged picture is moved to the
+    /// session the Margin lands in before the Margin is saved, and removed again when the save files nothing.
+    private func fileIntoQuickSession(
+        _ margin: LiveSessionMargin, now: Date, staged: LiveSessionPhotoStore.Staged? = nil
+    ) -> PhotoFiling {
+        sessions() // loads the deletions too
         let decision = LiveSessionFiling.decide(
-            .init(marginId: margin.id, markedAt: markedAt, allowsPlayerItem: false),
+            .init(marginId: margin.id, markedAt: margin.markedAt, allowsPlayerItem: false),
             sessions: candidates(), deletions: deletions, playerRuns: [], now: now
         )
-        guard let placed = (try? place(margin, by: decision)) ?? nil else { return nil }
+        let newId = "quick-\(makeId())"
+        var placing = margin
+        var photo: LiveSessionPhoto?
+        if let staged {
+            switch decision {
+            case let .joinQuick(id), let .session(id, _): photo = commitPhoto(staged, sessionId: id, marginId: margin.id)
+            case .newQuick: photo = commitPhoto(staged, sessionId: newId, marginId: margin.id)
+            default: photoStore?.discard(staged)
+            }
+            placing.photo = photo
+        }
+        guard let placed = (try? place(placing, by: decision, newQuickId: newId)) ?? nil else {
+            if let photo { photoStore?.remove(photo) }
+            return PhotoFiling(session: nil, photoFailed: staged != nil)
+        }
         var pass = Pass()
         tidy(now: now, pass: &pass)
-        return sessions()[placed.id] ?? placed
+        return PhotoFiling(session: sessions()[placed.id] ?? placed, photoFailed: staged != nil && photo == nil)
     }
 
     // MARK: Filing
@@ -463,7 +558,9 @@ public actor LiveSessionFileWorker {
     /// Files each received Watch Margin by `LiveSessionFiling`: stored in `WatchMarginInbox` first, then filed, and only
     /// then answered (the answers come back for the app to send). A recording that couldn't be stored or moved stays
     /// for the next pass. A repeat of one already filed is answered "already filed" and cleared.
-    public func fileWatchInbox(playerRuns: [LiveSessionFiling.PlayerRun] = [], now: Date = Date()) -> Pass {
+    public func fileWatchInbox(
+        playerRuns: [LiveSessionFiling.PlayerRun] = [], filesAttached: [LiveSessionFiling.FileAttachment] = [], now: Date = Date()
+    ) -> Pass {
         var pass = Pass()
         guard let landing = inboxDirectory, let inbox = openWatchInbox() else { return pass }
         sessions()
@@ -476,7 +573,9 @@ public actor LiveSessionFileWorker {
                 continue
             }
             let audioURL = metadataURL.deletingPathExtension().appendingPathExtension("m4a")
-            if let answer = fileOne(transfer, landedAt: audioURL, inbox: inbox, playerRuns: playerRuns, now: now, pass: &pass) {
+            if let answer = fileOne(
+                transfer, landedAt: audioURL, inbox: inbox, playerRuns: playerRuns, filesAttached: filesAttached, now: now, pass: &pass
+            ) {
                 pass.answers.append(answer)
                 try? fileManager.removeItem(at: audioURL)
                 try? fileManager.removeItem(at: metadataURL)
@@ -487,21 +586,27 @@ public actor LiveSessionFileWorker {
     }
 
     /// Files Lock Screen Marks by the same rule (slice 1a point 7). Each is a blind Margin with no words.
-    public func fileMarks(_ times: [Date], playerRuns: [LiveSessionFiling.PlayerRun] = [], now: Date = Date()) -> Pass {
+    public func fileMarks(
+        _ times: [Date], playerRuns: [LiveSessionFiling.PlayerRun] = [], filesAttached: [LiveSessionFiling.FileAttachment] = [],
+        now: Date = Date()
+    ) -> Pass {
         var pass = Pass()
         guard collection != nil else { return pass }
         sessions()
         for time in times {
             let id = "mark-\(Int((time.timeIntervalSince1970 * 1_000).rounded()))"
             let margin = LiveSessionMargin(id: id, text: "", markedAt: time, isBlindMark: true)
-            let decision = LiveSessionFiling.decide(
-                .init(marginId: id, markedAt: time), sessions: candidates(), deletions: deletions, playerRuns: playerRuns, now: now
-            )
+            let incoming = LiveSessionFiling.Incoming(marginId: id, markedAt: time)
+            let decision = LiveSessionFiling.decide(incoming, sessions: candidates(), deletions: deletions, playerRuns: playerRuns, now: now)
+            let hint = LiveSessionFiling.playingThen(
+                for: incoming, decision: decision, playerRuns: playerRuns, filesAttached: filesAttached)
             if case let .playerItem(itemId, positionMs) = decision {
-                pass.placements.append(PlayerPlacement(marginId: id, itemId: itemId, positionMs: positionMs, markedAt: time))
+                pass.placements.append(PlayerPlacement(
+                    marginId: id, itemId: itemId, positionMs: positionMs, markedAt: time, playingThen: hint
+                ))
                 continue
             }
-            if (try? place(margin, by: decision)) != nil { pass.changed = true }
+            if (try? place(margin, by: decision, playingThen: hint)) != nil { pass.changed = true }
         }
         tidy(now: now, pass: &pass)
         return pass
@@ -520,6 +625,9 @@ public actor LiveSessionFileWorker {
         margin.audioPath = placement.audioPath
         margin.durationMs = placement.durationMs
         margin.spokenOn = placement.spokenOn
+        // The item refused it: the session keeps where it was meant to go (#4233 Design 2.9.1 case 2).
+        margin.playingThen = placement.playingThen
+            ?? LiveSessionPlayingThen(itemId: placement.itemId, positionMs: placement.positionMs, source: .playerRun)
         let decision = LiveSessionFiling.decide(
             .init(marginId: placement.marginId, markedAt: placement.markedAt, allowsPlayerItem: false),
             sessions: candidates(), deletions: deletions, playerRuns: [], now: now
@@ -563,7 +671,7 @@ public actor LiveSessionFileWorker {
     /// Stores, files and answers one Watch Margin. Nil leaves it in the landing folder for the next pass.
     private func fileOne(
         _ transfer: WatchMarginTransfer, landedAt audioURL: URL, inbox: WatchMarginInbox,
-        playerRuns: [LiveSessionFiling.PlayerRun], now: Date, pass: inout Pass
+        playerRuns: [LiveSessionFiling.PlayerRun], filesAttached: [LiveSessionFiling.FileAttachment], now: Date, pass: inout Pass
     ) -> WatchMarginAnswer? {
         let fileManager = FileManager.default
         let captureId = WatchMarginTransfer.safeFileStem(transfer.id)
@@ -592,13 +700,13 @@ public actor LiveSessionFileWorker {
         // The Watch's clock, corrected by its measured offset; the raw time is kept as evidence (DESIGN section 4 point 8).
         let corrected = LiveSessionWatchSessions.phoneTime(transfer.wallStart, clock: transfer.clock)
         let offset = transfer.clock.flatMap { $0.isFresh(at: transfer.wallStart) ? $0.offset : nil }
-        let decision = LiveSessionFiling.decide(
-            .init(
-                marginId: transfer.marginId, markedAt: transfer.wallStart, clockOffset: offset, sessionId: transfer.sessionId,
-                itemTarget: transfer.itemTarget
-            ),
-            sessions: candidates(), deletions: deletions, playerRuns: playerRuns, now: now
+        let incoming = LiveSessionFiling.Incoming(
+            marginId: transfer.marginId, markedAt: transfer.wallStart, clockOffset: offset, sessionId: transfer.sessionId,
+            itemTarget: transfer.itemTarget
         )
+        let decision = LiveSessionFiling.decide(incoming, sessions: candidates(), deletions: deletions, playerRuns: playerRuns, now: now)
+        let hint = LiveSessionFiling.playingThen(
+                for: incoming, decision: decision, playerRuns: playerRuns, filesAttached: filesAttached)
         switch decision {
         case .alreadyFiled:
             try? inbox.markIncorporated(captureId)
@@ -627,7 +735,7 @@ public actor LiveSessionFileWorker {
                 marginId: transfer.marginId, itemId: itemId, positionMs: positionMs, markedAt: corrected.time,
                 audioPath: transfer.audioPath, durationMs: transfer.durationMs, spokenOn: "watch",
                 pending: PendingWatchCapture(captureId: captureId, receipt: receipt, landedStem: audioURL.deletingPathExtension().path),
-                aimedAtItem: transfer.itemTarget != nil
+                aimedAtItem: transfer.itemTarget != nil, playingThen: hint
             ))
             return nil
         }
@@ -637,7 +745,7 @@ public actor LiveSessionFileWorker {
         margin.audioPath = transfer.audioPath
         margin.durationMs = transfer.durationMs
         margin.spokenOn = "watch"
-        guard let session = try? place(margin, by: decision) else { return nil }
+        guard let session = try? place(margin, by: decision, playingThen: hint) else { return nil }
         pass.changed = true
         pass.filed.append(FiledMargin(marginId: transfer.marginId, audioPath: transfer.audioPath))
         try? inbox.markIncorporated(captureId)
@@ -649,9 +757,14 @@ public actor LiveSessionFileWorker {
     }
 
     /// Puts a Margin where `decision` says, and saves that session. Returns it, or nil when the decision files nothing.
-    private func place(_ margin: LiveSessionMargin, by decision: LiveSessionFiling.Decision) throws -> LiveSession? {
+    /// `playingThen`, when given, is kept on the Margin (#4233 Design 2.9.1); one the Margin already carries is kept.
+    private func place(
+        _ margin: LiveSessionMargin, by decision: LiveSessionFiling.Decision, newQuickId: String? = nil,
+        playingThen: LiveSessionPlayingThen? = nil
+    ) throws -> LiveSession? {
         var target: LiveSession
         var placed = margin
+        if placed.playingThen == nil { placed.playingThen = playingThen }
         switch decision {
         case let .session(id, placement):
             guard let session = sessions()[id] else { return nil }
@@ -666,7 +779,7 @@ public actor LiveSessionFileWorker {
             target.ownerDevice = WatchDevice.watch.rawValue
             target.endReason = LiveSessionWatchSessions.EndReason.placeholder.rawValue
         case .newQuick:
-            target = LiveSessionFiling.quickSession(id: "quick-\(makeId())", holding: placed)
+            target = LiveSessionFiling.quickSession(id: newQuickId ?? "quick-\(makeId())", holding: placed)
         case .alreadyFiled, .rejected, .playerItem:
             return nil
         }
@@ -795,5 +908,121 @@ public actor LiveSessionFileWorker {
         if fileManager.fileExists(atPath: audio.path) { try fileManager.removeItem(at: audio) }
         try fileManager.moveItem(at: url, to: audio)
         try JSONEncoder().encode(transfer).write(to: inbox.appending(path: "\(stem).json"), options: .atomic)
+    }
+
+    // MARK: Margins moved onto an item (#4233 Design 2.9.4)
+
+    /// What taking moved Margins out of a session did.
+    public struct MovedRemoval: Equatable, Sendable {
+        /// The session as it is now, or nil when the move emptied it and it went.
+        public var session: LiveSession?
+        /// True when the session went: a quick session the listener never renamed, left empty.
+        public var removedSession: Bool
+        /// The Margins that were in the session and are not now.
+        public var removedIds: [String]
+    }
+
+    /// Takes Margins that are now on an item out of session `sessionId`, in one write, after `LiveMarginMove.execute`
+    /// wrote the item side. Their ids go into `deletions.json`, so a late Watch copy of one is refused (filing's step 1),
+    /// but the session's own span does not: a quick session the move empties goes the way `tidy` removes one, so a later
+    /// Margin captured in its span still files, and Undo can bring the session back. Recording files are never deleted.
+    /// Returns nil when no stored session has that id.
+    public func removeMovedMargins(ids: Set<String>, fromSession sessionId: String) throws -> MovedRemoval? {
+        sessions() // loads the deletions too
+        guard let collection, let before = sessions()[sessionId] else { return nil }
+        var after = before
+        after.margins.removeAll { ids.contains($0.id) }
+        let removedIds = before.margins.map(\.id).filter { ids.contains($0) }
+        let previousDeletions = deletions
+        deletions.marginIds.formUnion(ids)
+        let goes = after.margins.isEmpty && LiveMarginMove.removesSession(before, movingIds: ids)
+        do {
+            if goes {
+                var all = sessions()
+                all[sessionId] = nil
+                try collection.writeLegacyMirror(Array(all.values))
+                collection.remove(id: sessionId)
+                cache = all
+                unseenMargins[sessionId] = nil
+                unseenTranscripts[sessionId] = nil
+            } else {
+                after.fitQuickSpan()
+                noteUnseen(from: before, to: after)
+                try persist([after])
+            }
+        } catch {
+            deletions = previousDeletions
+            throw error
+        }
+        try? collection.saveDeletions(deletions)
+        for key in unseenMargins.keys { for id in ids { unseenMargins[key]?[id] = nil } }
+        return MovedRemoval(session: goes ? nil : after, removedSession: goes, removedIds: removedIds)
+    }
+
+    /// Why Undo couldn't put Margins back into their session.
+    public enum RestoreOutcome: Equatable, Sendable {
+        /// They are in the session again (or already were). The session as stored now.
+        case restored(LiveSession)
+        /// The session became a Library item meanwhile.
+        case savedAsNotes
+        /// The listener discarded the session meanwhile.
+        case discarded
+    }
+
+    /// Undo of a move, live side: puts `margins` back into `session` (the session as it was before the move) with their
+    /// ids, recordings, times, position lines and filing notes, and takes their ids out of `deletions.json`. A session the
+    /// move or `tidy` removed is made again from `session`, holding only these Margins. A Margin already back in a session
+    /// is skipped, so a second Undo restores nothing twice. Refused, with nothing changed, when the session was saved as
+    /// notes or discarded meanwhile.
+    public func restoreMovedMargins(_ margins: [LiveSessionMargin], into session: LiveSession) throws -> RestoreOutcome {
+        sessions() // loads the deletions too
+        guard collection != nil else { return .restored(session) }
+        if deletions.deletedSession(session.id) { return .discarded }
+        let stored = sessions()[session.id]
+        if stored?.savedItemId != nil { return .savedAsNotes }
+        var target: LiveSession
+        if let stored {
+            target = stored
+        } else {
+            target = session
+            target.margins = []
+        }
+        let before = target
+        let elsewhere = Set(sessions().values.flatMap { $0.margins.map(\.id) })
+        let returning = margins.filter { !elsewhere.contains($0.id) }
+        guard !returning.isEmpty else { return .restored(stored ?? session) }
+        let previousDeletions = deletions
+        deletions.marginIds.subtract(returning.map(\.id))
+        for margin in returning { target.add(margin) }
+        if stored == nil { noteUnseen(from: LiveSession(id: target.id, startedAt: target.startedAt), to: target) } else {
+            noteUnseen(from: before, to: target)
+        }
+        do {
+            try persist([target])
+        } catch {
+            deletions = previousDeletions
+            throw error
+        }
+        try? collection?.saveDeletions(deletions)
+        return .restored(target)
+    }
+
+    /// Finishes a move the app was stopped in the middle of (Design 2.9.4 step 3): the item side was written, the live
+    /// side not yet. `liveMarginIds` are the live ids of the moved Margins still active on items (the origin records'
+    /// `liveMarginId`, which the app reads from the database). Each of them still in an unsaved session is taken out as
+    /// the move would have. Returns the sessions that changed or went.
+    @discardableResult
+    public func reconcileMovedMargins(liveMarginIds: Set<String>) -> [String] {
+        guard !liveMarginIds.isEmpty else { return [] }
+        let holding = sessions().values
+            .filter { $0.savedItemId == nil && $0.margins.contains { liveMarginIds.contains($0.id) } }
+            .map(\.id)
+            .sorted()
+        var touched: [String] = []
+        for sessionId in holding {
+            let ids = Set(sessions()[sessionId]?.margins.map(\.id).filter { liveMarginIds.contains($0) } ?? [])
+            if (try? removeMovedMargins(ids: ids, fromSession: sessionId)) != nil { touched.append(sessionId) }
+        }
+        return touched
     }
 }

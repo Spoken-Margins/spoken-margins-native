@@ -1944,9 +1944,10 @@ class MacDefersToHostedTests(unittest.TestCase):
         self.assertEqual((ops.posted, ops.comments, ops.reverts), ([], [], []))
         self.assertFalse(any(c[:3] == ['git', 'worktree', 'add'] for c in ops.calls))
 
-    def test_a_tip_with_no_hosted_run_is_tested_here_as_when_off(self):
-        # #2127: the lane runner's merges are pushed with the workflow token, which starts no workflows. A tip
-        # with no hosted run, or one whose run ended without a report, would otherwise go untested.
+    def test_a_tip_with_no_hosted_run_is_left_to_main_t3(self):
+        # #4573: hosted-integration.yml no longer runs on a push, so no tip has a hosted run. Before, such a tip went
+        # to the Mac (#2127); now main-t3.yml tests the trunk on a schedule, and the Mac must not run --plan app on
+        # every tip instead.
         cases = [('no run', []), ('a run that ended without a report', [{'status': 'completed', 'conclusion': 'failure'}]),
                  ('runs unreadable', None)]
         for name, runs in cases:
@@ -1954,10 +1955,10 @@ class MacDefersToHostedTests(unittest.TestCase):
                 ops = HostedOps(tmp, [manifest({TEST: 'passed'})], runs=runs,
                                 bodies=[report_comment(OLD[:7], 'PASS', by=run.HOSTED_RUN_BY)])
                 ops, verdict, state = self.tick(tmp, [], [], ops=ops)
-                self.assertEqual(verdict, 'PASS')
-                self.assertEqual(len(ops.posted), 1)
-                self.assertIn(f'run by: {run.RUN_BY}', ops.posted[0])
-                self.assertIn('the Mac tests it', (ops.home / 'log.txt').read_text())
+                self.assertEqual(verdict, 'deferred')
+                self.assertEqual(ops.posted, [])
+                self.assertFalse(any(c[:3] == ['git', 'worktree', 'add'] for c in ops.calls))
+                self.assertIn('main-t3.yml tests the trunk on a schedule', (ops.home / 'log.txt').read_text())
 
     def test_a_tip_the_hosted_run_has_or_may_soon_have_is_left_to_it(self):
         cases = [('queued', {'runs': [{'status': 'queued', 'conclusion': None}]}),
@@ -2192,3 +2193,33 @@ class ScreenTourTests(unittest.TestCase):
         self.assertIn(names[run.TOUR_NAMES_SHOWN - 1], line)
         self.assertNotIn(names[run.TOUR_NAMES_SHOWN], line)
         self.assertTrue(line.endswith('and 6 more'))
+
+
+class ExclusiveSlotTests(unittest.TestCase):
+    """The job holds its slot, not the decision lock: a desk boot must not wait out the whole run (#4736)."""
+
+    def test_the_job_lets_the_decision_lock_go_and_a_desk_boot_gets_the_second_slot(self):
+        import fcntl
+        import io
+        state = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, state, True)
+        environment = patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state), 'SM_LANE_MEMORY_PRESSURE': '1'})
+        environment.start()
+        self.addCleanup(environment.stop)
+        with run.exclusive_slot() as fds:
+            self.assertEqual(len(fds), 1, 'only the slot descriptor goes to verify-tests')
+            self.assertTrue(run.lane_slots.simulator_job_running())
+            with (state / run.lane_slots.SIMULATOR_DECISION).open('a+') as probe:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)  # free: raises BlockingIOError if the job kept it
+                fcntl.flock(probe, fcntl.LOCK_UN)
+            # What `lane-sim-boot --fresh` does, under the normal second-slot rule (memory pressure normal here).
+            desk = run.lane_slots.acquire_simulator_slot('lane-sim-boot desk', out=io.StringIO(), max_wait=0)
+            try:
+                self.assertEqual(run.lane_slots.simulator_jobs_running(), 2)
+            finally:
+                run.lane_slots.release_handle(desk)
+            # A second integration job still never starts beside it.
+            with self.assertRaises(TimeoutError):
+                with run.exclusive_slot():
+                    pass
+        self.assertFalse(run.lane_slots.simulator_job_running(), 'the slot ends with the job')
