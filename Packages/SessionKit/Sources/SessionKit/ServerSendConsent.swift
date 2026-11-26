@@ -23,16 +23,27 @@ public enum ServerSendConsent {
     /// want to read again. Every feature shares the number, so a bump asks everyone once more.
     public static let disclosureVersion = 2
 
+    /// Version 3 (#4675) adds the answers paragraph, in a build whose links carry a reply box (`SM_LINK_REPLIES`, which
+    /// the app reads and passes as `repliesOffered`). A build without reply boxes keeps version 2 and its words.
+    public static let repliesDisclosureVersion = 3
+
+    /// The version the words shown in this build carry.
+    public static func disclosureVersion(repliesOffered: Bool) -> Int {
+        repliesOffered ? repliesDisclosureVersion : disclosureVersion
+    }
+
     private static func key(for feature: ServerSendFeature) -> String {
         "serverSendConsent.\(feature.rawValue).version"
     }
 
-    public static func hasConsented(to feature: ServerSendFeature, in defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: key(for: feature)) as? Int == disclosureVersion
+    public static func hasConsented(
+        to feature: ServerSendFeature, repliesOffered: Bool = false, in defaults: UserDefaults = .standard
+    ) -> Bool {
+        defaults.object(forKey: key(for: feature)) as? Int == disclosureVersion(repliesOffered: repliesOffered)
     }
 
-    public static func record(_ feature: ServerSendFeature, in defaults: UserDefaults = .standard) {
-        defaults.set(disclosureVersion, forKey: key(for: feature))
+    public static func record(_ feature: ServerSendFeature, repliesOffered: Bool = false, in defaults: UserDefaults = .standard) {
+        defaults.set(disclosureVersion(repliesOffered: repliesOffered), forKey: key(for: feature))
     }
 
     public static func withdraw(_ feature: ServerSendFeature, in defaults: UserDefaults = .standard) {
@@ -67,6 +78,21 @@ public enum ShareLinkConsentCopy {
         """
     public static let accept = "Share as Link"
     public static let decline = "Not Now"
+
+    /// The paragraph a build with reply boxes adds after the first one (#4675, screen A).
+    public static let answersParagraph = """
+        Your friend can answer through the link. Their answers are locked the same way, wait on our server until your \
+        phone collects them or the link ends, and only your phone can open them.
+        """
+
+    /// The words for this build: `message`, with the answers paragraph after its first paragraph when links carry a
+    /// reply box. Shown with `ServerSendConsent.disclosureVersion(repliesOffered:)`.
+    public static func message(repliesOffered: Bool) -> String {
+        guard repliesOffered else { return message }
+        var paragraphs = message.components(separatedBy: "\n\n")
+        paragraphs.insert(answersParagraph, at: min(1, paragraphs.count))
+        return paragraphs.joined(separator: "\n\n")
+    }
 }
 
 /// What the listener reads before they first start or join a club (#1799, `docs/design/club-mailbox.md` sections 2, 3, 6

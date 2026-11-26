@@ -236,6 +236,39 @@ public struct ClubClient: Sendable {
         return Fetched(posts: posts, skipped: skipped, cursor: Cursor(lastPost: last), stoppedBy: nil)
     }
 
+    /// The numbers of the posts after `cursor`, oldest first, each once, none more than ``maximumJump`` past it: the
+    /// first half of ``fetchNew(for:after:)``, for a caller that fetches one post at a time and saves its cursor after
+    /// each (a reply box, #4675). A failed call throws its ``Failure``; a cancelled one throws `CancellationError`.
+    public func listNew(for invite: ClubInvite, after cursor: Cursor) async throws -> [Int] {
+        let listed = try await perform(
+            Request(
+                method: "GET",
+                path: "/api/v1/clubs/\(invite.id)/posts?after=\(cursor.lastPost)",
+                bearer: invite.credentials.readProof,
+                body: nil,
+                contentType: nil
+            ),
+            maximumBytes: Self.maximumListBytes
+        )
+        guard listed.status == 200 else { throw Failure.forStatus(listed.status, body: listed.body) }
+        guard let list = try? JSONDecoder().decode(PostList.self, from: listed.body) else { throw Failure.unexpected }
+        var seen = Set<Int>()
+        return list.posts.map(\.seq)
+            .filter { $0 > cursor.lastPost && $0 <= cursor.lastPost + Self.maximumJump && seen.insert($0).inserted }
+            .sorted()
+    }
+
+    /// One post, opened: the packet's exact bytes, or nil when it doesn't open or the box no longer has it (`404`), so
+    /// the caller passes over it. Any other answer throws its ``Failure``.
+    public func fetchPost(_ number: Int, of invite: ClubInvite) async throws -> Data? {
+        let response = try await perform(item(number, of: invite), maximumBytes: Self.maximumPostBytes)
+        switch response.status {
+        case 200: return try? ClubSealing.open(response.body, as: .post, in: invite.credentials)
+        case 404: return nil
+        default: throw Failure.forStatus(response.status, body: response.body)
+        }
+    }
+
     // MARK: Wire
 
     private struct PostedNumber: Decodable { let seq: Int }
