@@ -377,10 +377,18 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
     };
     // A container's text already includes its descendants. Consume each DOM
     // passage once, without deleting intentional repetitions in sibling blocks.
-    // A layout table (a nested table, or no row with two cells) is no block:
-    // its headings and paragraphs are, as Defuddle flattens it (#5364 audit).
-    const isDataTable = table => !table.querySelector("table") && Array.from(table.querySelectorAll("tr"))
-        .some(row => Array.from(row.children).filter(cell => /^(td|th)$/i.test(String(cell.tagName || ""))).length >= 2);
+    // A layout table (a nested table, no row with two cells, or a cell holding
+    // a heading or two or more blocks) is no block: its headings and
+    // paragraphs are (#5364 audits). Same rule as isDataTable in
+    // Tools/BrowserExtraction/browserExtractionCore.mjs.
+    const tableCells = row => Array.from(row.children).filter(cell => /^(td|th)$/i.test(String(cell.tagName || "")));
+    const isDataTable = table => {
+        if (table.querySelector("table")) { return false; }
+        const rows = Array.from(table.querySelectorAll("tr"));
+        if (!rows.some(row => tableCells(row).length >= 2)) { return false; }
+        return !rows.some(row => tableCells(row).some(cell =>
+            cell.querySelector("h1,h2,h3,h4,h5,h6") || cell.querySelectorAll("p,li,blockquote,pre").length >= 2));
+    };
     const dataTables = new Map();
     const isBlock = element => {
         if (element.tagName.toLowerCase() !== "table") { return true; }

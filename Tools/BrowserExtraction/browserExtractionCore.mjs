@@ -195,14 +195,20 @@ function ownTableRows(table) {
   return Array.from(table.querySelectorAll("tr")).filter(row => row.closest("table") === table);
 }
 
-// A data table, as Defuddle draws the line: no nested table, and at least one of its own rows with two or more cells.
-// Anything else is a layout table, whose text is read as the page's own blocks, never announced as a table.
+// A data table: no nested table, at least one of its own rows with two or more cells (Defuddle's line), and no cell
+// that holds a heading or two or more paragraphs, list items, quotes or code blocks (a page's content cell beside a
+// sidebar, #5364 audit of 3ac974e). Anything else is a layout table, whose text is read as the page's own blocks.
 export function isDataTable(table) {
   if (table.querySelector("table")) {
     return false;
   }
-  return ownTableRows(table).some(row =>
-    Array.from(row.children).filter(cell => /^(td|th)$/i.test(String(cell.tagName || ""))).length >= 2);
+  const cells = row => Array.from(row.children).filter(cell => /^(td|th)$/i.test(String(cell.tagName || "")));
+  const rows = ownTableRows(table);
+  if (!rows.some(row => cells(row).length >= 2)) {
+    return false;
+  }
+  return !rows.some(row => cells(row).some(cell =>
+    cell.querySelector("h1,h2,h3,h4,h5,h6") || cell.querySelectorAll("p,li,blockquote,pre").length >= 2));
 }
 
 export function tableToMarkdown(table) {

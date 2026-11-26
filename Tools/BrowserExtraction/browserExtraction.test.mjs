@@ -308,7 +308,12 @@ test("#5364 audit: both semantic fallbacks still read an article laid out in a l
   const layouts = {
     "one column": "<table><tr><td><h1>Essay</h1><p>Para one.</p><p>Para two.</p></td></tr></table>",
     "two columns over a nested table": "<table><tr><td><table><tr><td><p>Nav</p></td></tr></table></td>"
-      + "<td><h1>Essay</h1><p>Para one.</p><p>Para two.</p></td></tr></table>"
+      + "<td><h1>Essay</h1><p>Para one.</p><p>Para two.</p></td></tr></table>",
+    // Audit of 3ac974e: the common old layout, a sidebar cell beside the content cell, with no nested table.
+    "sidebar beside the content": "<table><tr><td><a>Home</a><br><a>About</a></td>"
+      + "<td><h1>Essay</h1><p>Para one.</p><p>Para two.</p></td></tr></table>",
+    "logo and search above the content": "<table><tr><td><a>Logo</a></td><td><a>Search</a></td></tr>"
+      + "<tr><td colspan=\"2\"><h1>Essay</h1><p>Para one.</p><p>Para two.</p></td></tr></table>"
   };
   for (const [layout, html] of Object.entries(layouts)) {
     const { document } = parseHTML(`<html><head><title>Old page</title></head><body>${html}</body></html>`);
