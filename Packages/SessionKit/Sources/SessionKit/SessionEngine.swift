@@ -3866,8 +3866,9 @@ public final class SessionEngine {
             item: ExportItem(
                 id: item.id,
                 title: item.title,
-                externalReference: options.includeReference ? ShareableLinkPolicy.shareableLink(item.externalReference) : nil,
-                sourceURL: options.includeReference ? ShareableLinkPolicy.shareableLink(item.media?.url) : nil,
+                // A restricted episode's audio and feed links stay on the device (#5340); its own web page still goes.
+                externalReference: options.includeReference ? AutomaticSourceAccess.sendableLink(item.externalReference, of: item) : nil,
+                sourceURL: options.includeReference ? AutomaticSourceAccess.sendableAudioLink(of: item) : nil,
                 mediaSourceType: item.media?.sourceType.rawValue,
                 includedFullText: noteMode ? includesNoteText : exposesFullSourceText,
                 text: noteMode ? (includesNoteText ? noteLayout?.text : nil) : exposesFullSourceText ? item.text : nil,
@@ -4639,6 +4640,8 @@ public final class SessionEngine {
             if existing.episodeGUID == nil { existing.episodeGUID = Self.nonEmpty(candidate.episodeGUID) }
             if existing.showTitle == nil { existing.showTitle = Self.nonEmpty(candidate.showTitle) }
             if existing.publishedAt == nil { existing.publishedAt = Self.nonEmpty(candidate.publishedAt) }
+            // A restriction only ever adds (#5340).
+            if candidate.publisherBlocked == true { existing.publisherBlocked = true }
             // An episode the listener added again shows as just added and not finished, as an article does (#4178).
             // One the engine holds with its session still going is left as it is.
             if listenerAdded, !itemIdsStillListening.contains(id) {
@@ -4672,6 +4675,7 @@ public final class SessionEngine {
         item.episodeGUID = Self.nonEmpty(candidate.episodeGUID)
         item.showTitle = Self.nonEmpty(candidate.showTitle)
         item.publishedAt = Self.nonEmpty(candidate.publishedAt)
+        if candidate.publisherBlocked == true { item.publisherBlocked = true }
         return item
     }
 
