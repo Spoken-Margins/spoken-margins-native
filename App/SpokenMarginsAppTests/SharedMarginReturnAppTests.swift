@@ -461,7 +461,9 @@ struct ReturnFixture {
     /// still waiting for its placement pass, so the Margin has only the sender's time (#3059).
     /// `isMuted: false` lets the friend's Margin sound its tone; the default keeps it silent, as these tests always had it (#4444).
     /// `senderReadAloud: false` is a written Margin its sender asked not to be read aloud (#3427).
-    static func make(sourcePlaying: Bool, voiceIsReadable: Bool = true, writtenWords: String? = nil, unplaced: Bool = false, isMuted: Bool = true, senderReadAloud: Bool? = nil) async throws -> ReturnFixture {
+    /// `withFriendRecord: false` leaves the friend's Margin out of the store and the item, for a test about the listener's own
+    /// Margins alone (#4938): clearing `sharedMarginRows` is not enough, because `refreshMarginRows()` reloads it from the store.
+    static func make(sourcePlaying: Bool, voiceIsReadable: Bool = true, writtenWords: String? = nil, unplaced: Bool = false, isMuted: Bool = true, senderReadAloud: Bool? = nil, withFriendRecord: Bool = true) async throws -> ReturnFixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "margin-return-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let sourceURL = try makeWAV(duration: 30)
@@ -499,9 +501,11 @@ struct ReturnFixture {
             senderReadAloud: senderReadAloud) // the sender's choice, when a test is about a Margin the sender asked not to be read (#4934)
         // In the store, not only on the model: pause, seek and every transport call refresh the selected item
         // from the store, which would otherwise empty its Margins and make Listen and jump find nothing.
-        _ = try store.importCommentaryLayer(layer, interjections: [record])
-        model.selectedItem.importedCommentaryLayers = [layer]
-        model.selectedItem.importedCommentaryInterjections = [layer.id: [record]]
+        if withFriendRecord {
+            _ = try store.importCommentaryLayer(layer, interjections: [record])
+            model.selectedItem.importedCommentaryLayers = [layer]
+            model.selectedItem.importedCommentaryInterjections = [layer.id: [record]]
+        }
         return ReturnFixture(model: model, layer: layer, record: record, sourcePlayer: sourcePlayer, root: root, files: [sourceURL, voiceURL])
     }
 
@@ -518,6 +522,21 @@ struct ReturnFixture {
         )
         try SQLiteSessionStore(path: root.appending(path: "library.sqlite").path).saveInterjection(own)
         return own
+    }
+
+    /// One of your own written Margins on the source's current session, at its place in the source, saved to the store (#4938). No
+    /// recording: a typed note, a Siri note or a Lock Screen Mark.
+    @discardableResult
+    func addOwnWrittenMargin(id: String, atMediaTimeMs mediaTimeMs: Int, words: String) throws -> Interjection {
+        let note = Interjection(
+            id: id, itemId: "real-source", sessionId: try XCTUnwrap(model.snapshot.sessionId),
+            targetType: .item, targetId: "real-source", createdAt: Date(), roughPercent: 3,
+            anchor: Anchor(anchorType: .transcript, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: mediaTimeMs),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "complete",
+            transcript: words, cleanedTranscript: nil, displayText: words, status: "active", captureKind: .written
+        )
+        try SQLiteSessionStore(path: root.appending(path: "library.sqlite").path).saveInterjection(note)
+        return note
     }
 
     /// Seeks the playing source to 1.5 s, past the shared Margin at 1 s, and waits until it is playing there. The seek

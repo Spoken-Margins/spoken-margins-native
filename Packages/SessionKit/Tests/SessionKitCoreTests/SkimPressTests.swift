@@ -64,4 +64,10 @@ final class SkimPressTests: XCTestCase {
                        ["outcome": "went_to_silent_margin", "direction": "backward"])
         XCTAssertNotEqual(SkimPressOutcome.wentToSilentMargin, .startedMarginLeadIn, "no lead-in started, so it is not logged as one")
     }
+
+    func testGoingToYourOwnWrittenMarginIsCountedApartFromAFriends() {
+        XCTAssertEqual(SkimPressOutcome.wentToOwnWrittenMargin.rawValue, "went_to_own_written_margin")
+        XCTAssertEqual(SkimPressOutcome.wentToOwnWrittenMargin.diagnosticFields(direction: .forward),
+                       ["outcome": "went_to_own_written_margin", "direction": "forward"])
+    }
 }
