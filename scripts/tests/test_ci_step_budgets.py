@@ -70,6 +70,25 @@ class DeriveTests(unittest.TestCase):
         self.assertEqual(limit['seconds'], 900)
         self.assertIn('fewer than', limit['note'])
 
+    def test_faster_samples_never_lower_a_limit_already_in_the_table(self):
+        # #5009: after #5145 left the slow tier out of PR runs, runner-tests samples fell to about 200 s and the table
+        # would have cut RUNNER_TESTS_CEILING from 1800 to 900 s, though the same limit bounds the full step elsewhere.
+        samples = [sample(i, 'runner-tests', 200, days_ago=i / 10) for i in range(30)]
+        previous = {'RUNNER_TESTS_CEILING': {'seconds': 1800, 'runs': [1]}}
+        limit = b.derive(samples, previous)['limits']['RUNNER_TESTS_CEILING']
+        self.assertEqual(limit['seconds'], 1800)
+        self.assertEqual(limit['derived_seconds'], 900)
+        self.assertIn('never lowers', limit['note'])
+        self.assertEqual(limit['p95'], 200)
+
+    def test_slower_samples_still_raise_a_limit(self):
+        samples = [sample(i, 'package-core', 712, days_ago=i / 10) for i in range(30)]
+        previous = {'PARALLEL_CORE_CEILING': {'seconds': 900, 'runs': [1]}}
+        limit = b.derive(samples, previous)['limits']['PARALLEL_CORE_CEILING']
+        self.assertEqual(limit['seconds'], 1080)
+        self.assertNotIn('derived_seconds', limit)
+        self.assertNotIn('note', limit)
+
     def test_a_step_run_by_two_jobs_counts_the_slower_one_per_run(self):
         samples = []
         for i in range(30):

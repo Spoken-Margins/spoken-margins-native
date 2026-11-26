@@ -270,6 +270,17 @@ func (s *Server) getLinkScript(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// The picture a messenger's preview card shows for every share link (#5271). It is one constant file, so it answers
+// while the links service is off too, and it is cacheable. It skips linkHeaders: an image needs neither no-store nor
+// the page's CSP. Like every /l/ path it is logged only as the route /l/* in the hourly aggregate.
+func (s *Server) getLinkCard(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Robots-Tag", "noindex")
+	w.Write(links.CardPNG)
+}
+
 // LinkExpiresHeader carries the packet's expiry day, e.g. 2026-12-06.
 const LinkExpiresHeader = "X-SM-Link-Expires"
 

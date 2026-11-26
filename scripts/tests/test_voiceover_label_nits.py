@@ -52,6 +52,30 @@ class VoiceOverLabelNitTests(unittest.TestCase):
         self.assertIn('.accessibilityLabel(isStarred ? "Remove sharing star" : "Star Margin for sharing")', text)
         self.assertNotIn('.accessibilityValue(isStarred ? "Starred" : "Not starred")', text)
 
+    # The first run for a VoiceOver listener (#5036, Design slice A).
+
+    def test_the_first_margin_prompt_has_a_hint_and_is_announced(self):
+        card = _read("FirstMarginPromptCard.swift")
+        self.assertIn('.accessibilityHint("Opens recording.")', card)
+        playback = _read("PlaybackScreen.swift")
+        self.assertIn("VoiceOverAnnouncements.firstMarginPrompt(", playback)
+
+    def test_a_button_swapped_for_a_spinner_keeps_its_name(self):
+        # One cause, two places: a control whose content becomes a bare ProgressView loses its spoken name.
+        add = _read("ExperienceAddSourceFlow.swift")
+        self.assertIn('.accessibilityLabel(model.isResolvingSourceLink ? "Adding to Library" : "Add to Library")', add)
+        paste = _read("PasteAndGoBar.swift")
+        spinner = paste[paste.index("ProgressView()"):]
+        self.assertIn('.accessibilityLabel("Adding the link")', spinner[:600])
+
+    def test_playback_has_one_button_called_library(self):
+        text = _read("PlaybackScreen.swift")
+        exit_button = text[text.index("private func libraryExitButton("):]
+        exit_button = exit_button[:exit_button.index(".accessibilityIdentifier(PlaybackLeadingControl.libraryExitIdentifier)")]
+        self.assertIn('.accessibilityLabel("Back to Library")', exit_button)
+        home = text[:text.index('accessibilityIdentifier("playback.home.button")')]
+        self.assertIn('.accessibilityLabel("Library")', home[-200:])
+
 
 if __name__ == "__main__":
     unittest.main()

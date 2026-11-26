@@ -13,6 +13,8 @@ struct LiveSessionMarginDetailView: View {
     @State private var isEditing = false
     @State private var draft = ""
     @State private var asksToDelete = false
+    /// Move to an Item is pushed onto this screen's stack (#4233 Design 2.3, #5304).
+    @State private var showsMove = false
     /// 40% of this screen, for the photo's height (#2708); measured, not read from the device's screen.
     @State private var photoMaxHeight: CGFloat = 320
 
@@ -28,6 +30,11 @@ struct LiveSessionMarginDetailView: View {
     let delete: () -> Void
     /// Pauses whatever the app is playing before the recording starts.
     var pauseOtherAudio: () -> Void = {}
+    /// Makes Move to an Item for this Margin alone (#4233 Design 2.3). Nil when it can't move.
+    var makeMove: (() -> LiveMarginMoveSheetModel)? = nil
+    /// Why it can't move, shown where Move would be. Nil in a saved session, which shows neither.
+    var moveUnavailableReason: String? = nil
+    var moved: (LiveMarginMoving.Moved) -> Void = { _ in }
 
     private var kindLine: String {
         let kind = margin.isBlindMark ? "Mark" : margin.isSpoken ? "Spoken Margin" : "Written Margin"
@@ -106,6 +113,23 @@ struct LiveSessionMarginDetailView: View {
                 }
                 Section {
                     if margin.isSpoken { playButton }
+                    if makeMove != nil {
+                        // A Button that pushes, not a NavigationLink: under this List's primitive button style, with a
+                        // simultaneous tap gesture to stop the recording, the link never pushed (#5304).
+                        Button("Move to an Item…", systemImage: "folder") {
+                            audio.stop()
+                            showsMove = true
+                        }
+                        // The move sheet is made from the Margin as it is now, so words still being edited would be left
+                        // behind on the item: Save or Cancel first.
+                        .disabled(isEditing)
+                        .accessibilityIdentifier("marginDetail.move.button")
+                    } else if let moveUnavailableReason {
+                        Text(moveUnavailableReason)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("marginDetail.moveUnavailable.label")
+                    }
                     if isEditing {
                         TextEditor(text: $draft)
                             .frame(minHeight: 120)
@@ -132,6 +156,9 @@ struct LiveSessionMarginDetailView: View {
                 }
             }
             .buttonStyle(MarginDetailActionButtonStyle())
+            .navigationDestination(isPresented: $showsMove) {
+                if let makeMove { LiveMarginMoveSheetHost(make: makeMove, moved: moved) }
+            }
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { photoMaxHeight = max(160, $0 * 0.4) }
             .confirmationDialog("Delete this Margin?", isPresented: $asksToDelete, titleVisibility: .visible) {
                 Button("Delete Margin", role: .destructive) {
@@ -163,5 +190,23 @@ struct LiveSessionMarginDetailView: View {
                 if isEditing && draft != margin.text { saveText(draft) }
             }
         }
+    }
+}
+
+/// Move to an Item, owning the sheet's state for as long as it is shown: pushed from a Margin's sheet, or at the root of a
+/// sheet of its own (`isRoot`).
+struct LiveMarginMoveSheetHost: View {
+    @StateObject private var sheet: LiveMarginMoveSheetModel
+    let isRoot: Bool
+    let moved: (LiveMarginMoving.Moved) -> Void
+
+    init(make: @escaping () -> LiveMarginMoveSheetModel, isRoot: Bool = false, moved: @escaping (LiveMarginMoving.Moved) -> Void) {
+        _sheet = StateObject(wrappedValue: make())
+        self.isRoot = isRoot
+        self.moved = moved
+    }
+
+    var body: some View {
+        LiveMarginMoveSheet(sheet: sheet, isRoot: isRoot, moved: moved)
     }
 }

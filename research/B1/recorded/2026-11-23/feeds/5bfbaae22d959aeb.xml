@@ -1,0 +1,18 @@
+
+
+<!-- THEME DEBUG -->
+<!-- THEME HOOK: 'views_view_rss' -->
+<!-- BEGIN OUTPUT from 'modules/contrib/views_rss/templates/views-view-rss.html.twig' -->
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xml:base="https://historyofphilosophy.net/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>History of Philosophy without any gaps</title>
+    <link>https://historyofphilosophy.net/</link>
+    <description><![CDATA[]]></description>
+    <language>en</language>
+        <pubDate>Sun, 22 Nov 26 04:00:00 +0100</pubDate>
+
+
+<!-- THEME DEBUG -->
+<!-- THEME HOOK: 'views_view_row_rss' -->
+<!-- BEGIN OUTPUT from 'modules/contrib/views_rss/templates/views-view-row-rss.html.twig' -->

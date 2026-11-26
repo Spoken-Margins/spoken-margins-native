@@ -110,10 +110,11 @@ def issue_body(sha: str, run_url: str, failed: list, details: list, green: str |
     first_failed = first_failed or sha
     state = {'first_failed': first_failed, 'latest': sha, 'last_green': green, 'failed': failed[:200]}
     lines = [MARKER, f'<!-- main-slow-state: {json.dumps(state, sort_keys=True).replace("-->", "")} -->', '',
-             f'The slow tier on main (`main-slow`, #5145) failed on `{sha}`: {run_url}', '',
-             'These tests left every PR because they were slow and had not failed in 30 days (scripts/slow_tier.py). '
-             'One of the merges below broke one. Fix it, and move the test back to every PR by deleting its line in '
-             'scripts/slow_tier.py (the waste signal in #5145).', '']
+             f'`main-slow` failed on `{sha}`: {run_url}', '',
+             'main-slow runs on main what the merge queue leaves out: the Mac tests (#5281) and the slow tier '
+             '(#5145). One of the merges below broke a test. Fix it on main. If the test is in the slow tier '
+             '(listed in scripts/slow_tier.py), also move it back to every PR by deleting its line there (the waste '
+             'signal in #5145).', '']
     if first_failed != sha:
         lines += [f'It first failed on `{first_failed}` and is still failing.', '']
     lines.append(f'- Last green `main-slow`: `{green}`' if green else

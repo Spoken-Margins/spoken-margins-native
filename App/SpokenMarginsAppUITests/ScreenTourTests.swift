@@ -211,11 +211,11 @@ final class ScreenTourTests: XCTestCase {
             capture("16-share-clean-up-question", "First share only: the clean-up question")
             cleanUp.buttons["Not now"].tap()
         }
-        XCTAssertTrue(element("build23.sender.select.continue").waitForExistence(timeout: 5), "Choose Margins has no Review")
-        capture("17-share-choose", "Share: Choose Margins")
-        element("build23.sender.select.continue").tap()
-        XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5), "Share's Review did not open")
-        capture("18-share-review", "Share: Review, with Share pinned at the bottom")
+        // One list replaced Choose and Review (#4647): stage 17 is the list, stage 18 the list at its second card.
+        XCTAssertTrue(element("build23.sender.stage.list").waitForExistence(timeout: 5), "Share Margins did not open its list")
+        capture("17-share-choose", "Share: the Share Margins list, with Share pinned at the bottom")
+        app.swipeUp()
+        capture("18-share-review", "Share: the list scrolled to its next card")
         element("build23.sender.review.share").tap()
         captureWhenPresent(element("ActivityListView"), timeout: 12, "19-share-system-sheet",
                            "The iOS share sheet with the packet")

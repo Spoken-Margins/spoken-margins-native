@@ -89,10 +89,25 @@ backstop down (#4866, now reported by the wake sweep's rule 15), and GitHub's ru
 
 ## Assumptions
 
-Every rule taken on trust is in `ASSUMPTIONS`, marked documented, observed or inferred, with its source. The ones
-that matter most and are not verified: a re-run asked for with `GITHUB_TOKEN` runs (A6); a failed merge group turns
-auto-merge off (A9, scenario `d2` shows the loop if it does not); merge-group events start runs whoever queued the
-PR (A8).
+Every rule taken on trust is in `ASSUMPTIONS` (and the harness's `GITHUB_RULES`), marked documented, observed or
+inferred, with its source. On 2026-11-24 (#4937) the rules the model leans on were checked once and are marked
+observed with their run ids:
+
+- **Throwaway probe**: run 45340601282 of a workflow that lived only on a `claude/` branch with no PR (never armed,
+  never merged), whose attempt 2 was started with `GITHUB_TOKEN` by a job of a second run, 45341093580. It showed one running and one pending entry per concurrency
+  group, a newer entry cancelling the pending one, `cancel-in-progress` cancelling the running one (G1); a skipped
+  job joining no group (G2); a job stopped by `timeout-minutes` ending `cancelled` (G5); a re-run asked for with
+  `GITHUB_TOKEN` running (A6, G6); a push made with `GITHUB_TOKEN` starting no run (A1); and the default check-run
+  listing returning the newest run of a name (G7), but only a little after the write: read at once it still gave the
+  older one.
+- **Live history** (timelines and runs of PRs #5172, #5157 and #5200): a failed merge group dequeues with reason
+  `CI_FAILURE` (the model used a made-up `FAILED_CHECKS`), a removal by hand sends `MANUAL` (A10); a dequeued PR
+  does not re-enter until it is armed again (A9); merge groups start for PRs queued with the App's token and the
+  owner's (A8; a PR queued with `GITHUB_TOKEN` has not been seen); and the queue's merge into `main` starts `push`
+  workflows (A11). G3 and G4 were already observed on #4898 (#4929).
+
+Still inferred: A4 (a dispatch run's check does not satisfy a PR's required check), and the model's own
+simplifications (A12, A13, A15).
 
 ## Limits
 

@@ -364,10 +364,12 @@ extension Gate1AppModel {
         }
     }
 
-    func scheduleTranscription(for interjection: Interjection) {
+    /// `capturesAnchorEvidence` is false for a Margin moved from a live session (#4233): its recording was not made while
+    /// the item played, so no fingerprint of the item is taken for it, and a friend places it by time alone.
+    func scheduleTranscription(for interjection: Interjection, capturesAnchorEvidence: Bool = true) {
         guard let audioPath = interjection.audioPath else { return }
         recordAnchorCaptureDiagnostics(for: interjection)
-        switch interjection.podcastAnchorEvidenceCaptureStatus {
+        switch capturesAnchorEvidence ? interjection.podcastAnchorEvidenceCaptureStatus : .ready {
         case .pendingPostResumeSample:
             diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", interjection)] = "sampling:decoded_playback_post_resume"
         case .pendingExactLocalCapture:
@@ -405,6 +407,13 @@ extension Gate1AppModel {
                     transcript = try await interjectionTranscriptionHandler(audioPath)
                 }
                 await MainActor.run {
+                    // A moved Margin whose move was undone meanwhile has no row any more (#4233 Design 2.9.2): the job
+                    // ends quietly, with no failure and no write.
+                    if LiveMarginMoving.wasTakenBack(interjection.id) {
+                        MarginEndPhraseSaving.finish(endPhraseCut, wordsSaved: false)
+                        retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
+                        return
+                    }
                     let wordsSaved = run { engine in
                         if let savedTranscript {
                             snapshot = try engine.transcriptionCompleted(
@@ -431,6 +440,10 @@ extension Gate1AppModel {
                 }
             } catch {
                 await MainActor.run {
+                    guard !LiveMarginMoving.wasTakenBack(interjection.id) else {
+                        retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
+                        return
+                    }
                     let failure = String(describing: error)
                     let diagnostic = SafeErrorText.describe(error)
                     let wasRetry = retryingInterjectionTranscriptionIds.contains(Self.marginIdentity(interjection))

@@ -169,14 +169,32 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
         return try await respond(to: prompt, maximumResponseTokens: 400)
     }
 
-    /// One request per tidy (#4339): the Margin's words and up to 500 characters of passage on each side, in the words the
-    /// Design fixed (`MarginTidyPrompt`). Greedy sampling, and a reply cap that fits a five-minute Margin.
+    /// One request per piece of a tidy (#4339), in the words `MarginTidyPrompt` holds: the task in the session's
+    /// instructions, the Margin and up to 500 characters of passage on each side in the prompt, greedy sampling.
+    /// Guardrails are Apple's setting for transforming the user's own text: with the default ones the model threw on a
+    /// Margin with a swear word, one about a massacre in the passage, and one that said "say hello" (eval, 2026-11-24).
+    /// If the request overflows the model's window, it is tried once more without the passage.
     func tidyMargin(transcript: String, before: String, after: String) async throws -> String {
         try requireAvailability()
-        return try await respond(
-            to: MarginTidyPrompt.text(transcript: transcript, before: before, after: after),
-            maximumResponseTokens: 1_500
+        do {
+            return try await tidy(MarginTidyPrompt.request(transcript: transcript, before: before, after: after))
+        } catch LanguageModelSession.GenerationError.exceededContextWindowSize {
+            return try await tidy(MarginTidyPrompt.request(transcript: transcript, before: "", after: ""))
+        }
+    }
+
+    private func tidy(_ request: MarginTidyRequest) async throws -> String {
+        let session = LanguageModelSession(
+            model: SystemLanguageModel(useCase: .general, guardrails: .permissiveContentTransformations),
+            instructions: request.instructions
         )
+        let response = try await session.respond(
+            to: request.prompt,
+            options: GenerationOptions(sampling: .greedy, maximumResponseTokens: request.maximumResponseTokens)
+        )
+        let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { throw LocalFoundationModelError.emptyResponse }
+        return text
     }
 
     private func requireAvailability() throws {

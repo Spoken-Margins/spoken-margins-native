@@ -24,7 +24,7 @@ An issue is built whole, in one PR, by one thread (Cole, 2026-11-23). Don't writ
 - `bug` for failures.
 - Exactly one area label from [docs/areas.md](../../../docs/areas.md): `area: get it in`, `area: hear it well`, `area: answer it`, `area: pass it on`, `area: groundwork`, `area: housekeeping`. Flaky tests, speed and pipeline work are `area: groundwork`.
 - `ready` only when every heading above is filled in and the issue fits the standing calls. Fill missing headings yourself when the issue honestly supports it.
-- `where:mac` only when it needs Mac hardware, signed-in Mac accounts or a physical device, not merely an iOS build.
+- `where:mac` only when it needs Mac hardware, signed-in Mac accounts or a physical device, not merely an iOS build. One more case (owner, 2026-11-23): an issue that changes what a listener sees or taps on an app screen in the sharing flow, so a session that can see it builds it (`AGENTS.md`, "A sharing change to an app screen").
 - `owner-asked` when the owner asked for it himself.
 - `priority`: add it when the owner has called the issue his top priority (owner, 2026-11-22: "yes", agents may set it then), quoting his words on the issue. Otherwise never add it, and never remove it; only the owner or the lead session does.
 - An outsider's issue (not OWNER, MEMBER or COLLABORATOR) gets `needs-triage-review` and a short reply, never `ready`.

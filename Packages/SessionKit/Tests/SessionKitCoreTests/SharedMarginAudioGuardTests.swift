@@ -26,12 +26,18 @@ final class SharedMarginAudioGuardTests: XCTestCase {
         let app = "SpokenMarginsApp/Sources/SpokenMarginsApp/"
         let fromWatch = "a Margin the Watch recorded: the listener's own"
         return [
+            Excuse(file: app + "Gate1AppModel+LiveMarginMove.swift", line: #"if margin.audioPath != nil, margin.transcriptionStatus == "pending" {"#,
+                   reason: "a Margin the listener moved from their own live session onto an item (#4233): their own recording"),
+            Excuse(file: app + "Gate1AppModel+CatchUp.swift", line: "margin.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) != nil",
+                   reason: "the minutes on a catch-up button count the listener's own parent Margins (`ownMargins`) whose recording is on this phone (#4785)"),
             Excuse(file: app + "ExperienceModels.swift", line: "var canPlayRecording: Bool { !isWritten && interjection.audioPath != nil }",
                    reason: "the row of the listener's own Margin (`MarginRow`)"),
             Excuse(file: app + "ExperienceModels.swift", line: #"var canRetryTranscription: Bool { !isWritten && !["transcribed", "complete"].contains(interjection.transcriptionStatus) && interjection.audioPath != nil }"#,
                    reason: "retrying the transcription of the listener's own recording"),
             Excuse(file: app + "Gate1AppModel+ListeningSignals.swift", line: "audioURL: interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)))",
                    reason: "a signal about the listener's own spoken Margin"),
+            Excuse(file: app + "Gate1AppModel+HearItLand.swift", line: "let path = playback.saved.audioPath, let voice = resolvedInterjectionAudioURL(for: path) else {",
+                   reason: "hear it land plays back the Margin the listener just recorded (#4713); `HearItLand.savedPlayback` only picks the listener's own"),
             Excuse(file: app + "Gate1AppModel+VoiceMarginImport.swift", line: "audioURL: interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:))",
                    reason: "a signal about the listener's own voice Margin from Add Voice Margin (#4924)"),
             Excuse(file: app + "AddVoiceMarginShortcutIntent.swift", line: "let path = prepared.audioPath",
@@ -55,7 +61,7 @@ final class SharedMarginAudioGuardTests: XCTestCase {
             Excuse(file: app + "Gate1AppModel+ShareDrafts.swift", line: ".interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:))",
                    reason: "sharing the listener's own Margins"),
             Excuse(file: app + "Gate1AppModel+ShareDrafts.swift", line: "let sourcePath = sharingState.drafts[index].interjection.audioPath,",
-                   reason: "sharing the listener's own Margins", count: 2),
+                   reason: "sharing the listener's own Margins"),
             Excuse(file: app + "Gate1AppModel+ShareExport.swift", line: "return draft.interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:))",
                    reason: "sharing the listener's own Margins"),
             Excuse(file: app + "Gate1AppModel+ShareExport.swift", line: "guard let url = draft.interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)),",

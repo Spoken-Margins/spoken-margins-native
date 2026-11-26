@@ -41,6 +41,7 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     public var sourceElements: [String: SourceElementsRecord] = [:]
     /// Publisher audio by item id (#545).
     public var publisherAudio: [String: PublisherAudio] = [:]
+    public var publisherAudioChoices: [String: PublisherAudioChoice] = [:]
     public var communityMapUploads: [String: CommunityMapUploadRecord] = [:]
 
     public init(
@@ -494,6 +495,9 @@ extension InMemorySessionRepository: CommunityMapUploadRepository {
 extension InMemorySessionRepository: PublisherAudioRepository {
     public func savePublisherAudio(_ audio: PublisherAudio) throws { publisherAudio[audio.itemId] = audio }
     public func loadPublisherAudio(itemId: String) throws -> PublisherAudio? { publisherAudio[itemId] }
+    public func loadPublisherAudioChoice(itemId: String) throws -> PublisherAudioChoice? { publisherAudioChoices[itemId] }
+    public func savePublisherAudioChoice(_ choice: PublisherAudioChoice) throws { publisherAudioChoices[choice.itemId] = choice }
+    public func deletePublisherAudioChoice(itemId: String) throws { publisherAudioChoices[itemId] = nil }
 }
 
 extension InMemorySessionRepository: SessionRecordCounting {

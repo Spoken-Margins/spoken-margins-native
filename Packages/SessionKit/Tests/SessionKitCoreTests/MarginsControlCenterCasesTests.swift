@@ -203,7 +203,8 @@ final class MarginsControlCenterCasesTests: XCTestCase {
     static func expectedRow(_ row: MarginsControlCenter.Row, autoplay: MarginsControlCenter.Autoplay) -> ExpectedRow {
         let id: String
         switch row.reference {
-        case .local(let value), .imported(let value): id = value
+        case .local(let value): id = bareOwnId(value)
+        case .imported(let value): id = value
         }
         let hearing: String
         switch row.hearing {
@@ -229,8 +230,15 @@ final class MarginsControlCenterCasesTests: XCTestCase {
             action: skip.action.rawValue, destinationMs: skip.destinationMs, countdown: skip.countdown,
             firstToPlayId: skip.firstToPlay.map { reference in
                 switch reference {
-                case .local(let id), .imported(let id): id
+                case .local(let id): bareOwnId(id)
+                case .imported(let id): id
                 }
             } ?? "")
+    }
+
+    /// The contract's cases name an own Margin by its bare id (one session each, "session-case"); the rows key it by
+    /// session and id (#5133).
+    private static func bareOwnId(_ scoped: String) -> String {
+        scoped.replacingOccurrences(of: "session-case::", with: "")
     }
 }

@@ -54,9 +54,10 @@ SIM_TEST_ACTIONS = {'test', 'test-without-building'}
 XCODEBUILD_NO_BUILD = {'-version', '-list', '-showsdks', '-showBuildSettings', '-showdestinations',
                        '-showTestPlans', '-help', '-h', '-usage', '-license', '-checkFirstLaunchStatus',
                        '-exportArchive', '-importLocalizations', '-exportNotarizedApp', '-create-xcframework'}
-# The fast plan and its three host-only splits (verify-tests.py FAST_SPLIT_PLANS, #3567): none boots a simulator.
+# The fast plan, its three host-only splits (verify-tests.py FAST_SPLIT_PLANS, #3567) and HOST_ONLY_PLANS (the slow
+# tier, #5145; the merge queue's Mac build and main's Mac tests, #5281): none boots a simulator.
 # test_lane_guard.py fails when FAST_SPLIT_PLANS gains a plan that is not listed here.
-HOST_PLANS = {'fast', 'fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest'}
+HOST_PLANS = {'fast', 'fast-portable', 'fast-hosted-sessionkit', 'fast-mac-rest', 'slow', 'mac-build', 'main-mac'}
 SIMULATOR_SCRIPTS = {'smoke-simulator.sh', 'check_posterboard_repair.py', 'verify-gate1.sh',
                      'verify-gate1-routine.sh', 'verify-gate1-closeout.sh', 'verify-gate2.sh',
                      'lane-runner.py',  # the lane's own runner job: agents ask for it by label instead

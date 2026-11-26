@@ -27,6 +27,17 @@ public enum SharedPacketItemMatcher {
         // second linked file, is still ambiguous (#755).
         let ownedFiles = candidates.filter { $0.item.mediaType == "audiobook" }
         if ownedFiles.count == 1, ownedFiles[0].item.linkedEpisode != nil { return ownedFiles[0].item.id }
+        // One episode held in two feed editions (#5286): both are the same work, and the row the packet names exactly,
+        // by its GUID or its file, is the one it was made on, as it was before editions matched each other.
+        if packetItem.itemType == .podcast, candidates.count > 1 {
+            let sameGUID = candidates.filter { candidate in
+                guard let guid = packetItem.episodeGUID, !guid.isEmpty else { return false }
+                return candidate.identity.episodeGUID == guid
+            }
+            if sameGUID.count == 1 { return sameGUID[0].item.id }
+            let sameFile = candidates.filter { PodcastEnclosureIdentity.sameFile(packetItem.enclosureURL, $0.identity.enclosureURL) }
+            if sameFile.count == 1 { return sameFile[0].item.id }
+        }
         guard candidates.count > 1, [.text, .pdf, .epub].contains(packetItem.itemType) else { return nil }
         let exact = candidates.filter { sameDigest(packetItem.exactEditionSHA256, $0.identity.exactEditionSHA256) }
         let sameText = candidates.filter { sameDigest(packetItem.normalizedContentSHA256, $0.identity.normalizedContentSHA256) }

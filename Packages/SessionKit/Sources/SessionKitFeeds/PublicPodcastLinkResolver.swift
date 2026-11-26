@@ -84,7 +84,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
 
     public func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
         let trimmed = request.inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), url.scheme?.lowercased() == "https" else {
+        guard let url = URL(string: trimmed).map(ArxivPaperLink.openingURL), url.scheme?.lowercased() == "https" else { // #5049
             return unsupported(request: request, reason: "invalid_url")
         }
 
@@ -156,7 +156,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         requestTimeoutSeconds: TimeInterval
     ) async throws -> LinkResolutionResult {
         let trimmed = request.inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), url.scheme?.lowercased() == "https" else {
+        guard let url = URL(string: trimmed).map(ArxivPaperLink.openingURL), url.scheme?.lowercased() == "https" else { // #5049
             return unsupported(request: request, reason: "invalid_url")
         }
 
@@ -843,7 +843,8 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             transcriptLinks: selected.transcriptLinks,
             chapterLinks: selected.chapterLinks,
             publisherChapterCollections: chapterCollections,
-            confidence: selected.isExactMatch ? 0.96 : 0.82
+            confidence: selected.isExactMatch ? 0.96 : 0.82,
+            publisherBlocked: selected.publisherBlocked ? true : nil
         )
         return playable(request: request, provider: "rss", candidate: candidate)
     }
@@ -883,7 +884,8 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             transcriptLinks: selected.transcriptLinks,
             chapterLinks: selected.chapterLinks,
             publisherChapterCollections: chapterCollections,
-            confidence: selected.isExactMatch ? 0.96 : 0.82
+            confidence: selected.isExactMatch ? 0.96 : 0.82,
+            publisherBlocked: selected.publisherBlocked ? true : nil
         )
         return playable(request: request, provider: "rss", candidate: candidate)
     }
@@ -920,6 +922,15 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
               let html = String(data: data, encoding: .utf8) else {
             return nil
         }
+        if let preferred = request.preferredEnclosureURL {
+            for feedURL in feedsToTryForPacketFile(in: html, pageURL: url) {
+                guard let feedData = try? fetch(feedURL),
+                      let item = feedItem(linkedFrom: url, in: RSSFeedParser().parse(data: feedData)),
+                      PodcastEnclosureIdentity.sameFile(item.enclosureURL, preferred) else { continue }
+                return playable(request: request, provider: "rss", candidate: linkedFeedCandidate(
+                    item, feedURL: feedURL, collections: resolvedChapterCollections(for: item)))
+            }
+        }
         guard let metadata = episodePageMetadata(in: html, pageURL: url) else {
             guard let feedURL = linkedFeedURL(in: html, pageURL: url),
                   let feedData = try? fetch(feedURL),
@@ -944,6 +955,16 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
               let html = String(data: data, encoding: .utf8) else {
             return nil
         }
+        if let preferred = request.preferredEnclosureURL {
+            for feedURL in feedsToTryForPacketFile(in: html, pageURL: url) {
+                guard let feedData = try? await fetchAsync(feedURL, timeout: requestTimeoutSeconds),
+                      let item = feedItem(linkedFrom: url, in: RSSFeedParser().parse(data: feedData)),
+                      PodcastEnclosureIdentity.sameFile(item.enclosureURL, preferred) else { continue }
+                let collections = await resolvedChapterCollections(for: item, requestTimeoutSeconds: requestTimeoutSeconds)
+                return playable(request: request, provider: "rss", candidate: linkedFeedCandidate(
+                    item, feedURL: feedURL, collections: collections))
+            }
+        }
         guard let metadata = episodePageMetadata(in: html, pageURL: url) else {
             guard let feedURL = linkedFeedURL(in: html, pageURL: url),
                   let feedData = try? await fetchAsync(feedURL, timeout: requestTimeoutSeconds),
@@ -966,7 +987,20 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
     // Some hosts (Omny, for one) put no play metadata on the episode page, but link the show's feed. The page is
     // only trusted to name its own feed item: the item must link back to this exact page, never a nearby title.
     private func linkedFeedURL(in html: String, pageURL: URL) -> URL? {
+        linkedFeedURLs(in: html, pageURL: pageURL).first
+    }
+
+    /// When a friend's packet names the episode's file (#5286), every feed the page links is tried in page order,
+    /// at most four, for the one whose item for this page is that file. Without it, the page's first feed is taken,
+    /// which on Hacker Public Radio is the Opus edition while the sender heard the MP3.
+    private func feedsToTryForPacketFile(in html: String, pageURL: URL) -> [URL] {
+        Array(linkedFeedURLs(in: html, pageURL: pageURL).prefix(4))
+    }
+
+    /// The feeds the page links, in the order `linkedFeedURL` prefers them, without repeats.
+    private func linkedFeedURLs(in html: String, pageURL: URL) -> [URL] {
         let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        var found: [URL] = []
         let patterns = [
             #"<link\b[^>]*\btype\s*=\s*["']application/rss\+xml["'][^>]*\bhref\s*=\s*["']([^"']+)["']"#,
             #"<link\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*\btype\s*=\s*["']application/rss\+xml["']"#,
@@ -974,14 +1008,15 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             #"\bhref\s*=\s*["'](https://[^"']+\.rss)["']"#
         ]
         for pattern in patterns {
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
-                  let match = regex.firstMatch(in: html, range: range),
-                  let valueRange = Range(match.range(at: 1), in: html),
-                  let url = URL(string: decodeHTMLEntities(String(html[valueRange])), relativeTo: pageURL)?.absoluteURL,
-                  url.scheme?.lowercased() == "https" else { continue }
-            return url
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
+            for match in regex.matches(in: html, range: range) {
+                guard let valueRange = Range(match.range(at: 1), in: html),
+                      let url = URL(string: decodeHTMLEntities(String(html[valueRange])), relativeTo: pageURL)?.absoluteURL,
+                      url.scheme?.lowercased() == "https", !found.contains(url) else { continue }
+                found.append(url)
+            }
         }
-        return nil
+        return found
     }
 
     private func feedItem(linkedFrom pageURL: URL, in items: [RSSFeedItem]) -> RSSFeedItem? {
@@ -1022,7 +1057,8 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             transcriptLinks: item.transcriptLinks,
             chapterLinks: item.chapterLinks,
             publisherChapterCollections: collections,
-            confidence: 0.96
+            confidence: 0.96,
+            publisherBlocked: item.publisherBlocked ? true : nil
         )
     }
 
@@ -1506,6 +1542,8 @@ private struct RSSFeedItem {
     var publishedAt: String?
     var durationMs: Int?
     var isExactMatch = false
+    /// `<itunes:block>Yes</itunes:block>` on the episode or its show (#5340).
+    var publisherBlocked = false
 }
 
 private final class RSSFeedParser: NSObject, XMLParserDelegate {
@@ -1516,6 +1554,7 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
     private var currentText = ""
     private var isInItem = false
     private var isInPodloveChapters = false
+    private var channelBlocked = false
 
     /// Substack lists each text post's cover image as an `image/jpeg` enclosure, so a shared text post looked like an
     /// episode whose audio was a picture (#223). An enclosure without a type stays: some podcast feeds omit it.
@@ -1529,7 +1568,8 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
         parser.shouldProcessNamespaces = true
         parser.delegate = self
         _ = parser.parse()
-        return items
+        // The show's block may come after its items in the file.
+        return channelBlocked ? items.map { var item = $0; item.publisherBlocked = true; return item } : items
     }
 
     func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
@@ -1577,6 +1617,9 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
         let element = localName(elementName)
         let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if PublisherBlockSignal.isBlock(qName ?? elementName, namespaceURI: namespaceURI, value: text) {
+            if isInItem { currentItem?.publisherBlocked = true } else { channelBlocked = true }
+        }
         if isInItem {
             switch element {
             case "title":

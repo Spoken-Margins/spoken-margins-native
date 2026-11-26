@@ -1,54 +1,8 @@
 import Foundation
+import SessionKit
 
-// #4341 PR 2 (hidden): a Zotero library's JSON turned into the papers a followed list shows. It reads bytes the
-// transport already fetched; nothing here makes a request or touches the Library.
-
-/// What the listener can do with a paper: the Design's three statuses.
-public enum PaperEntryStatus: String, Equatable, Sendable {
-    /// A PDF the phone can fetch without a key.
-    case pdf
-    /// No PDF, but the record carries an abstract the app can read aloud.
-    case abstractOnly
-    /// Neither: the button is Open, which shows the paper's page.
-    case linkOnly
-}
-
-public struct PaperEntry: Equatable, Identifiable, Sendable {
-    public var id: String
-    public var provider: PaperSource.Provider
-    public var title: String
-    /// Family names (or the one-field name of a group author), authors first. Editors only when there is no author.
-    public var authors: [String]
-    public var journal: String?
-    public var year: Int?
-    /// Lower-case, without a `doi:` or `https://doi.org/` prefix, so two spellings of one DOI match.
-    public var doi: String?
-    public var pmid: String?
-    public var abstract: String?
-    /// A PDF reachable without a key: a linked file whose address is a PDF.
-    public var pdfURL: URL?
-    /// A PDF stored in Zotero's file storage (needs the listener's key, PR 6). Never fetched from a public library.
-    public var storedPDFAttachmentKey: String?
-    /// Where Open goes: the DOI's address, else the record's own address, else its Zotero page.
-    public var pageURL: URL?
-    /// When the paper joined the list (Zotero's `dateAdded`), never its publication year.
-    public var dateJoined: Date?
-
-    public var status: PaperEntryStatus {
-        if pdfURL != nil { return .pdf }
-        if abstract != nil { return .abstractOnly }
-        return .linkOnly
-    }
-
-    /// "Smith, Jones et al." as the paper row prints it: two names, then "et al." for more.
-    public var authorLine: String {
-        switch authors.count {
-        case 0: return ""
-        case 1, 2: return authors.joined(separator: ", ")
-        default: return authors.prefix(2).joined(separator: ", ") + " et al."
-        }
-    }
-}
+// #4341: a Zotero library's JSON turned into the papers a followed list shows. It reads bytes the transport already
+// fetched; nothing here makes a request or touches the Library.
 
 public struct PaperPage: Equatable, Sendable {
     public var entries: [PaperEntry]
@@ -70,6 +24,12 @@ public enum ZoteroPaperReader {
     /// Reads one page of `items/top` and, when given, the list's attachments (any number of pages, each passed in
     /// turn). Papers come back newest-joined first.
     public static func read(items: Data, attachments: [Data] = [], groupID: Int) throws -> PaperPage {
+        try read(items: items, attachments: attachments, library: .group(groupID))
+    }
+
+    /// The same for either library. A paper of the listener's own library (`.user`) can fetch its stored PDF with their
+    /// key, so it reads as PDF; a public group's stored file stays out of reach.
+    public static func read(items: Data, attachments: [Data] = [], library: ZoteroPaperAPI.Library) throws -> PaperPage {
         guard items.count <= maximumBytes, attachments.allSatisfy({ $0.count <= maximumBytes }) else {
             throw ZoteroPaperReaderError.responseTooLarge
         }
@@ -90,7 +50,7 @@ public enum ZoteroPaperReader {
         var entries: [PaperEntry] = []
         var skipped = rows.count - records.count
         for record in records {
-            guard let entry = entry(from: record, children: children[record.key] ?? [], groupID: groupID) else {
+            guard let entry = entry(from: record, children: children[record.key] ?? [], library: library) else {
                 skipped += 1
                 continue
             }
@@ -107,7 +67,7 @@ public enum ZoteroPaperReader {
 
     private static let notPapers: Set<String> = ["note", "attachment", "annotation"]
 
-    private static func entry(from record: Record, children: [Record], groupID: Int) -> PaperEntry? {
+    private static func entry(from record: Record, children: [Record], library: ZoteroPaperAPI.Library) -> PaperEntry? {
         let data = record.data
         guard !notPapers.contains(data.itemType) else { return nil }
         let title = clean(data.title) ?? clean(data.shortTitle)
@@ -127,8 +87,14 @@ public enum ZoteroPaperReader {
                 break
             }
         }
+        let id: String
+        let ownLibrary: Bool
+        switch library {
+        case .group(let groupID): (id, ownLibrary) = ("zotero:\(groupID):\(record.key)", false)
+        case .user(let userID): (id, ownLibrary) = ("zotero:user:\(userID):\(record.key)", true)
+        }
         return PaperEntry(
-            id: "zotero:\(groupID):\(record.key)",
+            id: id,
             provider: .zotero,
             title: title,
             authors: authors(data.creators ?? []),
@@ -140,9 +106,12 @@ public enum ZoteroPaperReader {
             abstract: abstract,
             pdfURL: pdfURL,
             storedPDFAttachmentKey: storedKey,
+            storedPDFReachable: ownLibrary && storedKey != nil,
+            // The Zotero page of an item in a listener's own library names their username, so it is never kept:
+            // it would reach an abstract item's link or a stored PDF's address (#853).
             pageURL: doi.flatMap(doiAddress)
                 ?? webURL(data.url)
-                ?? webURL(record.links?.alternate?.href),
+                ?? (ownLibrary ? nil : webURL(record.links?.alternate?.href)),
             dateJoined: data.dateAdded.flatMap(date(from:))
         )
     }
@@ -318,6 +287,112 @@ public enum ZoteroPaperReader {
         private enum Key: String, CodingKey {
             case itemType, title, shortTitle, creators, abstractNote, publicationTitle, bookTitle, proceedingsTitle
             case encyclopediaTitle, date, DOI, PMID, extra, url, dateAdded, parentItem, linkMode, contentType
+        }
+    }
+}
+
+/// One collection of a Zotero library, as "Your collections" lists it.
+public struct ZoteroCollection: Equatable, Identifiable, Sendable {
+    public var key: String
+    public var name: String
+    /// The collection it sits in, when it is a subcollection.
+    public var parentKey: String?
+    /// Zotero's own count of the items in it, when the reply carries one.
+    public var itemCount: Int?
+
+    public var id: String { key }
+
+    public init(key: String, name: String, parentKey: String? = nil, itemCount: Int? = nil) {
+        self.key = key
+        self.name = name
+        self.parentKey = parentKey
+        self.itemCount = itemCount
+    }
+}
+
+/// The names a followed list shows, and the collections of a library, read from Zotero's JSON.
+public enum ZoteroCollectionReader {
+    /// A page of `<library>/collections`, sorted by name as Zotero's own app lists them. Rows without a usable key or
+    /// name are left out.
+    public static func collections(_ data: Data) throws -> [ZoteroCollection] {
+        guard data.count <= ZoteroPaperReader.maximumBytes else { throw ZoteroPaperReaderError.responseTooLarge }
+        let rows: [ZoteroPaperReader.Lossy<CollectionRecord>]
+        do { rows = try JSONDecoder().decode([ZoteroPaperReader.Lossy<CollectionRecord>].self, from: data) } catch {
+            throw ZoteroPaperReaderError.notZoteroJSON
+        }
+        let collections = rows.compactMap(\.value).compactMap { record -> ZoteroCollection? in
+            guard let name = record.data.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty,
+                  record.key.count == 8
+            else { return nil }
+            return ZoteroCollection(key: record.key, name: name, parentKey: record.data.parentCollection, itemCount: record.meta?.numItems)
+        }
+        return collections.sorted { lhs, rhs in
+            let order = lhs.name.localizedStandardCompare(rhs.name)
+            return order == .orderedSame ? lhs.key < rhs.key : order == .orderedAscending
+        }
+    }
+
+    /// The name in a collection's or a group's own record (`data.name`).
+    public static func name(_ data: Data) -> String? {
+        guard data.count <= ZoteroPaperReader.maximumBytes,
+              let record = try? JSONDecoder().decode(NamedRecord.self, from: data),
+              let name = record.data.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty
+        else { return nil }
+        return name
+    }
+
+    /// The library's own name, which every record carries (`library.name`): a group's name, or for the listener's
+    /// own library what Zotero calls it.
+    public static func libraryName(_ data: Data) -> String? {
+        let decoder = JSONDecoder()
+        if let rows = try? decoder.decode([ZoteroPaperReader.Lossy<LibraryHolder>].self, from: data) {
+            return rows.compactMap(\.value).compactMap(\.library?.name).first { !$0.isEmpty }
+        }
+        return (try? decoder.decode(LibraryHolder.self, from: data))?.library?.name
+    }
+
+    struct CollectionRecord: Decodable {
+        var key: String
+        var data: Fields
+        var meta: Meta?
+
+        struct Fields: Decodable {
+            var name: String?
+            /// `false` at the top level, a key in a subcollection.
+            var parentCollection: String?
+
+            init(from decoder: Decoder) throws {
+                let box = try decoder.container(keyedBy: Key.self)
+                name = box.text(.name)
+                parentCollection = box.text(.parentCollection)
+            }
+
+            private enum Key: String, CodingKey { case name, parentCollection }
+        }
+
+        struct Meta: Decodable {
+            var numItems: Int?
+            init(from decoder: Decoder) throws {
+                let box = try decoder.container(keyedBy: Key.self)
+                numItems = try? box.decodeIfPresent(Int.self, forKey: .numItems)
+            }
+            private enum Key: String, CodingKey { case numItems }
+        }
+    }
+
+    struct NamedRecord: Decodable {
+        var data: CollectionRecord.Fields
+    }
+
+    struct LibraryHolder: Decodable {
+        var library: Library?
+        struct Library: Decodable {
+            var name: String?
+            init(from decoder: Decoder) throws {
+                let box = try decoder.container(keyedBy: Key.self)
+                name = box.text(.name)
+            }
+            private enum Key: String, CodingKey { case name }
         }
     }
 }

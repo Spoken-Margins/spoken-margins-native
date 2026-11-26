@@ -12,7 +12,8 @@ public enum WatchNowPlayingFeed {
 
     /// The item the player has loaded, as the Watch shows it, or nil when nothing is loaded. Loaded means an item that is
     /// starting, playing, paused, or paused under a Margin being recorded on the phone; an idle or failed player is not.
-    public static func nowPlaying(from snapshot: SessionSnapshot, at now: Date) -> WatchNowPlaying? {
+    /// `mediaFile` is the file the engine plays, which the snapshot doesn't carry (#4779).
+    public static func nowPlaying(from snapshot: SessionSnapshot, at now: Date, mediaFile: String? = nil) -> WatchNowPlaying? {
         guard let itemId = snapshot.itemId?.trimmingCharacters(in: .whitespacesAndNewlines), !itemId.isEmpty else { return nil }
         switch snapshot.status {
         case .starting, .playing, .paused, .recording: break
@@ -28,11 +29,12 @@ public enum WatchNowPlayingFeed {
             isPlaying: snapshot.status.isPlaybackActive,
             positionMs: max(0, snapshot.currentMediaTimeMs ?? 0),
             positionAt: now,
-            rate: hasMediaTime ? (snapshot.playbackRate.isFinite && snapshot.playbackRate > 0 ? snapshot.playbackRate : 1) : 0
+            rate: hasMediaTime ? (snapshot.playbackRate.isFinite && snapshot.playbackRate > 0 ? snapshot.playbackRate : 1) : 0,
+            mediaFile: mediaFile
         )
     }
 
-    /// Whether `next` is worth sending, given what was last sent: a different item, title, play state or rate, or a
+    /// Whether `next` is worth sending, given what was last sent: a different item, title, play state, rate or file, or a
     /// position off where the Watch will predict it by more than `positionTolerance` (a seek, a skip, a stall). Steady
     /// playback never sends again, because the Watch moves the position on by itself.
     public static func shouldPublish(previous: WatchNowPlaying?, next: WatchNowPlaying?) -> Bool {
@@ -40,7 +42,8 @@ public enum WatchNowPlayingFeed {
         case (nil, nil): return false
         case (nil, _?), (_?, nil): return true
         case let (before?, after?):
-            if before.itemId != after.itemId || before.title != after.title || before.isPlaying != after.isPlaying || before.rate != after.rate {
+            if before.itemId != after.itemId || before.title != after.title || before.isPlaying != after.isPlaying || before.rate != after.rate
+                || before.mediaFile != after.mediaFile {
                 return true
             }
             let predicted = before.position(at: after.positionAt)

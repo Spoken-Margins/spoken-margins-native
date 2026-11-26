@@ -4,6 +4,11 @@ Someone who found Spoken Margins by searching and has no iPhone saw three TestFl
 owner said yes on 2026-11-12 ("4170 yes") to linking the web listener from this page, and the line must not promise
 share links, which stay behind the build-time flag and the lawyer's answer. The invite flow Build 36 depends on, the
 two TestFlight links and the steps, stay as they were.
+
+#5267: a friend on an older iPhone went through all three TestFlight steps before finding the app needs iOS 26, and
+step 3 ended "Done." with nothing telling them to go back and tap their friend's link, so they opened an app that held
+none of the Margins they came for. The page now says what the app needs before step 1, points older devices to the
+browser line, and ends step 3 with the way back to the friend's link.
 """
 import re
 import unittest
@@ -40,9 +45,26 @@ class JoinPageTests(unittest.TestCase):
 
     def test_the_words_are_plain_and_promise_no_share_links(self):
         words = re.sub(r"<[^>]+>", "", web_line(page()))
-        self.assertEqual(words, "No iPhone or iPad? Use Spoken Margins in your browser.")
+        self.assertEqual(words, "Older iPhone or iPad, or another phone? Use Spoken Margins in your browser")
         for banned in ("link", "share", "invite", "friend"):
             self.assertNotIn(banned, words.lower())
+
+    def test_the_ios_26_requirement_comes_before_step_one_and_leads_to_the_browser_line(self):
+        html = page()
+        match = re.search(r'<p class="needs">(.*?)</p>', html, re.S)
+        self.assertIsNotNone(match, 'the join page has no <p class="needs"> line saying what the app needs')
+        words = re.sub(r"<[^>]+>", "", match.group(1))
+        self.assertIn("The app needs an iPhone or iPad on iOS 26 or later.", words)
+        self.assertLess(html.index('class="needs"'), html.index('class="web"'))
+        self.assertLess(html.index('class="needs"'), html.index("<ol>"))
+        self.assertIn("Older iPhone or iPad", re.sub(r"<[^>]+>", "", web_line(html)))
+
+    def test_the_last_step_sends_them_back_to_their_friends_link(self):
+        steps = re.findall(r"<li[^>]*>(.*?)</li>", page(), re.S)
+        self.assertEqual(len(steps), 3)
+        last = re.sub(r"<[^>]+>", "", steps[-1])
+        self.assertIn("Go back to their message and tap their link again.", last)
+        self.assertNotIn("Done.", last)
 
     def test_the_testflight_steps_and_links_are_unchanged(self):
         html = page()

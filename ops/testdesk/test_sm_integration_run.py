@@ -2196,15 +2196,30 @@ class ScreenTourTests(unittest.TestCase):
 
 
 class ExclusiveSlotTests(unittest.TestCase):
-    """The job keeps the decision lock for its whole run: it guards the shared Test Runner device (#4730 audit)."""
+    """The job holds its slot, not the decision lock: a desk boot must not wait out the whole run (#4736)."""
 
-    def test_the_job_keeps_the_decision_lock_while_it_holds_its_slot(self):
+    def test_the_job_lets_the_decision_lock_go_and_a_desk_boot_gets_the_second_slot(self):
         import fcntl
+        import io
         state = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, state, True)
-        with patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}), run.exclusive_slot() as fds:
-            self.assertEqual(len(fds), 2, 'slot and decision descriptors both go to verify-tests')
-            with (state / run.lane_slots.SIMULATOR_DECISION).open('a+') as probe:
-                with self.assertRaises(BlockingIOError):
-                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        environment = patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state), 'SM_LANE_MEMORY_PRESSURE': '1'})
+        environment.start()
+        self.addCleanup(environment.stop)
+        with run.exclusive_slot() as fds:
+            self.assertEqual(len(fds), 1, 'only the slot descriptor goes to verify-tests')
             self.assertTrue(run.lane_slots.simulator_job_running())
+            with (state / run.lane_slots.SIMULATOR_DECISION).open('a+') as probe:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)  # free: raises BlockingIOError if the job kept it
+                fcntl.flock(probe, fcntl.LOCK_UN)
+            # What `lane-sim-boot --fresh` does, under the normal second-slot rule (memory pressure normal here).
+            desk = run.lane_slots.acquire_simulator_slot('lane-sim-boot desk', out=io.StringIO(), max_wait=0)
+            try:
+                self.assertEqual(run.lane_slots.simulator_jobs_running(), 2)
+            finally:
+                run.lane_slots.release_handle(desk)
+            # A second integration job still never starts beside it.
+            with self.assertRaises(TimeoutError):
+                with run.exclusive_slot():
+                    pass
+        self.assertFalse(run.lane_slots.simulator_job_running(), 'the slot ends with the job')

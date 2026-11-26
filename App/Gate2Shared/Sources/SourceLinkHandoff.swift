@@ -415,3 +415,92 @@ public enum SourceLinkHandoffURL {
         return try store.handoff(payloadID: payloadID)
     }
 }
+
+/// What the share extension did with the last share, kept in the App Group for Diagnostics (#271, #5338). It holds
+/// type identifiers, what each tried representation yielded, the route taken, the random id of the handoff it wrote
+/// and, on a failure, the error's domain and code: never a URL, title or text. The app reads it on each drain, so a
+/// share that never reached the app, or reached it as a link instead of the page Safari read, shows in an export,
+/// and the handoff id ties it to the app's own `pending…Payload:<id>` result.
+public struct ShareExtensionShareRecord: Codable, Equatable, Sendable {
+    public struct Candidate: Codable, Equatable, Sendable {
+        /// The representation's type identifier.
+        public var type: String
+        /// `content`, `link`, `shared_text`, `nothing` or `failed`.
+        public var outcome: String
+        /// For Safari's page property list: `results_missing` (the preprocessor's results never arrived), `no_text`
+        /// or `text`. Nil for other representations.
+        public var detail: String?
+
+        public init(type: String, outcome: String, detail: String? = nil) {
+            self.type = type
+            self.outcome = outcome
+            self.detail = detail
+        }
+    }
+
+    public static let folderName = "ShareExtensionDiagnostics"
+    public static let fileName = "last-share.json"
+
+    public var recordedAt: String
+    public var attachmentTypes: [[String]]
+    public var route: String
+    /// The representations tried, in order. Nil in a record from a build before #5338.
+    public var candidates: [Candidate]?
+    public var handoffId: String?
+    /// An error's `domain:code` (`failureCode`), never its message.
+    public var errorCode: String?
+
+    public init(
+        recordedAt: Date = Date(),
+        attachmentTypes: [[String]],
+        route: String,
+        candidates: [Candidate]? = nil,
+        handoffId: String? = nil,
+        errorCode: String? = nil
+    ) {
+        self.recordedAt = ISO8601DateFormatter().string(from: recordedAt)
+        self.attachmentTypes = attachmentTypes
+        self.route = route
+        self.candidates = candidates
+        self.handoffId = handoffId
+        self.errorCode = errorCode
+    }
+
+    /// An error as its domain and code only, so no message text (which can name a page or file) is kept.
+    public static func failureCode(_ error: Error) -> String {
+        let nsError = error as NSError
+        return "\(nsError.domain):\(nsError.code)"
+    }
+
+    public func save(inAppGroupRoot root: URL, fileManager: FileManager = .default) throws {
+        let directory = root.appendingPathComponent(Self.folderName, isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(self).write(to: directory.appendingPathComponent(Self.fileName), options: [.atomic])
+    }
+
+    /// The last record, or nil when there is none or it can't be read.
+    public static func load(fromAppGroupRoot root: URL) -> ShareExtensionShareRecord? {
+        let url = root.appendingPathComponent(folderName, isDirectory: true).appendingPathComponent(fileName)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(ShareExtensionShareRecord.self, from: data)
+    }
+
+    /// One Diagnostics line, such as
+    /// `at=2026-11-25T11:40:00Z; route=share_sheet; handoff=source-link-…; tried=com.apple.property-list:nothing(results_missing), public.url:link`.
+    public var diagnosticValue: String {
+        var parts = ["at=\(recordedAt)", "route=\(route)"]
+        if let handoffId { parts.append("handoff=\(handoffId)") }
+        if let errorCode { parts.append("error=\(errorCode)") }
+        if let candidates {
+            let tried = candidates.map { candidate in
+                "\(candidate.type):\(candidate.outcome)" + (candidate.detail.map { "(\($0))" } ?? "")
+            }
+            parts.append("tried=\(tried.isEmpty ? "none" : tried.joined(separator: ", "))")
+        } else {
+            parts.append("offered=\(attachmentTypes.map { $0.joined(separator: "+") }.joined(separator: ", "))")
+        }
+        return parts.joined(separator: "; ")
+    }
+}

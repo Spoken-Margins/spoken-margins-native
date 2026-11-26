@@ -76,7 +76,10 @@ class ReadinessTable(unittest.TestCase):
             ('another label', {'p': pr(labels=[{'name': 'needs-mac'}])}, True, 'ready'),
             ('conflict', {'p': pr(mergeable=False, mergeable_state='dirty')}, False, 'conflicts'),
             ('failing check', {'runs': GREEN + [run('host', conclusion='failure')]}, False, 'checks failed: host'),
-            ('cancelled check', {'runs': [run('lane', conclusion='cancelled')]}, False, 'checks failed'),
+            ('cancelled required check', {'runs': [run('hosted fast: portable', conclusion='cancelled')]},
+             False, 'checks failed: hosted fast: portable'),
+            ('cancelled lane-conflicts check (#5249)',
+             {'runs': GREEN + [run('check', conclusion='cancelled')]}, True, 'ready'),
             ('pending check', {'runs': GREEN + [run('lane-conflicts', status='queued', conclusion=None)]},
              False, 'checks pending'),
             ('in-progress check', {'runs': [run('lane', status='in_progress', conclusion=None)]}, False, 'pending'),
@@ -189,6 +192,36 @@ class SameRulesAsTheMergeRules(unittest.TestCase):
         self.assertEqual(alert.AUDITS, lane.AUDITS)
         self.assertEqual(alert.AUDIT_SHA.pattern, lane.AUDIT_SHA.pattern)
         self.assertEqual(alert.CLEAN_AUDIT.pattern, lane.CLEAN_AUDIT.pattern)
+
+    def test_cancel_superseded_checks_are_lane_conflicts_jobs_and_not_required(self):
+        import required_checks
+        import yaml
+        jobs = yaml.safe_load((SCRIPTS.parent / '.github/workflows/lane-conflicts.yml').read_text())['jobs']
+        names = {job.get('name', job_id) for job_id, job in jobs.items()}
+        self.assertLessEqual(alert.CANCEL_SUPERSEDED_CHECKS, names)
+        self.assertFalse(alert.CANCEL_SUPERSEDED_CHECKS & set(required_checks.REQUIRED_CHECKS))
+
+
+class CancelledRuns(unittest.TestCase):
+    """#5249: lane-conflicts' one concurrency group cancels older runs by design; that grey `check` held #5161,
+    #5177, #5185 and #5186 out of the audit for 3 to 4 hours as "checks failed"."""
+
+    def test_a_cancelled_lane_conflicts_check_is_not_a_failure(self):
+        self.assertEqual(alert.checks_state([run('hosted fast: portable'), run('check', conclusion='cancelled')], []),
+                         ('ok', []))
+
+    def test_any_other_cancelled_check_still_fails(self):
+        # Required checks, and checks such as `compat` (packet and database compatibility) and `signoff` whose cancelled
+        # run checked nothing.
+        for name in ('hosted fast: portable', 'hosted fast: scope', 'hosted web: build and Playwright', 'compat',
+                     'signoff', 'workflow files parse'):
+            with self.subTest(name=name):
+                self.assertEqual(alert.checks_state([run(name, conclusion='cancelled')], []), ('failed', [name]))
+
+    def test_other_endings_of_a_check_that_is_not_required_still_fail(self):
+        for conclusion in sorted(alert.FAILED - {'cancelled'}):
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(alert.checks_state([run('check', conclusion=conclusion)], []), ('failed', ['check']))
 
 
 class FakeApi:

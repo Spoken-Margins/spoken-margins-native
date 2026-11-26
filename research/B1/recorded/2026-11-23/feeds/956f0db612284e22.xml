@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:atom="http://www.w3.org/2005/Atom" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:sy="http://purl.org/rss/1.0/modules/syndication/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <title>Philosophy Talk</title>
+    <link>https://philosophytalk.org</link>
+    <pubDate>Sun, 22 Nov 2026 20:00:00 -0000</pubDate>
+    <lastBuildDate>Sat, 21 Nov 2026 16:58:53 -0000</lastBuildDate>
+    <ttl>60</ttl>
+    <language>en-US</language>
+    <copyright>© 2025 Philosophy Talk</copyright>
+    <webMaster>help@prx.org (PRX)</webMaster>
+    <description>
+      <![CDATA[<p>"The program that questions everything—except your intelligence." <em>Philosophy Talk </em>began as a weekly one-hour radio series and has been on the air for more than two decades. <br><br>The host-professors bring clarity, depth, and humor to everyday topics that are lofty (Truth, Beauty, Justice), arresting (Terrorism, Intelligent Design, Suicide), and engaging (Baseball, Love, Happiness). This is not a lecture or a college course; it's philosophy in action! <br><br>From timeless philosophical questions about the ultimate nature of things to contemporary social and political issues, as well as our most fundamental beliefs about science, morality, and the human condition, <em>Philosophy Talk </em>invites you to challenge your assumptions and think about things in new ways.</p>]]>
+    </description>
+    <managingEditor>devon@philosophytalk.org ()</managingEditor>
+    <generator>PRX Feeder v1.0.0</generator>
+    <docs>http://blogs.law.harvard.edu/tech/rss</docs>
+    <image>
+      <url>https://f.prxu.org/15207/images/2590c7d5-183c-42b7-91cc-a660407457ca/Logo_sq_hires_blank-copy-2.jpg</url>
+      <title>Philosophy Talk</title>
+      <link>https://philosophytalk.org</link>
+      <width>1400</width>
+      <height>1400</height>
+      <description>Philosophy Talk</description>
+    </image>
+    <atom:link href="https://publicfeeds.net/f/15207/feed-rss.xml" rel="self" type="application/rss+xml"/>
+    <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub"/>
+    <itunes:author>Philosophy Talk</itunes:author>
+    <itunes:type>episodic</itunes:type>
+    <itunes:category text="Education"/>
+    <itunes:image href="https://f.prxu.org/15207/images/b291de03-20e2-4de9-a3bc-50a28fe7fb64/Logo_sq_hires_blank-copy-2.jpg"/>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:owner>
+      <itunes:email>devon@philosophytalk.org</itunes:email>
+      <itunes:name>Philosophy Talk</itunes:name>
+    </itunes:owner>
+    <itunes:subtitle>Philosophy Talk</itunes:subtitle>
+    <itunes:summary>
+      <![CDATA["The program that questions everything—except your intelligence." Philosophy Talk began as a weekly one-hour radio series and has been on the air for more than two decades. 
+
+The host-professors bring clarity, depth, and humor to everyday topics that are lofty (Truth, Beauty, Justice), arresting (Terrorism, Intelligent Design, Suicide), and engaging (Baseball, Love, Happiness). This is not a lecture or a college course; it's philosophy in action! 
+
+From timeless philosophical questions about the ultimate nature of things to contemporary social and political issues, as well as our most fundamental beliefs about science, morality, and the human condition, Philosophy Talk invites you to challenge your assumptions and think about things in new ways.]]>
+    </itunes:summary>
+    <media:copyright>© 2025 Philosophy Talk</media:copyright>
+    <media:thumbnail url="https://f.prxu.org/15207/images/2590c7d5-183c-42b7-91cc-a660407457ca/Logo_sq_hires_blank-copy-2.jpg"/>
+    <media:category scheme="http://www.itunes.com/dtds/podcast-1.0.dtd">Education</media:category>
+    <podcast:guid>5eca0583-8892-595b-9d59-0fc7e9584772</podcast:guid>
+    <podcast:podping usesPodping="true"/>
+    <podcast:locked>yes</podcast:locked>
+    
