@@ -77,16 +77,20 @@ final class AdaptiveStackFitTests: XCTestCase {
 
     /// #5334: at the largest text size the share sheet's back button read "Back to", with "selection" dropped and no
     /// ellipsis, so it no longer said where it went. Its title is too long for one line at that size on the narrowest
-    /// phone, so a whole title is at least two lines high; one line is the cut-off button. "Back" alone is one line.
-    func testTheShareSheetBackButtonWrapsItsWholeTitleAtTheLargestTextSize() {
+    /// phone, so it needs two lines. Rendered on its own with no height limit the button already took two lines (a
+    /// hosted run of this file without the fix passed), so the sheet must have offered it less height than that and
+    /// the label took it. Here it is offered one line's height, as a squeezed container would, and must still keep its
+    /// whole title: at least two lines high. "Back" alone is one line.
+    func testTheShareSheetBackButtonKeepsItsWholeTitleWhenOfferedOneLine() {
         let size = DynamicTypeSize.accessibility5
         let oneLine = height(of: Build23BackToSelectionButton(identifier: "back", title: "Back", action: {}), size: size)
         XCTAssertGreaterThan(oneLine, 0, "the back button did not render")
         for title in ["Back to selection", ShareReviewCardWords.backToYourMargins] {
-            let whole = height(of: Build23BackToSelectionButton(identifier: "back", title: title, action: {}), size: size)
+            let button = Build23BackToSelectionButton(identifier: "back", title: title, action: {})
+            let whole = height(of: button, size: size, proposedHeight: oneLine)
             XCTAssertGreaterThan(
                 whole, oneLine * 1.5,
-                "\(size): \"\(title)\" is \(whole) pt high, about one line (\(oneLine) pt), so the rest of its title was cut off"
+                "\(size): offered one line (\(oneLine) pt), \"\(title)\" took \(whole) pt, so the rest of its title was cut off"
             )
         }
     }
@@ -117,9 +121,9 @@ final class AdaptiveStackFitTests: XCTestCase {
         }
     }
 
-    private func height(of view: some View, size: DynamicTypeSize) -> CGFloat {
+    private func height(of view: some View, size: DynamicTypeSize, proposedHeight: CGFloat? = nil) -> CGFloat {
         let renderer = ImageRenderer(content: view.environment(\.dynamicTypeSize, size))
-        renderer.proposedSize = ProposedViewSize(width: Self.width, height: nil)
+        renderer.proposedSize = ProposedViewSize(width: Self.width, height: proposedHeight)
         renderer.scale = 2
         return renderer.uiImage?.size.height ?? 0
     }
