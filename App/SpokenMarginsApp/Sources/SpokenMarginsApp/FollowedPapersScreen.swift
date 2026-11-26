@@ -70,7 +70,7 @@ struct FollowedPapersScreen: View {
             }
             Section {
                 if rows.isEmpty {
-                    Text(PaperSourceScreen.emptyText)
+                    Text(PaperSourceScreen.emptyText(for: record.source))
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
