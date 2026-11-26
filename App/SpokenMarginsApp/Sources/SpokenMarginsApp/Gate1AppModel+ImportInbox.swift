@@ -195,6 +195,13 @@ extension Gate1AppModel {
 
         do {
             let handoffStore = try resolvedSourceLinkHandoffStore()
+            // What the share extension did with the last share (#5338): the route, what each representation yielded and
+            // the handoff id, which matches the `pending…Payload:<id>` result below. Read on every drain, so it is in an
+            // export made after a relaunch too.
+            let root = handoffStore.rootDirectory
+            if let lastShare = try await Self.offMain({ ShareExtensionShareRecord.load(fromAppGroupRoot: root) }) {
+                diagnostics["lastShareExtension"] = lastShare.diagnosticValue
+            }
             let payloadIDs = try await Self.offMain { try handoffStore.pendingPayloadIDs() }
             diagnostics["pendingSourceLinkPayloads"] = "\(payloadIDs.count)"
             // A connection failure leaves the link pending for the next activation or the network's
