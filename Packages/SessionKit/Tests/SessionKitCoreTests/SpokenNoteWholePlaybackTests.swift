@@ -260,11 +260,30 @@ final class SpokenNoteWholePlaybackTests: XCTestCase {
             XCTAssertEqual(recorded.sourceOffset(mediaTimeMs: 1_600), recorded.sentenceStarts[1])
         }
 
+        // A Margin is saved on the recording's clock whichever version plays (#4779). One with no segment id (made while
+        // the note had no words) at 1.6 s of the recording, in the pause the version cuts, sits after sentence two on
+        // every clock, as on the note's own screen; the version's clock would put it after sentence three.
+        let itemId = SpokenNoteItem.itemId(forNoteId: store.load().id)
+        let margin = Interjection(
+            id: "m", itemId: itemId, sessionId: "session", targetType: .item, targetId: itemId,
+            createdAt: Date(timeIntervalSince1970: 0), roughPercent: 50,
+            anchor: Anchor(anchorType: .transcript, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "",
+                           mediaTimeMs: 1_600, transcriptSegmentId: nil),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+            displayText: "A Margin", status: "active")
+        for (playing, url) in [("the version", cleanURL), ("the recording", SpokenNoteWholePlayback.audioURL(inFolder: store.folderURL)),
+                               ("nothing", nil)] {
+            let shown = words(playing: url)
+            XCTAssertEqual(shown.marginItems([margin], itemId: itemId).map(\.afterRowId), [shown.rows[1].id], "playing \(playing)")
+        }
+
         try append("b", ["Four."], to: store)
         _ = try await SpokenNoteWholePlayback.prepare(store: store, joiner: FakeJoiner(), writer: RecordingWriter())
         let stale = words(playing: cleanURL)
         XCTAssertEqual(stale.rows.map(\.startMs), [nil, nil, nil, nil], "a version that no longer matches gives no times")
         XCTAssertNil(stale.sourceOffset(mediaTimeMs: 1_600))
+        XCTAssertEqual(stale.marginItems([margin], itemId: itemId).map(\.afterRowId), [stale.rows[1].id],
+                       "a version that no longer matches keeps the Margin rows")
     }
 
     func testTheFirstPlayJoinsTakesInOrderAndLaterPlaysReuseTheFile() async throws {

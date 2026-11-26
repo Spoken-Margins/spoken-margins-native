@@ -54,17 +54,28 @@ public enum SpokenNoteNowPassage {
         private let timed: [(startMs: Int, row: Int)]
         private let timedIsSorted: Bool
         private let timeline: SpokenNoteWholeTimeline?
+        /// The joined recording's timeline, which Margins are placed on: their times are saved on the recording's clock
+        /// whichever version plays (#4779), as the note's own screen reads them.
+        private let marginTimeline: SpokenNoteWholeTimeline?
 
         /// The words on the clock of the file the open session plays (`playingMediaURL`; nil when the note isn't the
         /// open item): the Shorter pauses version's when it names that version, else the joined recording's (#4779).
         /// Now lights and seeks by these times. A version that no longer matches the takes gives rows with no times,
-        /// never the recording's. It reads files, so call it off the main actor.
+        /// never the recording's. Margins are placed on the recording's timeline either way. It reads files, so call it
+        /// off the main actor.
         public init(note: SpokenNote, inFolder folder: URL, playingMediaURL: String?) {
-            self.init(note: note, timeline: SpokenNoteWholePlayback.timeline(
-                of: note, inFolder: folder, playingMediaURL: playingMediaURL))
+            self.init(
+                note: note,
+                timeline: SpokenNoteWholePlayback.timeline(of: note, inFolder: folder, playingMediaURL: playingMediaURL),
+                marginTimeline: SpokenNoteWholePlayback.timeline(of: note, inFolder: folder))
         }
 
+        /// The words on `timeline`, with Margins placed on it too: the recording's timeline, or none.
         public init(note: SpokenNote, timeline: SpokenNoteWholeTimeline?) {
+            self.init(note: note, timeline: timeline, marginTimeline: timeline)
+        }
+
+        private init(note: SpokenNote, timeline: SpokenNoteWholeTimeline?, marginTimeline: SpokenNoteWholeTimeline?) {
             var text = ""
             var starts: [Int] = []
             var rows: [Row] = []
@@ -101,10 +112,12 @@ public enum SpokenNoteNowPassage {
             self.timed = timed
             self.timedIsSorted = zip(timed, timed.dropFirst()).allSatisfy { $0.startMs <= $1.startMs }
             self.timeline = timeline
+            self.marginTimeline = marginTimeline
         }
 
         public static func == (lhs: Words, rhs: Words) -> Bool {
             lhs.text == rhs.text && lhs.rows == rhs.rows && lhs.timeline == rhs.timeline
+                && lhs.marginTimeline == rhs.marginTimeline
         }
 
         public func row(id: Int) -> Row? {
@@ -152,9 +165,10 @@ public enum SpokenNoteNowPassage {
         /// The listener's active Margins on this note as rows, each after the sentence it sits on, found by its segment
         /// id (`SpokenNoteMargins.sentence(of:on:)`), never by its stored character range, which shifts when words arrive
         /// for an earlier take. Ordered by row, then as made. A Margin with no sentence, no saved place, or on anything but
-        /// the note itself gets no row; with no timeline there are none.
+        /// the note itself gets no row; with no recording timeline there are none. A time with no segment id is on the
+        /// recording's clock, so it is looked up there even while the Shorter pauses version plays.
         public func marginItems(_ margins: [Interjection], itemId: String) -> [MarginItem] {
-            guard let timeline else { return [] }
+            guard let timeline = marginTimeline else { return [] }
             var placed: [(row: Int, margin: Interjection)] = []
             for margin in margins where margin.status == "active" && margin.targetType == .item && margin.hasPlace
                 && margin.itemId == itemId {
