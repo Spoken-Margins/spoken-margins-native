@@ -1127,6 +1127,65 @@ test("Safari preprocessor hands over an article page as Markdown with its source
   assert.doesNotMatch(markdown, /Navigation noise|Footer noise/);
 });
 
+// Safari turns the preprocessor's result into a property list before the share
+// extension sees it. A property list has no null, so one JavaScript null (a page
+// with no author or date, such as alignment.anthropic.com, metr.org or
+// example.com) makes the whole result fail to arrive: the extension's
+// loadItem returns nil ("no_item") and the share is refused (#5338).
+function plistUnsafePaths(value, path = "payload") {
+  if (value === null || value === undefined) return [path];
+  if (typeof value === "number") return Number.isFinite(value) ? [] : [path];
+  if (typeof value === "string" || typeof value === "boolean") return [];
+  if (Array.isArray(value)) return value.flatMap((item, index) => plistUnsafePaths(item, `${path}[${index}]`));
+  if (typeof value === "object") {
+    return Object.entries(value).flatMap(([key, item]) => plistUnsafePaths(item, `${path}.${key}`));
+  }
+  return [path];
+}
+
+function runPreprocessorOn(page, href) {
+  const context = { console, URL, document: page, window: { location: { href } } };
+  vm.runInNewContext(fs.readFileSync(preprocessorPath, "utf8"), context);
+  let payload;
+  context.ExtensionPreprocessingJS.run({ completionFunction: (value) => { payload = value; } });
+  return payload;
+}
+
+test("#5338: a page with no author, date or canonical link hands Safari a result with no null in it", () => {
+  const prose = "<p>" + "Alignment research prose. ".repeat(40) + "</p>";
+  const page = browserLikePage({
+    url: "https://alignment.example/2026/post/",
+    head: "<title>A post with no byline</title>",
+    body: `<article><h2>Setup</h2>${prose}</article>`
+  });
+  Object.defineProperty(page, "contentType", { value: "text/html" });
+
+  const payload = runPreprocessorOn(page, "https://alignment.example/2026/post/");
+
+  assert.deepEqual(plistUnsafePaths(payload), []);
+  assert.equal(payload.title, "A post with no byline");
+  assert.equal(payload.documentURL, "https://alignment.example/2026/post/");
+  assert.match(payload.markdown, /Alignment research prose\./);
+  assert.equal("author" in payload, false);
+  assert.equal("publishedAt" in payload, false);
+});
+
+test("#5338: the fallback after an extraction error also hands Safari no null", () => {
+  const page = {
+    URL: "https://example.com/broken",
+    contentType: "text/html",
+    title: "",
+    body: { innerText: "Some page text." },
+    querySelector: () => { throw new Error("broken document"); }
+  };
+
+  const payload = runPreprocessorOn(page, "https://example.com/broken");
+
+  assert.deepEqual(plistUnsafePaths(payload), []);
+  assert.equal(payload.text, "Some page text.");
+  assert.equal(payload.url, "https://example.com/broken");
+});
+
 // Timers that record themselves instead of running; the handle is the record,
 // since the page code treats a falsy handle as "no timer".
 function fakeTimers(timers) {

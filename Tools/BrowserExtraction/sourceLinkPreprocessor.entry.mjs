@@ -90,17 +90,44 @@ async function pagePDFBase64(documentURL) {
   }
 }
 
+// #5338: Safari hands the result to the share extension as a property list, and a
+// property list has no null. One null (a page with no author or date) and the whole
+// result never arrives: the extension's loadItem gets nil and refuses the share.
+// So only strings, finite numbers, booleans, arrays and plain objects go across;
+// a missing value is left out, which the extension already reads as "none".
+function propertyListSafe(value) {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (Array.isArray(value)) {
+    return value.map(propertyListSafe).filter((item) => item !== undefined);
+  }
+  if (typeof value === "object") {
+    const safe = {};
+    for (const [key, item] of Object.entries(value)) {
+      const kept = propertyListSafe(item);
+      if (kept !== undefined) safe[key] = kept;
+    }
+    return safe;
+  }
+  return undefined;
+}
+
+function complete(argumentsObject, payload) {
+  argumentsObject.completionFunction(propertyListSafe(payload));
+}
+
 function completeWithPagePDF(argumentsObject, payload) {
   if (!payload.isPDFDocument || typeof fetch !== "function") {
-    argumentsObject.completionFunction(payload);
+    complete(argumentsObject, payload);
     return;
   }
   pagePDFBase64(payload.documentURL).then(
     (encoded) => {
       if (encoded) payload.pdfBase64 = encoded;
-      argumentsObject.completionFunction(payload);
+      complete(argumentsObject, payload);
     },
-    () => argumentsObject.completionFunction(payload)
+    () => complete(argumentsObject, payload)
   );
 }
 
@@ -137,7 +164,7 @@ globalThis.SourceLinkPreprocessor.prototype = {
         title: document.title || "Shared Web Page",
         text: fallbackText,
         contentFormat: "plain_text",
-        extractionError: error.message
+        extractionError: String(error?.message || error)
       });
     }
   },
