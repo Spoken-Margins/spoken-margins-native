@@ -17,6 +17,9 @@ struct ListeningOptionsColumn<Content: View>: View {
             VStack(alignment: .leading, spacing: 18) {
                 content
             }
+            .containerRelativeFrame(.horizontal, alignment: .leading) { length, _ in
+                max(length - Self.margin * 2, 0)
+            }
             .padding(Self.margin)
         }
     }
@@ -34,10 +37,20 @@ struct ListeningOptionsActionDock: View {
     let showExport: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            detailsButton
-            timelineButton(fixedWidth: true)
-            exportButton
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                detailsButton
+                timelineButton(fixedWidth: true)
+                exportButton
+            }
+            VStack(spacing: 8) {
+                timelineButton(fixedWidth: false)
+                HStack(spacing: 8) {
+                    detailsButton
+                    Spacer(minLength: 0)
+                    exportButton
+                }
+            }
         }
         .font(.subheadline.weight(.semibold))
         .buttonStyle(.bordered)
