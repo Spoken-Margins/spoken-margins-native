@@ -4,6 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 import { build } from "esbuild";
 import { parseHTML } from "linkedom";
+import Defuddle from "defuddle/full";
 import {
   captureReadablePage,
   fallbackReadableMarkdown,
@@ -1156,13 +1157,48 @@ function captureFigures(figures) {
     head: "<title>Figures</title>",
     body: `<article><h1>Title</h1>${articleProse}${figures.join(articleProse)}${articleProse}</article>`
   });
-  const before = document.documentElement.outerHTML;
-  const payload = withGlobalDocument(document, () =>
-    captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, document)
+  const before = markupInAttributeOrder(document);
+  const nodesBefore = Array.from(document.querySelectorAll("*"));
+  let nodesDuringParse;
+  const payload = whileDefuddleParses(
+    () => { nodesDuringParse = Array.from(document.querySelectorAll("*")); },
+    () => withGlobalDocument(document, () =>
+      captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, document))
   );
   assert.equal(payload.metadata.extractor, "defuddle");
-  assert.equal(document.documentElement.outerHTML, before, "the page is left as it was found");
+  assert.equal(markupInAttributeOrder(document), before, "the page is left as it was found");
+  // While Defuddle reads the page it holds the same element objects in the same
+  // places: nothing was moved, copied or detached, so an embed or player in a
+  // figure keeps its state on the live page.
+  assert.deepEqual(nodesDuringParse, nodesBefore, "no node of the page is swapped out during the capture");
   return payload.text;
+}
+
+function whileDefuddleParses(observe, run) {
+  const parse = Defuddle.prototype.parse;
+  Defuddle.prototype.parse = function (...args) {
+    observe();
+    return parse.apply(this, args);
+  };
+  try {
+    return run();
+  } finally {
+    Defuddle.prototype.parse = parse;
+  }
+}
+
+// Taking `hidden` off a picture and putting it back moves it to the end of
+// the element's attributes. Order carries no meaning, so the page's markup is
+// compared with each element's attributes sorted.
+function markupInAttributeOrder(document) {
+  const copy = document.documentElement.cloneNode(true);
+  for (const element of [copy, ...copy.querySelectorAll("*")]) {
+    const attributes = Array.from(element.attributes, ({ name, value }) => [name, value])
+      .sort(([a], [b]) => a.localeCompare(b));
+    attributes.forEach(([name]) => element.removeAttribute(name));
+    attributes.forEach(([name, value]) => element.setAttribute(name, value));
+  }
+  return copy.outerHTML;
 }
 
 const pictureCount = (text) => (text.match(/!\[[^\]]*\]\([^)]+\)/g) || []).length;
@@ -1241,6 +1277,44 @@ test("#5365: neighbours of the interactive figure: chart only, canvas, an icon i
   assert.equal(pictureCount(text), 1);
   assert.ok(text.includes("Figure W. Wrapped caption.") && !text.includes("wrapped legend"));
   assert.ok(!text.includes("legend word"));
+});
+
+test("#5365 audit: content that shares a figure with an icon or a chart is never removed as the chart's block", () => {
+  // A comparison table with tick icons in its cells keeps every cell.
+  let text = captureFigures([`<figure class="table"><table><tr><th>Plan</th><th>Offline</th></tr>`
+    + `<tr><td>Basic plan row</td><td><svg viewBox="0 0 10 10"><path d="M0 0"/></svg></td></tr></table>`
+    + `<figcaption>Table 2. Plans.</figcaption></figure>`]);
+  assert.ok(text.includes("Basic plan row"), text);
+  assert.ok(text.includes("Table 2. Plans."));
+
+  // A copy button inside the <pre>, or beside it in a wrapper, leaves the code.
+  text = captureFigures([`<figure><pre><code>npm install inside-pre</code><button><svg><path d="M0 0"/></svg></button></pre>`
+    + `<figcaption>Figure K1. Copy inside.</figcaption></figure>`]);
+  assert.ok(text.includes("npm install inside-pre"), text);
+  text = captureFigures([`<figure><div class="code-wrap"><pre><code>npm install in-wrapper</code></pre><button><svg><path d="M0 0"/></svg></button></div>`
+    + `<figcaption>Figure K2. Copy in a wrapper.</figcaption></figure>`]);
+  assert.ok(text.includes("npm install in-wrapper"), text);
+
+  // A pull quote with a quote-mark <svg> keeps its words.
+  text = captureFigures([`<figure><blockquote><p>Quoted words stay in the capture.</p><svg class="quote-mark"><path d="M0 0"/></svg></blockquote>`
+    + `<figcaption>Quote author</figcaption></figure>`]);
+  assert.ok(text.includes("Quoted words stay in the capture."), text);
+
+  // A video in a wrapper with an <svg> play button: the wrapper is not the chart's block.
+  const document = browserLikePage({
+    url: "https://example.com/video",
+    head: "<title>Video</title>",
+    body: `<article><h1>Title</h1>${articleProse}<figure><div class="video-wrap"><video src="clip.mp4" controls></video>`
+      + `<button><svg><path d="M0 0"/></svg></button></div><figcaption>Figure V. A clip.</figcaption></figure>${articleProse}</article>`
+  });
+  const wrap = document.querySelector(".video-wrap");
+  const hiddenDuringCapture = [];
+  whileDefuddleParses(
+    () => hiddenDuringCapture.push(wrap.getAttribute("style"), document.querySelector("video").getAttribute("style")),
+    () => withGlobalDocument(document, () =>
+      captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, document))
+  );
+  assert.deepEqual(hiddenDuringCapture, [null, null], "only the play button's own block is hidden");
 });
 
 // The app ships the built scripts, and the tests above that import the

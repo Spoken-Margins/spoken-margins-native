@@ -196,20 +196,39 @@ function shieldProseFromAdSelectors(documentRef) {
 // <canvas>) and a tooltip, with the same figure as a plain picture hidden
 // beside it for print and for readers without script (#5365). Defuddle drops
 // the hidden picture, the app strips the <svg>, and what is left is the
-// legend's words run together and read aloud. While Defuddle runs, stand in
-// for each such figure a copy without the chart's block (the widest wrapper
-// around the chart that holds no picture and no caption) and with its
-// pictures unhidden, then put the page's own figure back. Code, tables and
-// any other content of the figure stay. `loading` is kept, so a lazy picture
-// the page never loaded is not fetched by the copy.
+// legend's words run together and read aloud. While Defuddle runs, hide each
+// such figure's chart block (the widest wrapper around the chart that holds
+// nothing a listener reads) and unhide its pictures, then put every attribute
+// back. Only attributes change: no node of the page is moved, copied or
+// detached, so an embed or player in the figure keeps its state. `loading` is
+// kept, so a lazy picture the page never loaded is not fetched.
 const CHART_SELECTOR = "svg, canvas";
-const HIDING_ATTRIBUTES = ["class", "style", "hidden", "aria-hidden"];
+// A chart block never grows into or past one of these: it is content a
+// listener reads (a table holding tick icons, a code block holding a copy
+// button, a quote holding a quote mark), or a picture or embed of its own.
+// Buttons, links and labels are not on the list: an interactive legend is
+// made of them, and the block they sit in still stops at the code or table.
+const READABLE_SELECTOR = [
+  "figcaption", "img", "picture", "video", "audio", "iframe", "object", "embed",
+  "table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption",
+  "pre", "code", "blockquote", "p", "ul", "ol", "li", "dl", "dt", "dd",
+  "h1", "h2", "h3", "h4", "h5", "h6", "math", "mjx-assistive-mml"
+].join(", ");
+const HIDDEN_STYLE_DECLARATION = /^\s*(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0)\s*(?:!important)?\s*$/i;
+const HIDDEN_CLASS_TOKEN = /^(?:hidden|invisible|[^[\s]*:(?:hidden|invisible))$/;
+
+function holdsReadableOutside(parent, block) {
+  return Array.from(parent.querySelectorAll(READABLE_SELECTOR))
+    .some(element => !block.contains(element) && !element.contains(block));
+}
 
 function chartBlock(chart, figure) {
   let block = chart;
-  while (block.parentElement && block.parentElement !== figure
-    && !block.parentElement.querySelector("figcaption, img")) {
-    block = block.parentElement;
+  for (let parent = block.parentElement;
+    parent && parent !== figure && !parent.matches(READABLE_SELECTOR)
+      && !holdsReadableOutside(parent, block);
+    parent = block.parentElement) {
+    block = parent;
   }
   return block;
 }
@@ -219,19 +238,47 @@ function chartsOutsideCaption(figure) {
     .filter(element => !element.closest("figcaption"));
 }
 
-function figureWithoutChart(figure) {
-  const copy = figure.cloneNode(true);
-  for (const chart of chartsOutsideCaption(copy)) {
-    if (copy.contains(chart)) {
-      chartBlock(chart, copy).remove();
+function setAttributeWhileCapturing(element, name, value, restores) {
+  const original = element.getAttribute(name);
+  if (original === value) {
+    return;
+  }
+  if (value === null) {
+    element.removeAttribute(name);
+  } else {
+    element.setAttribute(name, value);
+  }
+  restores.push(() => original === null
+    ? element.removeAttribute(name)
+    : element.setAttribute(name, original));
+}
+
+function hideWhileCapturing(element, restores) {
+  const style = (element.getAttribute("style") || "").trim().replace(/;\s*$/, "");
+  setAttributeWhileCapturing(element, "style", style ? `${style}; display: none` : "display: none", restores);
+}
+
+// Attributes are changed in place where they can be, so the page's own markup
+// keeps its attribute order; only `hidden` has to go and come back.
+function unhideWhileCapturing(image, restores) {
+  if (image.hasAttribute("hidden")) {
+    setAttributeWhileCapturing(image, "hidden", null, restores);
+  }
+  if (image.getAttribute("aria-hidden") === "true") {
+    setAttributeWhileCapturing(image, "aria-hidden", "false", restores);
+  }
+  const style = image.getAttribute("style");
+  if (style !== null) {
+    const kept = style.split(";").filter(part => part.trim() && !HIDDEN_STYLE_DECLARATION.test(part));
+    setAttributeWhileCapturing(image, "style", kept.join(";"), restores);
+  }
+  const className = image.getAttribute("class");
+  if (className !== null) {
+    const kept = className.split(/\s+/).filter(token => token && !HIDDEN_CLASS_TOKEN.test(token));
+    if (kept.length !== className.split(/\s+/).filter(Boolean).length) {
+      setAttributeWhileCapturing(image, "class", kept.join(" "), restores);
     }
   }
-  for (const image of copy.querySelectorAll("img")) {
-    if (!image.closest("figcaption")) {
-      HIDING_ATTRIBUTES.forEach(attribute => image.removeAttribute(attribute));
-    }
-  }
-  return copy;
 }
 
 function pictureInteractiveFigures(documentRef) {
@@ -239,12 +286,24 @@ function pictureInteractiveFigures(documentRef) {
   const restore = () => restores.reverse().forEach(undo => undo());
   try {
     for (const figure of documentRef.querySelectorAll("figure")) {
-      if (figure.parentElement?.closest("figure") || !chartsOutsideCaption(figure).length) {
+      if (figure.parentElement?.closest("figure")) {
         continue;
       }
-      const copy = figureWithoutChart(figure);
-      figure.replaceWith(copy);
-      restores.push(() => copy.replaceWith(figure));
+      const charts = chartsOutsideCaption(figure);
+      if (!charts.length) {
+        continue;
+      }
+      const blocks = new Set(charts.map(chart => chartBlock(chart, figure)));
+      for (const block of blocks) {
+        if (![...blocks].some(other => other !== block && other.contains(block))) {
+          hideWhileCapturing(block, restores);
+        }
+      }
+      for (const image of figure.querySelectorAll("img")) {
+        if (!image.closest("figcaption")) {
+          unhideWhileCapturing(image, restores);
+        }
+      }
     }
   } catch (error) {
     restore();
