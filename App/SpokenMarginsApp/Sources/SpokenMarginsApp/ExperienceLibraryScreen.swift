@@ -17,6 +17,8 @@ struct ExperienceLibraryScreen: View {
     @State private var isAudioPreparationQueuePresented = false
     @State private var isPlayQueuePresented = false
     @ObservedObject private var playQueue = PlayQueueState.shared
+    /// Holds the queue entry back while a first add's swipe settles (#5360).
+    @State private var queueReveal = QueueEntryReveal()
     /// The thumbnail each row shows in place of its icon, when the item's feed or page gave one (#3864).
     @ObservedObject private var itemArtwork = ItemArtworkModel.shared
     /// The item whose Continue is waiting on the "hear new Margins first?" question (#474).
@@ -48,6 +50,30 @@ struct ExperienceLibraryScreen: View {
 
     private var continueItem: LibraryItemRow? {
         LibraryPresentation.continueItem(in: model.libraryItems, activeItemId: model.activePlaybackItemId)
+    }
+
+    /// Holds the queue entry back until a first add's swipe has settled, then brings it in; it goes at once when the
+    /// queue empties, and a queue holding items when the Library appears shows with no wait (#5360). Reduce Motion keeps the wait, so the list still holds still under the finger, but drops
+    /// the animation.
+    private func queueEmptinessChanged(isQueued: Bool, onAppear: Bool) {
+        var next = queueReveal
+        if onAppear {
+            next.appeared(isQueued: isQueued)
+            queueReveal = next
+            return
+        }
+        switch next.queueChanged(isQueued: isQueued) {
+        case .hideNow:
+            withMotion(.smooth(duration: 0.24)) { queueReveal = next }
+        case let .showAfter(delay, generation):
+            queueReveal = next
+            Task { @MainActor in
+                try? await Task.sleep(for: delay)
+                var settled = queueReveal
+                guard settled.settleFinished(generation: generation) else { return }
+                withMotion(.smooth(duration: 0.24)) { queueReveal = settled }
+            }
+        }
     }
 
     /// The play queue's rows (#1990); empty while nothing is queued, which is when the Library shows no entry.
@@ -94,8 +120,11 @@ struct ExperienceLibraryScreen: View {
                         PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
                     }
 
-                    if !queuedRows.isEmpty {
+                    // Shows once a first add's swipe has settled, so the block doesn't grow while the row slides
+                    // back (#5360).
+                    if queueReveal.showsEntry(isQueued: !queuedRows.isEmpty) {
                         PlayQueueSummaryRow(rows: queuedRows) { isPlayQueuePresented = true }
+                            .transition(.opacity)
                     }
 
                     // Above the items while audio is queued, so a listener sees it without scrolling past the list
@@ -106,6 +135,9 @@ struct ExperienceLibraryScreen: View {
                     }
                 }
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                .onChange(of: queuedRows.isEmpty, initial: true) { wasEmpty, isEmpty in
+                    queueEmptinessChanged(isQueued: !isEmpty, onAppear: wasEmpty == isEmpty)
+                }
 
                 items
 
