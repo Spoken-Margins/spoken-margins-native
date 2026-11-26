@@ -70,10 +70,10 @@ class ShareExportGlyphTests(unittest.TestCase):
         self.assertGreaterEqual(len(export_doors), 8)
 
     def test_the_playback_options_dock_has_distinct_glyphs(self):
-        """The dock's two icon-only buttons, Details and Export, used to wear the same document glyph."""
-        text = (SOURCES / "PlaybackScreen.swift").read_text()
-        dock = text[text.index("private var sessionActionDock"):]
-        dock = dock[:dock.index(".font(.subheadline.weight(.semibold))")]
+        """The dock's two icon-only buttons, Details and Export, used to wear the same document glyph (the dock is its own
+        view since #5333)."""
+        text = (SOURCES / "ListeningOptionsLayout.swift").read_text()
+        dock = text[text.index("struct ListeningOptionsActionDock"):]
         glyphs = re.findall(r'Image\(systemName: "([^"]+)"\)', dock)
         self.assertEqual(["info.circle", DOCUMENT], glyphs, "Details is info.circle and Export is doc.text")
 
