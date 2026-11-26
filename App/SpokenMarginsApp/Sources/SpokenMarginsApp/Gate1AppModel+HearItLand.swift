@@ -32,10 +32,24 @@ extension Gate1AppModel {
     /// Whether this spoken save plays back, decided **before** the speech ask hears of the save (#4715 Design: the playback
     /// first, then the ask). `finishInterjection` passes the answer to `transcribeAndRecordSavedSpokenMargin`.
     func hearItLandWillPlayBack(hadSavedMarginBefore: Bool, heldVoice: Bool) -> Bool {
-        HearItLand.order(
-            kind: .spoken, heardFirstMargin: isOnboardingStepComplete(.heardFirstMargin), hadSavedMarginBefore: hadSavedMarginBefore,
-            savedOverHeldVoice: heldVoice, sourcePlaysAfterSave: snapshot.status.isPlaybackActive,
-            surroundings: hearItLandSurroundings).playsBack
+        let heard = isOnboardingStepComplete(.heardFirstMargin)
+        let sourcePlays = snapshot.status.isPlaybackActive
+        let surroundings = hearItLandSurroundings
+        let playsBack = HearItLand.order(
+            kind: .spoken, heardFirstMargin: heard, hadSavedMarginBefore: hadSavedMarginBefore,
+            savedOverHeldVoice: heldVoice, sourcePlaysAfterSave: sourcePlays, surroundings: surroundings).playsBack
+        // A new listener's save that skips the playback says which input refused it, so a skip seen in Diagnostics or a
+        // failing test names its cause instead of leaving it to inference (#5398). A returning listener writes nothing.
+        // Each new listener's save overwrites it, so an earlier skip never stands in for this one.
+        if !heard {
+            let reasons: [String?] = [
+                heldVoice ? "heldVoice" : nil, sourcePlays ? nil : "sourceNotPlaying",
+                surroundings.appInForeground ? nil : "appNotActive", surroundings.recordingAgain ? "recordingAgain" : nil,
+                surroundings.anotherSheetUp ? "anotherSheetUp" : nil,
+            ]
+            diagnostics["hearItLandSkipped"] = playsBack ? "no" : reasons.compactMap { $0 }.joined(separator: ",")
+        }
+        return playsBack
     }
 
     /// Called at the very end of a spoken save, after the engine's own resume, the held voice's resume and the speech queue's

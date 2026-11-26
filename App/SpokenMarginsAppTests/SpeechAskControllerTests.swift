@@ -1,4 +1,5 @@
 import SessionKit
+import SessionKitAudio
 import XCTest
 @testable import SpokenMarginsApp
 
@@ -30,6 +31,14 @@ final class SpeechAskControllerTests: XCTestCase {
             access: { [unowned self] in iosAnswer },
             isSuppressed: { false },
             askSystem: { [unowned self] in await MainActor.run { promptsRaised += 1 } })
+    }
+
+    /// #5398: the unit-test host keeps iOS's Speech Recognition prompt closed. Nothing in an app-hosted test answers that
+    /// prompt, so when a spoken save's transcription raised it the host app went inactive for the rest of the process, and
+    /// every later test that needs the app active failed (HearItLandAppTests, FootnotePlanWiringTests).
+    func testTheUnitTestHostKeepsIOSsSpeechPromptClosed() {
+        XCTAssertTrue(Gate1AppModel.isRunningUnitTests, "precondition: an app-hosted unit test")
+        XCTAssertFalse(SpeechAuthorizationAsk.mayAskSystem(), "SpokenMarginsApp.init closes the gate under unit tests")
     }
 
     func testCardShowsAfterASpokenSaveAndNotAfterAWrittenOne() {

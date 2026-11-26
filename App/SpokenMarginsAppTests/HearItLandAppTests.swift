@@ -96,6 +96,9 @@ final class HearItLandAppTests: XCTestCase {
         await HearItLandState.shared.pendingStart?.value
     }
 
+    /// Which input refused the playback, as the save wrote it (#5398), for the failure message.
+    private func skipped(_ model: Gate1AppModel) -> String { model.diagnostics["hearItLandSkipped"] ?? "nothing recorded" }
+
     // MARK: the Design's four
 
     /// A first spoken save on a playing source starts the Margin's own moment with the five-second lead-in, the source plays
@@ -105,7 +108,7 @@ final class HearItLandAppTests: XCTestCase {
         defer { model.endMarginMoment(); model.pause() }
         await finish(model)
 
-        let moment = try XCTUnwrap(model.marginMoment, "the saved Margin plays back in place")
+        let moment = try XCTUnwrap(model.marginMoment, "the saved Margin plays back in place; skipped for: \(skipped(model))")
         XCTAssertEqual(model.diagnostics["hearItLand"], "playBack")
         XCTAssertEqual(moment.unplayed, [moment.target], "only the new Margin: nothing keeps the card after the voice")
         XCTAssertLessThanOrEqual(moment.startMediaTimeMs, moment.target.mediaTimeMs, "the run-up starts before the Margin's place")
@@ -129,7 +132,7 @@ final class HearItLandAppTests: XCTestCase {
         defer { model.endMarginMoment(); model.pause() }
         await finish(model)
 
-        XCTAssertNotNil(model.marginMoment)
+        XCTAssertNotNil(model.marginMoment, "skipped for: \(skipped(model))")
         XCTAssertEqual(model.diagnostics["hearItLand"], "playBack")
     }
 
@@ -154,7 +157,7 @@ final class HearItLandAppTests: XCTestCase {
         HearItLandState.shared.reset()
 
         XCTAssertFalse(model.hearItLandWillPlayBack(hadSavedMarginBefore: false, heldVoice: true))
-        XCTAssertTrue(model.hearItLandWillPlayBack(hadSavedMarginBefore: false, heldVoice: false), "the same save without a held voice does")
+        XCTAssertTrue(model.hearItLandWillPlayBack(hadSavedMarginBefore: false, heldVoice: false), "the same save without a held voice does; skipped for: \(skipped(model))")
         model.hearItLandAfterSpokenSave(willPlayBack: false, savedId: nil)
         XCTAssertNil(model.marginMoment, "no playback starts over a held voice")
     }
@@ -171,7 +174,7 @@ final class HearItLandAppTests: XCTestCase {
         defer { model.endMarginMoment(); model.pause() }
         await finish(model)
 
-        let moment = try XCTUnwrap(model.marginMoment, "the playback runs first")
+        let moment = try XCTUnwrap(model.marginMoment, "the playback runs first; skipped for: \(skipped(model))")
         XCTAssertNil(speech.cardSurface, "the card waits for the playback")
         XCTAssertTrue(speech.isOutstanding, "but it is owed")
 
