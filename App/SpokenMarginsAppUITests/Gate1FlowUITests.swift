@@ -568,6 +568,11 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(seededStart.waitForExistence(timeout: 4), app.debugDescription)
         seededStart.tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        // Pause before touring the tabs (#5310). Since #5196 the fixture article keeps playing after its start tap, and
+        // the simulator's synthesizer reads it to the end within this test's half minute. A finished session hides the
+        // mini player by design (NarrationOwnership.miniPlayerVisibility, "session_finished"), so the bar was gone by
+        // the second Following visit. A paused session is still Now Playing, which is what the tabs must keep.
+        pausePlaybackIfNeeded()
         app.buttons["playback.home.button"].tap()
         XCTAssertTrue(element("miniPlayer.bar").waitForExistence(timeout: 4))
         assertMiniPlayerClearsRootNavigation()
@@ -1058,6 +1063,13 @@ final class Gate1FlowUITests: XCTestCase {
     private func pausePlaybackIfNeeded() {
         let playPause = element("playback.play.button")
         XCTAssertTrue(playPause.waitForExistence(timeout: 8))
+        // The label reads "Pause" from .starting on (activePlaybackIsPlaying uses status.isPlaybackActive), but "Play"
+        // in any state before the start reaches the engine. The old first wait accepted that "Play" at once, the loop
+        // then saw "Play" and called the source paused, and nothing was tapped. Inferred, not confirmed from a run
+        // (#5346): #5310's pause still left the root-tabs journey without its mini player at 30b7c83, which a start
+        // that ran on and finished would explain. So give a start the chance to read "Pause" before taking "Play" as
+        // paused. A source that is really paused costs this wait's ceiling, never a wrong answer.
+        _ = waitUntil(playPause, "label == %@", "Pause", timeout: 10)
         _ = XCTWaiter().wait(
             for: [XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "label == %@ OR label == %@", "Play", "Pause"),

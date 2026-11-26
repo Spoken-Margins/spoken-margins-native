@@ -57,6 +57,8 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     private var didProcess = false
     /// Each attachment's registered types, for the share diagnostics (#271).
     private var sharedAttachmentTypes: [[String]] = []
+    /// What each tried representation yielded, for the share diagnostics (#5338).
+    private let candidateTrace = CandidateTrace()
     private var didCompleteRequest = false
     private typealias ExtractionCompletion = @Sendable (Result<SharedImport, Error>) -> Void
     private let cardView = UIView()
@@ -118,10 +120,16 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         // The walk is shared with the app's tests (#1049): it hands off the first content any candidate
         // yields, a link only once no file, PDF or page result is left to try (#271), and shared text
         // only once nothing else is left (#662).
+        let trace = candidateTrace
         ShareSheetCandidateWalk.run(
             ordered,
             identifier: \.identifier,
-            load: { candidate, report in Self.loadCandidate(candidate, report: report) },
+            load: { candidate, report in
+                Self.loadCandidate(candidate, detail: { trace.note(detail: $0, for: candidate.identifier) }) { outcome in
+                    trace.record(outcome, for: candidate.identifier)
+                    report(outcome)
+                }
+            },
             resume: { next in DispatchQueue.main.async(execute: next) },
             completion: { result in
                 guard let result else {
@@ -135,9 +143,44 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     }
 
     private typealias CandidateReport = @Sendable (ShareSheetCandidateOutcome<SharedImport>) -> Void
+    private typealias CandidateDetail = @Sendable (String) -> Void
+
+    /// The candidates the walk tried and what each yielded, in order (#5338). Loads report on any queue, one at a time.
+    private final class CandidateTrace: @unchecked Sendable {
+        private let lock = NSLock()
+        private var details: [String: String] = [:]
+        private var tried: [ShareExtensionShareRecord.Candidate] = []
+
+        func note(detail: String, for identifier: String) {
+            lock.lock(); defer { lock.unlock() }
+            details[identifier] = detail
+        }
+
+        func record(_ outcome: ShareSheetCandidateOutcome<SharedImport>, for identifier: String) {
+            let name: String
+            switch outcome {
+            case .content: name = "content"
+            case .link: name = "link"
+            case .sharedText: name = "shared_text"
+            case .nothing: name = "nothing"
+            case .failed: name = "failed"
+            }
+            lock.lock(); defer { lock.unlock() }
+            tried.append(.init(type: identifier, outcome: name, detail: details.removeValue(forKey: identifier)))
+        }
+
+        var candidates: [ShareExtensionShareRecord.Candidate] {
+            lock.lock(); defer { lock.unlock() }
+            return tried
+        }
+    }
 
     /// Loads one candidate and reports what it yielded, once.
-    nonisolated private static func loadCandidate(_ candidate: ProviderCandidate, report: @escaping CandidateReport) {
+    nonisolated private static func loadCandidate(
+        _ candidate: ProviderCandidate,
+        detail: @escaping CandidateDetail,
+        report: @escaping CandidateReport
+    ) {
         let candidateType = UTType(candidate.identifier)
         if isSpokenMarginsPackage(candidate) {
             candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { url, error in
@@ -173,7 +216,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                         report(.nothing)
                     }
                 } else {
-                    loadCandidateItem(candidate, report: report)
+                    loadCandidateItem(candidate, detail: detail, report: report)
                 }
             }
             return
@@ -185,7 +228,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                 if let url {
                     report(transcriptOutcome(copying: url, name: name))
                 } else {
-                    loadCandidateItem(candidate, report: report)
+                    loadCandidateItem(candidate, detail: detail, report: report)
                 }
             }
             return
@@ -202,16 +245,24 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                    ) {
                     report(.content(.browserText(payload)))
                 } else {
-                    loadCandidateItem(candidate, report: report)
+                    loadCandidateItem(candidate, detail: detail, report: report)
                 }
             }
             return
         }
-        loadCandidateItem(candidate, report: report)
+        loadCandidateItem(candidate, detail: detail, report: report)
     }
 
-    nonisolated private static func loadCandidateItem(_ candidate: ProviderCandidate, report: @escaping CandidateReport) {
+    nonisolated private static func loadCandidateItem(
+        _ candidate: ProviderCandidate,
+        detail: @escaping CandidateDetail,
+        report: @escaping CandidateReport
+    ) {
         candidate.provider.loadItem(forTypeIdentifier: candidate.identifier, options: nil) { item, _ in
+            // Whether Safari's preprocessor results arrived at all, and with page text (#5338).
+            if candidate.identifier == UTType.propertyList.identifier {
+                detail(pagePropertyListDetail(item))
+            }
             // A file the provider hands over by address (`public.file-url`): a transcript is copied, not read (#2997).
             if let url = SourceLinkShareRepresentation.url(from: item), url.isFileURL,
                let name = transcriptFileName(suggestedName: candidate.provider.suggestedName, fileURL: url) {
@@ -260,7 +311,9 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     }
 
     private func handle(_ result: Result<SharedImport, Error>) {
-        recordShareDiagnostics(result)
+        var handoffId: String?
+        var failure: Error?
+        defer { recordShareDiagnostics(result, handoffId: handoffId, failure: failure) }
         do {
             switch result {
             case .success(.sourceLink(let inputURL)):
@@ -270,7 +323,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                     sourceSurface: "share_sheet",
                     startSession: false
                 )
-                _ = try SourceLinkHandoffStore.appGroup().save(handoff)
+                handoffId = try SourceLinkHandoffStore.appGroup().save(handoff)
                 showSaved("Sent link to Spoken Margins.")
             case .success(.remotePDF(let inputURL)):
                 let handoff = SourceLinkHandoff(
@@ -279,7 +332,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                     sourceSurface: "share_sheet_pdf",
                     startSession: false
                 )
-                _ = try SourceLinkHandoffStore.appGroup().save(handoff)
+                handoffId = try SourceLinkHandoffStore.appGroup().save(handoff)
                 showSaved("Sent PDF to Spoken Margins.")
             case .success(.localPDF(let inputURL)):
                 let handoff = SourceLinkHandoff(
@@ -288,10 +341,11 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                     sourceSurface: "share_sheet_pdf_file",
                     startSession: false
                 )
-                _ = try SourceLinkHandoffStore.appGroup().save(handoff)
+                handoffId = try SourceLinkHandoffStore.appGroup().save(handoff)
                 showSaved("Sent PDF to Spoken Margins.")
             case .success(.browserText(let payload)), .success(.sharedText(let payload)):
                 try saveBrowserText(payload)
+                handoffId = payload.id
                 showSaved("Sent \(payload.source.title) to Spoken Margins.")
             case .success(.spokenMarginsPackage):
                 showSaved("Sent shared session to Spoken Margins. Open Spoken Margins to import it.")
@@ -301,14 +355,16 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                 throw error
             }
         } catch {
+            failure = error
             completeWithError(error)
         }
     }
 
-    /// Writes what the share offered and which route won to the App Group, so a lane run
-    /// can tell which representations Safari sent (#271). Type identifiers and the route
-    /// only: no URLs, titles or text. Best effort; a failure never affects the share.
-    private func recordShareDiagnostics(_ result: Result<SharedImport, Error>) {
+    /// Writes what the share offered, what each tried representation yielded, which route won and the handoff it
+    /// wrote to the App Group, so a lane run (#271) and the app's Diagnostics (#5338) can tell where a share stopped.
+    /// Type identifiers, random ids and error codes only: no URLs, titles or text. Best effort; a failure never
+    /// affects the share.
+    private func recordShareDiagnostics(_ result: Result<SharedImport, Error>, handoffId: String?, failure: Error?) {
         let route: String
         switch result {
         case .success(.sourceLink): route = "share_sheet"
@@ -320,19 +376,19 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         case .success(.transcriptFile): route = "transcript_file"
         case .failure: route = "failed"
         }
-        let record: [String: Any] = [
-            "recordedAt": ISO8601DateFormatter().string(from: Date()),
-            "attachmentTypes": sharedAttachmentTypes,
-            "route": route
-        ]
+        var failureError = failure
+        if case .failure(let error) = result { failureError = error }
+        let record = ShareExtensionShareRecord(
+            attachmentTypes: sharedAttachmentTypes,
+            route: route,
+            candidates: candidateTrace.candidates,
+            handoffId: handoffId,
+            errorCode: failureError.map(ShareExtensionShareRecord.failureCode)
+        )
         guard let containerURL = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: SourceLinkHandoffStore.appGroupIdentifier
-        ), let data = try? JSONSerialization.data(withJSONObject: record, options: [.prettyPrinted, .sortedKeys]) else {
-            return
-        }
-        let directory = containerURL.appendingPathComponent("ShareExtensionDiagnostics", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? data.write(to: directory.appendingPathComponent("last-share.json"), options: [.atomic])
+        ) else { return }
+        try? record.save(inAppGroupRoot: containerURL)
     }
 
     private func saveBrowserText(_ payload: BrowserTextSharePayload) throws {
@@ -695,6 +751,20 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             ),
             text: content
         )
+    }
+
+    /// Safari's page property list as a diagnostic word (#5338): whether the preprocessor's results arrived, and
+    /// whether they carried page text.
+    /// `no_item` means the representation didn't load at all.
+    nonisolated private static func pagePropertyListDetail(_ item: Any?) -> String {
+        guard let item else { return "no_item" }
+        guard let dictionary = item as? [String: Any] ?? item as? NSDictionary as? [String: Any] else { return "not_a_dictionary" }
+        let rawResults = dictionary[NSExtensionJavaScriptPreprocessingResultsKey]
+            ?? dictionary["NSExtensionJavaScriptPreprocessingResultsKey"]
+        guard let results = rawResults as? [String: Any] ?? rawResults as? NSDictionary as? [String: Any] else {
+            return "results_missing"
+        }
+        return browserPayload(fromResults: results) == nil ? "no_text" : "text"
     }
 
     nonisolated private static func browserResultsFromPropertyList(_ item: Any?) -> [String: Any]? {

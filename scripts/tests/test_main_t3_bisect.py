@@ -6,6 +6,7 @@ that fault or flake. The git range is tested on a real temporary repository.
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -230,11 +231,29 @@ class PresentClassesTests(unittest.TestCase):
             self.assertEqual(B.present_classes(grouped, Path(tmp) / 'missing'), {})
 
 
+class MakeProbeTests(unittest.TestCase):
+    def test_the_real_probe_loads_the_lane_and_gives_each_probe_its_own_clock(self):
+        """The audit on b0d3d2f: make_probe called a loader main_t3 doesn't have, so every real bisection crashed
+        before its first probe while the CommandTests, which replace make_probe, passed."""
+        loaded = []
+        real = B.t3.load_lane_t3
+        B.t3.load_lane_t3 = lambda: loaded.append(real()) or loaded[-1]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                probe = B.make_probe({}, set(), 'a' * 40, '1', Path(tmp))
+        finally:
+            B.t3.load_lane_t3 = real
+        self.assertTrue(callable(probe))
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0].T3_TIMEOUT, B.PROBE_TIMEOUT)
+        self.assertTrue(callable(loaded[0]._run_t3_grouped))
+
+
 class CommandTests(unittest.TestCase):
     """command_bisect end to end with git, gh and the lane replaced by recorders."""
 
     def run_command(self, result_for, failure_issue=True, git_fails=False, red_failed=None, probe_failed=None,
-                    closed=None, revert_hooks=None, env=None, open_extra=None):
+                    closed=None, revert_hooks=None, env=None, open_extra=None, then_revert=False, between=None):
         import argparse
         import json
         import os
@@ -275,8 +294,18 @@ class CommandTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 args = argparse.Namespace(sha=RED, run_url='https://run', run_id='1', evidence=tmp, budget=10**6)
-                self.assertEqual(B.command_bisect(args), 0)
+                bisect_env = {k: os.environ.pop(k, None) for k in (B.REVERT_TOKEN_ENV,)}
+                try:
+                    self.assertEqual(B.command_bisect(args), 0)
+                finally:
+                    os.environ.update({k: v for k, v in bisect_env.items() if v is not None})
                 saved_json = json.loads((Path(tmp) / 'main-t3-bisect.json').read_text())
+                request = Path(tmp) / B.REVERT_REQUEST
+                saved_json['revert_request'] = json.loads(request.read_text()) if request.exists() else None
+                if then_revert:
+                    if between:
+                        between()
+                    self.assertEqual(B.command_revert(argparse.Namespace(evidence=tmp)), 0)
         finally:
             for o, n, v in saved:
                 setattr(o, n, v)
@@ -302,7 +331,7 @@ class CommandTests(unittest.TestCase):
     def test_a_safe_culprit_with_the_revert_token_is_reverted_and_both_issues_say_so(self):
         opened = []
         calls, record = self.run_command(lambda sha: B.FAIL, revert_hooks=self.safe_revert_hooks(opened),
-                                         env={B.REVERT_TOKEN_ENV: 'app-token'})
+                                         env={B.REVERT_TOKEN_ENV: 'app-token'}, then_revert=True)
         self.assertEqual(len(opened), 1)
         sha, issue, token, area, tests = opened[0]
         self.assertEqual((sha, issue, token, area), (record['culprit'], 9, 'app-token', 'area: hear it well'))
@@ -317,17 +346,84 @@ class CommandTests(unittest.TestCase):
     def test_without_the_revert_token_nothing_is_reverted_and_the_culprit_issue_says_why(self):
         opened = []
         calls, _ = self.run_command(lambda sha: B.FAIL, revert_hooks=self.safe_revert_hooks(opened),
-                                    env={B.REVERT_TOKEN_ENV: ''})
+                                    env={B.REVERT_TOKEN_ENV: ''}, then_revert=True)
         self.assertEqual(opened, [])
+        comments = [(c[0][2], c[1]) for c in calls if c[0][:2] == ('issue', 'comment')]
+        self.assertEqual([n for n, _ in comments], ['5', '9', '5'])  # the failure issue hears how the revert ended
+        for _, text in comments[1:]:
+            self.assertIn('Not reverted automatically', text)
+            self.assertIn(B.REVERT_TOKEN_ENV, text)
+            self.assertIn('will not retry', text)
+
+    def test_bisect_never_reads_the_revert_token_and_leaves_a_request_for_revert(self):
+        """The probes run older commits' code for hours: the write token must not be in their environment, and an App
+        token minted before them would have expired (one hour) by the time the revert runs."""
+        opened, seen = [], []
+        hooks = self.safe_revert_hooks(opened)
+        hooks['make_probe'] = lambda *a: (lambda sha: seen.append(os.environ.get(B.REVERT_TOKEN_ENV)) or B.FAIL)
+        calls, record = self.run_command(None, revert_hooks=hooks, env={B.REVERT_TOKEN_ENV: 'app-token'})
+        self.assertEqual(opened, [])
+        self.assertTrue(seen)
+        self.assertEqual(set(seen), {None})
+        request = record['revert_request']
+        self.assertEqual((request['sha'], request['culprit_issue'], request['failure_issue'], request['area']),
+                         (record['culprit'], 9, 5, 'area: hear it well'))
         body = [c for c in calls if c[0][:2] == ('issue', 'create')][0][1]
-        self.assertIn('## Not reverted automatically', body)
-        self.assertIn(B.REVERT_TOKEN_ENV, body)
-        self.assertEqual([c[0][2] for c in calls if c[0][:2] == ('issue', 'comment')], ['5'])
+        self.assertNotIn('Not reverted automatically', body)
+
+    def test_revert_without_a_request_does_nothing(self):
+        import argparse
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = B.t3.gh
+            B.t3.gh = lambda *a, **k: self.fail('no gh call without a request')
+            try:
+                self.assertEqual(B.command_revert(argparse.Namespace(evidence=tmp)), 0)
+            finally:
+                B.t3.gh = saved
+
+    def test_an_unreadable_request_or_one_with_no_failure_issue_is_handled(self):
+        import argparse
+        import json
+        posted = []
+        saved = (B.t3.gh, B.t3.repo, B.revert_safety)
+        B.t3.gh = lambda *a, **k: posted.append(a) or ''
+        B.t3.repo = lambda: 'o/r'
+        B.revert_safety = lambda *a, **k: (None, ['main moved'])
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                (Path(tmp) / B.REVERT_REQUEST).write_text('{"sha": ')
+                self.assertEqual(B.command_revert(argparse.Namespace(evidence=tmp)), 0)
+                self.assertEqual(posted, [])
+                (Path(tmp) / B.REVERT_REQUEST).write_text(json.dumps(
+                    {'sha': 'c' * 40, 'red': 'd' * 40, 'culprit_issue': 9, 'failure_issue': None}))
+                os.environ[B.REVERT_TOKEN_ENV] = 'app-token'
+                try:
+                    self.assertEqual(B.command_revert(argparse.Namespace(evidence=tmp)), 0)
+                finally:
+                    os.environ.pop(B.REVERT_TOKEN_ENV, None)
+                self.assertEqual([a[2] for a in posted], ['9'])
+        finally:
+            B.t3.gh, B.t3.repo, B.revert_safety = saved
+
+    def test_revert_checks_the_rules_again_on_the_newest_main(self):
+        """Main can move between the two steps: a fix forward that lands then stops the revert."""
+        opened = []
+        hooks = self.safe_revert_hooks(opened)
+        moved = []
+        hooks['changed_on_main_since'] = lambda red: list(moved)
+        gate = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift'
+        calls, record = self.run_command(lambda sha: B.FAIL, revert_hooks=hooks, env={B.REVERT_TOKEN_ENV: 'app-token'},
+                                         then_revert=True, between=lambda: moved.append(gate))
+        self.assertIsNotNone(record['revert_request'])
+        self.assertEqual(opened, [])
+        comment = [c[1] for c in calls if c[0][:3] == ('issue', 'comment', '9')][0]
+        self.assertIn('fix forward may already be in', comment)
 
     def test_a_revert_that_fails_to_apply_is_said_on_the_culprit_issue(self):
         hooks = self.safe_revert_hooks([])
         hooks['open_revert'] = lambda *a: (None, '', '`git revert -m 1` does not apply cleanly on the newest main (f)')
-        calls, _ = self.run_command(lambda sha: B.FAIL, revert_hooks=hooks, env={B.REVERT_TOKEN_ENV: 'app-token'})
+        calls, _ = self.run_command(lambda sha: B.FAIL, revert_hooks=hooks, env={B.REVERT_TOKEN_ENV: 'app-token'},
+                                    then_revert=True)
         comments = {c[0][2]: c[1] for c in calls if c[0][:2] == ('issue', 'comment')}
         self.assertIn('does not apply cleanly', comments['9'])
         self.assertNotIn('Revert opened', comments['5'])

@@ -22,6 +22,7 @@ import { useData } from '../data.tsx';
 import type { PacketRead } from '../ports.ts';
 import { usePlayer } from '../player.tsx';
 import { RELAY_ORIGIN, services } from '../services.ts';
+import { linkPacketWords } from '../logic/link-packet-words.ts';
 import { primeSpeech } from '../speech.ts';
 import { useUi } from '../ui.tsx';
 
@@ -46,7 +47,7 @@ function failureWords(error: unknown): string {
         return ARRIVAL_WORDS.server;
     }
   }
-  return ARRIVAL_WORDS.unreadable;
+  return linkPacketWords(error) ?? ARRIVAL_WORDS.unreadable;
 }
 
 /** The first sentence is the heading; what to do is the rest. */

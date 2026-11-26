@@ -1,6 +1,7 @@
 import Foundation
 import SessionKit
 import SessionKitAudio
+import SessionKitSupertonic
 
 /// What the model records so an export names who paused narration or switched its voice (#1109).
 /// The field builders are `PlaybackDiagnosticFields` in SessionKit.

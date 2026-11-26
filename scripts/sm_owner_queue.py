@@ -23,7 +23,9 @@ The fixed card (the owner overlay, "A question he can answer"): a line starting 
 `**Step for Cole**`), then what this is in one sentence, the question, the pick, the other options with their
 cost, and what it blocks. The card runs to the next line that is only `---`. A card inside a code block or a quoted
 line is not a card. Only a card from a trusted author counts (scripts/comment_trust.py, #1822): a stranger's
-look-alike is data and is ignored. A trusted comment that contains `<!-- owner-answered -->` after the card ends it.
+look-alike is data and is ignored. A trusted comment that contains `<!-- owner-answered -->` after the card ends it
+(`scripts/owner_card_guard.py --answered N` posts it and takes `needs-owner` off together, #5269), and so does the
+merge of the one PR a `**Step for Cole**` asks him to tap.
 
 Exit 0 the queue printed, 2 GitHub unreachable (nothing partial is shown as the queue).
 """
@@ -50,6 +52,10 @@ ANSWERED = '<!-- owner-answered -->'
 HEADING = re.compile(r'^[ \t]*\*\*(Decision|Step) for Cole\*\*', re.I)
 CHECK_HEADING = re.compile(r'^[ \t]*\*\*(Owner) check\*\*', re.I)
 FENCE = re.compile(r'^[ \t]*(```|~~~)')
+# A Step for Cole whose whole ask is one PR tap (#5269): it names exactly one PR as "PR #N", "PR N" or a /pull/N link,
+# and asks him to tap, merge or approve it. Once that PR has merged the step is done, so it ends like an answered card.
+TAP_WORD = re.compile(r'\b(tap|merge|approve)\b', re.I)
+PR_REF = re.compile(r'(?:/pull/|\bPR\s*#?)(\d+)\b', re.I)
 
 ISSUES_QUERY = '''
 query($cursor: String, $owner: String!, $name: String!) {
@@ -130,6 +136,48 @@ def newest_card(issue: dict, heading: re.Pattern = HEADING) -> dict | None:
     return best
 
 
+def tap_pr(card: dict | None) -> int | None:
+    """The one PR a Step for Cole asks him to tap, or None (a decision, no tap word, or no or several PRs named)."""
+    if not card or card.get('kind') != 'step':
+        return None
+    prs = set(PR_REF.findall(card.get('text') or ''))
+    if len(prs) != 1:
+        return None
+    # The tap word must sit on a line that names the PR: "PR #5 can merge afterwards" in a token step is context.
+    tapped = any(TAP_WORD.search(line) and PR_REF.search(line) and not re.search(r'\b(after|afterwards|once|when|then)\b',
+                                                                               line, re.I)
+                 for line in card['text'].splitlines())
+    return int(prs.pop()) if tapped else None
+
+
+def owner_card(issue: dict, merged=None) -> dict | None:
+    """newest_card, plus: a live tap step ends once its PR has merged (#5269). `merged(n) -> bool` reads the PR; with
+    no reader the card is left as newest_card found it. An ended card gets 'ended_by_merge' = the PR number."""
+    card = newest_card(issue)
+    pr = tap_pr(card) if card and not card['answered'] and merged else None
+    state = merged(pr) if pr else False
+    if state is None:  # the PR could not be read: the card stays live, and the guard leaves the issue alone
+        card = {**card, 'merge_unknown': pr}
+    elif state:
+        card = {**card, 'answered': True, 'ended_by_merge': pr}
+    return card
+
+
+def merged_reader(api: sm_status.GitHub):
+    """merged(n): whether PR n has merged, one read per PR per run; None when it can't be read (not "not merged",
+    which would put a label back on a done step during a rate-limit blip)."""
+    seen: dict[int, bool | None] = {}
+
+    def merged(number: int) -> bool:
+        if number not in seen:
+            try:
+                seen[number] = bool((api.get(f'pulls/{number}') or {}).get('merged_at'))
+            except sm_status.GitHubError:
+                seen[number] = None
+        return seen[number]
+    return merged
+
+
 def live_check(issue: dict) -> dict | None:
     """The newest `**Owner check**` comment from a trusted author, unless an owner-answered marker ended it."""
     check = newest_card(issue, CHECK_HEADING)
@@ -143,15 +191,16 @@ def age_days(created: str | None, now: dt.datetime) -> int | None:
         return None
 
 
-def build_queue(issues: list[dict], taps: list[dict], now: dt.datetime | None = None) -> dict:
+def build_queue(issues: list[dict], taps: list[dict], now: dt.datetime | None = None, merged=None) -> dict:
     """The four lists plus 'needs_card', 'answered_label_on' and 'on_design'. One entry per issue: a live card
-    first, else a validation label, else `needs-owner` with no card."""
+    first, else a validation label, else `needs-owner` with no card. `merged` as in owner_card: a tap step whose PR
+    has merged is not waiting on him."""
     now = now or dt.datetime.now(dt.timezone.utc)
     queue = {'decisions': [], 'steps': [], 'merge_taps': [], 'phone_checks': [], 'owner_checks': [],
              'needs_card': [], 'answered_label_on': [], 'on_design': []}
     for issue in sorted(issues, key=lambda i: i['number']):
         labels = set(issue.get('labels') or [])
-        card = newest_card(issue)
+        card = owner_card(issue, merged)
         live = card if card and not card['answered'] else None
         entry = {'number': issue['number'], 'title': issue.get('title', ''), 'url': issue.get('url', ''),
                  'age_days': age_days(issue.get('createdAt'), now), 'labels': sorted(labels)}
@@ -239,7 +288,7 @@ def main(argv=None, api=None, now=None) -> int:
     args = parser.parse_args(argv)
     try:
         api = api or sm_status.GitHub(args.repo)
-        queue = build_queue(fetch_issues(api), fetch_taps(api), now)
+        queue = build_queue(fetch_issues(api), fetch_taps(api), now, merged_reader(api))
     except (sm_status.GitHubError, KeyError, TypeError) as error:
         print(f'unknown: could not read GitHub ({error}); nothing is shown as the queue', file=sys.stderr)
         return 2

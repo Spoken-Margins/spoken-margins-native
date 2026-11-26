@@ -148,13 +148,10 @@ final class VoiceOverAuditUITests: XCTestCase {
         XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 5), "Share Margins did not open")
         let cleanUpQuestion = app.alerts["Remove ums and long pauses?"]
         if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
-        audit("Share: choose Margins")
-
-        let review = element("build23.sender.select.continue")
-        XCTAssertTrue(review.waitForExistence(timeout: 5), "Review is missing")
-        review.tap()
-        XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5), "Review did not open")
-        audit("Share: review")
+        // One list replaced Choose and Review (#4647): there is no Review button to reach.
+        XCTAssertTrue(element("build23.sender.stage.list").waitForExistence(timeout: 5), "The Share Margins list did not open")
+        XCTAssertFalse(element("build23.sender.select.continue").exists, "the list has no Review step")
+        audit("Share: the Share Margins list")
     }
 
     // MARK: - Helpers

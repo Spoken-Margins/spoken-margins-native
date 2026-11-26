@@ -4,6 +4,7 @@ import SessionKit
 import SessionKitAudio
 import SessionKitPersistence
 import SessionKitSharing
+import SessionKitSupertonic
 @testable import SpokenMarginsApp
 
 /// #122: the owner's phone was killed for memory twice, going from a podcast with shared Margins to an article.

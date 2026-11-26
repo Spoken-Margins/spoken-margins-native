@@ -70,7 +70,7 @@ final class ReplyBackRoundTripTests: XCTestCase {
         XCTAssertEqual(entries.map(\.interjection.packageScopedId), ["b-reply"], "the review holds the reply and nothing else")
         let entry = try XCTUnwrap(entries.first)
         XCTAssertEqual(entry.mediaTimeMs, 755_000)
-        XCTAssertEqual(entry.replyContext?.parent, .yours(interjectionId: "a-1", mediaTimeMs: 754_000))
+        XCTAssertEqual(entry.replyContext?.parent, .yours(interjectionId: Interjection.sessionScopedId(sessionId: ana.sessionId, id: "a-1"), mediaTimeMs: 754_000))
         XCTAssertEqual(entry.replyContext?.caption, "Reply to your Margin at 12:34")
 
         // The parent link resolves to A's own Margin.
@@ -80,7 +80,7 @@ final class ReplyBackRoundTripTests: XCTestCase {
         guard case .linked(let link)? = graph.states[.imported(entry.interjection.id)] else {
             return XCTFail("the reply should link to its parent: \(String(describing: graph.states))")
         }
-        XCTAssertEqual(link.parent, .local("a-1"))
+        XCTAssertEqual(link.parent, .local(Interjection.sessionScopedId(sessionId: ana.sessionId, id: "a-1")))
 
         // One tap plays the lead-in, then A's own Margin, then the reply.
         let steps = SharedMarginReview.playlist(for: entries, ownMargins: own)
@@ -125,7 +125,7 @@ final class ReplyBackRoundTripTests: XCTestCase {
 
         // The item screen says these are replies to A's Margin, from Ben, and does not explain what a Margin is to the
         // person who made it (#3889). Worked out from the saved links, so it holds after a relaunch.
-        XCTAssertEqual(entries.map { $0.waitingMargin.replyToYouParentId }, ["a-1", "a-1"])
+        XCTAssertEqual(entries.map { $0.waitingMargin.replyToYouParentId }, Array(repeating: Interjection.sessionScopedId(sessionId: ana.sessionId, id: "a-1"), count: 2))
         let intro = try XCTUnwrap(FriendMarginsIntro(unheardFriendMargins: entries.map(\.waitingMargin)))
         XCTAssertEqual(intro.senderLine, "Replies from Ben")
         XCTAssertEqual(intro.countLine.prefix(30), "2 replies to your Margin · abo")

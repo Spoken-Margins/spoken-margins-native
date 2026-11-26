@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/thegoodfight" rel="self" type="application/rss+xml"/>
+    <title>The Good Fight</title>
+    <link>https://www.yaschamounk.com</link>
+    <language>en</language>
+    <copyright>Creative Commons Attribution 4.0 International</copyright>
+    <description>"The Good Fight," the podcast that searches for the ideas, policies and strategies that can beat authoritarian populism.Please do listen and spread the word about&amp;nbsp;The Good Fight.If you have not yet signed up for our podcast, please do so now&amp;nbsp;by following this link on your phone.﻿Email: goodfightpod@gmail.comTwitter: @Yascha_MounkWebsite: http://www.persuasion.community</description>
+    <image>
+      <url>https://megaphone-images.spotifycdn.com/podcasts/151e5432-6b29-11e7-8e72-9fa7258a9677/image/uploads_2F1602179393910-bsdvszvgoys-469fdde0e2fd5076469d8ca0ef0a75ed_2FThe_Good_Fight_Persuasion.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>The Good Fight</title>
+      <link>https://www.yaschamounk.com</link>
+    </image>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle>The podcast that searches for the ideas, policies and strategies that can beat authoritarian populism.</itunes:subtitle>
+    <itunes:author>Yascha Mounk</itunes:author>
+    <itunes:summary>"The Good Fight," the podcast that searches for the ideas, policies and strategies that can beat authoritarian populism.Please do listen and spread the word about&amp;nbsp;The Good Fight.If you have not yet signed up for our podcast, please do so now&amp;nbsp;by following this link on your phone.﻿Email: goodfightpod@gmail.comTwitter: @Yascha_MounkWebsite: http://www.persuasion.community</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>"The Good Fight," the podcast that searches for the ideas, policies and strategies that can beat authoritarian populism.Please do listen and spread the word about&nbsp;The Good Fight.If you have not yet signed up for our podcast, please do so now&nbsp;by following this link on your phone.﻿Email: goodfightpod@gmail.comTwitter: @Yascha_MounkWebsite: http://www.persuasion.community</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Yascha Mounk</itunes:name>
+      <itunes:email>goodfightpod@gmail.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone-images.spotifycdn.com/podcasts/151e5432-6b29-11e7-8e72-9fa7258a9677/image/uploads_2F1602179393910-bsdvszvgoys-469fdde0e2fd5076469d8ca0ef0a75ed_2FThe_Good_Fight_Persuasion.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="News">
+    </itunes:category>
+    

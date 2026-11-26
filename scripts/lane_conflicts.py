@@ -9,7 +9,12 @@ in a throwaway worktree. A clean merge changes nothing. A conflict
 
 1. posts one comment per head/base pair, naming the files, in the Mac finisher's hand-off format;
 2. adds `needs-mac`, and removes `lane:queued` and `automerge`, so nothing re-queues it;
-3. cancels the PR's lane.yml runs whose Mac job has not started, so the queued slot is freed too.
+3. cancels the PR's lane.yml runs whose Mac job has not started, so the queued slot is freed too;
+4. takes it out of GitHub's merge queue (#5302). A queued PR can't be pushed to ("Branches that are queued for
+   merging cannot be updated"), so the finisher could not push the fix, and a label removed with this job's
+   GITHUB_TOKEN wakes no merge-queue-label-bridge run to dequeue it (#5276 sat queued 5 hours). So when GitHub says
+   the PR is queued or set to auto-merge, this dispatches merge-queue-label-bridge.yml for that one PR; the bridge
+   runs as the App, and takes a `needs-mac` PR with no arming label out. A PR that is not queued gets no dispatch.
 
 A second case (#4538): git merges the PR cleanly but GitHub reports it as not mergeable (`mergeable: false`, state
 `dirty`; seen with a history that has more than one merge base). GitHub builds no merge ref for such a PR and so
@@ -64,6 +69,12 @@ class GitHubApi:
 
     def delete(self, path):
         self._run(['-X', 'DELETE', f'repos/{self.repo}/{path}'])
+
+    def graphql(self, query, **variables):
+        args = ['graphql', '-f', f'query={query}']
+        for key, value in variables.items():
+            args += ['-F' if isinstance(value, int) else '-f', f'{key}={value}']
+        return json.loads(self._run(args))
 
 
 def git(cwd, *args, check=True, auth=None, timeout=300):
@@ -229,6 +240,36 @@ def cancel_queued_runs(api, pr, head):
     return cancelled
 
 
+QUEUE_STATE = '''query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) { autoMergeRequest { enabledAt } mergeQueueEntry { id } } }
+}'''
+BRIDGE = 'merge-queue-label-bridge.yml'
+
+
+def set_to_merge(api, pr):
+    """True when GitHub has the PR in the merge queue or set to auto-merge; None when that can't be read."""
+    owner, name = api.repo.split('/', 1)
+    try:
+        found = api.graphql(QUEUE_STATE, owner=owner, name=name, number=int(pr))['data']['repository']['pullRequest']
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return None
+    return bool(found and (found.get('autoMergeRequest') or found.get('mergeQueueEntry')))
+
+
+def release_queue(api, pr, trunk, log=print):
+    """Ask the label bridge to take a handed-off PR out of the merge queue (#5302). Returns what was done.
+
+    Only a PR GitHub has queued or set to merge gets the dispatch. When that can't be read the dispatch goes anyway:
+    the bridge reads the PR itself and does nothing to one that isn't set to merge. The dispatch is on the trunk,
+    the only ref the bridge's `agent-identity` environment admits.
+    """
+    state = set_to_merge(api, pr)
+    if state is False:
+        return []
+    api.post(f'actions/workflows/{BRIDGE}/dispatches', {'ref': trunk, 'inputs[pr]': str(pr)})
+    return ['asked the merge-queue bridge to dequeue' + (' (queue state unread)' if state is None else '')]
+
+
 def remove_label(api, pr, name):
     """Remove a label; one that is already gone (404) counts as removed. Returns True when it is gone."""
     try:
@@ -280,6 +321,8 @@ def act_on_conflict(api, pr, base, base_sha, head, files, log=print, kind='confl
         cancelled = cancel_queued_runs(api, pr, head)
         if cancelled:
             done.append('cancelled ' + ', '.join(str(run) for run in cancelled))
+        # Last: the bridge takes out only a PR that already carries `needs-mac` and no arming label.
+        done += release_queue(api, pr, ((current.get('base') or {}).get('repo') or {}).get('default_branch') or 'main', log)
     except (ImportError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         log(f'::warning::#{pr}: the conflict hand-off stopped ({describe(error)}); the Mac check still catches it.')
     return done

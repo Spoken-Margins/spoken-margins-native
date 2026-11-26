@@ -106,12 +106,18 @@ public enum RuleEvidenceBuilder {
         let marginsByItem = Dictionary(grouping: margins, by: \.itemId)
         let stoppedBefore = now.addingTimeInterval(-Double(stoppedEarlyDays) * 86_400)
         let addedBefore = now.addingTimeInterval(-Double(neverPlayedDays) * 86_400)
-        let assignedMarks = assignMarks(marks, to: episodes)
+        // By episode id, not position: two Library copies of one feed episode are one episode, so a mark that names the
+        // second copy still counts for the first and is never also counted as a row of its own (PR 11 audit).
+        var marksByEpisode: [String: [ShowLessMark]] = [:]
+        for (index, assigned) in assignMarks(marks, to: episodes) {
+            let episode = episodes[index]
+            marksByEpisode[nonEmpty(episode.entryId) ?? episode.item.id, default: []].append(contentsOf: assigned)
+        }
         var usedMarkIds = Set<String>()
         var result: [EpisodeEvidence] = []
         var seenIds = Set<String>()
 
-        for (index, episode) in episodes.enumerated() {
+        for episode in episodes {
             let item = episode.item
             let id = nonEmpty(episode.entryId) ?? item.id
             guard seenIds.insert(id).inserted else { continue }
@@ -125,7 +131,7 @@ public enum RuleEvidenceBuilder {
             var evidence = EpisodeEvidence(id: id, feedKey: episode.feedKey, title: episode.title, publishedAt: episode.publishedAt, at: .distantPast, positive: positive)
             var dates: [Date] = []
 
-            let matching = assignedMarks[index] ?? []
+            let matching = marksByEpisode[id] ?? []
             if !matching.isEmpty {
                 evidence.showLess = true
                 usedMarkIds.formUnion(matching.map(\.id))

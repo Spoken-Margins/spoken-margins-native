@@ -1,8 +1,8 @@
 import Foundation
 import SessionKit
 
-// #4341 PR 3 (hidden): what Add does with one paper from a followed reading list. The rules are here so they run on
-// Linux; fetching the PDF and saving the item stay in the app. Nothing in the app calls these yet (PR 5 does).
+// #4341: what Add does with one paper from a followed reading list. The rules are here so they run on Linux; fetching
+// the PDF and saving the item stay in the app (`PaperSourcesState`).
 
 /// What tapping Add (or the row's button) on a paper does.
 public enum PaperEntryImportRoute: Equatable, Sendable {
@@ -11,6 +11,8 @@ public enum PaperEntryImportRoute: Equatable, Sendable {
     /// Fetch this PDF through the existing remote PDF import, with the feed's metadata as the citation fallback
     /// (`PaperCitation.merged`).
     case pdf(URL)
+    /// Fetch the PDF stored in the listener's own Zotero library, with their key, then import it as `.pdf` does.
+    case storedPDF(attachmentKey: String)
     /// Add the abstract as a short text item (`AbstractItemBuilder`).
     case abstract
     /// Nothing to add: the button is Open, which shows the paper's page. Nil only when the record names no address.
@@ -19,6 +21,7 @@ public enum PaperEntryImportRoute: Equatable, Sendable {
     public static func route(for entry: PaperEntry, existingItemId: String?) -> Self {
         if let existingItemId { return .inLibrary(itemId: existingItemId) }
         if let pdfURL = entry.pdfURL { return .pdf(pdfURL) }
+        if entry.storedPDFReachable, let key = entry.storedPDFAttachmentKey { return .storedPDF(attachmentKey: key) }
         if hasAbstract(entry) { return .abstract }
         return .open(entry.pageURL)
     }
@@ -27,6 +30,15 @@ public enum PaperEntryImportRoute: Equatable, Sendable {
     /// there is one, otherwise Open. Never a second try at the PDF, and never an empty item.
     public static func afterPDFFailed(for entry: PaperEntry) -> Self {
         hasAbstract(entry) ? .abstract : .open(entry.pageURL)
+    }
+
+    /// After one PDF attempt failed: a PDF link that failed falls to the PDF stored in the listener's own library when
+    /// there is one, then to the abstract or Open; a stored PDF that failed goes straight to those.
+    public static func afterPDFFailed(for entry: PaperEntry, failed: Self) -> Self {
+        if case .pdf = failed, entry.storedPDFReachable, let key = entry.storedPDFAttachmentKey {
+            return .storedPDF(attachmentKey: key)
+        }
+        return afterPDFFailed(for: entry)
     }
 
     /// The same test `AbstractItemBuilder` applies, so `.abstract` always builds an item.
@@ -122,7 +134,9 @@ public struct PaperLibraryIndex: Sendable {
             var dois: [String] = []
             if let doi = ZoteroPaperReader.normalizedDOI(item.documentStructure?.bibliography?.doi) { dois.append(doi) }
             for address in [item.externalReference, item.sourceURL].compactMap({ $0 }) {
-                if let doi = Self.doi(inAddress: address) {
+                if let file = Self.storedFileKey(address) {
+                    if itemIdByAddress[file] == nil { itemIdByAddress[file] = item.id }
+                } else if let doi = Self.doi(inAddress: address) {
                     dois.append(doi)
                 } else if let key = Self.addressKey(address) {
                     if itemIdByAddress[key] == nil { itemIdByAddress[key] = item.id }
@@ -139,7 +153,20 @@ public struct PaperLibraryIndex: Sendable {
         for address in addresses {
             if let key = Self.addressKey(address), let id = itemIdByAddress[key] { return id }
         }
+        if let file = entry.storedPDFSourceURL.flatMap({ Self.storedFileKey($0.absoluteString) }), let id = itemIdByAddress[file] {
+            return id
+        }
         return nil
+    }
+
+    /// A stored Zotero PDF's local name (`PaperEntry.storedPDFSourceURL` with no public address), keyed apart from
+    /// web addresses. Attachment keys are upper-case, so only the scheme and host are folded.
+    static func storedFileKey(_ address: String) -> String? {
+        guard let components = URLComponents(string: address.trimmingCharacters(in: .whitespacesAndNewlines)),
+              components.scheme?.lowercased() == "zotero-file", components.host?.lowercased() == "attachment"
+        else { return nil }
+        let key = components.percentEncodedPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return key.isEmpty ? nil : "zotero-file:" + key
     }
 
     /// The DOI a `doi.org` address names, normalized as Zotero's DOIs are.

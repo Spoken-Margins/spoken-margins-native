@@ -327,10 +327,6 @@ extension Gate1AppModel: EpisodeMapPreparerHost {
         preparationSeams.deviceConditions()
     }
 
-    func episodeMapTranscribed(itemId: String, timeline: TranscriptTimeline, store: SQLiteSessionStore) {
-        CommunityMapUploadService.shared.episodeTranscribed(itemId: itemId, timeline: timeline, store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 }
-    }
-
     func episodeMapWarn(_ message: String) {
         reportWarning(message)
     }

@@ -558,7 +558,9 @@ public actor LiveSessionFileWorker {
     /// Files each received Watch Margin by `LiveSessionFiling`: stored in `WatchMarginInbox` first, then filed, and only
     /// then answered (the answers come back for the app to send). A recording that couldn't be stored or moved stays
     /// for the next pass. A repeat of one already filed is answered "already filed" and cleared.
-    public func fileWatchInbox(playerRuns: [LiveSessionFiling.PlayerRun] = [], now: Date = Date()) -> Pass {
+    public func fileWatchInbox(
+        playerRuns: [LiveSessionFiling.PlayerRun] = [], filesAttached: [LiveSessionFiling.FileAttachment] = [], now: Date = Date()
+    ) -> Pass {
         var pass = Pass()
         guard let landing = inboxDirectory, let inbox = openWatchInbox() else { return pass }
         sessions()
@@ -571,7 +573,9 @@ public actor LiveSessionFileWorker {
                 continue
             }
             let audioURL = metadataURL.deletingPathExtension().appendingPathExtension("m4a")
-            if let answer = fileOne(transfer, landedAt: audioURL, inbox: inbox, playerRuns: playerRuns, now: now, pass: &pass) {
+            if let answer = fileOne(
+                transfer, landedAt: audioURL, inbox: inbox, playerRuns: playerRuns, filesAttached: filesAttached, now: now, pass: &pass
+            ) {
                 pass.answers.append(answer)
                 try? fileManager.removeItem(at: audioURL)
                 try? fileManager.removeItem(at: metadataURL)
@@ -582,7 +586,10 @@ public actor LiveSessionFileWorker {
     }
 
     /// Files Lock Screen Marks by the same rule (slice 1a point 7). Each is a blind Margin with no words.
-    public func fileMarks(_ times: [Date], playerRuns: [LiveSessionFiling.PlayerRun] = [], now: Date = Date()) -> Pass {
+    public func fileMarks(
+        _ times: [Date], playerRuns: [LiveSessionFiling.PlayerRun] = [], filesAttached: [LiveSessionFiling.FileAttachment] = [],
+        now: Date = Date()
+    ) -> Pass {
         var pass = Pass()
         guard collection != nil else { return pass }
         sessions()
@@ -591,7 +598,8 @@ public actor LiveSessionFileWorker {
             let margin = LiveSessionMargin(id: id, text: "", markedAt: time, isBlindMark: true)
             let incoming = LiveSessionFiling.Incoming(marginId: id, markedAt: time)
             let decision = LiveSessionFiling.decide(incoming, sessions: candidates(), deletions: deletions, playerRuns: playerRuns, now: now)
-            let hint = LiveSessionFiling.playingThen(for: incoming, decision: decision, playerRuns: playerRuns)
+            let hint = LiveSessionFiling.playingThen(
+                for: incoming, decision: decision, playerRuns: playerRuns, filesAttached: filesAttached)
             if case let .playerItem(itemId, positionMs) = decision {
                 pass.placements.append(PlayerPlacement(
                     marginId: id, itemId: itemId, positionMs: positionMs, markedAt: time, playingThen: hint
@@ -663,7 +671,7 @@ public actor LiveSessionFileWorker {
     /// Stores, files and answers one Watch Margin. Nil leaves it in the landing folder for the next pass.
     private func fileOne(
         _ transfer: WatchMarginTransfer, landedAt audioURL: URL, inbox: WatchMarginInbox,
-        playerRuns: [LiveSessionFiling.PlayerRun], now: Date, pass: inout Pass
+        playerRuns: [LiveSessionFiling.PlayerRun], filesAttached: [LiveSessionFiling.FileAttachment], now: Date, pass: inout Pass
     ) -> WatchMarginAnswer? {
         let fileManager = FileManager.default
         let captureId = WatchMarginTransfer.safeFileStem(transfer.id)
@@ -697,7 +705,8 @@ public actor LiveSessionFileWorker {
             itemTarget: transfer.itemTarget
         )
         let decision = LiveSessionFiling.decide(incoming, sessions: candidates(), deletions: deletions, playerRuns: playerRuns, now: now)
-        let hint = LiveSessionFiling.playingThen(for: incoming, decision: decision, playerRuns: playerRuns)
+        let hint = LiveSessionFiling.playingThen(
+                for: incoming, decision: decision, playerRuns: playerRuns, filesAttached: filesAttached)
         switch decision {
         case .alreadyFiled:
             try? inbox.markIncorporated(captureId)

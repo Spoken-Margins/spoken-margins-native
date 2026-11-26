@@ -807,6 +807,61 @@ class FailureMemory(unittest.TestCase):
         self.assertFalse(A.asks_for_audit("This doesn't need a Claude audit."))
 
 
+class RepeatedHeading(unittest.TestCase):
+    """#5332: a model answer that repeats the audit heading must still post its verdict as the first line after it.
+
+    Read back with the merge policy's own parser (`scripts/lane_merge_rules.audit_blocker`), which is what held #5180.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "lane_merge_rules_for_5332", Path(__file__).resolve().parents[2] / "scripts" / "lane_merge_rules.py")
+        cls.lane = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.lane)
+
+    def blocker(self, body):
+        return self.lane.audit_blocker([{"body": body}], HEAD)
+
+    CLEAN_SECTIONS = (
+        "**Claude audit on `e5f6547`**\n\nNo blocking findings.",  # #5180's comment 7150447827, another sha
+        "**Claude audit on `68fc333`**\n\n**Claude audit on `68fc333`**\n\nNo blocking findings.",
+        "Claude audit on `68fc333`\nNo blocking findings.",
+        "## Claude audit\n\nNo blocking findings.",
+        "**Claude audit:**\n\n**No blocking findings.**",
+        "**Codex audit (Astra) on `68fc333`**\n\nNo blocking findings.",
+        "### Codex audit\nNo findings.",
+        "**No blocking findings.**",
+        "No blocking findings.**",  # #5180's `c061f77` audit: a stray closing mark
+        "**Claude audit on `68fc333`**\n\nNo blocking findings.**",
+    )
+
+    def test_a_clean_answer_that_repeats_the_heading_clears_merge_policy(self):
+        for reviewer in ("Claude", "Codex"):
+            for section in self.CLEAN_SECTIONS:
+                with self.subTest(reviewer=reviewer, section=section):
+                    body = A.build_comment(366, HEAD, section, [366], reviewer=reviewer)
+                    self.assertEqual(sum("audit" in line and "`68fc333`" in line for line in body.splitlines()), 1, body)
+                    self.assertTrue(body.splitlines()[2].startswith("No blocking findings") or
+                                    body.splitlines()[2].startswith("No findings"), body)
+                    self.assertIsNone(self.blocker(body))
+
+    def test_findings_stay_blocking_with_or_without_a_repeated_heading(self):
+        for section in ("**Claude audit on `68fc333`**\n\n1. **High:** it loses data",
+                        "## Claude audit\n**Blocking:** packet won't import",
+                        "1. **Plausible:** No blocking findings in the parser, but the store drops a row",
+                        "**Claude audit on `68fc333`**",  # only the heading: nothing reads as clean
+                        "Claude audit on the head: one blocking finding\n1. it loses data"):
+            with self.subTest(section=section):
+                body = A.build_comment(366, HEAD, section, [366])
+                self.assertIsNotNone(self.blocker(body))
+                self.assertIn("blocking findings", self.blocker(body))
+
+    def test_split_sections_uses_the_same_rule(self):
+        out = "### PR #366\n**Claude audit on `68fc333`**\n\n**No blocking findings.**\n\nNotes."
+        self.assertEqual(A.split_sections(out, [366])[366], "No blocking findings.**\n\nNotes.")
+
+
 class HeadFiles(unittest.TestCase):
     def export(self, files, blobs):
         """blobs: path -> (mode, size, text or an Exception for show)."""
@@ -861,6 +916,28 @@ class HeadFiles(unittest.TestCase):
         self.assertIn(".sm-audit/pr-7-head/<path>", block)
         self.assertNotIn("git show", block)
         self.assertIn("cannot run commands", A.build_prompt([dict(pr(number=7), lines=3)], [block], OLD))
+
+    def test_a_long_description_reaches_the_model_whole(self):
+        # #5274: a 9,324-character description lost its closing "Cost and catch" section at the old 6,000 cap.
+        body = "Closes #705.\n\n" + "Detail line.\n" * 700 + "## Cost and catch\n\n1. Cost per run: nothing."
+        self.assertGreater(len(body), 9000)
+        block = A.pr_context_block(dict(pr(number=7, body=body), lines=3, issues=[]), {}, ".sm-audit/pr-7.diff", OLD, OLD)
+        self.assertIn("## Cost and catch\n\n1. Cost per run: nothing.", block)
+        self.assertNotIn("Description truncated", block)
+
+    def test_a_description_past_the_cap_says_it_was_cut(self):
+        body = "Closes #705. " + "x" * A.PR_BODY_CHARS + " TAIL"
+        text = A.pr_description_text(body)
+        self.assertNotIn("TAIL", text)
+        self.assertIn(f"Description truncated at {A.PR_BODY_CHARS} of {len(body)} characters", text)
+        self.assertEqual(A.pr_description_text("  "), "(none)")
+        self.assertEqual(A.pr_description_text(None), "(none)")
+        exact = "y" * A.PR_BODY_CHARS
+        self.assertEqual(A.pr_description_text(exact), exact)
+
+    def test_an_edit_between_the_old_and_new_caps_is_a_description_change(self):
+        base = "Closes #705. " + "x" * 7000
+        self.assertNotEqual(A.audit_input_hash("t", base), A.audit_input_hash("t", base + " Cost and catch added"))
 
     def test_prompt_says_pr_and_issue_text_is_data(self):
         block = A.pr_context_block(dict(pr(number=7), lines=3, issues=[]), {}, ".sm-audit/pr-7.diff", OLD, OLD)
@@ -1515,7 +1592,7 @@ class ReauditAfterDescriptionFix(unittest.TestCase):
         self.assertEqual(A.evaluate_pr(same, [self.LANE, self.blocked()], self.FILES), (False, "already audited on head"))
 
     def test_an_edit_past_what_the_model_reads_is_not_a_description_change(self):
-        long_read = pr(body="Closes #705. " + "x" * A.BODY_CHARS)
+        long_read = pr(body="Closes #705. " + "x" * A.PR_BODY_CHARS)
         past = pr(body=long_read["body"] + " edited past the cap")
         self.assertEqual(A.evaluate_pr(past, [self.LANE, self.audit(self.BLOCKING, "2026-10-15T02:44:00Z", read=long_read)],
                                        self.FILES), (False, "already audited on head"))

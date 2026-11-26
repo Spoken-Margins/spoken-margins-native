@@ -165,20 +165,36 @@ extension Gate1AppModel {
     /// Library are kept either way. Undo brings back the show and its newest episodes, not its Quiet or
     /// "new items" choices.
     func unfollowShowWithUndo(_ subscription: FeedSubscription) {
+        unfollowShow(subscription, message: nil, onUndo: nil)
+    }
+
+    /// The one unfollow behind the Show screen's Unfollow and Not for me (#4285): the show leaves its lists and
+    /// Following, and the banner offers Undo, which follows the feed again and puts it back in its lists. Not for me
+    /// passes its own banner words, an Undo label, and an `onUndo` that runs before the follow. `afterUnfollow` runs
+    /// once the unfollow has landed and the subscriptions are published, so a hide written there is never undone by
+    /// the reconcile of a list that still holds the show.
+    func unfollowShow(
+        _ subscription: FeedSubscription,
+        message: String?,
+        undoAccessibilityLabel: String? = nil,
+        onUndo: (@MainActor () async -> Void)?,
+        afterUnfollow: (@MainActor () async -> Void)? = nil
+    ) {
         let title = subscription.source.title ?? subscription.source.host
         let feedURL = subscription.source.canonicalURL
         // The lists it is in (#4046): the show leaves them, and Undo puts it back.
         let listIDs = FollowListsState.shared.lists(containing: subscription).map(\.id)
         let member = FollowListEditing.member(for: subscription)
         followingLooked.remove(subscription.id)
-        unfollowSource(id: subscription.id)
+        unfollowSource(id: subscription.id, then: afterUnfollow)
         if followingLookedLoaded { saveFollowingLooked() } else { followingLookedDirty = true }
         let action = UserFeedbackEvent.Action(
             title: FollowingDismissMessages.undoTitle,
-            accessibilityLabel: FollowingRowActions.undoUnfollowAccessibilityLabel(showTitle: title),
+            accessibilityLabel: undoAccessibilityLabel ?? FollowingRowActions.undoUnfollowAccessibilityLabel(showTitle: title),
             identifier: "following.undo.button",
             perform: { [weak self] in
                 Task { [weak self] in
+                    await onUndo?()
                     guard (try? await self?.followCatalogFeed(feedURL)) != nil else { return }
                     await self?.restoreFollowListMembership(member, toLists: listIDs)
                 }
@@ -186,7 +202,7 @@ extension Gate1AppModel {
         )
         presentFeedback(UserFeedbackEvent(
             kind: .success,
-            message: FollowListWords.unfollowedBanner(showTitle: title, wasInAList: !listIDs.isEmpty),
+            message: message ?? FollowListWords.unfollowedBanner(showTitle: title, wasInAList: !listIDs.isEmpty),
             action: action
         ))
     }

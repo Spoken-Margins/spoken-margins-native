@@ -118,7 +118,8 @@ class HostedPortableWorkflowTests(unittest.TestCase):
 
     def test_a_red_portable_job_cancels_the_run_so_its_mac_jobs_free_their_slots(self):
         # #2596: the cancel job runs on Linux, only after `portable` ended `failure`, and holds no more than actions: write.
-        # The Mac jobs may wait only for the ~20 s `scope` job: the merge queue waits on them.
+        # The Mac jobs may wait only for the ~20 s `scope` job and the ~2-minute `guards` job (merge groups only, which
+        # frees the Macs from a group a repository rule already fails): the merge queue waits on them.
         jobs = yaml.safe_load(self.hosted)['jobs']
         stop = jobs['stop-macs-on-red']
         self.assertEqual(stop['needs'], 'portable')
@@ -128,8 +129,8 @@ class HostedPortableWorkflowTests(unittest.TestCase):
         self.assertIn('gh run cancel', stop['steps'][0]['run'])
         for name in ('sessionkit', 'mac-rest'):
             self.assertEqual(self.slow_needs(jobs[name]), [], name)
-        # Only `scope` (a Linux job of about 20 seconds, #2650) may come first; any other need fails the check.
-        for allowed in ('scope', ['scope']):
+        # Only `scope` (a Linux job of about 20 seconds, #2650) and `guards` may come first; any other need fails the check.
+        for allowed in ('scope', ['scope'], ['scope', 'guards']):
             copy = copy_module.deepcopy(jobs['mac-rest'])
             copy['needs'] = allowed
             self.assertEqual(self.slow_needs(copy), [], allowed)
@@ -142,7 +143,7 @@ class HostedPortableWorkflowTests(unittest.TestCase):
     def slow_needs(job):
         needs = job.get('needs', [])
         needs = [needs] if isinstance(needs, str) else list(needs)
-        return [name for name in needs if name != 'scope']
+        return [name for name in needs if name not in ('scope', 'guards')]
 
     def test_no_workflow_job_runs_on_the_vps(self):
         # #2442, #2383: CI left the owner's VPS. linux-t1.yml is gone, and the lane-open pings keep their 10-minute

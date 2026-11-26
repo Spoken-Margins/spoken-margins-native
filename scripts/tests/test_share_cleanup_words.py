@@ -11,12 +11,15 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCES = ROOT / "App" / "SpokenMarginsApp" / "Sources" / "SpokenMarginsApp"
 # One Margin's "Prepare All Included" steps moved into SessionKitSharing (#969); the guard follows them there.
 BULK_STEPS = ROOT / "Packages" / "SessionKit" / "Sources" / "SessionKitSharing" / "BulkShareDraftPreparation.swift"
-FILES = ["Build23SenderSharingExperience.swift", "Build23SenderSharingComponents.swift", "Gate1AppModel+ShareDrafts.swift",
+FILES = ["Build23SenderSharingExperience.swift", "Build23SenderSharingComponents.swift", "Build23MarginListCard.swift",
+         "Gate1AppModel+ShareDrafts.swift",
          BULK_STEPS]
 RETIRED = [
     "Clean selected", "Clean this Margin", "Pause analysis was unavailable", "Cleaned voice could not",
     "Cleaned voice storage", "The cleaned audio preview", "Cleaned audio could not", "Cleanup applied",
     "Automatic cleanup is unavailable", "Cleaning this Margin", "tightened",
+    # The list replaced Choose and Review (#4647): no screen points to a step that isn't there.
+    "use Back to selection and turn it off", "in the next step",
 ]
 
 

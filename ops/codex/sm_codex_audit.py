@@ -140,7 +140,12 @@ HEAD_TOTAL_CAP = 10_000_000  # bytes copied out per PR
 SOLO_OVER_LINES = 400  # a PR with more changed lines than this is audited alone
 BATCH_MAX_PRS = 5
 BATCH_MAX_LINES = 600
-BODY_CHARS = 6000  # cap on each PR body / issue section passed to the model
+BODY_CHARS = 6000  # cap on each issue section and audit comment passed to the model
+# The PR description gets its own, larger cap. At 6,000 the model was shown about two thirds of a long description
+# and blocked on the "Cost and catch" section it never saw, which sits near the end (#5274's ran 9,324 characters;
+# about ten PRs since 2026-11-10 drew a "cut off" finding). A description past this cap ends in a marker, so the model
+# knows text is missing rather than taking the cut for the end.
+PR_BODY_CHARS = 20_000
 HISTORY_AUDITS = 3
 
 INSTRUCTION = (
@@ -307,12 +312,12 @@ def head_audit_comments(comments: list[dict], head_sha: str) -> list[dict]:
 def audit_input_hash(title: str | None, body: str | None) -> str:
     """A fingerprint of the PR's title and description, which the model reads but GitHub's events never record.
 
-    Only the first BODY_CHARS of the description count: that is all the model is shown, so an edit past it
+    Only the first PR_BODY_CHARS of the description count: that is all the model is shown, so an edit past it
     would pay for an audit that reads the same input.
     """
     def norm(text):
         return (text or "").replace("\r\n", "\n").strip()
-    return hashlib.sha256(json.dumps([norm(title), norm(body)[:BODY_CHARS]], ensure_ascii=False).encode("utf-8")).hexdigest()
+    return hashlib.sha256(json.dumps([norm(title), norm(body)[:PR_BODY_CHARS]], ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def audit_input_marker(c: dict) -> str | None:
@@ -646,18 +651,38 @@ def issue_sections(body: str) -> dict[str, str]:
 _PR_HEADING_RE = re.compile(r"(?im)^\s*#{1,6}\s*\**\s*PR\s*#(\d+)\b.*$")
 
 
+# A line that only repeats an audit heading, as a model sometimes starts its answer (#5332): the Claude or the legacy
+# Codex heading, with or without its sha, bold, a Markdown heading mark or a trailing colon.
+_REPEATED_HEADING_RE = re.compile(
+    r"(?i)^[#>*_\s]*(?:claude audit|codex audit(?: \(astra\))?)(?: on `?[0-9a-f]{7,40}`?)?[*_:\s]*$")
+
+
+def verdict_first(section: str) -> str:
+    """The section as it goes under the audit heading, with its verdict on the first line.
+
+    The runner reads the verdict as the first non-empty line after the heading (`lane_merge_rules.audit_blocker`,
+    #441), and only by its first characters. So lines that repeat the heading are dropped (#5332: on #5180 the
+    model's own "**Claude audit on `e5f6547`**" sat where the verdict belongs, and a clean audit held the PR), and
+    the emphasis markup in front of a clean verdict goes ("**No blocking findings.**"). Anything else stays as the
+    model wrote it, so a section with findings still reads as findings.
+    """
+    lines = (section or "").strip().splitlines()
+    while lines and (not lines[0].strip() or _REPEATED_HEADING_RE.match(lines[0])):
+        lines.pop(0)
+    text = "\n".join(lines).strip()
+    bare = text.lstrip("*_#> \t")
+    if re.match(r"(?i)no (blocking )?findings\b", bare):
+        text = bare
+    return text
+
+
 def split_sections(output: str, numbers: list[int]) -> dict[int, str]:
     """Split the reviewer's answer into {pr_number: section text} by "### PR #N"."""
     marks = [(m.start(), m.end(), int(m.group(1))) for m in _PR_HEADING_RE.finditer(output or "")]
     out: dict[int, str] = {}
     for idx, (_, end, num) in enumerate(marks):
         stop = marks[idx + 1][0] if idx + 1 < len(marks) else len(output)
-        text = output[end:stop].strip()
-        # The runner reads the verdict by its first characters, so "**No blocking findings.**" would
-        # hold the PR as if it had findings: drop the emphasis markup in front of a clean verdict.
-        bare = text.lstrip("*_#> \t")
-        if re.match(r"(?i)no (blocking )?findings\b", bare):
-            text = bare
+        text = verdict_first(output[end:stop])
         if num in numbers and text and num not in out:
             out[num] = text
     return out
@@ -675,7 +700,7 @@ def build_comment(number: int, sha: str, section: str, batch: list[int], *, revi
         "Claude": ("Claude audit", "Posted by the mechanical audit script; Claude ran read-only; "
                    "findings are Claude's own."),
     }[reviewer]
-    lines = [f"**{heading} on `{sha[:7]}`**", "", section.strip(), "", "---"]
+    lines = [f"**{heading} on `{sha[:7]}`**", "", verdict_first(section), "", "---"]
     others = [n for n in batch if n != number]
     if others:
         footer += " Batched with " + ", ".join(f"#{n}" for n in others) + "."
@@ -1137,6 +1162,17 @@ def incremental_diffs(worktree: Path, number: int, head: str, comments: list[dic
     return '\n'.join(parts) if parts else 'No earlier audited head or accepted finding code to compare.'
 
 
+def pr_description_text(body: str | None) -> str:
+    """The PR description as the model reads it: whole up to PR_BODY_CHARS, then a marker saying the rest is missing."""
+    text = (body or "").strip()
+    if not text:
+        return "(none)"
+    if len(text) <= PR_BODY_CHARS:
+        return text
+    return (text[:PR_BODY_CHARS] + f"\n[Description truncated at {PR_BODY_CHARS} of {len(text)} characters. A section "
+            "may be in the part not shown: say so rather than calling it missing.]")
+
+
 def pr_context_block(c: dict, issue_texts: dict[int, dict[str, str]], diff_rel: str,
                      base_sha: str, merge_base: str, delta_context: str = '', inherited_context: str = '') -> str:
     plan = c.get('plan')
@@ -1154,7 +1190,7 @@ def pr_context_block(c: dict, issue_texts: dict[int, dict[str, str]], diff_rel: 
     parts += [
         "",
         "PR description:",
-        (c.get("body") or "(none)").strip()[:BODY_CHARS],
+        pr_description_text(c.get("body")),
     ]
     for inum in c["issues"]:
         secs = issue_texts.get(inum) or {}

@@ -19,6 +19,110 @@ final class PlayerRunRecorderTests: XCTestCase {
 
     private let paused = PlayerRunRecorder.Observation(itemId: "ep", mediaTimeMs: 0, rate: 1, isPlaying: false)
 
+    func testARunKeepsTheFileItPlayedAndAnotherFileOfTheItemStartsANewRun() {
+        // #4779: a spoken note moved to its Shorter pauses version restarts at the same words on another clock.
+        var recorder = PlayerRunRecorder()
+        let recordedFile = "file:///notes/n/whole-note.m4a", shorterFile = "file:///notes/n/clean/whole-note.m4a"
+        recorder.observe(.init(itemId: "note", mediaTimeMs: 3_000, rate: 1, isPlaying: true, mediaURL: recordedFile), at: at(0))
+        recorder.observe(.init(itemId: "note", mediaTimeMs: 3_500, rate: 1, isPlaying: true, mediaURL: recordedFile), at: at(0.5))
+        // The same item and a steady-looking time would have kept one run had the file not been compared.
+        recorder.observe(.init(itemId: "note", mediaTimeMs: 4_000, rate: 1, isPlaying: true, mediaURL: shorterFile), at: at(1))
+        recorder.observe(.init(itemId: "note", mediaTimeMs: 4_500, rate: 1, isPlaying: true, mediaURL: shorterFile), at: at(1.5))
+        let runs = recorder.runs(at: at(1.5))
+        XCTAssertEqual(runs.map(\.mediaURL), [recordedFile, shorterFile])
+        let hint = LiveSessionFiling.playingThen(
+            for: .init(marginId: "m", markedAt: at(1.5)), decision: .newQuick, playerRuns: runs)
+        XCTAssertEqual(hint?.positionMs, 4_500)
+        XCTAssertEqual(hint?.playingMediaURL, shorterFile, "the place is kept with the clock it is on")
+    }
+
+    func testAPausedNoteKeepsTheFileAttachedWhenAWatchMarginWasTakenThoughNothingPlayed() {
+        // #4779 audit on 44dbaf4: a note paused with no run (restored, or paused past the hold) is moved to its other
+        // version while a Watch "On this episode" Margin is on its way. The Watch's position is on the file attached
+        // when the Margin was taken, so that file goes with it, not the one attached when it is written.
+        var recorder = PlayerRunRecorder()
+        let recordedFile = "file:///notes/n/whole-note.m4a", shorterFile = "file:///notes/n/clean/whole-note.m4a"
+        recorder.observe(.init(itemId: "note", mediaTimeMs: 210_000, rate: 1, isPlaying: false, isPaused: true, mediaURL: recordedFile), at: at(0))
+        recorder.observe(.init(itemId: "note", mediaTimeMs: 150_000, rate: 1, isPlaying: false, isPaused: true, mediaURL: shorterFile), at: at(60))
+        let runs = recorder.runs(at: at(90))
+        XCTAssertEqual(runs, [], "a note that never played this launch has no run")
+        XCTAssertEqual(recorder.filesAttached.map(\.mediaURL), [recordedFile, shorterFile])
+
+        let aimed = LiveSessionFiling.Incoming(
+            marginId: "m", markedAt: at(30), itemTarget: WatchItemTarget(itemId: "note", positionMs: 210_000))
+        let decision = LiveSessionFiling.decide(aimed, sessions: [], deletions: .init(), playerRuns: runs, now: at(90))
+        XCTAssertEqual(decision, .playerItem(itemId: "note", positionMs: 210_000))
+        let hint = LiveSessionFiling.playingThen(for: aimed, decision: decision, playerRuns: runs, filesAttached: recorder.filesAttached)
+        XCTAssertEqual(hint?.source, .watchTarget)
+        XCTAssertEqual(hint?.playingMediaURL, recordedFile, "the file attached at the Margin's time, not the one attached now")
+
+        // Filed into a session instead, it keeps the same file for a later move onto the note.
+        let filed = LiveSessionFiling.playingThen(
+            for: aimed, decision: .newQuick, playerRuns: runs, filesAttached: recorder.filesAttached)
+        XCTAssertEqual(filed?.playingMediaURL, recordedFile)
+        // Taken after the move, it is on the shorter file; taken before anything was seen, the file is not known.
+        let later = LiveSessionFiling.Incoming(
+            marginId: "n", markedAt: at(70), itemTarget: WatchItemTarget(itemId: "note", positionMs: 150_000))
+        XCTAssertEqual(
+            LiveSessionFiling.playingThen(for: later, decision: .newQuick, playerRuns: runs, filesAttached: recorder.filesAttached)?
+                .playingMediaURL, shorterFile)
+        let early = LiveSessionFiling.Incoming(
+            marginId: "o", markedAt: at(-5), itemTarget: WatchItemTarget(itemId: "note", positionMs: 1_000))
+        XCTAssertNil(
+            LiveSessionFiling.playingThen(for: early, decision: .newQuick, playerRuns: runs, filesAttached: recorder.filesAttached)?
+                .playingMediaURL)
+    }
+
+    func testTheWatchCarriesTheFileItsPlaceIsOnAndANoteWithNoneKnownHasNoFile() throws {
+        // #4779 audit on 9443c0a: after a relaunch, or past the history's window, the phone's record is gone. The board
+        // names the note's file, the Watch hands it back with the Margin, and the transfer keeps it.
+        let recordedFile = "file:///notes/n/whole-note.m4a", shorterFile = "file:///notes/n/clean/whole-note.m4a"
+        let board = WatchNowPlaying(
+            itemId: "note", title: "A note", isPlaying: false, positionMs: 210_000, positionAt: at(0), mediaFile: recordedFile)
+        let plan = WatchRecordingPlan.begin(target: .episode, nowPlaying: board, phoneNow: at(20))
+        XCTAssertEqual(plan.itemTarget, WatchItemTarget(itemId: "note", positionMs: 210_000, mediaFile: recordedFile))
+        let transfer = WatchMarginTransfer(id: "w", wallStart: at(20), durationMs: 2_000, itemTarget: plan.itemTarget)
+        XCTAssertEqual(WatchMarginTransfer(metadata: transfer.metadata)?.itemTarget?.mediaFile, recordedFile)
+
+        // The phone has moved to the shorter file and kept no record: the Margin still says which clock it is on.
+        let fresh = PlayerRunRecorder()
+        let aimed = LiveSessionFiling.Incoming(marginId: "m", markedAt: at(20), itemTarget: plan.itemTarget)
+        let decision = LiveSessionFiling.decide(aimed, sessions: [], deletions: .init(), playerRuns: [], now: at(90))
+        XCTAssertEqual(
+            LiveSessionFiling.playingThen(for: aimed, decision: decision, playerRuns: [], filesAttached: fresh.filesAttached)?
+                .playingMediaURL, recordedFile)
+        // The board's file wins over the phone's record, which dates a change only when its snapshot arrives.
+        var recorder = PlayerRunRecorder()
+        recorder.observe(.init(itemId: "note", mediaTimeMs: 150_000, rate: 1, isPlaying: false, isPaused: true, mediaURL: shorterFile), at: at(0))
+        XCTAssertEqual(
+            LiveSessionFiling.playingThen(for: aimed, decision: decision, playerRuns: [], filesAttached: recorder.filesAttached)?
+                .playingMediaURL, recordedFile)
+        // A Watch build before it sends no file, and with no record either, none is known.
+        let old = LiveSessionFiling.Incoming(marginId: "o", markedAt: at(20), itemTarget: WatchItemTarget(itemId: "note", positionMs: 210_000))
+        XCTAssertNil(LiveSessionFiling.playingThen(for: old, decision: decision, playerRuns: [], filesAttached: [])?.playingMediaURL)
+
+        // A board from the build before it still decodes, with no file.
+        let encoded = try JSONEncoder().encode(WatchNowPlaying(itemId: "ep", title: "E", isPlaying: true, positionMs: 1, positionAt: at(0)))
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        json["mediaFile"] = nil
+        let decoded = try JSONDecoder().decode(WatchNowPlaying.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertNil(decoded.mediaFile)
+        // A change of file alone sends the board again.
+        var moved = board
+        moved.mediaFile = shorterFile
+        XCTAssertTrue(WatchNowPlayingFeed.shouldPublish(previous: board, next: moved))
+    }
+
+    func testOldFileChangesAreDroppedButEachItemKeepsItsLatest() {
+        var recorder = PlayerRunRecorder()
+        recorder.observe(.init(itemId: "note", mediaTimeMs: 0, rate: 1, isPlaying: false, isPaused: true, mediaURL: "a"), at: at(0))
+        recorder.observe(.init(itemId: "note", mediaTimeMs: 0, rate: 1, isPlaying: false, isPaused: true, mediaURL: "b"), at: at(10))
+        recorder.observe(.init(itemId: "note", mediaTimeMs: 0, rate: 1, isPlaying: false, isPaused: true, mediaURL: "b"), at: at(20))
+        XCTAssertEqual(recorder.filesAttached.map(\.mediaURL), ["a", "b"], "the same file again adds nothing")
+        recorder.observe(.init(itemId: "ep", mediaTimeMs: 0, rate: 1, isPlaying: false, isPaused: true, mediaURL: "e"), at: at(PlayerRunRecorder.keepFor + 60))
+        XCTAssertEqual(recorder.filesAttached.map(\.mediaURL), ["b", "e"], "the note's older file goes; its latest stays")
+    }
+
     func testASteadyRunPlacesAMarginAtTheTimeItWasTaken() {
         var recorder = PlayerRunRecorder()
         recorder.observe(playing(60_000), at: at(0))

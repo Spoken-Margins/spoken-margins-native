@@ -284,6 +284,7 @@ final class Gate1AppModel: ObservableObject {
     /// Settable from other files so the go-to in `Gate1AppModel+SilentMarginJump.swift` can ask for Now (#4934).
     @Published var showNowRequests = 0
     @Published var silentMarginLanding: SilentMarginLanding? // a friend's silent Margin the listener went to; the pinned card shows it (#4934)
+    @Published var catchUp: ActiveCatchUp? // a catch-up run on a finished item and its caught-up card (#4785, `Gate1AppModel+CatchUp.swift`)
     @Published private(set) var marginMomentVoiceIsPaused = false
     /// Whose Margin the moment is for ("Your Margin", "Cole's Margin"), and whether its position is only a guess.
     @Published private(set) var marginMomentTitle = "Your Margin"
@@ -306,6 +307,7 @@ final class Gate1AppModel: ObservableObject {
     let linkListArrival = LinkListArrivalState() // Paste & go's wait on a pasted link list and the Quick Folder's retries (#4683)
     let aiFollowSuggestionsModel = AIFollowSuggestionsModel() // shows the listener's AI suggested following (#4683)
     let notForMe = NotForMeHolder() // what the listener said Not for me to, kept on the phone (#4285)
+    lazy var spokenNoteClean: SpokenNoteCleanCoordinator = { let made = SpokenNoteCleanCoordinator(); made.attach(self); return made }() // Shorter pauses for spoken notes (#4779)
     @Published var sourceImportProgressMessage: String?
     @Published var importInbox: [ImportInboxEntry] = []
     @Published var sourceLinksWaitingForNetwork = 0 // shared links left pending while offline (#1546)
@@ -331,7 +333,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var feedSubscriptions: [FeedSubscription] = [] { didSet { quickAccess.invalidateCandidates(); listeningSignals.endListening() } }
     @Published var isRefreshingFollowedSources = false
     @Published var followingShows = FollowingShowsState() // Following's rows, entries and looked times (#1865)
-    @Published var importingFollowedSourceEntryIds: Set<String> = []
+    @Published var followedEntryImports = FollowedEntryImports() // Following fetches, and which ones a ▶ tap waits on (#5328)
     /// The latest Play now or Add and open from Following; any later open or start makes it stale (#2124).
     var followedPlayIntent = CurrentRequest()
     @Published var isFollowingSelectedSource = false
@@ -584,15 +586,6 @@ final class Gate1AppModel: ObservableObject {
         return []
         #endif
     }
-
-    #if DEBUG
-    /// Tests that model a write through the app must share its serialized connection.
-    /// Opening another connection also races unrelated offline-ledger startup work.
-    func libraryStoreForTesting() throws -> SQLiteSessionStore {
-        precondition(Self.isRunningUnitTests)
-        return try requireStore()
-    }
-    #endif
 
     init(
         sourceLinkResolver: LinkResolutionClient? = nil,
@@ -1005,7 +998,6 @@ final class Gate1AppModel: ObservableObject {
         startHangTelemetry(); narrationStartupProtection.appEnteredForeground(); reconcileNarrationOwnership(trigger: "foreground")
         openReadyListeningEdition()
         marginOutput.start(); readwiseHighlightSync.start { [weak self] in self?.store }
-        if let store { CommunityMapUploadService.shared.retryFailed(store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
         OnDeviceVoiceGovernor.app.setAppBackgrounded(false)
         let refreshedAvailability = localFoundationModelClient.availability()
         if refreshedAvailability != localFoundationModelAvailability {
@@ -1159,7 +1151,10 @@ final class Gate1AppModel: ObservableObject {
             self.marginMomentVoiceIsPaused = conductor.isVoicePaused
             if !conductor.isPlayingVoice { self.recordMarginMomentVoiceEnded() }
             // Nothing left to play inline: the card goes away and the item simply continues.
-            if conductor.sequence.phase == .listening, conductor.sequence.unplayed.isEmpty { self.endMarginMoment() }
+            if conductor.sequence.phase == .listening, conductor.sequence.unplayed.isEmpty {
+                self.catchUpRunReachedItsEnd(conductor) // before the moment ends, so the caught-up card takes the slot (#4785)
+                self.endMarginMoment()
+            }
         }
         marginMomentConductor = conductor
         marginMomentTitle = title
@@ -1186,7 +1181,7 @@ final class Gate1AppModel: ObservableObject {
     /// Stops playing Margins inline. The item keeps its current play state.
     func endMarginMoment() {
         giveBackUnfinishedReview()
-        recordMarginMomentVoiceEnded()
+        recordMarginMomentEnded()
         marginMomentConductor?.cancel()
         marginMomentConductor = nil
         marginMoment = nil
@@ -1318,10 +1313,11 @@ final class Gate1AppModel: ObservableObject {
         }
         run { engine in
             try hangTelemetry.labels.scoped("start.prepareSource") { try prepareSourceMediaPlayback(itemId: activeItemId) }
-            let started = try engine.startSession(itemId: activeItemId)
+            let started = try engine.startSession(itemId: activeItemId, atMediaTimeMs: spokenNoteClean.takePendingStartMs(itemId: activeItemId))
             snapshot = try hangTelemetry.labels.scoped("start.playbackRate") { try applyPreferredPlaybackRate(to: started, engine: engine) }
             if let store, let sessionId = snapshot.sessionId {
                 try seedUITestingSummaryInterjectionIfNeeded(sessionId: sessionId, engine: engine, store: store)
+                try seedUITestingShareBatchIfNeeded(sessionId: sessionId, engine: engine, store: store)
                 try seedUITestingGeneratedTimelineIfNeeded(sessionId: sessionId, engine: engine, store: store)
             }
             if let store {
@@ -1553,17 +1549,27 @@ final class Gate1AppModel: ObservableObject {
         LibraryQueryEngine.librarySortDescription(query: libraryQuery)
     }
 
-    func startItem(id: String) {
-        guard prepareToStartItem(id: id) else { return }
+    /// `catchUp` (#4785) starts by `PlayRule.catchUpStart`, which never moves a finished or 99% session. Returns what it
+    /// tried, nil when nothing was tried (a spoken note routed to its chosen version starts later, #4779).
+    @discardableResult
+    func startItem(id: String, catchUp: Bool = false, trigger: VoiceoverLookupDecision.Trigger = .play) -> PlayRule.StartAction? {
+        guard prepareToStartItem(id: id, trigger: trigger) else { return nil }
+        guard !startSpokenNoteThroughChosenVersion(itemId: id) else { return nil } // #4779
         silentMarginLanding = nil
         do {
             let store = try requireStore()
-            switch PlayRule.startAction(sessions: try store.loadSessions(itemId: id), addedAgainAt: addedAgainAt(forItem: id)) {
+            let sessions = try store.loadSessions(itemId: id)
+            let action = catchUp
+                ? PlayRule.catchUpStart(sessions: sessions, addedAgainAt: addedAgainAt(forItem: id))
+                : PlayRule.startAction(sessions: sessions, addedAgainAt: addedAgainAt(forItem: id))
+            switch action {
             case .resume(let continuation): resumeSession(continuation)
             case .startNew: startNewSession(id: id)
             }
+            return action
         } catch {
             reportFailure(error, context: "Continue listening failed")
+            return nil
         }
     }
 
@@ -1572,6 +1578,7 @@ final class Gate1AppModel: ObservableObject {
         // Before ending what's playing: a blocked start must not stop a downloaded episode.
         guard !blockOfflineEpisodeStart(itemId: id) else { return }
         endUnfinishedReview()
+        noteCatchUp(.otherItemOpened) // any new start puts the caught-up card away (#4785)
         followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
         resetMixWithOtherAudioForNewSession()
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
@@ -1591,6 +1598,7 @@ final class Gate1AppModel: ObservableObject {
     func openSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_session") else { return }
         endUnfinishedReview()
+        noteCatchUp(.otherItemOpened)
         followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
         resetMixWithOtherAudioForNewSession()
         sharedMarginOffers.removeAll()
@@ -1622,6 +1630,7 @@ final class Gate1AppModel: ObservableObject {
         guard !rejectNavigationOrSessionMutationWhileRecording("resume_session") else { return }
         guard !blockOfflineEpisodeStart(itemId: session.itemId) else { return }
         endUnfinishedReview()
+        noteCatchUp(.otherItemOpened)
         followedPlayIntent.cancel() // the listener moved on: a pending Play now must not take over (#2124)
         resetMixWithOtherAudioForNewSession()
         cancelSleepTimer()
@@ -2072,7 +2081,7 @@ final class Gate1AppModel: ObservableObject {
             "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
             "requestedMediaTimeMs": String(mediaTimeMs ?? -1)
         ])
-        if command.movesPlaybackPosition { marginMomentConductor?.sourceMoved() } // before any return below (#1656)
+        noteTransportCommand(command) // before any return below (#1656, #4785)
         if command == .beginInterjection { gate2CompactControls.recordingWillTakeAudioSession() } // #2967
         if command == .beginInterjection, !snapshot.isRecording, snapshot.skimBridgeState == nil,
            !handOffPlayingMarginToRecording() { return }
@@ -2148,9 +2157,8 @@ final class Gate1AppModel: ObservableObject {
             ? playbackRate.map { SpeechRateRule.quarterStepMultiplier($0) }
             : playbackRate
         synchronizeSpeechAnchorForCompactCommand(command, canonicalTransport: canonicalTransportCommands.contains(command))
-        if command == .beginInterjection {
-            streamingSpeechQueue.pauseForInterjection()
-        }
+        if command == .beginInterjection { streamingSpeechQueue.pauseForInterjection() }
+        settleCatchUpPlaceBeforeCompactDispatch(command) // a compact Play gives back a catch-up run's kept place (#5238)
         guard let captureVerdict = verdictForCompactCommand(command) else { return }
         do {
             let result = try gate2CompactControls.dispatch(

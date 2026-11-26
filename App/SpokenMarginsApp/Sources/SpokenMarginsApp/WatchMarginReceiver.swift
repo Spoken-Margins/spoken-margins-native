@@ -149,7 +149,7 @@ final class WatchMarginReceiver: NSObject {
             await previous?.value
             // A Resume tapped before a Mark opens the session the Mark belongs in.
             let resumed = await self?.apply(resumes) ?? false
-            let result = await files.fileMarks(marks, playerRuns: PlayerRunController.runs())
+            let result = await files.fileMarks(marks, playerRuns: PlayerRunController.runs(), filesAttached: PlayerRunController.filesAttached())
             let placed = await self?.placeOnPlayerItems(result.placements)
             if result.changed || resumed || placed?.changed == true { self?.announceChange() }
         }
@@ -179,11 +179,11 @@ final class WatchMarginReceiver: NSObject {
         var changed = await apply(drainResumes())
         let marks = drainMarks()
         if !marks.isEmpty {
-            let result = await files.fileMarks(marks, playerRuns: PlayerRunController.runs())
+            let result = await files.fileMarks(marks, playerRuns: PlayerRunController.runs(), filesAttached: PlayerRunController.filesAttached())
             changed = result.changed || changed
             changed = await placeOnPlayerItems(result.placements).changed || changed
         }
-        let pass = await files.fileWatchInbox(playerRuns: PlayerRunController.runs())
+        let pass = await files.fileWatchInbox(playerRuns: PlayerRunController.runs(), filesAttached: PlayerRunController.filesAttached())
         changed = pass.changed || changed
         let placed = await placeOnPlayerItems(pass.placements)
         changed = placed.changed || changed

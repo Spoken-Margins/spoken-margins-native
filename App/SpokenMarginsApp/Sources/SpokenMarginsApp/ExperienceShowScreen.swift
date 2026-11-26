@@ -93,10 +93,11 @@ struct ExperienceShowScreen: View {
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
             }
             settingsRows(for: subscription)
-            // When the card holds the show's only episode there is nothing left to list, so no empty Episodes header.
-            if !listed.isEmpty || upNext == nil {
+            // When the card holds the show's only episode there is nothing left to list, so no empty Episodes header; nor
+            // when every other episode was skipped by a rule, which the Skipped group below lists (PR 10b audit).
+            if !listed.isEmpty || (upNext == nil && skipped.isEmpty) {
                 Section {
-                    if episodes.isEmpty {
+                    if listed.isEmpty && skipped.isEmpty {
                         Text("No episodes yet. Pull down on Following to look for new ones.")
                             .font(.subheadline)
                             .foregroundStyle(AppColors.secondaryText)
@@ -266,6 +267,18 @@ struct ExperienceShowScreen: View {
         .accessibilityHint("Stops following this show. Everything already in your Library is kept. You can undo right after.")
         .accessibilityIdentifier("show.unfollow")
         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+        // Not for me (#4285): unfollows, then stops the show being suggested on this iPhone. Its own row, in the
+        // same style, so a tap can never reach Unfollow.
+        Button(role: .destructive) {
+            model.notForMeShow(subscription)
+        } label: {
+            Label(FollowingDismissMessages.notForMeTitle, systemImage: FollowingDismissMessages.notForMeSystemImage)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .buttonStyle(.borderless)
+        .accessibilityHint(CatalogPackWords.showNotForMeHint)
+        .accessibilityIdentifier(CatalogPackWords.showNotForMeIdentifier)
+        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
     }
 
     /// A waiting episode keeps the row actions Following's stream had: add, play now, dismiss. A played one is
@@ -276,7 +289,7 @@ struct ExperienceShowScreen: View {
             InLibraryEpisodeRow(episode: episode, itemId: model.followingLibraryEpisodes[episode.entry.id]?.itemID)
         } else {
             SourceInboxRow(candidate: .followedSource(episode.entry), artwork: artwork,
-                           skippedWord: episode.skippedWord, isPick: episode.isPick)
+                           skippedWord: episode.skippedWord, isPick: episode.isPick, offersShowLess: episode.skippedWord == nil)
         }
     }
 }

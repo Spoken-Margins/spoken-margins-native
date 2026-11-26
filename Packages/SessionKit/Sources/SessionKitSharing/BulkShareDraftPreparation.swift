@@ -67,29 +67,87 @@ public struct BulkShareDraftPreparation {
             && !draft.currentEditState.automaticCleanupEnabled
     }
 
-    /// Prepares one Margin: turns automatic cleanup on, analyses its pauses, and renders the cleaned copy.
-    /// Returns whether it got the cleaned copy with nothing missing (`false`: it fell back, or the work went stale).
+    /// Whether a Margin's work in the run should stop: it was switched out, or the sender picked As recorded or Words
+    /// only (#4647). Its result is not written and it is neither finished nor failed.
+    public static func leftTheRun(_ draft: ShareInterjectionDraft) -> Bool {
+        !draft.isIncluded || draft.optedOutOfCleanedVoice
+    }
+
+    // MARK: Words first (#4647)
+
+    /// The text step: turns automatic cleanup on for one Margin with no render, so its cleaned words show at once. The
+    /// voice is made later by the run. Does nothing for a Margin with no word timing or with cleanup already on.
+    /// Returns whether it changed the Margin.
+    @discardableResult
+    public static func applyTextStep(for id: String, host: any BulkShareDraftHost) -> Bool {
+        guard let index = host.bulkShareDrafts.firstIndex(where: { $0.id == id }),
+              host.bulkShareDrafts[index].interjection.alignedTranscript != nil,
+              !host.bulkShareDrafts[index].currentEditState.automaticCleanupEnabled else { return false }
+        host.bulkShareDrafts[index].preparationMessage = nil
+        recordEdit(for: id, host: host) { $0.automaticCleanupEnabled = true }
+        return true
+    }
+
+    /// The switch turned on, or the list opened with it stored on: every eligible Margin gets its cleaned words at once,
+    /// including one set to As recorded or Words only, and is remembered as cleaned by the switch. Returns, in list
+    /// order, the ones whose voice should be made: all of those but the ones the sender set to As recorded or Words only.
+    public static func startPass(host: any BulkShareDraftHost) -> [String] {
+        let eligible = host.bulkShareDrafts.filter(isEligible).map(\.id)
+        var voices: [String] = []
+        for id in eligible {
+            applyTextStep(for: id, host: host)
+            host.bulkAutomaticallyCleanedDraftIDs.insert(id)
+            if let draft = host.bulkShareDrafts.first(where: { $0.id == id }), !draft.optedOutOfCleanedVoice {
+                voices.append(id)
+            }
+        }
+        return voices
+    }
+
+    /// One Margin switched in, or whose words arrived, with the switch on: only that Margin gets its cleaned words and,
+    /// unless the sender opted out, joins the run. Other Margins are never swept up. Returns whether its voice should be
+    /// made.
+    public static func includePass(id: String, host: any BulkShareDraftHost) -> Bool {
+        guard let draft = host.bulkShareDrafts.first(where: { $0.id == id }), draft.isIncluded,
+              draft.interjection.alignedTranscript != nil else { return false }
+        if applyTextStep(for: id, host: host) {
+            host.bulkAutomaticallyCleanedDraftIDs.insert(id)
+        }
+        guard let current = host.bulkShareDrafts.first(where: { $0.id == id }) else { return false }
+        return !current.optedOutOfCleanedVoice && !(current.currentEditState.automaticCleanupEnabled && current.cleanedAudioURL != nil)
+    }
+
+    /// Whether asking for a Margin's voice should queue it (#4647): not when it is already queued or in progress, and
+    /// not when its automatic cleanup is on and its voice without ums is already made.
+    public static func needsVoice(_ id: String, pending: Set<String>, host: any BulkShareDraftHost) -> Bool {
+        guard !pending.contains(id), let draft = host.bulkShareDrafts.first(where: { $0.id == id }) else { return false }
+        return !(draft.currentEditState.automaticCleanupEnabled && draft.cleanedAudioURL != nil)
+    }
+
+    /// Prepares one Margin's voice: analyses its pauses and renders the cleaned copy, from the words as they are when its
+    /// turn comes. Its words were cleaned when it was queued (`applyTextStep`), never here, so an "Undo all edits" made
+    /// while it waited is not redone.
+    ///
+    /// - `.skipped`: it left the run (`leftTheRun`) before its turn's work began or before a result was written.
+    /// - `.requeued`: a hand edit changed its words while the render was out, so the copy is stale; it goes again.
+    /// - `.prepared` / `.fellBack`: it got the cleaned copy with nothing missing, or fell back.
     public func prepare(
         _ id: String,
         ticket: BulkPreparationTicket,
         host: any BulkShareDraftHost
-    ) async -> Bool {
+    ) async -> BulkPreparationOutcome {
         guard let initialIndex = host.bulkShareDrafts.firstIndex(where: { $0.id == id }),
               let aligned = host.bulkShareDrafts[initialIndex].interjection.alignedTranscript else {
-            return false
+            return .fellBack
         }
+        guard !Self.leftTheRun(host.bulkShareDrafts[initialIndex]) else { return .skipped }
         host.bulkShareDrafts[initialIndex].preparationMessage = nil
-        Self.recordEdit(for: id, host: host) { $0.automaticCleanupEnabled = true }
-        host.bulkAutomaticallyCleanedDraftIDs.insert(id)
 
-        guard let analysisIndex = host.bulkShareDrafts.firstIndex(where: { $0.id == id }) else {
-            return false
-        }
-        let audioPath = host.bulkShareDrafts[analysisIndex].interjection.audioPath
+        let audioPath = host.bulkShareDrafts[initialIndex].interjection.audioPath
         let sourceURL = audioPath.flatMap(host.bulkShareAudioURL(forAudioPath:))
         var analysisFailure: ShareCleanupWords.Failure?
         if let sourceURL {
-            host.bulkShareDrafts[analysisIndex].isAnalyzingPauses = true
+            host.bulkShareDrafts[initialIndex].isAnalyzingPauses = true
             let analyzer = analyze
             let analysis = await Task.detached {
                 do {
@@ -100,9 +158,10 @@ public struct BulkShareDraftPreparation {
             }.value
             guard ticket.isLive,
                   let current = host.bulkShareDrafts.firstIndex(where: { $0.id == id }) else {
-                return false
+                return .fellBack
             }
             host.bulkShareDrafts[current].isAnalyzingPauses = false
+            guard !Self.leftTheRun(host.bulkShareDrafts[current]) else { return .skipped }
             host.bulkShareDrafts[current].acousticPauseDecisions = analysis.0
             if let reason = analysis.1 {
                 analysisFailure = .pauseAnalysisUnavailable
@@ -113,11 +172,16 @@ public struct BulkShareDraftPreparation {
             analysisFailure = .recordingMissing
         }
 
-        guard ticket.isLive else { return false }
+        guard ticket.isLive else { return .fellBack }
         let rendered = await renderCleanup(forDraft: id, ticket: ticket, host: host)
+        switch rendered {
+        case .skipped: return .skipped
+        case .requeued: return .requeued
+        case .done, .failed: break
+        }
         guard ticket.isCurrent,
               let finalIndex = host.bulkShareDrafts.firstIndex(where: { $0.id == id }) else {
-            return false
+            return .fellBack
         }
         if let analysisFailure {
             let analysisMessage = analysisFailure.message
@@ -128,30 +192,32 @@ public struct BulkShareDraftPreparation {
                 host.bulkShareDrafts[finalIndex].preparationMessage = analysisMessage
             }
         }
-        return rendered && analysisFailure == nil
+        return rendered == .done && analysisFailure == nil ? .prepared : .fellBack
     }
+
+    private enum RenderResult { case done, failed, skipped, requeued }
 
     private func renderCleanup(
         forDraft id: String,
         ticket: BulkPreparationTicket,
         host: any BulkShareDraftHost
-    ) async -> Bool {
+    ) async -> RenderResult {
         guard let index = host.bulkShareDrafts.firstIndex(where: { $0.id == id }) else {
-            return false
+            return .failed
         }
         guard let decisions = host.bulkShareDrafts[index].cleanup?.decisions else {
-            return true
+            return .done
         }
         guard let sourcePath = host.bulkShareDrafts[index].interjection.audioPath,
               let sourceURL = host.bulkShareAudioURL(forAudioPath: sourcePath) else {
             host.bulkShareDrafts[index].representationChoice = .textOnly
             host.bulkShareDrafts[index].preparationMessage = ShareCleanupWords.Failure.recordingMissing.message
-            return false
+            return .failed
         }
         guard let folder = host.bulkShareRevisionFolder() else {
             host.bulkShareDrafts[index].preparationMessage = ShareCleanupWords.Failure.voiceNotPrepared.message
             host.recordBulkShareCleanupFailure("render_storage_unavailable", for: host.bulkShareDrafts[index].interjection)
-            return false
+            return .failed
         }
         host.bulkShareDrafts[index].renderGeneration += 1
         let renderGeneration = host.bulkShareDrafts[index].renderGeneration
@@ -165,42 +231,74 @@ public struct BulkShareDraftPreparation {
             result = (nil, SafeErrorText.describe(error))
         }
         guard ticket.isLive,
-              let current = host.bulkShareDrafts.firstIndex(where: { $0.id == id }),
-              host.bulkShareDrafts[current].renderGeneration == renderGeneration else {
+              let current = host.bulkShareDrafts.firstIndex(where: { $0.id == id }) else {
             discardStaleCopy(destination)
-            return false
+            return .failed
+        }
+        guard host.bulkShareDrafts[current].renderGeneration == renderGeneration else {
+            // The words changed while the copy was made (a hand edit, or Undo all edits): the copy is for words that
+            // no longer go. It is deleted, and the Margin goes again with its words as they are now (#4647).
+            discardStaleCopy(destination)
+            host.bulkShareDrafts[current].isPreparingCleanup = false
+            return .requeued
         }
         host.bulkShareDrafts[current].isPreparingCleanup = false
+        let draft = host.bulkShareDrafts[current]
         if let duration = result.duration {
             host.bulkShareDrafts[current].cleanedAudioURL = destination
             host.bulkShareDrafts[current].cleanedAudioDurationMs = duration
-            host.bulkShareDrafts[current].representationChoice = .cleaned
-            return true
+            // A sender's pick holds (#4647): the copy goes when they picked nothing or picked Without ums, even for a
+            // Margin switched out meanwhile, so switching it back in sends the voice its cleaned words describe. A left-out
+            // Margin's version is never read (the packet and the fingerprint take only included Margins), and it is
+            // not counted as done.
+            let now = host.bulkShareDrafts[current]
+            if !now.optedOutOfCleanedVoice {
+                host.bulkShareDrafts[current].representationChoice = .cleaned
+            }
+            guard !Self.leftTheRun(now) else { return .skipped }
+            return .done
         }
         host.bulkShareDrafts[current].cleanedAudioURL = nil
         host.bulkShareDrafts[current].cleanedAudioDurationMs = nil
+        let keepsWordsOnly = draft.representationChoice == .textOnly || draft.senderPickedVersion == .textOnly
         host.bulkShareDrafts[current].representationChoice =
-            Self.hasOriginalAudio(host.bulkShareDrafts[current], host: host) ? .original : .textOnly
+            keepsWordsOnly || !Self.hasOriginalAudio(draft, host: host) ? .textOnly : .original
+        if host.bulkShareDrafts[current].senderPickedVersion == .cleaned {
+            host.bulkShareDrafts[current].senderPickedVersion = nil
+        }
+        guard !Self.leftTheRun(draft) else { return .skipped }
         host.bulkShareDrafts[current].preparationMessage = ShareCleanupWords.Failure.voiceNotPrepared.message
         host.recordBulkShareCleanupFailure("render:\(result.failure ?? "unknown")", for: host.bulkShareDrafts[current].interjection)
-        return false
+        return .failed
     }
 
     /// The Cancel button, after the run is invalidated: every draft stops showing work, and a draft whose work was in
-    /// flight gets its automatic cleanup taken back, so it is eligible again. Every draft, on purpose: a manual
-    /// cleanup in flight is rolled back too (characterised on #969, 2026-10-12).
-    public static func rollBackInFlightDrafts(host: any BulkShareDraftHost) {
+    /// flight, or that was still queued (`pending`, #4647), gets its automatic cleanup taken back (words back as
+    /// recorded), so it is eligible again. Every draft in flight, on purpose: a manual cleanup in flight is rolled back too
+    /// (characterised on #969, 2026-10-12). Margins already finished keep theirs.
+    public static func rollBackInFlightDrafts(host: any BulkShareDraftHost, pending: Set<String> = []) {
         for index in host.bulkShareDrafts.indices {
             let wasInFlight = host.bulkShareDrafts[index].isAnalyzingPauses
                 || host.bulkShareDrafts[index].isPreparingCleanup
+                || pending.contains(host.bulkShareDrafts[index].id)
             host.bulkShareDrafts[index].isAnalyzingPauses = false
             host.bulkShareDrafts[index].isPreparingCleanup = false
-            if wasInFlight,
-               host.bulkShareDrafts[index].currentEditState.automaticCleanupEnabled,
-               host.bulkShareDrafts[index].canUndoEdit {
-                let hasOriginalAudio = hasOriginalAudio(host.bulkShareDrafts[index], host: host)
+            guard wasInFlight, host.bulkShareDrafts[index].currentEditState.automaticCleanupEnabled else { continue }
+            let hasOriginalAudio = hasOriginalAudio(host.bulkShareDrafts[index], host: host)
+            var withoutAutomatic = host.bulkShareDrafts[index].currentEditState
+            withoutAutomatic.disableAutomaticCleanup()
+            let history = host.bulkShareDrafts[index].editHistory
+            let position = host.bulkShareDrafts[index].editHistoryIndex
+            if position > 0, history[position - 1] == withoutAutomatic {
+                // The last edit was the automatic one: take it back as an undo, so redo still has it.
                 _ = host.bulkShareDrafts[index].undoEdit(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: false)
+            } else {
+                // Edits came after it: take only the automatic part off, as a new edit, and keep the sender's own.
+                _ = host.bulkShareDrafts[index].recordEdit(hasOriginalAudio: hasOriginalAudio, renderCleanedAudio: false) {
+                    $0.disableAutomaticCleanup()
+                }
             }
+            host.bulkAutomaticallyCleanedDraftIDs.remove(host.bulkShareDrafts[index].id)
         }
     }
 

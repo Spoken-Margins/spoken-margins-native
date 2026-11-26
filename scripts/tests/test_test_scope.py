@@ -157,10 +157,14 @@ class TestScopeTests(unittest.TestCase):
                                (KIT + 'SessionKitPersistence/SQLiteSessionStore.swift', 'persistence'),
                                (KIT + 'SessionKitSharing/InterjectionPackageArchive.swift', 'packet'),
                                (KIT + 'SessionKit/SharingModels.swift', 'packet'),
-                               (KIT + 'SessionKit/ShareableLinkPolicy.swift', 'packet')):
+                               (KIT + 'SessionKit/ShareableLinkPolicy.swift', 'packet'),
+                               (KIT + 'SessionKitSupertonic/SupertonicSpeechPlaybackClient.swift', 'audio'),
+                               (KIT + 'SessionKitSupertonic/SupertonicPreparedAudioAssembler.swift', 'audio'),
+                               (KIT + 'SessionKit/PreparedChunkPlan.swift', 'audio')):
             with self.subTest(path=path):
                 self.assertEqual(self.kind(path), (category, 'T2'))
         self.assertEqual(self.kind(KIT + 'SessionKit/SharingSummary.swift'), ('sessionkit', 'T1'))  # not on the list
+        self.assertEqual(self.kind(KIT + 'SessionKitSupertonic/RenderedSpeechDiskCache.swift'), ('sessionkit', 'T1'))
 
     def test_each_audio_name_pattern_makes_an_app_file_an_audio_change(self):
         for name in ('AudioRouteWatcher', 'PlaybackScreen', 'SpeechVoiceCatalog', 'SupertonicVoicePack',

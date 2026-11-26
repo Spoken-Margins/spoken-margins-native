@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import type { PlaybackPosition } from '../../shared/model.ts';
-import { MIRROR_KEY, forgetMirrored, mergeMirror, mirrorPosition, pruneMirror, readMirror, type MirrorStorage } from './position-mirror.ts';
+import { MIRROR_KEY, mergeMirror, mirrorPosition, pruneMirror, readMirror, type MirrorStorage } from './position-mirror.ts';
 
 const at = (episodeId: string, seconds: number, time: string): PlaybackPosition => ({ episodeId, seconds, updatedAt: `2026-11-12T10:00:${time}Z` });
 const memory = (initial?: string): MirrorStorage & { value: string | null } => {
@@ -26,15 +26,6 @@ test('#4096: the live player\u2019s place replaces the row even if its clock rea
   mirrorPosition(s, at('a', 40, '09'));
   mirrorPosition(s, at('a', 5, '01'));
   assert.equal(readMirror(s).get('a')?.seconds, 5);
-});
-
-test('#4096: unfollowing forgets the mirrored places of the removed episodes only', () => {
-  const s = memory();
-  mirrorPosition(s, at('a', 10, '01'));
-  mirrorPosition(s, at('b', 20, '02'));
-  forgetMirrored(s, ['a', 'never-played']);
-  assert.deepEqual([...readMirror(s).keys()], ['b']);
-  forgetMirrored(undefined, ['b']);
 });
 
 test('#4096: refresh during playback: the mirrored place newer than the stored one wins, and goes back to storage', () => {

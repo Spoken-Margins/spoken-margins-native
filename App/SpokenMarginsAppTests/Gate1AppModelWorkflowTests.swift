@@ -5,6 +5,7 @@ import XCTest
 import SessionKitAudio
 import SessionKitFeeds
 import SessionKitPersistence
+import SessionKitSupertonic
 @testable import SpokenMarginsApp
 import SQLite3
 import SwiftUI
@@ -1375,8 +1376,12 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.sharingState.automaticallyCleanedDraftIDs.isEmpty)
 
         model.prepareCleanup(forShareDraft: model.sharingState.drafts[0].id)
-        XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
+        XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.", "the card's button cleans the words at once")
         XCTAssertTrue(model.sharingState.automaticallyCleanedDraftIDs.isEmpty)
+        // Its voice goes through the run now (#4647); let that run end before the switch is turned on and off.
+        try await waitFor("the card's cleanup to finish") {
+            !model.sharingState.isBulkPreparing
+        }
 
         model.setShareAutoCleanSelectedEnabled(true)
         model.setShareAutoCleanSelectedEnabled(false)

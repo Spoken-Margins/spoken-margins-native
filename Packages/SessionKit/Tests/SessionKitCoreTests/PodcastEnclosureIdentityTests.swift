@@ -56,6 +56,30 @@ final class PodcastEnclosureIdentityTests: XCTestCase {
         XCTAssertFalse(PodcastEnclosureIdentity.sameFile(hollywood, strikes))
     }
 
+    /// HPR serves every file through one script and names it in the query (#5286). The MP3 and Opus editions of one
+    /// episode, and two episodes, are different files; the same file with tracking added, another case of the
+    /// parameter's name or a redirect wrapper is still the same one.
+    func testAFileNamedInTheQueryKeepsEditionsAndEpisodesApart() {
+        let mp3 = "https://hub.hackerpublicradio.org/ccdn.php?filename=/eps/hpr4777/hpr4777.mp3"
+        let opus = "https://hub.hackerpublicradio.org/ccdn.php?filename=/eps/hpr4777/hpr4777.opus"
+        let ogg = "https://hub.hackerpublicradio.org/ccdn.php?filename=/eps/hpr4777/hpr4777.ogg"
+        let nextEpisode = "https://hub.hackerpublicradio.org/ccdn.php?filename=/eps/hpr4778/hpr4778.mp3"
+        XCTAssertFalse(PodcastEnclosureIdentity.sameFile(mp3, opus))
+        XCTAssertFalse(PodcastEnclosureIdentity.sameFile(mp3, ogg))
+        XCTAssertFalse(PodcastEnclosureIdentity.sameFile(mp3, nextEpisode))
+        XCTAssertTrue(PodcastEnclosureIdentity.sameFile(mp3, mp3 + "&utm_source=Podcast"))
+        XCTAssertTrue(PodcastEnclosureIdentity.sameFile(mp3, "https://HUB.hackerpublicradio.org/ccdn.php?FileName=/eps/hpr4777/hpr4777.mp3"))
+        XCTAssertTrue(PodcastEnclosureIdentity.sameFile(mp3, "https://dts.podtrac.com/redirect.mp3/hub.hackerpublicradio.org/ccdn.php?filename=/eps/hpr4777/hpr4777.mp3"))
+        XCTAssertEqual(PodcastEnclosureIdentity.key(mp3), "hub.hackerpublicradio.org/ccdn.php?filename=/eps/hpr4777/hpr4777.mp3")
+    }
+
+    /// Query values that are not a file still drop out, so a plain file's key is what it was.
+    func testTrackingValuesThatAreNotFilesStillDropOut() {
+        let file = "https://cdn.example.com/show/episode-7.mp3"
+        XCTAssertEqual(PodcastEnclosureIdentity.key(file + "?utm_source=rss&ref=https://example.com/feed&t=12"), "cdn.example.com/show/episode-7.mp3")
+        XCTAssertEqual(PodcastEnclosureIdentity.key(file + "?empty="), "cdn.example.com/show/episode-7.mp3")
+    }
+
     func testMissingOrInvalidURLsNeverMatch() {
         XCTAssertFalse(PodcastEnclosureIdentity.sameFile(nil, nil))
         XCTAssertFalse(PodcastEnclosureIdentity.sameFile("not a url", "not a url"))
