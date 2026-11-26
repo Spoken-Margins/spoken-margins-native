@@ -340,6 +340,14 @@ def act_on_conflict(api, pr, base, base_sha, head, files, log=print, kind='confl
     return done
 
 
+def stale_body(base, hours, marker_line):
+    """The finisher's hand-off for a PR the resolver left. It carries the conflict marker for the Mac worker."""
+    return (f'{HANDOFF} the conflict resolver has not acted on this conflict in {hours} hours, so it comes to '
+            f'the Mac finisher.\n\nDone when: `{base}` is merged into the branch (no force-push), the conflicts '
+            f'are resolved, the checks that covered the change pass, and the branch is pushed. Then add '
+            f'`automerge` again.\n{marker_line}')
+
+
 def promote_stale(api, base, now=None, hours=STALE_HOURS, log=print):
     """Hand any `conflict-resolver` PR whose hand-off is older than `hours` to the Mac finisher. Returns the PRs.
 
@@ -366,11 +374,7 @@ def promote_stale(api, base, now=None, hours=STALE_HOURS, log=print):
             marker_line = next((m.group(0) for c in reversed(ours)
                                 for m in [re.search(r'<!-- lane-conflict head=[0-9a-f]{7} base=[0-9a-f]{7} -->',
                                                     c.get('body') or '')] if m), '')
-            api.post(f'issues/{pr}/comments', {'body': (
-                f'{HANDOFF} the conflict resolver has not acted on this conflict in {hours} hours, so it comes to '
-                f'the Mac finisher.\n\nDone when: `{base}` is merged into the branch (no force-push), the conflicts '
-                f'are resolved, the checks that covered the change pass, and the branch is pushed. Then add '
-                f'`automerge` again.\n{marker_line}')})
+            api.post(f'issues/{pr}/comments', {'body': stale_body(base, hours, marker_line)})
             if ADD not in {label['name'] for label in pull.get('labels', [])}:
                 api.post(f'issues/{pr}/labels', {'labels[]': ADD})
             remove_label(api, pr, RESOLVER)
