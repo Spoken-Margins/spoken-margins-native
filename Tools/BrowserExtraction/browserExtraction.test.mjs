@@ -334,6 +334,43 @@ test("#5364 audit: both semantic fallbacks still read an article laid out in a l
   }
 });
 
+test("#5364 audit of baddf60: a layout table whose content cell uses <br>, <div> or one <p> is read, not \"Table not read.\"", () => {
+  // The content cell of an old table-layout page is often marked up with <br><br>, <div>s or a single <p>, with no
+  // heading. Both fallbacks must still read the essay rather than make the whole page one Markdown table.
+  const swift = fs.readFileSync("App/SpokenMarginsApp/Sources/SpokenMarginsApp/AppOwnedReadablePageExtractor.swift", "utf8");
+  const script = swift.split('private static let semanticFallbackJavaScript = #"""')[1].split('"""#')[0];
+  const nav = "<td><a>Home</a><br><a>About</a></td>";
+  const longProse = Array.from({ length: 45 }, (_, index) => `word${index}`).join(" ");
+  const layouts = {
+    "br breaks, one row": `<table><tr>${nav}<td><b>Essay</b><br>Para one.<br><br>Para two.</td></tr></table>`,
+    "divs, one row": `<table><tr>${nav}<td><div>Para one.</div><div>Para two.</div></td></tr></table>`,
+    "one paragraph, one row": `<table><tr>${nav}<td><p>Para one. Para two.</p></td></tr></table>`,
+    "br breaks under a logo and search row": "<table><tr><td><a>Logo</a></td><td><a>Search</a></td></tr>"
+      + `<tr>${nav}<td><b>Essay</b><br>Para one.<br> <br>Para two.</td></tr></table>`,
+    "divs under a logo and search row": "<table><tr><td><a>Logo</a></td><td><a>Search</a></td></tr>"
+      + `<tr>${nav}<td><div>Para one.</div><div>Para two.</div></td></tr></table>`,
+    "long plain text under a logo and search row": "<table><tr><td><a>Logo</a></td><td><a>Search</a></td></tr>"
+      + `<tr>${nav}<td>Para one. Para two. ${longProse}</td></tr></table>`
+  };
+  for (const [layout, html] of Object.entries(layouts)) {
+    const { document } = parseHTML(`<html><head><title>Old page</title></head><body>${html}</body></html>`);
+    Object.defineProperty(document, "location", { value: { href: "https://example.com/old" } });
+    const native = new Function("document", script)(document);
+    for (const [name, text] of [["native", native.text], ["bundled", fallbackReadableMarkdown(document)]]) {
+      assert.doesNotMatch(text, /\|/, `${layout}, ${name}: ${text}`);
+      assert.match(text, /Para one\.[\s\S]*Para two\./, `${layout}, ${name}: ${text}`);
+    }
+  }
+  // Short data tables stay tables: a single <br> in a cell (an address line) and a header plus one body row.
+  const { document } = parseHTML(`<html><head><title>Data</title></head><body><p>Intro.</p>
+    <table><tr><th>Name</th><th>Address</th></tr><tr><td>Ada</td><td>1 Lane<br>London</td></tr></table></body></html>`);
+  Object.defineProperty(document, "location", { value: { href: "https://example.com/data" } });
+  const native = new Function("document", script)(document);
+  for (const [name, text] of [["native", native.text], ["bundled", fallbackReadableMarkdown(document)]]) {
+    assert.ok(text.includes("| Name | Address |\n| --- | --- |\n| Ada | 1 Lane London |"), `${name}: ${text}`);
+  }
+});
+
 test("readable capture speaks a social card as a sentence, not as link and view-count markup", () => {
   const document = browserLikePage({
     head: "<title>Retirement Guide</title>",

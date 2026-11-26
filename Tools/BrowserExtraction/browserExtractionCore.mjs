@@ -195,20 +195,67 @@ function ownTableRows(table) {
   return Array.from(table.querySelectorAll("tr")).filter(row => row.closest("table") === table);
 }
 
-// A data table: no nested table, at least one of its own rows with two or more cells (Defuddle's line), and no cell
-// that holds a heading or two or more paragraphs, list items, quotes or code blocks (a page's content cell beside a
-// sidebar, #5364 audit of 3ac974e). Anything else is a layout table, whose text is read as the page's own blocks.
+// A data table (#5364 audits): no nested table, at least two of its own rows with two or more cells (a header and a
+// body row, so a one-row table never takes over a page), and no cell that reads like a page's content: a heading, two
+// or more paragraphs, list items, quotes, code blocks or divs, a pair of line breaks, or more than 40 words. That
+// test looks at what a content cell holds, not at how it is marked up, so a sidebar beside text laid out with <p>s,
+// <div>s or <br><br> is a layout table. A layout table's text is read as the page's own blocks.
+export const DATA_TABLE_CELL_WORD_LIMIT = 40;
+
+function hasLineBreakPair(cell) {
+  let previousWasBreak = false;
+  for (const node of walkNodes(cell)) {
+    if (node.nodeType === 3) {
+      if (String(node.nodeValue || "").trim()) {
+        previousWasBreak = false;
+      }
+      continue;
+    }
+    if (node.nodeType !== 1) {
+      continue;
+    }
+    if (String(node.tagName || "").toLowerCase() === "br") {
+      if (previousWasBreak) {
+        return true;
+      }
+      previousWasBreak = true;
+    }
+  }
+  return false;
+}
+
+function walkNodes(root) {
+  const nodes = [];
+  const visit = node => {
+    for (const child of Array.from(node.childNodes || [])) {
+      nodes.push(child);
+      visit(child);
+    }
+  };
+  visit(root);
+  return nodes;
+}
+
+export function isLayoutCell(cell) {
+  if (cell.querySelector("h1,h2,h3,h4,h5,h6") || cell.querySelectorAll("p,li,blockquote,pre,div").length >= 2) {
+    return true;
+  }
+  if (hasLineBreakPair(cell)) {
+    return true;
+  }
+  return normalizeWhitespace(cell.textContent || "").split(" ").filter(Boolean).length > DATA_TABLE_CELL_WORD_LIMIT;
+}
+
 export function isDataTable(table) {
   if (table.querySelector("table")) {
     return false;
   }
   const cells = row => Array.from(row.children).filter(cell => /^(td|th)$/i.test(String(cell.tagName || "")));
   const rows = ownTableRows(table);
-  if (!rows.some(row => cells(row).length >= 2)) {
+  if (rows.filter(row => cells(row).length >= 2).length < 2) {
     return false;
   }
-  return !rows.some(row => cells(row).some(cell =>
-    cell.querySelector("h1,h2,h3,h4,h5,h6") || cell.querySelectorAll("p,li,blockquote,pre").length >= 2));
+  return !rows.some(row => cells(row).some(isLayoutCell));
 }
 
 export function tableToMarkdown(table) {

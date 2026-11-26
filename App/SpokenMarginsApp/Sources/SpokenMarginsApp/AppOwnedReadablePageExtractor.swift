@@ -377,17 +377,40 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
     };
     // A container's text already includes its descendants. Consume each DOM
     // passage once, without deleting intentional repetitions in sibling blocks.
-    // A layout table (a nested table, no row with two cells, or a cell holding
-    // a heading or two or more blocks) is no block: its headings and
-    // paragraphs are (#5364 audits). Same rule as isDataTable in
-    // Tools/BrowserExtraction/browserExtractionCore.mjs.
+    // A layout table (a nested table, fewer than two rows with two cells, or
+    // a cell holding a heading, two or more paragraphs, list items, quotes,
+    // code blocks or divs, a pair of line breaks, or more than 40 words) is
+    // no block: its headings and paragraphs are (#5364 audits). Same rule as
+    // isDataTable in Tools/BrowserExtraction/browserExtractionCore.mjs.
     const tableCells = row => Array.from(row.children).filter(cell => /^(td|th)$/i.test(String(cell.tagName || "")));
+    const hasLineBreakPair = cell => {
+        let previousWasBreak = false;
+        const visit = node => {
+            for (const child of Array.from(node.childNodes || [])) {
+                if (child.nodeType === 3) {
+                    if (String(child.nodeValue || "").trim()) { previousWasBreak = false; }
+                } else if (child.nodeType === 1) {
+                    if (String(child.tagName || "").toLowerCase() === "br") {
+                        if (previousWasBreak) { return true; }
+                        previousWasBreak = true;
+                    }
+                    if (visit(child)) { return true; }
+                }
+            }
+            return false;
+        };
+        return visit(cell);
+    };
+    const isLayoutCell = cell =>
+        Boolean(cell.querySelector("h1,h2,h3,h4,h5,h6"))
+        || cell.querySelectorAll("p,li,blockquote,pre,div").length >= 2
+        || hasLineBreakPair(cell)
+        || normalize(cell.textContent).split(" ").filter(Boolean).length > 40;
     const isDataTable = table => {
         if (table.querySelector("table")) { return false; }
         const rows = Array.from(table.querySelectorAll("tr"));
-        if (!rows.some(row => tableCells(row).length >= 2)) { return false; }
-        return !rows.some(row => tableCells(row).some(cell =>
-            cell.querySelector("h1,h2,h3,h4,h5,h6") || cell.querySelectorAll("p,li,blockquote,pre").length >= 2));
+        if (rows.filter(row => tableCells(row).length >= 2).length < 2) { return false; }
+        return !rows.some(row => tableCells(row).some(isLayoutCell));
     };
     const dataTables = new Map();
     const isBlock = element => {
