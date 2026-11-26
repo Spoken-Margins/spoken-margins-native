@@ -12,30 +12,35 @@ struct PacketOpenFailureSheet: View {
     let close: () -> Void
 
     @AccessibilityFocusState private var headlineHasFocus: Bool
+    @State private var helpTopic: FriendHelpTopic?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.title)
-                .foregroundStyle(AppColors.warningText)
-                .accessibilityHidden(true)
-            Text(content.headline)
-                .font(.title2.weight(.semibold))
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityFocused($headlineHasFocus)
-                .accessibilityIdentifier("packetOpenFailure.headline")
-            Text(content.line)
-                .font(.body)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("packetOpenFailure.line")
-            Spacer(minLength: 8)
-            buttons
+        // It scrolls, and can be dragged up, so the text and up to four controls fit at accessibility sizes.
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.title)
+                    .foregroundStyle(AppColors.warningText)
+                    .accessibilityHidden(true)
+                Text(content.headline)
+                    .font(.title2.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityFocused($headlineHasFocus)
+                    .accessibilityIdentifier("packetOpenFailure.headline")
+                Text(content.line)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("packetOpenFailure.line")
+                VStack(spacing: 12) { buttons }
+                    .padding(.top, 8)
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .scrollBounceBehavior(.basedOnSize)
         .background(AppColors.background)
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("packetOpenFailure.sheet")
         .onAppear { headlineHasFocus = true }
@@ -48,6 +53,8 @@ struct PacketOpenFailureSheet: View {
                 headlineHasFocus = true
             }
         }
+        // The help opens over this sheet, so Done comes back to the same failure and its buttons (#5268).
+        .trackedSheet(item: $helpTopic) { FriendHelpScreen(focus: $0) }
     }
 
     @ViewBuilder
@@ -84,6 +91,8 @@ struct PacketOpenFailureSheet: View {
                 .accessibilityIdentifier("packetOpenFailure.report")
             }
         }
+        FriendHelpButton { helpTopic = FriendHelpTopic.forOpenFailure(content) }
+            .accessibilityIdentifier("packetOpenFailure.help")
     }
 }
 

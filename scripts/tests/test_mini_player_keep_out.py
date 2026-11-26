@@ -30,6 +30,7 @@ NO_PILL = {
     ("ExperienceMarginsScreen.swift", "SharedMarginDetailView"): "a sheet from Margins",
     ("ExperienceTimelineRailScreen.swift", "*"): "the Timeline places its own mini player",
     ("HelpScreen.swift", "*"): "a sheet",
+    ("FriendHelpScreen.swift", "*"): "a sheet",
     ("SenderCollectionOfferViews.swift", "SenderCollectionSheet"): "a sheet from the item screen",
     ("FindInTextSheet.swift", "*"): "a sheet over Now Playing, which hides the mini player (#5035)",
     ("FollowSheet.swift", "*"): "the Follow sheet",
