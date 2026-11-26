@@ -8,11 +8,16 @@ extension PlaybackLivePassage {
         /// `id` is negative (the card's place in the anchor list, from -1), so it never equals a sentence's id, which is
         /// a Character offset of 0 or more.
         case clip(floatId: String, id: Int)
+        /// One of the listener's Margins on a spoken note, as a row of its own after the sentence it sits on (#4780).
+        /// `id` is negative, from -1,000,000 down (`PlaybackNowSceneState` hands them out), so it never equals a
+        /// sentence's or a card's id. Never lit, never a place following scrolls to.
+        case margin(SpokenNoteNowPassage.MarginItem, id: Int)
 
         public var id: Int {
             switch self {
             case .sentence(let sentence): sentence.id
             case .clip(_, let id): id
+            case .margin(_, let id): id
             }
         }
 

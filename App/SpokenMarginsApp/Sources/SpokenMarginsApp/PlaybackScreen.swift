@@ -61,6 +61,10 @@ struct PlaybackScreen: View {
     @State private var timelinePull = TimelinePullHolder()
     @State private var playbackTick = 0 // bumped by each progress tick, so this screen follows the clock (#2074)
     @StateObject private var nowScene = NowSceneController()
+    /// A spoken note's own words for Now, read off the main actor (#4780).
+    @StateObject private var noteTranscript = SpokenNoteNowTranscript()
+    /// The note's own screen, opened from the no-words card or the part-missing line.
+    @State private var openedNote: SpokenNoteOpening?
     @State private var firstMarginPromptAnnounced = false // said once per showing (#5036)
 
     /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
@@ -76,6 +80,81 @@ struct PlaybackScreen: View {
         .accessibilityLabel("Back to Library")
         .accessibilityHint("Leaves this screen. Playback keeps going.")
         .accessibilityIdentifier(PlaybackLeadingControl.libraryExitIdentifier)
+    }
+
+    /// The selected item is a spoken note (#4780). A note whose reference can't be read keeps the audio layout.
+    private var isSpokenNote: Bool { selectedNoteId != nil }
+    private var selectedNoteId: String? { SpokenNoteItem.noteId(fromReference: model.selectedItem.externalReference) }
+    /// The loaded words, only when they are the selected note's: a change of item never shows the last note's for a pass.
+    private var noteIsLoaded: Bool { selectedNoteId != nil && noteTranscript.noteId == selectedNoteId }
+
+    /// Which layout Now draws: a choice tested on the host (`SpokenNoteNowPassage.NowLayout.choose`).
+    private var nowLayout: SpokenNoteNowPassage.NowLayout {
+        SpokenNoteNowPassage.NowLayout.choose(
+            isNativeAudio: model.selectedItem.isNativeAudio, isSpokenNote: isSpokenNote,
+            availability: noteIsLoaded ? noteTranscript.availability : .loading)
+    }
+
+    private func reloadNoteWords() {
+        guard isSpokenNote else { return }
+        // The rows' times are on the clock of the file playing, which differs under Shorter pauses (#4779).
+        let playing = model.snapshot.itemId == model.selectedItem.id ? model.openSessionMediaURL : nil
+        noteTranscript.load(externalReference: model.selectedItem.externalReference, playingMediaURL: playing) {
+            try model.applicationSupportDirectory()
+        }
+    }
+
+    private func openNoteScreen() {
+        guard let noteId = SpokenNoteItem.noteId(fromReference: model.selectedItem.externalReference) else { return }
+        openedNote = SpokenNoteOpening(noteId: noteId, title: model.selectedItem.title, createdAt: nil)
+    }
+
+    @ViewBuilder
+    private var guidedCoach: some View {
+        if model.shouldShowGuidedOnboardingCoach {
+            GuidedOnboardingPlaybackCard {
+                openTimeline()
+            }
+        }
+    }
+
+    /// A note with no words yet: says so, and offers the note's own screen, where words are written down and a failed
+    /// take has Try again (#4780). Now itself never starts a transcription.
+    private var noteNoWordsCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("No words for this note yet").font(.headline).foregroundStyle(.white)
+            Text("Spoken Margins writes a note's words down on this device after you record it. Open the note to write them down, or to try again if it didn't work.")
+                .font(.subheadline)
+                .foregroundStyle(AppColors.watchSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Open the note", action: openNoteScreen)
+                .buttonStyle(.bordered)
+                .tint(AppColors.listeningAccent)
+                .accessibilityIdentifier("playback.now.note.open")
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // The Now screen's own always-dark plate, the one the mixed audio card draws and the colour audit measures: the
+        // light-mode panel would put white words on a pale card here (#3733).
+        .background(AppColors.watchControl.opacity(0.72), in: RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("playback.now.note.noWords")
+    }
+
+    /// Some takes have words and some don't (#4780).
+    private var notePartialWordsLine: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Part of this note has no words yet.")
+                .font(.subheadline)
+                .foregroundStyle(AppColors.watchSecondary)
+            Button("Open the note", action: openNoteScreen)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(AppColors.listeningAccent)
+                .accessibilityIdentifier("playback.now.note.open")
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("playback.now.note.partialWords")
     }
 
     /// The first-Margin prompt is on screen: it is due and the Now pane, the only one that draws it, is showing (#5036).
@@ -110,21 +189,36 @@ struct PlaybackScreen: View {
                                     playbackHeader
                                     capturePermissionRecovery
                                     importedCommentaryControl
-                                    if model.selectedItem.isNativeAudio {
+                                    switch nowLayout {
+                                    case .audio:
                                         PlaybackNowView()
-                                        if model.shouldShowGuidedOnboardingCoach {
-                                            GuidedOnboardingPlaybackCard {
-                                                openTimeline()
+                                        guidedCoach
+                                    case .noteNoWords:
+                                        noteNoWordsCard
+                                        PlaybackNowView()
+                                        guidedCoach
+                                    case .noteLoading:
+                                        // The note is being read: neither the card nor the words yet (#4780).
+                                        recentMarginPreview
+                                        guidedCoach
+                                    case .noteWords:
+                                        if noteIsLoaded, case .partial = noteTranscript.availability { notePartialWordsLine }
+                                        recentMarginPreview
+                                        guidedCoach
+                                        PlaybackLivePassageView(
+                                            scene: nowScene, proxy: proxy,
+                                            openReader: { _ in }, // a note has no reader: its rows play
+                                            noteWords: noteIsLoaded ? noteTranscript.words : nil,
+                                            noteRevision: noteTranscript.revision,
+                                            openMargin: { id in
+                                                selectedInterjection = model.marginRows.first { $0.interjection.id == id }?.interjection
+                                                    ?? model.selectedItem.interjections.first { $0.id == id }
                                             }
-                                        }
-                                    } else {
+                                        )
+                                    case .text:
                                         // Below a long scene these would be out of reach, so they sit above the text (#4453).
                                         recentMarginPreview
-                                        if model.shouldShowGuidedOnboardingCoach {
-                                            GuidedOnboardingPlaybackCard {
-                                                openTimeline()
-                                            }
-                                        }
+                                        guidedCoach
                                         PlaybackLivePassageView(scene: nowScene, proxy: proxy) { offset in
                                             sourceTextTarget = PlaybackTextReaderTarget.resolve(
                                                 text: model.selectedItem.text,
@@ -141,6 +235,18 @@ struct PlaybackScreen: View {
                                 .frame(maxWidth: .infinity, alignment: .top)
                             }
                             .scrollBounceBehavior(.always)
+                            // A spoken note's words: read when Now appears, and again whenever the note may have changed (#4780).
+                            .onAppear { reloadNoteWords() }
+                            .onChange(of: model.selectedItem.id) { _, _ in reloadNoteWords() }
+                            .onChange(of: model.snapshot.itemId == model.selectedItem.id) { _, isThisItem in
+                                if isThisItem { reloadNoteWords() }
+                            }
+                            .onChange(of: model.openSessionMediaURL) { _, _ in reloadNoteWords() }
+                            .onReceive(NotificationCenter.default.publisher(for: .spokenNoteChanged)
+                                .receive(on: DispatchQueue.main)) { _ in reloadNoteWords() }
+                            .trackedFullScreenCover(item: $openedNote, onDismiss: { reloadNoteWords() }) { opening in
+                                SpokenNoteRecordingView(opening: opening).environmentObject(model)
+                            }
                             // The sentences on screen, and the listener's own scrolling (a drag or a fling; a scroll the
                             // view makes itself reports `.animating`), which stops the scene following playback (#4453).
                             .onScrollTargetVisibilityChange(idType: Int.self, threshold: 0.1) { nowScene.sentencesOnScreen($0) }
@@ -159,7 +265,8 @@ struct PlaybackScreen: View {
                             }
                             .overlay(alignment: .bottom) {
                                 // Only over this item's own scene: not over a podcast, nor while another item plays.
-                                if !model.selectedItem.isNativeAudio, model.snapshot.itemId == model.selectedItem.id {
+                                if nowLayout == .text || (nowLayout == .noteWords && nowScene.showsLit),
+                                   model.snapshot.itemId == model.selectedItem.id {
                                     NowBackToPlayingButton(scene: nowScene)
                                 }
                             }
