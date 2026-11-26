@@ -134,7 +134,8 @@ extension Build23SharingMarginSnapshot {
 struct Build23RecipientPreviewMargin: Identifiable, Equatable, Sendable {
     let id: String
     let reviewedText: String
-    let representation: String
+    /// The packet's version of the Margin. Shown only through `SharePreviewWords.version` (#5336).
+    let representation: SharedInterjectionRepresentationKind?
     let positionDescription: String
     let includesVoice: Bool
 }
@@ -1253,7 +1254,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             return Build23RecipientPreviewMargin(
                 id: record.packageScopedId,
                 reviewedText: representation?.approvedTranscript ?? "",
-                representation: representation?.kind.rawValue ?? "unavailable",
+                representation: representation?.kind,
                 positionDescription: positionDescription(for: record.anchor),
                 includesVoice: representation?.assetId != nil
             )

@@ -769,7 +769,7 @@ struct Build23VerifiedRecipientPreviewPanel: View {
                 ExperienceSurface {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text(margin.representation)
+                            Text(SharePreviewWords.version(margin.representation))
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(AppColors.evergreen)
                             Spacer()
