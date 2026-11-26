@@ -297,25 +297,22 @@ struct PlaybackScreen: View {
             }
             .trackedSheet(isPresented: $isPlaybackOptionsPresented, onDismiss: performPendingOptionsNavigation) {
                 NavigationStack {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 18) {
-                            if let noteId = playingSpokenNoteId {
-                                SpokenNoteAudioVersionControl(clean: model.spokenNoteClean, noteId: noteId, placement: .listeningOptions)
-                            }
-                            playbackRateControl
-                            mixedAudioControl
-                            PlaybackFollowOptionsView()
-                            PlaybackPreparedAudioView(
-                                fraction: model.renderedFractionForPlayback,
-                                isNativeAudio: model.selectedItem.isNativeAudio
-                            )
-                            ListeningOptionsVoiceRow()
-                            onDeviceSpeechGenerationControl
-                            reflectionOptions
-                            conversation
-                            sessionActionDock
+                    ListeningOptionsColumn {
+                        if let noteId = playingSpokenNoteId {
+                            SpokenNoteAudioVersionControl(clean: model.spokenNoteClean, noteId: noteId, placement: .listeningOptions)
                         }
-                        .padding(20)
+                        playbackRateControl
+                        mixedAudioControl
+                        PlaybackFollowOptionsView()
+                        PlaybackPreparedAudioView(
+                            fraction: model.renderedFractionForPlayback,
+                            isNativeAudio: model.selectedItem.isNativeAudio
+                        )
+                        ListeningOptionsVoiceRow()
+                        onDeviceSpeechGenerationControl
+                        reflectionOptions
+                        conversation
+                        sessionActionDock
                     }
                     .background(AppColors.listeningBackground)
                     .navigationTitle("Listening options")
@@ -570,40 +567,12 @@ struct PlaybackScreen: View {
     }
 
     private var sessionActionDock: some View {
-        HStack(spacing: 8) {
-            Button {
-                closeOptions(to: .item)
-            } label: {
-                Image(systemName: "info.circle")
-                    .frame(width: 48, height: 48)
-            }
-            .accessibilityLabel("Details")
-            .accessibilityIdentifier("playback.item.button")
-
-            Button(action: openTimeline) {
-                Label("Timeline", systemImage: "list.bullet.rectangle")
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(maxWidth: .infinity, minHeight: 48)
-            }
-            .accessibilityIdentifier("playback.timeline.button")
-
-            Button {
-                closeOptions(to: .export)
-            } label: {
-                Image(systemName: "doc.text")
-                    .frame(width: 48, height: 48)
-            }
-            .disabled(!model.hasActiveSession)
-            .accessibilityLabel("Export")
-            .accessibilityIdentifier("playback.export.button")
-        }
-        .font(.subheadline.weight(.semibold))
-        .buttonStyle(.bordered)
-        .tint(.white)
-        .foregroundStyle(.white)
-        .padding(8)
-        .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        ListeningOptionsActionDock(
+            exportDisabled: !model.hasActiveSession,
+            showDetails: { closeOptions(to: .item) },
+            showTimeline: openTimeline,
+            showExport: { closeOptions(to: .export) }
+        )
     }
 
     private func openTimeline() {
