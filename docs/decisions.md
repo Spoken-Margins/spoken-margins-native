@@ -746,6 +746,10 @@ These came in the project chat, so most have no comment of his to link. Each cit
   - Bringing it back is a new decision: a revert of the removal, possibly as a paid feature, and after the lawyer.
   - Builds already on phones (36 and 37) keep the toggles until the server's map endpoints are switched off. That server change is his to approve; the privacy page keeps its community-maps section while those builds can use it.
 
+## 2026-11-26
+- **A link the browser can't play keeps a way to the app (#5355, #5265).** #5355's listen-here card had dropped the web arrival's "Open Spoken Margins" and "Keep Cole's Margins" buttons, which needs his yes (sharing rule 4). Cole, in the project chat: "when someone receives a share link that is of a PDF or some other file that they can't listen to on the web, I think we should definitely direct them to open Spoken Margins as an app. And I think that maybe we could be a little bit more descriptive and allow them to maybe listen to the margins while being able to read the lead-in anchors. I think that is totally fine to allow them to do on the web."
+  - How it is carried out: "Open Spoken Margins" stays on the card whenever "Go to your web Library" doesn't show, so the card always has a way out, and the "Hear them in place" step keeps pointing to the iPhone app. Listening to the Margins while reading the source's words before each one is what #5355's card already does. "Keep Cole's Margins" is replaced by Hear and "Go to your web Library".
+
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
   - Verification layers: tests that pass while the app is broken usually fake the boundary that broke, such as audio sessions, players, file paths across containers and network responses.
