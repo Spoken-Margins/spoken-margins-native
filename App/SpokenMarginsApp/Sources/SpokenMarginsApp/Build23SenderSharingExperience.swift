@@ -34,7 +34,7 @@ struct Build23SenderSharingExperience: View {
     private func withShareLink(_ content: some View) -> some View {
         #if SM_SHARE_LINK_CREATION
         content
-            .modifier(ShareLinkPresentation(sender: linkSender, packageURL: coordinator.verifiedShareFileURL) { packet in
+            .modifier(ShareLinkPresentation(sender: linkSender, packageURL: coordinator.verifiedShareFileURL, isSpokenNote: coordinator.sharedItemIsSpokenNote) { packet in
                 coordinator.recordSystemShareCompleted(packetURL: packet)
             })
             .onChange(of: linkSender.state) { _, state in
@@ -1254,7 +1254,7 @@ struct Build23SenderSharingExperience: View {
                 return
             }
             guard let packageURL = coordinator.verifiedShareFileURL else { return }
-            linkSender.makeLink(packageURL: packageURL, itemID: coordinator.sharedItemID)
+            linkSender.makeLink(packageURL: packageURL, isSpokenNote: coordinator.sharedItemIsSpokenNote, itemID: coordinator.sharedItemID)
             #else
             presentVerifiedSystemShare()
             #endif

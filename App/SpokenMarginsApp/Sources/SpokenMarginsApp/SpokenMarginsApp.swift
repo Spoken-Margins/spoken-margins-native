@@ -89,9 +89,16 @@ struct SpokenMarginsApp: App {
         if !runningTests {
             LaunchRecorder.shared = LaunchRecorder()
         }
-        // iOS's Speech Recognition prompt waits for the listener's Yes (#5016). Unit tests and scripted journeys have no card
-        // (it is hidden under the first-run suppression) and no way to say Yes, so they keep the gate open as before.
-        if !runningTests, !UITestingHooks.suppressesFirstRun { SpeechAskController.installGate() }
+        // iOS's Speech Recognition prompt waits for the listener's Yes (#5016). Scripted journeys have no card (it is hidden
+        // under the first-run suppression) and tap Allow on iOS's prompt, so they keep the gate open as before.
+        // Unit tests close it for good (#5398): nothing in an app-hosted test answers iOS's prompt, so the first spoken save's
+        // transcription raised it, the host app went inactive and stayed so, and every later test that needs the app active
+        // (hear it land, the footnote chime) failed. Closed, an undecided answer throws `speech_recognition_not_yet_asked`.
+        if runningTests {
+            SpeechAuthorizationAsk.setMayAskSystem { false }
+        } else if !UITestingHooks.suppressesFirstRun {
+            SpeechAskController.installGate()
+        }
         let model = Gate1AppModel.makeApplicationModel()
         // Memory use and memory kills, in Diagnostics (#122). Unit tests keep nothing on disk.
         let pinnedDiagnostics = PinnedDiagnostics(diagnostics: model.runtimeDiagnostics)
