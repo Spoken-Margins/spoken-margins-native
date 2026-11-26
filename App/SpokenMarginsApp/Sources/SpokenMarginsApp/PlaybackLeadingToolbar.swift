@@ -7,30 +7,21 @@ import SwiftUI
 /// One meaning for the top-left arrow on every tab: leave the screen. The exception is the Timeline editor with the
 /// keyboard up, where the tab switch is hidden and this is the way back to Now (#4027).
 ///
-/// The Library arrow is in the bar in every state of the Now header, hidden while the header shows it. Adding and
-/// removing the item as the header scrolled in and out changed the bar's size at large text, which moved the header
-/// across its visibility threshold and flipped the item again, without end. Nothing in the bar may depend on scroll
-/// state, so this type takes the raw inputs and never wraps an item in a condition on them.
+/// On Now the Library arrow is always drawn here (#5329). It used to live beside the title, with an invisible copy in
+/// the bar so the bar could not resize as the title scrolled (#4739); iOS 26 drew an empty glass pill around that copy.
+/// Nothing in the bar may depend on scroll state, so this type takes no scroll input at all.
 struct PlaybackLeadingToolbar<LibraryExit: View>: ToolbarContent {
     let pane: PlaybackLeadingControl.Pane
     let timelineEditorHasFocus: Bool
-    let nowHeaderIsVisible: Bool
     let returnToNow: () -> Void
-    /// The Library arrow, given the accessibility identifier to carry: the bar's hidden copy must not share the shown
-    /// arrow's identifier, or a lookup finds the copy that can't be tapped (#5311).
-    @ViewBuilder let libraryExit: (_ accessibilityIdentifier: String) -> LibraryExit
+    @ViewBuilder let libraryExit: () -> LibraryExit
 
     @ToolbarContentBuilder
     var body: some ToolbarContent {
-        let slot = PlaybackLeadingControl.slot(
-            pane: pane, timelineEditorHasFocus: timelineEditorHasFocus, nowHeaderIsVisible: nowHeaderIsVisible)
-        switch slot.kind {
+        switch PlaybackLeadingControl.control(pane: pane, timelineEditorHasFocus: timelineEditorHasFocus) {
         case .libraryExit:
             ToolbarItem(placement: .topBarLeading) {
-                libraryExit(slot.libraryExitIdentifier)
-                    .opacity(slot.isShown ? 1 : 0)
-                    .allowsHitTesting(slot.isShown)
-                    .accessibilityHidden(!slot.isShown)
+                libraryExit()
             }
         case .returnToNow:
             ToolbarItem(placement: .topBarLeading) {

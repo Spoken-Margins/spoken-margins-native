@@ -96,7 +96,8 @@ public struct CatchUpRun: Equatable, Sendable {
     }
 
     public enum Event: Equatable, Sendable {
-        case completed(stillNew: Int)
+        /// `owedPlaceMs`: the re-listen's place the run kept owed at its paused end (#5238), nil when none is owed.
+        case completed(stillNew: Int, owedPlaceMs: Int? = nil)
         case stopped
         case dismissed
         case play
@@ -116,6 +117,8 @@ public struct CatchUpRun: Equatable, Sendable {
     /// The item's title, for the line handed to the share sheet.
     public let title: String
     public private(set) var state: State = .running
+    /// The re-listen's place still owed after the run's natural end (#5238): Play, Continue or leaving gives it back.
+    public private(set) var owedPlaceMs: Int?
 
     public init(
         itemId: String, friendMarginIds: [String], senderName: String?, replyCount: Int, allReplies: Bool,
@@ -143,7 +146,9 @@ public struct CatchUpRun: Equatable, Sendable {
     /// starting or another item puts it away. Stopped and dismissed are final.
     public mutating func handle(_ event: Event) {
         switch (state, event) {
-        case (.running, .completed(let stillNew)): state = .ended(stillNew: max(0, stillNew))
+        case (.running, .completed(let stillNew, let owed)):
+            state = .ended(stillNew: max(0, stillNew))
+            owedPlaceMs = owed
         case (.running, .stopped), (.running, .otherItemOpened): state = .stopped
         case (.running, _): break
         case (.ended, .completed), (.ended, .stopped): break
@@ -157,7 +162,9 @@ public struct CatchUpRun: Equatable, Sendable {
         guard case .ended(let stillNew) = state else { return nil }
         return PinnedMarginCard(
             subject: .friend(senderName),
-            stage: .caughtUp(stillNew: stillNew, allReplies: allReplies, shareText: shareText),
+            stage: .caughtUp(
+                stillNew: stillNew, allReplies: allReplies, shareText: shareText,
+                placeBack: owedPlaceMs.map(MarginReplyWords.clock(milliseconds:))),
             noun: noun)
     }
 

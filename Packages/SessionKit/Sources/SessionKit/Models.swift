@@ -228,6 +228,8 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
     public var chapterLinks: [SourceChapterLink]
     public var publisherChapterCollections: [PublisherChapterCollection]
     public var confidence: Double
+    /// The feed blocks this episode or its show from directories (`<itunes:block>Yes</itunes:block>`, #5340). True or nil.
+    public var publisherBlocked: Bool?
 
     public init(
         sourceLink: SourceLink,
@@ -240,7 +242,8 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         transcriptLinks: [SourceTranscriptLink] = [],
         chapterLinks: [SourceChapterLink] = [],
         publisherChapterCollections: [PublisherChapterCollection] = [],
-        confidence: Double
+        confidence: Double,
+        publisherBlocked: Bool? = nil
     ) {
         self.sourceLink = sourceLink
         self.title = title
@@ -253,6 +256,7 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         self.chapterLinks = chapterLinks
         self.publisherChapterCollections = publisherChapterCollections
         self.confidence = confidence
+        self.publisherBlocked = publisherBlocked
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -267,6 +271,7 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         case chapterLinks
         case publisherChapterCollections
         case confidence
+        case publisherBlocked
     }
 
     public init(from decoder: Decoder) throws {
@@ -282,6 +287,7 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         chapterLinks = try container.decodeIfPresent([SourceChapterLink].self, forKey: .chapterLinks) ?? []
         publisherChapterCollections = try container.decodeIfPresent([PublisherChapterCollection].self, forKey: .publisherChapterCollections) ?? []
         confidence = try container.decode(Double.self, forKey: .confidence)
+        publisherBlocked = try container.decodeIfPresent(Bool.self, forKey: .publisherBlocked)
     }
 }
 
@@ -720,6 +726,13 @@ public struct Item: Codable, Equatable, Sendable {
     /// added, and listening that ended before this moment no longer makes it finished (`ItemFinishedRule`).
     /// Optional and additive: Builds 34 and 36 decode an item that carries it and ignore it. Never packed into a packet.
     public var addedAgainAt: Date? = nil
+    /// The episode's feed asked directories not to list it (`<itunes:block>Yes</itunes:block>` on the episode or its
+    /// show, #5340). Its audio and feed links then never leave the device on their own (`AutomaticSourceAccess`).
+    /// True or nil. Optional and additive: Builds 34 and 36 decode an item that carries it and ignore it.
+    public var publisherBlocked: Bool? = nil
+    /// The episode came from a feed whose own address holds an access secret (#168, #5340), recorded where the feed
+    /// address itself is not kept (a feed pasted to find a friend's episode, #454). True or nil. Optional and additive.
+    public var fromPrivateFeed: Bool? = nil
 
     public init(
         id: String,

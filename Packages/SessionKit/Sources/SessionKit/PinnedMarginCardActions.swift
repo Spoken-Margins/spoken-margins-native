@@ -104,7 +104,7 @@ extension PinnedMarginCard {
             return [Action(job: .dismissSilentMargin, title: "Dismiss", hint: "Hides this card. The \(ahead) keeps playing.", prominence: .quiet)]
         case .answerSaved, .savedHere, .lastMargin:
             return []
-        case .caughtUp(let stillNew, _, _):
+        case .caughtUp(let stillNew, _, _, _):
             let dismiss = Action(job: .dismissCaughtUp, title: "Dismiss", hint: "Hides this card.", prominence: .quiet)
             // With something still new the card only says so: no thanks to send for what wasn't heard.
             guard stillNew == 0 else { return [dismiss] }

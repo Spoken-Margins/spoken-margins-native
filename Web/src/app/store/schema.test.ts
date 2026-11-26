@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
-import { DB_VERSION, DEFAULT_SETTINGS, readMembership, readSettings, SCHEMA_KEY, SCHEMA_VERSION, storedVersion, upgrade, type StoredRows } from './schema.ts';
+import { DB_VERSION, DEFAULT_SETTINGS, readDismissed, readMembership, readSettings, SCHEMA_KEY, SCHEMA_VERSION, storedVersion, upgrade, type StoredRows } from './schema.ts';
 
 // The rows the web store held before #3012 (shape 1), as db.ts wrote them: no version row, three settings.
 function shapeOne(): StoredRows {
@@ -166,4 +166,24 @@ test('libraryModel reads only "" or "added"; libraryMovedOut only an array of st
   assert.deepEqual(read, ['a', 'b']);
   assert.notEqual(read, stored, 'a copy, so nothing edits the stored row in place');
   assert.ok(Object.isFrozen(DEFAULT_SETTINGS.libraryMovedOut), 'the shared default can\'t be pushed to');
+});
+
+test('#4426: dismissed: rows read into snapshot.dismissed; malformed rows are skipped; settings ignore them', () => {
+  const rows = shapeOne();
+  rows.settings.push(
+    { key: 'dismissed:ep-1', value: { dismissed: true, at: '2026-11-25T00:00:00Z' } },
+    { key: 'dismissed:ep-2', value: { dismissed: false, at: '2026-11-25T01:00:00Z' } },
+    { key: 'dismissed:not-object', value: 'yes' },
+    { key: 'dismissed:not-boolean', value: { dismissed: 'true', at: '2026-11-25T00:00:00Z' } },
+    { key: 'dismissed:not-string-at', value: { dismissed: true, at: 5 } },
+    { key: 'dismissed:', value: { dismissed: true, at: '2026-11-25T00:00:00Z' } },
+  );
+  const { snapshot } = upgrade(rows);
+  assert.deepEqual({ ...snapshot.dismissed }, {
+    'ep-1': { dismissed: true, at: '2026-11-25T00:00:00Z' },
+    'ep-2': { dismissed: false, at: '2026-11-25T01:00:00Z' },
+  });
+  assert.deepEqual(readDismissed([{ key: 'dismissed:constructor', value: { dismissed: true, at: 'x' } }]).constructor, { dismissed: true, at: 'x' });
+  assert.equal(readDismissed([]).constructor, undefined, 'no inherited value');
+  assert.deepEqual(readSettings(rows.settings), { ...DEFAULT_SETTINGS, relayAllowed: true, relayAsked: true, playbackRate: 1.5 });
 });

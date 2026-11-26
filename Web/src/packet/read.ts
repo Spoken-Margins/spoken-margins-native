@@ -5,7 +5,7 @@
 
 import { fromUtf8, sha256Hex } from './bytes.ts';
 import { KIND_SWIFT_TYPE, decodeProblem } from './decode.ts';
-import { PacketError, damaged, mismatch, newerApp, tooLarge } from './errors.ts';
+import { LISTENING_MAP_DETAIL, PacketError, damaged, mismatch, newerApp, tooLarge } from './errors.ts';
 import {
   ARTIFACT_KEYS, ASSET_KEYS, AUDIO_REPRESENTATIONS, COMMENTARY_LAYER_VERSION, CONVERSATION_VERSION,
   EMBEDDED_TEXT_ITEM_VERSION, FILE_EXTENSION, ITEM_KEYS, LIMITS, MANIFEST_KEYS, MAP_PACKET_CAPABILITY, PACKAGE_VERSION,
@@ -284,7 +284,7 @@ export async function readPacket(input: Uint8Array | ArrayBuffer | Blob, options
   }
   for (const capability of m.requiredCapabilities) {
     if (capability === MAP_PACKET_CAPABILITY) {
-      throw new PacketError('needsNewerApp', 'Listening Map packet',
+      throw new PacketError('needsNewerApp', LISTENING_MAP_DETAIL,
         'This file holds a Listening Map. Open it in the Spoken Margins iPhone app; the web app reads Margins only.');
     }
     if (!SUPPORTED_REQUIRED.has(capability)) throw newerApp(`required capability ${capability}`);

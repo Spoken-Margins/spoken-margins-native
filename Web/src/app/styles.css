@@ -293,6 +293,29 @@ button:disabled {
   flex: none;
 }
 
+.show-episode > .icon-button {
+  flex: none;
+  margin-right: -10px;
+}
+
+/* A show's Dismissed episodes (#4426): a full-width disclosure at the foot of its list, like a Margins group's title. */
+.dismissed-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 0 10px;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
 /* What the one-time move left on Following (#4425): a card in the page flow, no timer, so nobody reads it against a clock. */
 .library-notice {
   display: grid;

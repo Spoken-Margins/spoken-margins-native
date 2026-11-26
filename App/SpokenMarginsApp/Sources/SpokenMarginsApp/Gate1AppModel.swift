@@ -333,7 +333,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var feedSubscriptions: [FeedSubscription] = [] { didSet { quickAccess.invalidateCandidates(); listeningSignals.endListening() } }
     @Published var isRefreshingFollowedSources = false
     @Published var followingShows = FollowingShowsState() // Following's rows, entries and looked times (#1865)
-    @Published var importingFollowedSourceEntryIds: Set<String> = []
+    @Published var followedEntryImports = FollowedEntryImports() // Following fetches, and which ones a ▶ tap waits on (#5328)
     /// The latest Play now or Add and open from Following; any later open or start makes it stale (#2124).
     var followedPlayIntent = CurrentRequest()
     @Published var isFollowingSelectedSource = false
@@ -998,7 +998,6 @@ final class Gate1AppModel: ObservableObject {
         startHangTelemetry(); narrationStartupProtection.appEnteredForeground(); reconcileNarrationOwnership(trigger: "foreground")
         openReadyListeningEdition()
         marginOutput.start(); readwiseHighlightSync.start { [weak self] in self?.store }
-        if let store { CommunityMapUploadService.shared.retryFailed(store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
         OnDeviceVoiceGovernor.app.setAppBackgrounded(false)
         let refreshedAvailability = localFoundationModelClient.availability()
         if refreshedAvailability != localFoundationModelAvailability {
@@ -2158,9 +2157,8 @@ final class Gate1AppModel: ObservableObject {
             ? playbackRate.map { SpeechRateRule.quarterStepMultiplier($0) }
             : playbackRate
         synchronizeSpeechAnchorForCompactCommand(command, canonicalTransport: canonicalTransportCommands.contains(command))
-        if command == .beginInterjection {
-            streamingSpeechQueue.pauseForInterjection()
-        }
+        if command == .beginInterjection { streamingSpeechQueue.pauseForInterjection() }
+        settleCatchUpPlaceBeforeCompactDispatch(command) // a compact Play gives back a catch-up run's kept place (#5238)
         guard let captureVerdict = verdictForCompactCommand(command) else { return }
         do {
             let result = try gate2CompactControls.dispatch(

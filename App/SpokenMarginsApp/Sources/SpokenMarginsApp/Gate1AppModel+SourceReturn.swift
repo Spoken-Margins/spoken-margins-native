@@ -9,10 +9,12 @@ extension Gate1AppModel {
     /// The last step of `resumePlayback()`, kept here so the hot file doesn't grow (#4110).
     func startSourceAgain(returningFromMargin: Bool) {
         if returningFromMargin, resumeSourceAfterMargin() { return }
+        // Play gives back a place a catch-up run kept, and says so in place of "Resumed." (#5238).
+        let gaveBack = returningFromMargin ? false : settleCatchUpPlace(trigger: "play", reports: true)
         run { engine in
             snapshot = try engine.resumePlayback()
             refreshSelectedItemInBackground() // like pause(): the icon flips without waiting for the item reload (#2098)
-            reportSuccess("Resumed.")
+            if !gaveBack { reportSuccess("Resumed.") }
         }
     }
 

@@ -324,15 +324,113 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
     const root = document.querySelector("article") || document.querySelector("main") || document.body;
     if (!root) { return null; }
     const normalize = value => String(value || "").replace(/\s+/g, " ").trim();
-    const selector = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre";
+    const selector = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,table";
+    // A table becomes a Markdown table, so speech announces it once and never
+    // reads a cell's paragraph as a sentence (#5364). Spans fill a grid; the
+    // first row is the header. Same rules as tableToMarkdown in
+    // Tools/BrowserExtraction/browserExtractionCore.mjs.
+    const breaks = new Set(["td", "th", "tr", "p", "div", "br", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre"]);
+    const words = (node, parts) => {
+        if (node.nodeType === 3) { parts.push(node.nodeValue); return; }
+        const tag = String(node.tagName || "").toLowerCase();
+        if (tag === "script" || tag === "style") { return; }
+        if (breaks.has(tag)) { parts.push(" "); }
+        Array.from(node.childNodes || []).forEach(child => words(child, parts));
+        if (breaks.has(tag)) { parts.push(" "); }
+    };
+    const span = (cell, name) => {
+        const value = Number.parseInt(String(cell.getAttribute(name) ?? "").trim(), 10);
+        return Number.isFinite(value) && value >= 1 ? Math.min(value, 1000) : 1;
+    };
+    const tableMarkdown = table => {
+        const tableRows = Array.from(table.querySelectorAll("tr")).filter(row => row.closest("table") === table);
+        const grid = [];
+        tableRows.forEach((row, rowIndex) => {
+            grid[rowIndex] ??= [];
+            let column = 0;
+            for (const cell of Array.from(row.children)) {
+                const tag = String(cell.tagName || "").toLowerCase();
+                if (tag !== "td" && tag !== "th") { continue; }
+                while (grid[rowIndex][column] !== undefined) { column += 1; }
+                const parts = [];
+                Array.from(cell.childNodes || []).forEach(child => words(child, parts));
+                const value = normalize(parts.join("")).replace(/\|/g, "\\|");
+                const columns = span(cell, "colspan");
+                const rows = Math.min(span(cell, "rowspan"), tableRows.length - rowIndex);
+                for (let down = 0; down < rows; down += 1) {
+                    grid[rowIndex + down] ??= [];
+                    for (let across = 0; across < columns; across += 1) { grid[rowIndex + down][column + across] = value; }
+                }
+                column += columns;
+            }
+        });
+        const rows = grid.filter(row => row && row.some(cell => cell));
+        const width = Math.max(0, ...rows.map(row => row.length));
+        if (!rows.length || width === 0) { return ""; }
+        const caption = Array.from(table.children).find(child => String(child.tagName || "").toLowerCase() === "caption");
+        const captionParts = [];
+        if (caption) { Array.from(caption.childNodes || []).forEach(child => words(child, captionParts)); }
+        const captionText = normalize(captionParts.join(""));
+        const line = row => `| ${Array.from({ length: width }, (_, index) => row[index] ?? "").join(" | ")} |`;
+        const markdown = [line(rows[0]), `| ${Array(width).fill("---").join(" | ")} |`, ...rows.slice(1).map(line)].join("\n");
+        return captionText ? `${captionText}\n\n${markdown}` : markdown;
+    };
     // A container's text already includes its descendants. Consume each DOM
     // passage once, without deleting intentional repetitions in sibling blocks.
+    // A layout table (a nested table, fewer than two rows with two cells, or
+    // a cell holding a heading, two or more paragraphs, list items, quotes,
+    // code blocks or divs, a pair of line breaks, or more than 40 words) is
+    // no block: its headings and paragraphs are (#5364 audits). Same rule as
+    // isDataTable in Tools/BrowserExtraction/browserExtractionCore.mjs.
+    const tableCells = row => Array.from(row.children).filter(cell => /^(td|th)$/i.test(String(cell.tagName || "")));
+    const hasLineBreakPair = cell => {
+        let previousWasBreak = false;
+        const visit = node => {
+            for (const child of Array.from(node.childNodes || [])) {
+                if (child.nodeType === 3) {
+                    if (String(child.nodeValue || "").trim()) { previousWasBreak = false; }
+                } else if (child.nodeType === 1) {
+                    if (String(child.tagName || "").toLowerCase() === "br") {
+                        if (previousWasBreak) { return true; }
+                        previousWasBreak = true;
+                    }
+                    if (visit(child)) { return true; }
+                }
+            }
+            return false;
+        };
+        return visit(cell);
+    };
+    const isLayoutCell = cell =>
+        Boolean(cell.querySelector("h1,h2,h3,h4,h5,h6"))
+        || cell.querySelectorAll("p,li,blockquote,pre,div").length >= 2
+        || hasLineBreakPair(cell)
+        || normalize(cell.textContent).split(" ").filter(Boolean).length > 40;
+    const isDataTable = table => {
+        if (table.querySelector("table")) { return false; }
+        const rows = Array.from(table.querySelectorAll("tr"));
+        if (rows.filter(row => tableCells(row).length >= 2).length < 2) { return false; }
+        return !rows.some(row => tableCells(row).some(isLayoutCell));
+    };
+    const dataTables = new Map();
+    const isBlock = element => {
+        if (element.tagName.toLowerCase() !== "table") { return true; }
+        if (!dataTables.has(element)) { dataTables.set(element, isDataTable(element)); }
+        return dataTables.get(element);
+    };
+    const insideBlock = element => {
+        for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+            if (parent.matches(selector) && isBlock(parent)) { return true; }
+        }
+        return false;
+    };
     const blocks = Array.from(root.querySelectorAll(selector))
-        .filter(element => !element.parentElement?.closest(selector));
+        .filter(element => isBlock(element) && !insideBlock(element));
     const text = blocks.map(element => {
+        const tag = element.tagName.toLowerCase();
+        if (tag === "table") { return tableMarkdown(element); }
         const value = normalize(element.innerText || element.textContent);
         if (!value) { return ""; }
-        const tag = element.tagName.toLowerCase();
         if (/^h[1-6]$/.test(tag)) { return `${"#".repeat(Number(tag.slice(1)))} ${value}`; }
         if (tag === "li") { return `- ${value}`; }
         if (tag === "blockquote") { return `> ${value}`; }

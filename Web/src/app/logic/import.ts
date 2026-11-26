@@ -154,7 +154,9 @@ export function placeImport(
       : own;
   } else {
     const shared = sharedShowFor(read.sender, now);
-    if (!shows.some((s) => s.id === shared.id)) show = shared;
+    // A holder the listener unfollowed counts as missing (#4426): the fresh one is followed through `follow()`, which
+    // picks up the stored record, so the sender's row comes back on Following.
+    if (!shows.some((s) => s.id === shared.id && !Object.hasOwn(s, 'unfollowedAt'))) show = shared;
     const { showTitle, publisher: _publisher, ...fields } = read.episode;
     const realShow = showTitle?.trim();
     episode = {

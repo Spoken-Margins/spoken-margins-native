@@ -1513,6 +1513,18 @@ public final class SessionEngine {
                 session.position.charOffset = firstBoundary
             }
         }
+        if session.position.charOffset >= text.count {
+            // A skip past the last sentence finishes the item, as playing to the end does and as a media skip to the
+            // end already did. It used to stop at the end still in `.itemPlayback`, so nothing saw a finish: the
+            // play queue never started the next item (#5358) and the session never counted as finished.
+            let finished = markPlaybackComplete(session, item: item)
+            currentSession = finished
+            try persistSession(finished)
+            protectPlaybackPosition(for: finished)
+            try audio.stop()
+            publish(status: .paused, phase: .finished)
+            return snapshot
+        }
         session.completionPercent = percent(for: session.position.charOffset, text: text)
         session.position.chapterId = chapterId(for: session.position.charOffset)
         session.phase = .itemPlayback
@@ -1520,14 +1532,12 @@ public final class SessionEngine {
         currentSession = session
         try persistSession(session)
         protectPlaybackPosition(for: session)
-        if snapshot.status.isPlaybackActive, session.position.charOffset < text.count {
+        if snapshot.status.isPlaybackActive {
             try playCurrentTarget(session, seeking: true)
             publishPlaybackContinuation(for: session)
             return snapshot
-        } else if session.position.charOffset >= text.count {
-            try audio.stop()
         }
-        publish(status: session.position.charOffset >= text.count ? .paused : snapshot.status, phase: session.phase)
+        publish(status: snapshot.status, phase: session.phase)
         return snapshot
     }
 
@@ -3673,6 +3683,9 @@ public final class SessionEngine {
         /// A spoken note's own file and joined timeline, read off the main thread in note mode (#4782). Nil gives the
         /// fallback built from the row's text and stored timeline.
         var spokenNote: SpokenNoteExportInput? = nil
+        /// Read beforehand, off the main thread, when a note's Margins are placed by the stored timeline (#5288): the map
+        /// onto the Shorter pauses file's clock that timeline is on. nil means "read it when the export needs it".
+        var noteClock: SpokenNoteCleanMap?? = nil
     }
 
     /// What `buildExportReadingOffMain` reads on a background thread: everything the export would otherwise read
@@ -3686,6 +3699,7 @@ public final class SessionEngine {
         var listeningMap: ListeningMap??
         var pageDocument: StructuredDocument??
         var spokenNote: SpokenNoteExportInput? = nil
+        var noteClock: SpokenNoteCleanMap?? = nil
     }
 
     /// The export the Export screen shows, with its store reads off the main thread (#2505): the item's whole text,
@@ -3722,7 +3736,8 @@ public final class SessionEngine {
         return try buildExport(options: options, source: ExportSource(
             session: inputs.session, item: inputs.item, sourceTimeline: sourceTimeline,
             allInterjections: inputs.allInterjections, allTurns: inputs.allTurns,
-            listeningMap: inputs.listeningMap, pageDocument: inputs.pageDocument, spokenNote: inputs.spokenNote))
+            listeningMap: inputs.listeningMap, pageDocument: inputs.pageDocument, spokenNote: inputs.spokenNote,
+            noteClock: inputs.noteClock))
     }
 
     /// The reads `loadExportSource` and `buildExport(options:source:)` make, done ahead in one go. The timeline is
@@ -3749,8 +3764,11 @@ public final class SessionEngine {
             ? .some(pageDocument(for: item, repository: repository))
             : nil
         let spokenNote = noteMode ? spokenNoteLoader?(item) : nil
+        let noteClock: SpokenNoteCleanMap?? = noteMode && spokenNote?.wholeTimeline == nil
+            ? .some(SpokenNoteCleanClock.map(forMediaURL: item.media?.url)) : nil
         return ExportInputs(session: session, item: item, allInterjections: interjections, allTurns: turns,
-                            timeline: timeline, listeningMap: map, pageDocument: pageDocument, spokenNote: spokenNote)
+                            timeline: timeline, listeningMap: map, pageDocument: pageDocument, spokenNote: spokenNote,
+                            noteClock: noteClock)
     }
 
     private nonisolated static func activeExportInterjections(_ all: [Interjection]) -> [Interjection] {
@@ -3835,16 +3853,22 @@ public final class SessionEngine {
         let pageDocument = interjections.contains { $0.targetType == .item } && item.documentStructure?.bibliography != nil
             ? source.pageDocument ?? exportPageDocument(for: item)
             : nil
+        // Placing by the stored timeline compares saved times (the recording's clock) with that timeline (the clock of
+        // the file the item names): the map between them, when the item names the note's Shorter pauses version (#5288).
+        let storedTimelineClock: SpokenNoteCleanMap? = noteMode && source.spokenNote?.wholeTimeline == nil
+            ? source.noteClock ?? SpokenNoteCleanClock.map(forMediaURL: item.media?.url)
+            : nil
         let noteLayout = noteMode
             ? SpokenNoteExportLayout(input: source.spokenNote, itemId: item.id, itemText: item.text ?? "",
-                                     storedTimeline: sourceTimeline, margins: interjections)
+                                     storedTimeline: sourceTimeline, storedTimelineClock: storedTimelineClock, margins: interjections)
             : nil
         let export = SessionExport(
             item: ExportItem(
                 id: item.id,
                 title: item.title,
-                externalReference: options.includeReference ? ShareableLinkPolicy.shareableLink(item.externalReference) : nil,
-                sourceURL: options.includeReference ? ShareableLinkPolicy.shareableLink(item.media?.url) : nil,
+                // A restricted episode's audio and feed links stay on the device (#5340); its own web page still goes.
+                externalReference: options.includeReference ? AutomaticSourceAccess.sendableLink(item.externalReference, of: item) : nil,
+                sourceURL: options.includeReference ? AutomaticSourceAccess.sendableAudioLink(of: item) : nil,
                 mediaSourceType: item.media?.sourceType.rawValue,
                 includedFullText: noteMode ? includesNoteText : exposesFullSourceText,
                 text: noteMode ? (includesNoteText ? noteLayout?.text : nil) : exposesFullSourceText ? item.text : nil,
@@ -4616,6 +4640,8 @@ public final class SessionEngine {
             if existing.episodeGUID == nil { existing.episodeGUID = Self.nonEmpty(candidate.episodeGUID) }
             if existing.showTitle == nil { existing.showTitle = Self.nonEmpty(candidate.showTitle) }
             if existing.publishedAt == nil { existing.publishedAt = Self.nonEmpty(candidate.publishedAt) }
+            // A restriction only ever adds (#5340).
+            if candidate.publisherBlocked == true { existing.publisherBlocked = true }
             // An episode the listener added again shows as just added and not finished, as an article does (#4178).
             // One the engine holds with its session still going is left as it is.
             if listenerAdded, !itemIdsStillListening.contains(id) {
@@ -4649,6 +4675,7 @@ public final class SessionEngine {
         item.episodeGUID = Self.nonEmpty(candidate.episodeGUID)
         item.showTitle = Self.nonEmpty(candidate.showTitle)
         item.publishedAt = Self.nonEmpty(candidate.publishedAt)
+        if candidate.publisherBlocked == true { item.publisherBlocked = true }
         return item
     }
 

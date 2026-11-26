@@ -101,8 +101,9 @@ public struct PinnedMarginCard: Equatable, Sendable {
         /// Margins the item holds; the subject names the one when there is one.
         case lastMargin(senders: Int)
         /// A catch-up run reached its natural end (#4785, `CatchUpRun`). `stillNew` counts the run's friend Margins still
-        /// unheard; `allReplies` says every one answered the listener; `shareText` is what "Let Cole know" hands over.
-        case caughtUp(stillNew: Int, allReplies: Bool, shareText: String)
+        /// unheard; `allReplies` says every one answered the listener; `shareText` is what "Let Cole know" hands over;
+        /// `placeBack` is the clock of the re-listen's place Play gives back (#5238), nil when none is owed.
+        case caughtUp(stillNew: Int, allReplies: Bool, shareText: String, placeBack: String? = nil)
     }
 
     /// What happens when the source gets to the next Margin.
@@ -222,7 +223,7 @@ public struct PinnedMarginCard: Equatable, Sendable {
         case .lastMargin(let senders):
             if senders > 1 { return "That was the last of your friends' Margins" }
             return subject.name.map { "That was \($0)'s last Margin" } ?? "That was the last Margin"
-        case .caughtUp(let stillNew, let allReplies, _):
+        case .caughtUp(let stillNew, let allReplies, _, _):
             if stillNew == 0 { return subject.name.map { "You're caught up with \($0)" } ?? "You're caught up" }
             let noun = allReplies ? "replies" : "new Margins"
             return subject.name.map { "\($0)'s \(noun) have played" } ?? "The \(noun) have played"
@@ -275,10 +276,13 @@ public struct PinnedMarginCard: Equatable, Sendable {
         case .answerSaved(_, let sentTo): return "To send it to \(sentTo), tap Share below. You pick which of your Margins go."
         case .lastMargin(let senders):
             return "To answer\(senders > 1 ? " your friends" : subject.name.map { " \($0)" } ?? ""), add a Margin of your own."
-        case .caughtUp(let stillNew, _, _):
+        case .caughtUp(let stillNew, _, _, let placeBack):
             // Saying that no answer is owed is the point (#4785): never "add a Margin of your own" here.
-            if stillNew == 0 { return "That's everything new on this \(noun.inSentence). You don't need to answer." }
-            return stillNew == 1 ? "1 stays marked new." : "\(stillNew) stay marked new."
+            let line = stillNew == 0
+                ? "That's everything new on this \(noun.inSentence). You don't need to answer."
+                : stillNew == 1 ? "1 stays marked new." : "\(stillNew) stay marked new."
+            // The re-listen's place the run kept (#5238): said before Play jumps there, so the jump is never a surprise.
+            return placeBack.map { "\(line) Play picks up where you were, at \($0)." } ?? line
         case .upNext(let ms, let arrival):
             if case .yours = subject { return "Plays by itself when you get there." }
             switch arrival {

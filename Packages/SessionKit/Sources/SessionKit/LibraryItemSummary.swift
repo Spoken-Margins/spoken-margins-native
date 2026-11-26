@@ -20,6 +20,9 @@ public protocol LibraryItemFields {
     var sourceCompletedAt: Date? { get }
     /// When the listener last added the item again while it was already here (`Item.addedAgainAt`, #4178).
     var addedAgainAt: Date? { get }
+    /// `Item.publisherBlocked` and `Item.fromPrivateFeed` (#5340), so the share sheet withholds the links the packet will.
+    var publisherBlocked: Bool? { get }
+    var fromPrivateFeed: Bool? { get }
     /// Whether the item has text with something in it besides whitespace.
     var hasListenableText: Bool { get }
     /// How many characters the listening-time estimate counts. nil when the item has no text.
@@ -67,6 +70,9 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
     public var transcriptId: String?
     /// `Item.addedAgainAt` (#4178).
     public var addedAgainAt: Date?
+    /// `Item.publisherBlocked` and `Item.fromPrivateFeed` (#5340).
+    public var publisherBlocked: Bool?
+    public var fromPrivateFeed: Bool?
 
     public init(
         id: String,
@@ -86,7 +92,9 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
         hasListenableText: Bool,
         textCharacterCount: Int?,
         transcriptId: String? = nil,
-        addedAgainAt: Date? = nil
+        addedAgainAt: Date? = nil,
+        publisherBlocked: Bool? = nil,
+        fromPrivateFeed: Bool? = nil
     ) {
         self.id = id
         self.title = title
@@ -106,6 +114,8 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
         self.textCharacterCount = textCharacterCount
         self.transcriptId = transcriptId
         self.addedAgainAt = addedAgainAt
+        self.publisherBlocked = publisherBlocked
+        self.fromPrivateFeed = fromPrivateFeed
     }
 
     /// The summary of a whole item. A summary read from the store answers the same.
@@ -116,6 +126,7 @@ public struct LibraryItemSummary: LibraryItemFields, Equatable, Sendable {
             media: item.media, deletedAt: item.deletedAt, author: item.author, sourceTitle: item.sourceTitle,
             sourceURL: item.sourceURL, createdAt: item.createdAt, publishedAt: item.publishedAt,
             sourceCompletedAt: item.sourceCompletedAt, hasListenableText: item.hasListenableText, textCharacterCount: item.textCharacterCount,
-            transcriptId: item.transcriptId, addedAgainAt: item.addedAgainAt)
+            transcriptId: item.transcriptId, addedAgainAt: item.addedAgainAt,
+            publisherBlocked: item.publisherBlocked, fromPrivateFeed: item.fromPrivateFeed)
     }
 }

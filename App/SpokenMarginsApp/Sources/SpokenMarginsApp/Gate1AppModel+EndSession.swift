@@ -18,6 +18,7 @@ extension Gate1AppModel {
             endFields["tapToEndMs"] = String(tapToEndMs)
         }
         recordDeveloperDiagnostic("session.end", endFields)
+        settleCatchUpPlace(trigger: "session_end") // while the source is still on the item: the mini player's X, Trash (#5238)
         return try engine.endSession(stoppingInlinePlayback: endMarginMoment)
     }
 }

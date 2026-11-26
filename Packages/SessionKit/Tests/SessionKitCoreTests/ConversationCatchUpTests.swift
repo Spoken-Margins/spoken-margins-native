@@ -294,6 +294,24 @@ final class ConversationCatchUpTests: XCTestCase {
         }
     }
 
+    /// The card says where Play goes when the run kept the re-listen's place (#5238); without one the line is unchanged.
+    func testTheCardSaysWherePlayPicksUp() throws {
+        struct Row { let stillNew: Int; let owed: Int?; let detail: String }
+        let rows = [
+            Row(stillNew: 0, owed: 1_440_000, detail: "That's everything new on this episode. You don't need to answer. Play picks up where you were, at 24:00."),
+            Row(stillNew: 1, owed: 3_840_000, detail: "1 stays marked new. Play picks up where you were, at 1:04:00."),
+            Row(stillNew: 2, owed: 1_440_000, detail: "2 stay marked new. Play picks up where you were, at 24:00."),
+            Row(stillNew: 0, owed: nil, detail: "That's everything new on this episode. You don't need to answer."),
+            Row(stillNew: 1, owed: nil, detail: "1 stays marked new."),
+        ]
+        for row in rows {
+            var run = makeRun()
+            run.handle(.completed(stillNew: row.stillNew, owedPlaceMs: row.owed))
+            XCTAssertEqual(run.owedPlaceMs, row.owed)
+            XCTAssertEqual(try XCTUnwrap(run.card).detail, row.detail)
+        }
+    }
+
     func testTheCardsJobs() throws {
         var heard = makeRun()
         heard.handle(.completed(stillNew: 0))

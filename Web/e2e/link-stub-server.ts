@@ -19,6 +19,8 @@
 //   vectorbook01   a book's (EPUB) Margins, from web-written, the same way
 //   vectortext01   a pasted text's Margins, from web-written, the same way
 //   vectornoaud1   a podcast episode on an ordinary site's page with no audio address: web-voice's two timed Margins
+//   vectornewer01  vectorvoice01's packet declaring a required capability this page doesn't know, as a packet from a newer
+//                  Spoken Margins does: the page says it is a version gap, not damage (#5266)
 //   expired00001   answers 410, as an expired link does
 //   switchedoff1   answers 503 `disabled`, as the server does while links are switched off
 // Run: node e2e/link-stub-server.ts (Node 24 strips the types). Port 4174, or SM_LINK_STUB_PORT.
@@ -69,6 +71,21 @@ links.set('vectorvoice01', {
 links.set('vectorvoice33', {
   preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
   packet: await sealPart(await voicePacketOfLength(SERVED_EPISODE_MS + 33_000), PART.packet, vectorKey),
+});
+// A packet from a newer Spoken Margins: it needs a capability this page has never heard of (#5266).
+links.set('vectornewer01', {
+  preview: await sealPart(b64(vector.preview.plaintextBase64), PART.preview, vectorKey),
+  packet: await sealPart(
+    await withLayer(
+      await voicePacketOfLength(SERVED_EPISODE_MS),
+      () => {},
+      (manifest) => {
+        manifest.requiredCapabilities = [...((manifest.requiredCapabilities as string[] | undefined) ?? []), 'spokenmargins.capability.from-the-future.v1'];
+      },
+    ),
+    PART.packet,
+    vectorKey,
+  ),
 });
 
 const writtenPacket = new Uint8Array(readFileSync(join(repo, 'Contracts/fixtures/web-packets/web-written.spokenmargins')));

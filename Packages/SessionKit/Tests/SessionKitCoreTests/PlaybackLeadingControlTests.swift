@@ -8,8 +8,8 @@ final class PlaybackLeadingControlTests: XCTestCase {
         XCTAssertEqual(PlaybackLeadingControl.control(pane: .margins, timelineEditorHasFocus: false), .libraryExit)
     }
 
-    func testEveryTabWithAToolbarArrowLeavesExceptTheEditorCase() {
-        for pane in [PlaybackLeadingControl.Pane.timeline, .margins] {
+    func testEveryTabLeavesExceptTheEditorCase() {
+        for pane in [PlaybackLeadingControl.Pane.now, .timeline, .margins] {
             XCTAssertNotEqual(PlaybackLeadingControl.control(pane: pane, timelineEditorHasFocus: false), .returnToNow,
                               "\(pane) must not use the top-left arrow to switch tabs")
         }
@@ -20,107 +20,20 @@ final class PlaybackLeadingControlTests: XCTestCase {
     }
 
     func testEditorFocusChangesNothingOnTheOtherTabs() {
-        XCTAssertEqual(PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: true), .none)
-        XCTAssertEqual(PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: false), .none)
+        XCTAssertEqual(PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: true), .libraryExit)
         XCTAssertEqual(PlaybackLeadingControl.control(pane: .margins, timelineEditorHasFocus: true), .libraryExit)
     }
 
-    /// #4453: following scrolls the Now header, which holds the Library arrow, out of sight; the toolbar shows it then.
-    func testNowShowsTheLibraryArrowInTheToolbarOnlyWhileItsHeaderIsOutOfView() {
-        XCTAssertEqual(PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: false, nowHeaderIsVisible: true), .none)
-        XCTAssertEqual(PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: false, nowHeaderIsVisible: false), .libraryExit)
-        XCTAssertEqual(PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: false), .none, "the default is today's")
-        XCTAssertEqual(PlaybackLeadingControl.control(pane: .timeline, timelineEditorHasFocus: false, nowHeaderIsVisible: false), .libraryExit)
-        XCTAssertEqual(PlaybackLeadingControl.control(pane: .timeline, timelineEditorHasFocus: true, nowHeaderIsVisible: false), .returnToNow)
-    }
-
-    /// #4739: the bar's leading item exists, with the same kind, whether or not the Now header is on screen. Only its
-    /// visibility may follow the header; anything else makes the bar's size depend on scroll state.
-    func testToolbarItemDoesNotDependOnHeaderVisibility() {
-        for pane in [PlaybackLeadingControl.Pane.now, .timeline, .margins] {
-            for editorFocus in [false, true] {
-                let shown = PlaybackLeadingControl.slot(pane: pane, timelineEditorHasFocus: editorFocus, nowHeaderIsVisible: true)
-                let hidden = PlaybackLeadingControl.slot(pane: pane, timelineEditorHasFocus: editorFocus, nowHeaderIsVisible: false)
-                let label = "pane \(pane), editor focus \(editorFocus)"
-                XCTAssertEqual(shown.kind, hidden.kind, "same kind either way: \(label)")
-            }
+    /// #5329: on Now the bar's corner held an invisible copy of the arrow while the title row showed the real one, and
+    /// iOS 26 drew an empty glass pill around the copy. Now always gives the shown Library arrow in the corner.
+    func testNowAlwaysShowsTheLibraryArrowInTheCorner() {
+        for focus in [false, true] {
+            XCTAssertEqual(PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: focus), .libraryExit)
         }
     }
 
-    func testOnNowTheArrowIsDrawnOnlyWhileTheHeaderIsOutOfView() {
-        XCTAssertEqual(PlaybackLeadingControl.slot(pane: .now, timelineEditorHasFocus: false, nowHeaderIsVisible: true).isShown, false)
-        XCTAssertEqual(PlaybackLeadingControl.slot(pane: .now, timelineEditorHasFocus: false, nowHeaderIsVisible: false).isShown, true)
-        XCTAssertEqual(PlaybackLeadingControl.slot(pane: .timeline, timelineEditorHasFocus: true, nowHeaderIsVisible: true).kind, .returnToNow)
-        XCTAssertEqual(PlaybackLeadingControl.slot(pane: .margins, timelineEditorHasFocus: false, nowHeaderIsVisible: true).isShown, true)
-    }
-
-    /// #4739: at the largest text size in dark mode the app hung on first launch. Showing the toolbar arrow laid the bar
-    /// out again and moved a header that sat at the edge back into view, which took the arrow away, which moved the
-    /// header out again, on every pass. Here the header shows 0.5% of itself without the arrow and 30% with it.
-    func testABarLayoutThatMovesTheHeaderCannotFlipTheArrowBackAndForth() {
-        var header = NowHeaderVisibility()
-        var flips = 0
-        var shown = PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: false, nowHeaderIsVisible: header.isVisible)
-        for _ in 0..<50 {
-            header.seen(fraction: shown == .libraryExit ? 0.3 : 0.005)
-            let next = PlaybackLeadingControl.control(pane: .now, timelineEditorHasFocus: false, nowHeaderIsVisible: header.isVisible)
-            if next != shown { flips += 1 }
-            shown = next
-        }
-        XCTAssertEqual(flips, 1, "the arrow must settle after one change, not flip on every layout pass")
-        XCTAssertEqual(shown, .libraryExit)
-    }
-
-    func testTheHeaderIsGoneOnlyWhenAlmostNoneOfItShowsAndBackOnlyWhenAlmostAllOfItDoes() {
-        // (share on screen, starting visible, expected after)
-        let rows: [(Double, Bool, Bool)] = [
-            (1.0, true, true), (0.5, true, true), (0.01, true, true), (0.009, true, false), (0.0, true, false),
-            (0.0, false, false), (0.009, false, false), (0.01, false, false), (0.3, false, false), (0.89, false, false),
-            (0.9, false, true), (1.0, false, true),
-        ]
-        for (fraction, start, expected) in rows {
-            var header = NowHeaderVisibility(isVisible: start)
-            header.seen(fraction: fraction)
-            XCTAssertEqual(header.isVisible, expected, "\(fraction) of the header, starting \(start ? "visible" : "gone")")
-        }
-    }
-
-    func testEachThresholdMovesTheStateOnlyOneWay() {
-        var header = NowHeaderVisibility()
-        header.reachedBackThreshold(false)
-        XCTAssertTrue(header.isVisible, "less than the back threshold never hides a visible header")
-        header.reachedGoneThreshold(false)
-        XCTAssertFalse(header.isVisible)
-        header.reachedGoneThreshold(true)
-        XCTAssertFalse(header.isVisible, "a sliver back in view does not bring the arrow back to the header")
-        header.reachedBackThreshold(true)
-        XCTAssertTrue(header.isVisible)
-        XCTAssertTrue(NowHeaderVisibility().isVisible, "a new screen starts with its header in view, as before")
-    }
-    /// #5311: the bar keeps a hidden copy of the Library arrow on Now (#4739). It shared the header arrow's identifier,
-    /// so the J14 scripts' lookup found the hidden copy, which has no point to tap, and failed. Only a drawn arrow may
-    /// carry the shared identifier, on every pane and either header state.
-    func testOnlyADrawnLibraryArrowCarriesTheSharedIdentifier() {
-        let shared = PlaybackLeadingControl.Slot.libraryExitIdentifier
-        XCTAssertEqual(shared, "playback.exit.button", "the identifier the J14 scripts tap")
-        for pane in [PlaybackLeadingControl.Pane.now, .timeline, .margins] {
-            for focus in [false, true] {
-                for headerVisible in [false, true] {
-                    let slot = PlaybackLeadingControl.slot(
-                        pane: pane, timelineEditorHasFocus: focus, nowHeaderIsVisible: headerVisible)
-                    guard slot.kind == .libraryExit else { continue }
-                    let label = "\(pane), focus \(focus), header \(headerVisible ? "visible" : "gone")"
-                    if slot.isShown {
-                        XCTAssertEqual(slot.libraryExitIdentifier, shared, label)
-                    } else {
-                        XCTAssertNotEqual(slot.libraryExitIdentifier, shared, label)
-                        XCTAssertFalse(slot.libraryExitIdentifier.isEmpty, label)
-                    }
-                }
-            }
-        }
-        let hiddenOnNow = PlaybackLeadingControl.slot(pane: .now, timelineEditorHasFocus: false, nowHeaderIsVisible: true)
-        XCTAssertFalse(hiddenOnNow.isShown, "Now with its header in view is the case the scripts meet")
-        XCTAssertNotEqual(hiddenOnNow.libraryExitIdentifier, shared)
+    /// #5311: the J14 scripts tap the arrow by this identifier; there is one arrow, so nothing can shadow it.
+    func testTheLibraryArrowKeepsTheIdentifierTheScriptsTap() {
+        XCTAssertEqual(PlaybackLeadingControl.libraryExitIdentifier, "playback.exit.button")
     }
 }

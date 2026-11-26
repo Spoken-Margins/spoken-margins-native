@@ -125,6 +125,51 @@ public enum PlayQueueAdvance {
               let sessionId = current.sessionId, previous.sessionId == sessionId else { return false }
         return true
     }
+
+    /// What the queue does at a snapshot change, for the advance and for Diagnostics (#5358). `nil` for the ordinary
+    /// change that is no end at all, so Diagnostics gets one line per end, never one per tick.
+    ///
+    /// - `advance`: the finish edge with a queued item ready, and no sleep timer running.
+    /// - `skipped(.sleepTimer)`: the finish edge while a sleep timer runs; the listener asked for the audio to stop.
+    /// - `skipped(.queueEmpty)`: the finish edge with nothing available in the queue.
+    /// - `skipped(.noFinishEdge)`: the same session stopped at its end (paused, at the end percent) without moving
+    ///   into `.finished`, so the queue could not see a finish. This was the #5358 skip to the end of an article.
+    public static func decision(
+        from previous: SessionSnapshot, to current: SessionSnapshot, sleepTimerActive: Bool, queueHasNext: Bool
+    ) -> Decision? {
+        if shouldAdvance(from: previous, to: current) {
+            if sleepTimerActive { return .skipped(.sleepTimer) }
+            return queueHasNext ? .advance : .skipped(.queueEmpty)
+        }
+        guard previous.status.isPlaybackActive, current.status == .paused, current.phase != .finished,
+              current.currentPlaybackProgressPercent >= ItemFinishedRule.atEndPercent,
+              let sessionId = current.sessionId, previous.sessionId == sessionId,
+              let itemId = current.itemId, previous.itemId == itemId,
+              current.targetId == previous.targetId else { return nil }
+        return .skipped(.noFinishEdge)
+    }
+
+    public enum Decision: Equatable, Sendable {
+        case advance
+        case skipped(SkipReason)
+
+        /// The Diagnostics fields: the outcome and, for a skip, its reason. No ids or titles.
+        public var diagnosticFields: [String: String] {
+            switch self {
+            case .advance: return ["outcome": "advanced"]
+            case .skipped(let reason): return ["outcome": "skipped", "reason": reason.rawValue]
+            }
+        }
+    }
+
+    public enum SkipReason: String, Equatable, Sendable {
+        case sleepTimer = "sleep_timer"
+        case queueEmpty = "queue_empty"
+        case noFinishEdge = "no_finish_edge"
+        /// The queued item was taken off the queue but did not start (recording a Margin, an episode that can't
+        /// play offline). Recorded by the app after its start, not by `decision`.
+        case startRefused = "start_refused"
+    }
 }
 
 /// The queue's file. A missing or unreadable file is an empty queue, never an error the listener sees.
