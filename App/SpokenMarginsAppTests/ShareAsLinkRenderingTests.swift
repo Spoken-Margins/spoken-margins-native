@@ -31,7 +31,8 @@ final class ShareAsLinkRenderingTests: XCTestCase {
     /// reports a completed share, and only a completed one.
     func testTheLinkSheetReportsACompletedShareOnly() {
         var shared = 0
-        let sheet = ShareLinkActivityView(link: URL(string: "https://example.test/l/abc#k")!, companionFile: nil) { shared += 1 }
+        let box = ShareLinkMessageBox(text: "https://example.test/l/abc#k")
+        let sheet = ShareLinkActivityView(message: box, companionFile: nil) { shared += 1 }
         let controller = sheet.makeController()
         controller.completionWithItemsHandler?(nil, false, nil, nil)
         XCTAssertEqual(shared, 0, "a cancelled sheet is not a share")
@@ -40,19 +41,80 @@ final class ShareAsLinkRenderingTests: XCTestCase {
     }
 
     /// #3787: a link goes out with a sentence, so the friend does not get a bare address. The sentence and the whole
-    /// link, key included, are one text, so no app can keep one and drop the other.
+    /// link, key included, are one text, so no app can keep one and drop the other. #5264: the text comes from an item
+    /// source that reads the sender's box when asked, so a check that finished while the sheet was open reaches the send.
     func testTheLinkSheetCarriesTheSentenceAndTheWholeLinkAsOneText() throws {
         let link = URL(string: "https://example.test/l/abc#k")!
-        let alone = ShareLinkActivityView.activityItems(link: link, companionFile: nil)
+        let first = ShareLinkMessage.text(
+            for: link, item: .episode, notes: .init(count: 1, allVoice: true), hasAudioOrPage: true, playability: .unknown
+        )
+        let box = ShareLinkMessageBox(text: first)
+        let controller = UIActivityViewController(activityItems: [], applicationActivities: nil)
+
+        let alone = ShareLinkActivityView.activityItems(message: box, companionFile: nil)
         XCTAssertEqual(alone.count, 1)
-        let text = try XCTUnwrap(alone.first as? String)
-        XCTAssertTrue(text.hasPrefix(ShareLinkMessage.sentence))
-        XCTAssertTrue(text.hasSuffix("https://example.test/l/abc#k"))
+        let source = try XCTUnwrap(alone.first as? ShareLinkMessageItemSource)
+        let placeholder = try XCTUnwrap(source.activityViewControllerPlaceholderItem(controller) as? String)
+        XCTAssertEqual(placeholder, first)
+        XCTAssertTrue(placeholder.hasPrefix(ShareLinkMessage.sentence))
+        XCTAssertTrue(placeholder.hasSuffix("https://example.test/l/abc#k"))
+        XCTAssertEqual(source.activityViewController(controller, itemForActivityType: .message) as? String, first)
+        XCTAssertEqual(source.activityViewController(controller, itemForActivityType: .copyToPasteboard) as? String, first)
+
+        // The check finds the browser can't play it after the sheet opened: the pick gets the newer text.
+        let newer = ShareLinkMessage.text(
+            for: link, item: .episode, notes: .init(count: 1, allVoice: true), hasAudioOrPage: true, playability: .cannot
+        )
+        box.text = newer
+        XCTAssertEqual(source.activityViewController(controller, itemForActivityType: .message) as? String, newer)
+        XCTAssertNotEqual(newer, first)
 
         let file = URL(fileURLWithPath: "/tmp/margins.spokenmargins")
-        let withFile = ShareLinkActivityView.activityItems(link: link, companionFile: file)
+        let withFile = ShareLinkActivityView.activityItems(message: box, companionFile: file)
         XCTAssertEqual(withFile.count, 2, "the file still goes in the same message as the link")
-        XCTAssertEqual(withFile.first as? String, text)
+        let firstOfTwo = try XCTUnwrap(withFile.first as? ShareLinkMessageItemSource)
+        XCTAssertEqual(firstOfTwo.activityViewController(controller, itemForActivityType: .mail) as? String, newer)
+    }
+
+    /// #5354 audit: a check that finished while the sheet was open never changed the text, because the sender read the
+    /// checker's `@Published` property inside its own subscriber, which runs before the new value is stored. The writer
+    /// must take the outcome its subscription delivers. Driven through a real `@Published`, as the checker publishes.
+    func testACheckThatFinishesAfterTheLinkChangesTheTextAtOnce() throws {
+        let source = PublishedOutcomes()
+        let writer = ShareLinkMessageWriter(outcomes: source.$outcomes.eraseToAnyPublisher())
+        let link = URL(string: "https://example.test/l/abc#k")!
+        let facts = ShareLinkMessage.Facts(
+            itemType: .text, notes: .init(count: 1, allVoice: true), hasAudioOrPage: true
+        )
+        func expected(_ playability: ShareLinkMessage.Playability) -> String {
+            ShareLinkMessage.text(for: link, item: .article, notes: facts.notes, hasAudioOrPage: true, playability: playability)
+        }
+
+        writer.newLink(replacingLinkID: nil)
+        writer.prepared(facts: facts, isSpokenNote: false)
+        source.outcomes["abc"] = .checking
+        writer.linkReady(link, linkID: "abc")
+        XCTAssertEqual(writer.box.text, expected(.unknown))
+
+        // The page answers while the sheet is open: an article page can play (a Substack post's voice, #4421).
+        source.outcomes["abc"] = .plays
+        XCTAssertEqual(writer.box.text, expected(.plays), "the text must follow the outcome just published, not the one before it")
+
+        source.outcomes["abc"] = .problem(.article)
+        XCTAssertEqual(writer.box.text, expected(.cannot))
+
+        // A second link on the same selection: the first link's verdict carries while the new check is unknown.
+        writer.newLink(replacingLinkID: "abc")
+        source.outcomes["def"] = .checking
+        writer.linkReady(URL(string: "https://example.test/l/def#k")!, linkID: "def")
+        XCTAssertTrue(writer.box.text.contains("You'll need Spoken Margins on iPhone"), writer.box.text)
+
+        // A new selection forgets it.
+        writer.selectionChanged()
+        writer.newLink(replacingLinkID: nil)
+        writer.linkReady(URL(string: "https://example.test/l/ghi#k")!, linkID: "ghi")
+        source.outcomes["ghi"] = .plays
+        XCTAssertTrue(writer.box.text.contains("nothing to install"), writer.box.text)
     }
 
     func testTheStatusLinesAreEmptyUntilALinkFailsOrNeedsItsFile() throws {
@@ -200,5 +262,12 @@ final class ShareAsLinkRenderingTests: XCTestCase {
         add(attachment)
         return CGSize(width: image.size.width, height: image.size.height)
     }
+}
+
+/// Publishes like `ShareLinkPlayChecker.outcomes`: a `@Published` property, whose subscribers run before it stores the
+/// new value.
+@MainActor
+private final class PublishedOutcomes: ObservableObject {
+    @Published var outcomes: [String: ShareLinkPlayCheck.Outcome] = [:]
 }
 #endif

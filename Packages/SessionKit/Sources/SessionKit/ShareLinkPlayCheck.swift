@@ -146,7 +146,7 @@ public enum ShareLinkPlayCheck {
              "Only paid subscribers can hear it.")
         case .noPostVoice:
             ("Your friend's browser can't find audio for this post.",
-             "They'll see your Margins' words. To hear it read aloud, they need Spoken Margins on iPhone.")
+             "To hear it read aloud with your Margins, they need Spoken Margins on iPhone.")
         case .audioRefused:
             ("Your friend's browser can't reach this episode's audio.",
              "The podcast's server turned the request away. Try again later, or add the episode again from the show.")
