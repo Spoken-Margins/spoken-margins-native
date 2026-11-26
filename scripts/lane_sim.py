@@ -53,8 +53,9 @@ from simctl_preflight import bounded_output, problem as simctl_problem
 from lane_slots import (annotate_holder, build_slot_file, disable_second_slot, memory_pressure_level, second_slot_back_on_at, simulator_boot_lock,
                         simulator_jobs_running, state_dir, PRESSURE_NAMES, SLOTS)
 
-# iOS 27's Apple Intelligence services crash-flood on this Mac (#184). A GitHub-hosted Mac (lane.yml, #1389) sets
-# SM_LANE_IOS_MAJOR to the iOS its image ships when it has no iOS 26 runtime; the report names the runtime it used.
+# iOS 27's Apple Intelligence services crash-flood on this Mac (#184). A GitHub-hosted Mac sets SM_LANE_IOS_MAJOR:
+# main-t3 and branch-t3 install iOS 26.5 first and stop rather than use another iOS (#5221); the report names the
+# runtime it used.
 IOS_MAJOR = int(os.environ.get('SM_LANE_IOS_MAJOR') or 26)
 DEVICE_TYPE = 'com.apple.CoreSimulator.SimDeviceType.iPhone-17'
 FIRST_BOOT_TIMEOUT = 900

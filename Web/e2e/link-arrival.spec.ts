@@ -636,7 +636,15 @@ test('a link that can’t open says what happened and one thing to do, in the sa
     // Nothing raw, and no way to play something that didn't open.
     await expect(page.getByText(/not_found|disabled|\{"error"/), name).toHaveCount(0);
     await expect(failed.getByRole('button'), name).toHaveCount(0);
+    // One tap to the friends page, at the question a link that won't open raises (#5268).
+    await expect(failed.getByRole('link', { name: 'Get help' }), name).toHaveAttribute('href', /\/friends\/#wont-open$/);
   }
+  // Offline: the help page can't load either, so the card offers no help link.
+  await page.route(`${STUB}/l/vectorvoice01/packet`, (route) => route.abort());
+  await page.goto(LINK);
+  await expect(failed.getByRole('heading')).toContainText('You’re offline.');
+  await expect(failed.getByRole('link', { name: 'Get help' })).toHaveCount(0);
+  await page.unroute(`${STUB}/l/vectorvoice01/packet`);
   // A newer packet is a version gap: sending it again gives the same result, so the page never says so (#5266).
   await page.goto(`${STUB}/l/vectornewer01#${KEY}`);
   await expect(failed).toContainText('Open your friend’s link again, so this page loads its newest version.');
@@ -664,6 +672,7 @@ test('when the episode can’t load: one problem toast, one sentence, and a butt
   await expect(playing).toBeVisible();
   // The card is the one sentence: no toast beside it, however the audio element's error and the rejected play() arrive.
   await expect(cue).toContainText('This episode can’t play here');
+  await expect(cue.getByRole('link', { name: 'Get help' })).toHaveAttribute('href', 'https://spokenmargins.com/friends/#cant-hear');
   await page.waitForTimeout(1500);
   await expect(page.locator('.toast-problem')).toHaveCount(0);
   await expect(page.getByText('couldn’t be loaded')).toHaveCount(0);

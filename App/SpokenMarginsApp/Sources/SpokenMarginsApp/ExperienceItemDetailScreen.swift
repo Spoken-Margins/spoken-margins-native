@@ -38,6 +38,8 @@ struct ExperienceItemDetailScreen: View {
     @State private var collectionItem: LibraryItemRow?
     /// A Margin with no place, opened from Recent Margins (#4233): it has no moment to show in the Timeline.
     @State private var unplacedMargin: MarginRow?
+    /// The friend help, from a friend's episode whose download failed (#5268).
+    @State private var helpTopic: FriendHelpTopic?
     /// Whether the open item is a PDF, so the menu offers "Export PDF with Margins" (#4338). Looked up off the main thread
     /// when the item opens, with the kept copy of its file when this iPhone holds one (`keptPDFOriginal`). With no copy
     /// the sheet asks the listener to choose the file (PR 6).
@@ -291,6 +293,7 @@ struct ExperienceItemDetailScreen: View {
             .trackedSheet(item: $unplacedMargin) { row in
                 ExperienceMarginDetailView(row: row).environmentObject(model)
             }
+            .trackedSheet(item: $helpTopic) { FriendHelpScreen(focus: $0) }
             .alert("Which episode is this?", isPresented: $asksForEpisodeLink) {
                 TextField("Episode link", text: $episodeLinkText)
                     .textInputAutocapitalization(.never)
@@ -927,19 +930,30 @@ struct ExperienceItemDetailScreen: View {
     private var downloadRecovery: some View {
         switch model.selectedPodcastDownloadState {
         case .waitingForWiFi, .streamingOnly, .failed, .evicted, .downloading:
-            // The status beside its button, or one above the other when they don't fit (large text, #1938).
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) {
-                    downloadStatusLabel
-                    Spacer(minLength: 8)
-                    downloadRecoveryControl
+            VStack(alignment: .leading, spacing: 8) {
+                // The status beside its button, or one above the other when they don't fit (large text, #1938).
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        downloadStatusLabel
+                        Spacer(minLength: 8)
+                        downloadRecoveryControl
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        downloadStatusLabel
+                        downloadRecoveryControl
+                    }
                 }
-                VStack(alignment: .leading, spacing: 8) {
-                    downloadStatusLabel
-                    downloadRecoveryControl
+                .accessibilityIdentifier("item.podcastDownload.status")
+                // A friend's episode that can't be fetched is where a receiver gets stuck: one tap to why (#5268).
+                if downloadFailedUnderFriendsMargins {
+                    Button { helpTopic = .cantHear } label: {
+                        Text("Get Help").minimumTapTarget()
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.subheadline)
+                        .accessibilityIdentifier("item.podcastDownload.help")
                 }
             }
-            .accessibilityIdentifier("item.podcastDownload.status")
         case .availableOffline:
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) {
@@ -958,6 +972,13 @@ struct ExperienceItemDetailScreen: View {
             }
         case .none:
             EmptyView()
+        }
+    }
+
+    private var downloadFailedUnderFriendsMargins: Bool {
+        switch model.selectedPodcastDownloadState {
+        case .failed, .evicted: return !sharingCoordinator.importedLayers.isEmpty
+        default: return false
         }
     }
 
