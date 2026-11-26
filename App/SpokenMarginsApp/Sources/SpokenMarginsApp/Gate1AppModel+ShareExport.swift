@@ -265,11 +265,13 @@ extension Gate1AppModel {
         )
     }
 
-    /// Mirrors the link the packet builder keeps, so the share screen never promises a private feed link (#168).
+    /// Mirrors the link the packet builder keeps, so the share screen never promises a private feed link (#168) or a
+    /// restricted episode's audio or feed link (#5340).
     func secureSharedItemURL<Fields: LibraryItemFields>(for item: Fields) -> String? {
-        ShareableLinkPolicy.shareableLink(
+        AutomaticSourceAccess.sendableLink(
             item.externalReference.flatMap(SharedItemIdentityBuilder.normalizedSharingURL)
-                ?? item.media?.url.flatMap(SharedItemIdentityBuilder.normalizedSharingURL)
+                ?? item.media?.url.flatMap(SharedItemIdentityBuilder.normalizedSharingURL),
+            of: item
         )
     }
 

@@ -9,12 +9,13 @@ public enum SharedEpisodeFeedEntry {
     /// The followed-source id these entries carry. No subscription is saved under it.
     public static let subscriptionId = "shared-episode-recovery"
 
-    /// The entry for `item`, or nil when the feed gives it no audio to listen to.
+    /// The entry for `item`, or nil when the feed gives it no audio to listen to. The caller marks it
+    /// `fromPrivateFeed` when the pasted feed's address holds an access secret (#5340).
     public static func entry(for item: ParsedFeedItem) -> FeedEntry? {
         let audio = nonEmpty(item.audioURL)
         guard let address = audio ?? nonEmpty(item.url) else { return nil }
         let guid = nonEmpty(item.guid)
-        return FeedEntry(
+        var entry = FeedEntry(
             id: stableID(for: guid ?? nonEmpty(item.id) ?? address),
             subscriptionId: subscriptionId,
             canonicalURL: nonEmpty(item.url) ?? address,
@@ -27,6 +28,8 @@ public enum SharedEpisodeFeedEntry {
             audioDurationMs: item.durationMs,
             episodeGUID: guid
         )
+        if item.publisherBlocked { entry.publisherBlocked = true }
+        return entry
     }
 
     /// The entry id ends up in diagnostics keys, and a GUID can be a private link, so the entry is

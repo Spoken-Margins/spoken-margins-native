@@ -68,15 +68,22 @@ public enum SharedItemIdentityBuilder {
     }
 
     /// The sender side, for a packet of `draftEditionDigests` (each Margin's source edition digest).
-    /// A shared edition digest is used only when every Margin recorded on the same edition.
+    /// A shared edition digest is used only when every Margin recorded on the same edition. A link that holds a
+    /// secret is dropped later, by the package builder (#168); a restricted episode's audio and feed links are
+    /// dropped here (`AutomaticSourceAccess`, #5340).
     public static func exportIdentity(
         for item: Item,
         draftEditionDigests: [String?],
         localAudioDigest: String? = nil
     ) -> SharedItemIdentity {
         let isPodcast = isPodcast(item)
-        let external = item.externalReference.flatMap { normalizedSharingURL($0) }
-        let enclosure = item.media?.url.flatMap { URL(string: $0)?.scheme?.lowercased() == "https" ? $0 : nil }
+        // An episode whose feed blocks it from directories or holds an access secret sends neither its audio link nor
+        // anything that is its audio or feed link (#5340). The friend matches by GUID, show, title, date and length.
+        let restricted = AutomaticSourceAccess.restriction(of: item) != nil
+        let external = item.externalReference.flatMap {
+            restricted && AutomaticSourceAccess.sendableLink($0, of: item) == nil ? nil : normalizedSharingURL($0)
+        }
+        let enclosure = restricted ? nil : item.media?.url.flatMap { URL(string: $0)?.scheme?.lowercased() == "https" ? $0 : nil }
         let digests = draftEditionDigests.compactMap { $0 }
         let sharedDigest = digests.count == draftEditionDigests.count && Set(digests).count == 1 ? digests.first : nil
         let articleExact = isPodcast ? nil : PortableArticleAnchorResolver.exactEditionSHA256(item.text ?? "")
@@ -86,7 +93,7 @@ public enum SharedItemIdentityBuilder {
             originalURL: external,
             title: item.title,
             showTitle: isPodcast ? bounded(item.showTitle, 500) : nil,
-            episodeGUID: episodeGUID(for: item),
+            episodeGUID: episodeGUID(for: item).flatMap { AutomaticSourceAccess.sendableEpisodeGUID($0, of: item) },
             enclosureURL: enclosure,
             publishedAt: isPodcast ? bounded(item.publishedAt, 100) : nil,
             durationMs: item.media?.durationMs,
