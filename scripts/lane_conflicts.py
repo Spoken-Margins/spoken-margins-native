@@ -7,20 +7,26 @@ runs on the VPS runner (.github/workflows/lane-conflicts.yml). For every open PR
 carries `automerge` or `lane:queued`, it tries `git merge --no-commit --no-ff` of the PR head onto the base tip
 in a throwaway worktree. A clean merge changes nothing. A conflict
 
-1. posts one comment per head/base pair, naming the files, in the Mac finisher's hand-off format;
-2. adds `needs-mac`, and removes `lane:queued` and `automerge`, so nothing re-queues it;
+1. posts one comment per head/base pair, naming the files: a `Handing to the conflict resolver:` hand-off (#5320,
+   live since 2026-11-26), which says the owning thread has 30 minutes to push its own fix first;
+2. adds `conflict-resolver`, and removes `lane:queued` and `automerge`, so nothing re-queues it.
+   `scripts/conflict_resolver.py` then merges the base in when the conflict is small, or hands the PR to the Mac
+   finisher (`needs-mac`). A `conflict-resolver` PR the resolver has not acted on for STALE_HOURS goes to the
+   finisher from here (`promote_stale`), so a broken resolver never strands it;
 3. cancels the PR's lane.yml runs whose Mac job has not started, so the queued slot is freed too;
 4. takes it out of GitHub's merge queue (#5302). A queued PR can't be pushed to ("Branches that are queued for
    merging cannot be updated"), so the finisher could not push the fix, and a label removed with this job's
    GITHUB_TOKEN wakes no merge-queue-label-bridge run to dequeue it (#5276 sat queued 5 hours). So when GitHub says
    the PR is queued or set to auto-merge, this dispatches merge-queue-label-bridge.yml for that one PR; the bridge
-   runs as the App, and takes a `needs-mac` PR with no arming label out. A PR that is not queued gets no dispatch.
+   runs as the App, and takes a handed-off PR (`needs-mac` or `conflict-resolver`) with no arming label out. A PR that is not queued gets no dispatch.
 
 A second case (#4538): git merges the PR cleanly but GitHub reports it as not mergeable (`mergeable: false`, state
 `dirty`; seen with a history that has more than one merge base). GitHub builds no merge ref for such a PR and so
 starts no `pull_request` workflow for it: removing and re-adding `automerge` does nothing, and the PR sits armed
 and silent. The sweep treats it as a hand-off of its own, with a comment that says to merge the base into the
 branch, unless a lane run for that head, its own or one dispatched for it, is already waiting or running.
+
+The no-merge-ref case still goes to the Mac finisher (`needs-mac`): nothing in it is for a merge tool to resolve.
 
 It never pushes to a branch and never force-pushes. Any doubt (a fetch or merge error, a head that moved since
 the PR list, an API failure) changes nothing: the Mac's own merge check (lane-runner.py) still catches it.
@@ -31,6 +37,7 @@ import argparse
 import base64
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -44,6 +51,9 @@ ARMED = ('automerge', 'lane:queued')
 REMOVE = ARMED
 ADD = 'needs-mac'
 HANDOFF = 'Handing to the Mac finisher:'
+RESOLVER = 'conflict-resolver'
+RESOLVER_HANDOFF = 'Handing to the conflict resolver:'
+STALE_HOURS = 2  # the resolver's 30-minute wait plus its 15-minute schedule, several times over
 
 
 class GitHubApi:
@@ -168,11 +178,12 @@ def marker(head, base_sha, kind='conflict'):
 def comment_body(pr_base, base_sha, head, files):
     shown = ', '.join(f'`{name}`' for name in files[:10])
     more = f' and {len(files) - 10} more' if len(files) > 10 else ''
-    return (f'{HANDOFF} the PR does not merge cleanly into `{pr_base}` (`{base_sha[:7]}`) at its head '
+    return (f'{RESOLVER_HANDOFF} the PR does not merge cleanly into `{pr_base}` (`{base_sha[:7]}`) at its head '
             f'`{head[:7]}`. Conflicting files: {shown}{more}.\n\n'
-            f'Done when: `{pr_base}` is merged into the branch (no force-push), the conflicts are resolved, '
-            f'the checks that covered the change pass, and the branch is pushed. Then add `automerge` again '
-            f'(and a `/lane` request with `lane:queued` if the diff needs one).\n\n'
+            f'If this PR\'s thread is working: within 30 minutes, merge `{pr_base}` into the branch (no force-push), '
+            f'resolve the conflicts, push, and add `automerge` again; the resolver then leaves it alone. Otherwise '
+            f'the conflict resolver (#5320) merges `{pr_base}` in when the conflict is small and re-arms the PR, or '
+            f'hands it to the Mac finisher.\n\n'
             f'Hosted conflict check (#683): `lane:queued` and `automerge` were removed and this PR\'s queued lane '
             f'runs cancelled, so the Mac spends no slot on it. Nothing was pushed to the branch.\n'
             f'{marker(head, base_sha)}')
@@ -311,21 +322,63 @@ def act_on_conflict(api, pr, base, base_sha, head, files, log=print, kind='confl
                 f'{HANDOFF} still not mergeable on GitHub at `{head[:7]}`, so no run can start; `automerge` and '
                 f'`lane:queued` came off again. Merge `{base}` into the branch and push, then arm it.')})
             done.append('comment (re-armed)')
-        # The labels that start a Mac job go first; needs-mac is the hand-off and goes on last.
+        # The labels that start a Mac job go first; the hand-off label goes on last.
         for name in REMOVE:
             if name in labels and remove_label(api, pr, name):
                 done.append(f'-{name}')
-        if ADD not in labels:
-            api.post(f'issues/{pr}/labels', {'labels[]': ADD})
-            done.append(f'+{ADD}')
+        add = RESOLVER if kind == 'conflict' else ADD
+        if add not in labels:
+            api.post(f'issues/{pr}/labels', {'labels[]': add})
+            done.append(f'+{add}')
         cancelled = cancel_queued_runs(api, pr, head)
         if cancelled:
             done.append('cancelled ' + ', '.join(str(run) for run in cancelled))
-        # Last: the bridge takes out only a PR that already carries `needs-mac` and no arming label.
+        # Last: the bridge takes out only a PR that already carries a hand-off label and no arming label.
         done += release_queue(api, pr, ((current.get('base') or {}).get('repo') or {}).get('default_branch') or 'main', log)
     except (ImportError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         log(f'::warning::#{pr}: the conflict hand-off stopped ({describe(error)}); the Mac check still catches it.')
     return done
+
+
+def promote_stale(api, base, now=None, hours=STALE_HOURS, log=print):
+    """Hand any `conflict-resolver` PR whose hand-off is older than `hours` to the Mac finisher. Returns the PRs.
+
+    The resolver moves the label itself on every path it finishes; one still on after `hours` means its runs are
+    failing or off, and the PR must not wait on them. The finisher's hand-off carries the conflict marker, so the
+    Mac worker treats it as a merge conflict.
+    """
+    import datetime as dt
+    now = now or dt.datetime.now(dt.timezone.utc)
+    moved = []
+    for pull in api.get_all(f'pulls?state=open&base={quote(base, safe="")}&per_page=100'):
+        pr = pull['number']
+        if RESOLVER not in {label['name'] for label in pull.get('labels', [])}:
+            continue
+        if (pull['head'].get('repo') or {}).get('full_name') != api.repo:
+            continue
+        try:
+            comments = api.get_all(f'issues/{pr}/comments?per_page=100')
+            ours = [c for c in comments if (c.get('body') or '').lstrip().startswith(RESOLVER_HANDOFF)]
+            if ours:
+                at = dt.datetime.fromisoformat(ours[-1]['created_at'].replace('Z', '+00:00'))
+                if now - at < dt.timedelta(hours=hours):
+                    continue
+            marker_line = next((m.group(0) for c in reversed(ours)
+                                for m in [re.search(r'<!-- lane-conflict head=[0-9a-f]{7} base=[0-9a-f]{7} -->',
+                                                    c.get('body') or '')] if m), '')
+            api.post(f'issues/{pr}/comments', {'body': (
+                f'{HANDOFF} the conflict resolver has not acted on this conflict in {hours} hours, so it comes to '
+                f'the Mac finisher.\n\nDone when: `{base}` is merged into the branch (no force-push), the conflicts '
+                f'are resolved, the checks that covered the change pass, and the branch is pushed. Then add '
+                f'`automerge` again.\n{marker_line}')})
+            if ADD not in {label['name'] for label in pull.get('labels', [])}:
+                api.post(f'issues/{pr}/labels', {'labels[]': ADD})
+            remove_label(api, pr, RESOLVER)
+            moved.append(pr)
+            log(f'#{pr}: the resolver left it {hours} hours; handed to the Mac finisher.')
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+            log(f'::warning::#{pr}: could not hand a stale resolver PR on ({describe(error)}).')
+    return moved
 
 
 def armed_pulls(api, base, only=None):
@@ -396,7 +449,10 @@ def main(argv=None):
         parser.error('--repo or GH_REPO is required')
     remote = args.remote or f'{os.environ.get("GITHUB_SERVER_URL", "https://github.com")}/{args.repo}.git'
     try:
-        sweep(GitHubApi(args.repo), remote, args.base, args.workdir, os.environ.get('GH_TOKEN'), args.pr)
+        api = GitHubApi(args.repo)
+        if args.pr is None:
+            promote_stale(api, args.base)
+        sweep(api, remote, args.base, args.workdir, os.environ.get('GH_TOKEN'), args.pr)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         # Never red: a red check wakes the PR's thread as if its code failed. The Mac check still catches conflicts.
         print(f'::warning::Conflict check unavailable ({describe(error)}).')

@@ -225,10 +225,13 @@ class RetitleTests(unittest.TestCase):
     def test_a_dispatch_for_a_handed_off_queued_pr_turns_auto_merge_off_and_dequeues(self):
         # #5302: lane_conflicts.py swaps automerge for needs-mac with GITHUB_TOKEN, which wakes no unlabeled run,
         # and dispatches this one-PR run instead (the workflow passes --action edited for a dispatch).
-        github = FakeGitHub({7: pr(7, armed=False, queued=True, extra=('needs-mac',))})
-        code, out = run(github, '--pr', '7', '--action', 'edited')
-        self.assertEqual((code, github.disabled, github.dequeued, github.merged), (0, [7], ['PR_7'], []))
-        self.assertIn('handed off', out)
+        # Since #5320 went live, a conflict is handed to the resolver (`conflict-resolver`) the same way.
+        for label in ('needs-mac', 'conflict-resolver'):
+            with self.subTest(label=label):
+                github = FakeGitHub({7: pr(7, armed=False, queued=True, extra=(label,))})
+                code, out = run(github, '--pr', '7', '--action', 'edited')
+                self.assertEqual((code, github.disabled, github.dequeued, github.merged), (0, [7], ['PR_7'], []))
+                self.assertIn(f'handed off (`{label}`)', out)
 
     def test_a_handed_off_pr_set_to_auto_merge_but_not_queued_only_turns_it_off(self):
         github = FakeGitHub({7: pr(7, armed=False, auto=True, extra=('needs-mac',))})

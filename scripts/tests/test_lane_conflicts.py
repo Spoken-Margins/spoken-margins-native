@@ -166,10 +166,10 @@ class ConflictCheckTests(unittest.TestCase):
         self.assertEqual(self.sweep(api), {7: ['shared.txt']})
         comments = [fields for path, fields in api.posted if path.endswith('/comments')]
         self.assertEqual(len(comments), 1)
-        self.assertTrue(comments[0]['body'].startswith(conflicts.HANDOFF))
+        self.assertTrue(comments[0]['body'].startswith(conflicts.RESOLVER_HANDOFF))
         self.assertIn('`shared.txt`', comments[0]['body'])
         self.assertIn(conflicts.marker(head, run_git(self.origin.bare, 'rev-parse', 'next')), comments[0]['body'])
-        self.assertEqual([name['name'] for name in api.pulls[7]['labels']], ['needs-mac'])
+        self.assertEqual([name['name'] for name in api.pulls[7]['labels']], ['conflict-resolver'])
         self.assertEqual(sorted(api.deleted), ['issues/7/labels/automerge', 'issues/7/labels/lane%3Aqueued'])
         self.assertEqual(api.cancelled, [50])  # the run already on a Mac keeps going
 
@@ -190,8 +190,8 @@ class ConflictCheckTests(unittest.TestCase):
         api.post = post
         self.sweep(api)
         self.assertEqual(api.dispatched, [self.BRIDGE_DISPATCH])
-        # The bridge takes out only a PR that already carries needs-mac and no arming label.
-        self.assertEqual(order[-1], (self.BRIDGE_DISPATCH[0], ['needs-mac']))
+        # The bridge takes out only a PR that already carries a hand-off label and no arming label.
+        self.assertEqual(order[-1], (self.BRIDGE_DISPATCH[0], ['conflict-resolver']))
         self.assertTrue(any('asked the merge-queue bridge to dequeue' in line for line in self.logs))
 
     def test_a_pr_set_to_auto_merge_but_not_yet_queued_is_handed_to_the_bridge_too(self):
@@ -206,7 +206,7 @@ class ConflictCheckTests(unittest.TestCase):
         self.sweep(api)
         self.assertEqual(len(api.queue_reads), 1)
         self.assertEqual(api.dispatched, [])
-        self.assertEqual([label['name'] for label in api.pulls[7]['labels']], ['needs-mac'])
+        self.assertEqual([label['name'] for label in api.pulls[7]['labels']], ['conflict-resolver'])
 
     def test_an_unreadable_queue_state_still_asks_the_bridge_which_reads_the_pr_itself(self):
         head = self.conflicting_pr()
@@ -233,7 +233,7 @@ class ConflictCheckTests(unittest.TestCase):
             real_post(path, fields)
         api.post = post
         self.assertEqual(self.sweep(api), {7: ['shared.txt']})
-        self.assertEqual([label['name'] for label in api.pulls[7]['labels']], ['needs-mac'])
+        self.assertEqual([label['name'] for label in api.pulls[7]['labels']], ['conflict-resolver'])
         self.assertTrue(any('hand-off stopped' in line for line in self.logs))
 
     def test_a_queued_pr_github_alone_calls_unmergeable_is_handed_to_the_bridge_too(self):
@@ -405,7 +405,7 @@ class ConflictCheckTests(unittest.TestCase):
         comments = [path for path, _ in api.posted if path.endswith('/comments')]
         self.assertEqual(len(comments), 1)
         self.assertEqual(api.deleted.count('issues/7/labels/automerge'), 2)
-        self.assertEqual([label['name'] for label in api.pulls[7]['labels']], ['needs-mac'])
+        self.assertEqual([label['name'] for label in api.pulls[7]['labels']], ['conflict-resolver'])
 
     def test_a_new_head_or_a_moved_next_gets_a_fresh_comment(self):
         head = self.conflicting_pr()
@@ -563,6 +563,40 @@ class ConflictCheckTests(unittest.TestCase):
                                              '--workdir', str(self.cache)]), 0)
         finally:
             conflicts.GitHubApi = original
+
+
+class PromoteStaleTests(unittest.TestCase):
+    """A `conflict-resolver` PR the resolver left alone goes to the Mac finisher, so a broken resolver strands nothing."""
+    NOW = __import__('datetime').datetime(2026, 11, 26, 12, 0, tzinfo=__import__('datetime').timezone.utc)
+
+    def handed(self, hours_ago, marker=True):
+        at = (self.NOW - __import__('datetime').timedelta(hours=hours_ago)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        body = f'{conflicts.RESOLVER_HANDOFF} the PR does not merge.'
+        if marker:
+            body += '\n<!-- lane-conflict head=aaaaaaa base=bbbbbbb -->'
+        return {'created_at': at, 'body': body, 'user': {'login': 'github-actions[bot]'}}
+
+    def promote(self, api):
+        return conflicts.promote_stale(api, 'main', now=self.NOW, log=lambda line: None)
+
+    def test_a_pr_left_past_the_limit_goes_to_the_finisher_with_the_marker(self):
+        api = FakeApi([pull(7, 'a' * 40, ('conflict-resolver',))], comments={7: [self.handed(3)]})
+        self.assertEqual(self.promote(api), [7])
+        body = [f['body'] for p, f in api.posted if p.endswith('/comments')][0]
+        self.assertTrue(body.startswith(conflicts.HANDOFF))
+        self.assertIn('<!-- lane-conflict head=aaaaaaa base=bbbbbbb -->', body)
+        self.assertEqual([label['name'] for label in api.pulls[7]['labels']], ['needs-mac'])
+
+    def test_a_recent_hand_off_is_left_to_the_resolver(self):
+        api = FakeApi([pull(7, 'a' * 40, ('conflict-resolver',))], comments={7: [self.handed(1)]})
+        self.assertEqual(self.promote(api), [])
+        self.assertEqual((api.posted, api.deleted), ([], []))
+
+    def test_other_prs_and_forks_are_not_touched(self):
+        api = FakeApi([pull(7, 'a' * 40, ('needs-mac',)), pull(8, 'a' * 40, ('conflict-resolver',), repo='x/fork')],
+                      comments={7: [self.handed(5)], 8: [self.handed(5)]})
+        self.assertEqual(self.promote(api), [])
+        self.assertEqual((api.posted, api.deleted), ([], []))
 
 
 class GitHubApiTests(unittest.TestCase):

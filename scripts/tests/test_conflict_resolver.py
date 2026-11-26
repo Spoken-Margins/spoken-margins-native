@@ -1,4 +1,5 @@
-"""The shadow conflict resolver (#5320): who it may touch, what Claude may change, and that it pushes nowhere else."""
+"""The conflict resolver (#5320): who it may touch, what Claude may change, and that it pushes only a fast-forward
+merge to the PR's own branch, or hands the PR to the Mac finisher."""
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -19,7 +20,7 @@ def iso(dt):
     return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
-def pull(number=7, head=HEAD, fork=False, association='OWNER', labels=('needs-mac',), login='uncomposed'):
+def pull(number=7, head=HEAD, fork=False, association='OWNER', labels=('conflict-resolver',), login='uncomposed'):
     return {'number': number, 'state': 'open', 'title': 'Add a thing', 'body': 'Closes #1',
             'head': {'sha': head, 'ref': 'claude/x', 'repo': {'full_name': 'stranger/app' if fork else REPO}},
             'base': {'ref': 'main', 'repo': {'full_name': REPO}},
@@ -184,7 +185,7 @@ def git(cwd, *args):
 
 class FakeApi:
     def __init__(self, pulls, comments):
-        self.pulls, self.comments, self.posts = pulls, comments, []
+        self.pulls, self.comments, self.posts, self.deletes, self.app = pulls, comments, [], [], []
 
     def get(self, path):
         if path.startswith('commits/'):
@@ -197,15 +198,26 @@ class FakeApi:
         number = int(path.split('/')[1])
         return self.comments.get(number, [])
 
-    def post(self, path, fields):
+    def post(self, path, fields, app=False):
         self.posts.append((path, fields))
+        if app:
+            self.app.append(path)
         if path.startswith(f'issues/{cr.LOG_ISSUE}/comments'):
             self.comments.setdefault(cr.LOG_ISSUE, []).append(
                 {'user': {'login': cr.BOT}, 'created_at': iso(NOW), 'body': fields['body']})
 
+    def delete(self, path):
+        self.deletes.append(path)
+
+    def labels_added(self):
+        return [f['labels[]'] for p, f in self.posts if p.endswith('/labels')]
+
+    def pr_comments(self, number=7):
+        return [f['body'] for p, f in self.posts if p == f'issues/{number}/comments']
+
 
 class EndToEnd(unittest.TestCase):
-    """A real origin: main and a PR edit the same line. The resolver must push only resolver-shadow/*."""
+    """A real origin: main and a PR edit the same line. The resolver may push only a fast-forward of the PR branch."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -252,7 +264,16 @@ class EndToEnd(unittest.TestCase):
         out = git(self.bare, 'for-each-ref', '--format=%(refname) %(objectname)')
         return dict(line.split(' ') for line in out.splitlines())
 
-    def test_a_small_conflict_is_proposed_on_a_shadow_branch_only(self):
+    def assert_to_finisher(self, api):
+        self.assertEqual(api.labels_added(), ['needs-mac'])
+        self.assertEqual(api.deletes, ['issues/7/labels/conflict-resolver'])
+        hand = api.pr_comments()
+        self.assertEqual(len(hand), 1)
+        self.assertTrue(hand[0].startswith(cr.FINISHER_HANDOFF), hand[0])
+        self.assertIn(f'<!-- lane-conflict head={self.head[:7]} base=bbbbbbb -->', hand[0])
+        self.assertTrue(all(p in api.app for p in ('issues/7/comments', 'issues/7/labels')))
+
+    def test_a_small_conflict_is_merged_into_the_pr_branch_and_re_armed(self):
         before = self.heads()
         reply = json.dumps({'hunks': [{'id': 'h1', 'text': 'if (a and b) or c:\n', 'why': 'both conditions'}],
                             'handback': None})
@@ -262,21 +283,97 @@ class EndToEnd(unittest.TestCase):
         self.assertNotIn('pr entry', calls[0], 'the doc append is mechanical and never reaches the model')
         self.assertEqual(len(posted), 1)
         record = posted[0]
-        self.assertEqual((record['sort'], record['outcome']), ('small', 'proposed'), record)
+        self.assertEqual((record['sort'], record['outcome']), ('small', 'merged'), record)
         after = self.heads()
         changed = {ref for ref in after if after.get(ref) != before.get(ref)}
-        self.assertEqual(changed, {f'refs/heads/resolver-shadow/7-{self.head[:7]}'})
-        shadow = record['shadow']
-        self.assertEqual(git(self.bare, 'show', f'{shadow}:a.py'), 'one\nif (a and b) or c:\ntwo')
-        self.assertEqual(git(self.bare, 'show', f'{shadow}:docs/log.md'), '# Log\n- main entry\n- pr entry')
-        self.assertEqual(git(self.bare, 'rev-parse', f'{shadow}^1'), before['refs/heads/main'])
-        self.assertEqual(git(self.bare, 'rev-parse', f'{shadow}^2'), self.head)
-        paths = [p for p, _ in api.posts]
-        self.assertIn('actions/workflows/hosted-portable.yml/dispatches', paths)
-        self.assertFalse([p for p in paths if '/labels' in p], 'no label moves')
+        self.assertEqual(changed, {'refs/heads/claude/x'})
+        merge = record['merge']
+        self.assertEqual(after['refs/heads/claude/x'], merge)
+        self.assertEqual(git(self.bare, 'show', f'{merge}:a.py'), 'one\nif (a and b) or c:\ntwo')
+        self.assertEqual(git(self.bare, 'show', f'{merge}:docs/log.md'), '# Log\n- main entry\n- pr entry')
+        self.assertEqual(git(self.bare, 'rev-parse', f'{merge}^1'), self.head, 'a fast-forward of the PR branch')
+        self.assertEqual(git(self.bare, 'rev-parse', f'{merge}^2'), before['refs/heads/main'])
+        self.assertEqual(api.deletes, ['issues/7/labels/conflict-resolver'])
+        self.assertEqual(api.labels_added(), ['automerge'])
+        self.assertIn('issues/7/labels', api.app, 'the App arms it, so the label event starts the queue')
+        said = api.pr_comments()
+        self.assertEqual(len(said), 1)
+        self.assertIn(merge[:7], said[0])
+        self.assertFalse([p for p, _ in api.posts if 'dispatches' in p])
         log = [f['body'] for p, f in api.posts if p == f'issues/{cr.LOG_ISSUE}/comments']
-        self.assertEqual(len(log), 2)  # trial start, then the case
-        self.assertEqual(cr.records([{'user': {'login': cr.BOT}, 'created_at': iso(NOW), 'body': log[1]}])[0]['pr'], 7)
+        self.assertEqual(len(log), 1)
+        self.assertNotIn(f'issues/{cr.LOG_ISSUE}/comments', api.app, 'records stay the workflow bot\'s')
+        self.assertEqual(cr.records([{'user': {'login': cr.BOT}, 'created_at': iso(NOW), 'body': log[0]}])[0]['pr'], 7)
+
+    def test_a_branch_that_moved_before_the_push_stays_its_threads(self):
+        git(self.work, 'checkout', '-q', 'pr')
+        (self.work / 'b.txt').write_text('thread fix\n')
+        git(self.work, 'add', '.')
+        git(self.work, 'commit', '-qm', 'thread pushed')
+        git(self.work, 'push', '-q', 'origin', 'HEAD:refs/heads/claude/x')
+        before = self.heads()
+        reply = json.dumps({'hunks': [{'id': 'h1', 'text': 'if a:\n'}]})
+        api, posted, _ = self.resolver_run(reply)
+        self.assertEqual(posted, [])
+        self.assertEqual(self.heads(), before)
+        self.assertEqual((api.labels_added(), api.deletes, api.pr_comments()), ([], [], []))
+
+    def test_a_trunk_head_is_never_pushed(self):
+        p = pull(head=self.head)
+        p['head']['ref'] = 'main'
+        before = self.heads()
+        api, posted, _ = self.resolver_run(json.dumps({'hunks': [{'id': 'h1', 'text': 'if a:\n'}]}), pulls=[p])
+        self.assertEqual(posted[0]['outcome'], 'refused')
+        self.assertEqual(self.heads(), before)
+        self.assert_to_finisher(api)
+
+    def test_a_pr_that_merges_cleanly_now_is_re_armed_without_a_push(self):
+        git(self.work, 'checkout', '-q', 'main')
+        (self.work / 'a.py').write_text('one\nif a or c:\ntwo\n')
+        (self.work / 'docs/log.md').write_text('# Log\n- pr entry\n')
+        git(self.work, 'commit', '-qam', 'main takes the same change')
+        git(self.work, 'push', '-q', 'origin', 'main')
+        before = self.heads()
+        api, posted, calls = self.resolver_run('{}')
+        self.assertEqual((calls, posted[0]['outcome']), ([], 'clean'))
+        self.assertEqual(self.heads(), before)
+        self.assertEqual(api.labels_added(), ['automerge'])
+
+    def test_a_pr_its_thread_took_back_loses_the_label_only(self):
+        for p, comments in ((pull(head=self.head, labels=('conflict-resolver', 'automerge')), [marker_comment(head=self.head)]),
+                            (pull(head=self.head), [marker_comment(head='c' * 40)])):
+            api = FakeApi([p], {7: comments})
+            posted = cr.run(api, REPO, 'main', self.workdir, now=NOW, claude=lambda *a: self.fail('called'),
+                            remote=str(self.bare))
+            self.assertEqual(posted, [])
+            self.assertEqual(api.deletes, ['issues/7/labels/conflict-resolver'])
+            self.assertEqual(api.posts, [])
+
+    def test_a_pushed_merge_whose_re_arm_failed_is_re_armed_from_its_record(self):
+        merge = 'd' * 40
+        rec = {'user': {'login': cr.BOT}, 'created_at': iso(NOW - timedelta(minutes=20)),
+               'body': cr.record_comment({'kind': 'case', 'pr': 7, 'head': self.head[:7], 'outcome': 'merged',
+                                          'merge': merge, 'base': 'bbbbbbb', 'sort': 'small'}, 'x')}
+        api = FakeApi([pull(head=merge)], {7: [marker_comment(head=self.head)], cr.LOG_ISSUE: [rec]})
+        posted = cr.run(api, REPO, 'main', self.workdir, now=NOW, claude=lambda *a: self.fail('called'),
+                        remote=str(self.bare))
+        self.assertEqual(posted, [])
+        self.assertEqual(api.labels_added(), ['automerge'])
+        self.assertEqual(api.deletes, ['issues/7/labels/conflict-resolver'])
+
+    def test_a_pr_without_the_label_is_not_touched(self):
+        api, posted, calls = self.resolver_run('{}', pulls=[pull(head=self.head, labels=('needs-mac',))])
+        self.assertEqual((posted, calls, api.posts, api.deletes), ([], [], [], []))
+
+    def test_over_the_daily_cap_it_goes_to_the_finisher(self):
+        old = [{'user': {'login': cr.BOT}, 'created_at': iso(NOW - timedelta(hours=1)),
+                'body': cr.record_comment({'kind': 'case', 'pr': 100 + n, 'head': 'x', 'outcome': 'merged'}, 'x')}
+               for n in range(cr.DAILY_CAP)]
+        api = FakeApi([pull(head=self.head)], {7: [marker_comment(head=self.head)], cr.LOG_ISSUE: old})
+        posted = cr.run(api, REPO, 'main', self.workdir, now=NOW, claude=lambda *a: self.fail('called'),
+                        remote=str(self.bare))
+        self.assertEqual(posted[0]['outcome'], 'handback')
+        self.assert_to_finisher(api)
 
     def test_the_same_head_is_proposed_once(self):
         reply = json.dumps({'hunks': [{'id': 'h1', 'text': 'if a:\n'}]})
@@ -287,9 +384,10 @@ class EndToEnd(unittest.TestCase):
     def test_a_refused_reply_pushes_nothing(self):
         before = self.heads()
         reply = json.dumps({'hunks': [{'id': 'h1', 'text': 'x\n', 'path': '.github/workflows/evil.yml'}]})
-        _, posted, _ = self.resolver_run(reply)
+        api, posted, _ = self.resolver_run(reply)
         self.assertEqual(posted[0]['outcome'], 'refused')
         self.assertEqual(self.heads(), before)
+        self.assert_to_finisher(api)
 
     def test_a_protected_path_is_only_reported(self):
         git(self.work, 'checkout', '-q', 'pr')
@@ -300,10 +398,11 @@ class EndToEnd(unittest.TestCase):
         self.head = git(self.work, 'rev-parse', 'HEAD')
         git(self.work, 'push', '-q', '-f', 'origin', 'HEAD:refs/pull/7/head')
         before = self.heads()
-        _, posted, calls = self.resolver_run('{}')
+        api, posted, calls = self.resolver_run('{}')
         self.assertEqual(calls, [])
         self.assertEqual((posted[0]['sort'], posted[0]['outcome']), ('hard', 'handback'))
         self.assertEqual(self.heads(), before)
+        self.assert_to_finisher(api)
 
     def test_crlf_lines_outside_the_hunk_are_kept(self):
         git(self.work, 'checkout', '-q', 'main')
@@ -313,15 +412,15 @@ class EndToEnd(unittest.TestCase):
         (self.work / 'a.py').write_bytes(b'one\r\nif a or c:\r\ntwo\r\n')
         git(self.work, 'commit', '-qam', 'pr')
         self.head = git(self.work, 'rev-parse', 'HEAD')
-        git(self.work, 'push', '-q', '-f', 'origin', 'HEAD:refs/pull/7/head')
+        git(self.work, 'push', '-q', '-f', 'origin', 'HEAD:refs/pull/7/head', 'HEAD:refs/heads/claude/x')
         git(self.work, 'checkout', '-q', 'main')
         (self.work / 'a.py').write_bytes(b'one\r\nif a and b:\r\ntwo\r\n')
         git(self.work, 'commit', '-qam', 'main')
         git(self.work, 'push', '-q', 'origin', 'main')
         reply = json.dumps({'hunks': [{'id': 'h1', 'text': 'if (a and b) or c:\r\n'}]})
         _, posted, _ = self.resolver_run(reply)
-        self.assertEqual(posted[0]['outcome'], 'proposed', posted[0])
-        blob = subprocess.run(['git', 'show', f'{posted[0]["shadow"]}:a.py'], cwd=self.bare, capture_output=True,
+        self.assertEqual(posted[0]['outcome'], 'merged', posted[0])
+        blob = subprocess.run(['git', 'show', f'{posted[0]["merge"]}:a.py'], cwd=self.bare, capture_output=True,
                               check=True).stdout
         self.assertEqual(blob, b'one\r\nif (a and b) or c:\r\ntwo\r\n')
 
@@ -347,15 +446,6 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertEqual(posted[0]['outcome'], 'handback', posted[0])
         self.assertIn('.github/w.yml', posted[0]['reason'])
-
-    def test_after_the_trial_window_nothing_runs(self):
-        start = {'user': {'login': cr.BOT}, 'created_at': iso(NOW - timedelta(hours=13)),
-                 'body': cr.record_comment({'kind': 'trial-start'}, 'started')}
-        api = FakeApi([pull(head=self.head)], {7: [marker_comment(head=self.head)], cr.LOG_ISSUE: [start]})
-        posted = cr.run(api, REPO, 'main', self.workdir, now=NOW, claude=lambda *a: self.fail('called'), remote=str(self.bare))
-        self.assertEqual(posted, [])
-        self.assertIn('ended', api.posts[-1][1]['body'])
-
 
 class Grading(unittest.TestCase):
     class Api:
