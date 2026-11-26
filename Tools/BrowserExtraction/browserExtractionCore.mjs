@@ -192,8 +192,55 @@ function shieldProseFromAdSelectors(documentRef) {
   return () => restores.forEach(restore => restore());
 }
 
+// Some pages draw a figure as an interactive chart: a legend, an <svg> (or
+// <canvas>) and a tooltip, with the same figure as a plain picture hidden
+// beside it for print and for readers without script (#5365). Defuddle drops
+// the hidden picture, the app strips the <svg>, and what is left is the
+// legend's words run together and read aloud. While Defuddle runs, stand in
+// for each such figure a plain one holding only its pictures and caption,
+// then put the page's own figure back, leaving the page as it was found.
+const CHART_SELECTOR = "svg, canvas";
+const HIDING_ATTRIBUTES = ["class", "style", "hidden", "aria-hidden", "loading"];
+
+function plainFigureFor(figure, documentRef) {
+  const plain = documentRef.createElement("figure");
+  const caption = Array.from(figure.children)
+    .find(child => String(child.tagName || "").toLowerCase() === "figcaption");
+  for (const image of figure.querySelectorAll("img")) {
+    if (image.closest("figcaption")) {
+      continue;
+    }
+    const picture = image.cloneNode(false);
+    HIDING_ATTRIBUTES.forEach(attribute => picture.removeAttribute(attribute));
+    plain.appendChild(picture);
+  }
+  if (caption) {
+    plain.appendChild(caption.cloneNode(true));
+  }
+  return plain;
+}
+
+function pictureInteractiveFigures(documentRef) {
+  const restores = [];
+  for (const figure of documentRef.querySelectorAll("figure")) {
+    if (figure.parentElement?.closest("figure")) {
+      continue;
+    }
+    const chart = Array.from(figure.querySelectorAll(CHART_SELECTOR))
+      .find(element => !element.closest("figcaption"));
+    if (!chart) {
+      continue;
+    }
+    const plain = plainFigureFor(figure, documentRef);
+    figure.replaceWith(plain);
+    restores.push(() => plain.replaceWith(figure));
+  }
+  return () => restores.reverse().forEach(restore => restore());
+}
+
 export function extractReadableMarkdown(documentRef) {
   const restoreAdNames = shieldProseFromAdSelectors(documentRef);
+  const restoreFigures = pictureInteractiveFigures(documentRef);
   let result;
   try {
     result = new Defuddle(documentRef, {
@@ -202,6 +249,7 @@ export function extractReadableMarkdown(documentRef) {
       url: documentURL(documentRef)
     }).parse();
   } finally {
+    restoreFigures();
     restoreAdNames();
   }
   const markdown = normalizeSocialEmbedsForReading(

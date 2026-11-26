@@ -1135,6 +1135,101 @@ test("ad-looking names on article bodies are neighbours of the e-flux case; real
   assert.ok(!contains(capture(`${promo}${articleProse}${articleProse}`), "Sponsored placeholder words."));
 });
 
+// #5365: alignment.anthropic.com/2026/neuron-basis-applications draws 8 of its
+// 11 figures as interactive charts, each with the same figure as a hidden
+// <img class="ix-static"> beside the <svg>. The capture kept 3 pictures and
+// read each chart's legend aloud as run-together words. Markup below is that
+// page's, cut down: legend, chart, tooltip, hidden static picture, caption.
+function interactiveFigure({ id, legend, picture, caption, chart = '<svg role="group" aria-label="Dot plot"><g><text>0.5</text><text>Toxic</text></g></svg>' }) {
+  const legendHTML = legend.map(label => `<span><i class="dot" style="--c:#1b9e77"></i>${label}</span>`).join("");
+  const pictureHTML = picture
+    ? `<img alt="${picture.alt}" src="${picture.src}" class="ix-static" style="display: none;">`
+    : "";
+  return `<figure id="${id}"><div class="ix"><div class="ix-legend">${legendHTML}</div>`
+    + `<div class="ix-chart">${chart}<div class="ix-tip" role="status" hidden="">Tooltip words</div></div></div>`
+    + `${pictureHTML}<figcaption><span style="font-weight: 700;">${caption}</span> More caption.</figcaption></figure>`;
+}
+
+function captureFigures(figures) {
+  const document = browserLikePage({
+    url: "https://alignment.anthropic.com/2026/neuron-basis-applications/",
+    head: "<title>Figures</title>",
+    body: `<article><h1>Title</h1>${articleProse}${figures.join(articleProse)}${articleProse}</article>`
+  });
+  const before = document.documentElement.outerHTML;
+  const payload = withGlobalDocument(document, () =>
+    captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, document)
+  );
+  assert.equal(payload.metadata.extractor, "defuddle");
+  assert.equal(document.documentElement.outerHTML, before, "the page is left as it was found");
+  return payload.text;
+}
+
+const pictureCount = (text) => (text.match(/!\[[^\]]*\]\([^)]+\)/g) || []).length;
+
+test("#5365: an interactive chart with a hidden static picture is captured as that picture and its caption, never its legend", () => {
+  const text = captureFigures([
+    interactiveFigure({
+      id: "figure-1",
+      legend: ["neurons, no labels", "best text search", "probe, 40 labels", "probe, 400 labels"],
+      picture: { alt: "Dot plot comparing label-free neuron probes.", src: "fig1.png" },
+      caption: "Figure 1. Neurons chosen without labels beat text search."
+    }),
+    interactiveFigure({
+      id: "figure-d1",
+      legend: ["RMU", "RMU-LAT", "circuit breakers", "ELM"],
+      picture: { alt: "Unlearning scores by method.", src: "fig10.png" },
+      caption: "Figure D1. Unlearning results.",
+      chart: "<svg></svg>"
+    }),
+    `<figure id="figure-4"><img alt="Line chart showing finetuning raises activation." src="fig4.png"><figcaption>Figure 4. Plain picture.</figcaption></figure>`
+  ]);
+
+  assert.equal(pictureCount(text), 3, text);
+  assert.match(text, /!\[Dot plot comparing label-free neuron probes\.\]\(https:\/\/alignment\.anthropic\.com\/2026\/neuron-basis-applications\/fig1\.png\)/);
+  assert.match(text, /!\[Unlearning scores by method\.\]\([^)]*fig10\.png\)/);
+  assert.match(text, /!\[Line chart showing finetuning raises activation\.\]\([^)]*fig4\.png\)/);
+  for (const caption of ["Figure 1. Neurons chosen without labels beat text search.", "Figure D1. Unlearning results.", "Figure 4. Plain picture."]) {
+    assert.ok(text.includes(caption), caption);
+  }
+  for (const noise of ["neurons, no labels", "best text search", "probe, 40 labels", "RMU-LAT", "circuit breakers", "Tooltip words", "Toxic", "<svg"]) {
+    assert.ok(!text.includes(noise), `${noise} is not read`);
+  }
+});
+
+test("#5365: neighbours of the interactive figure: chart only, canvas, an icon in the caption, two pictures", () => {
+  // A chart with no picture beside it keeps its caption and loses its legend.
+  let text = captureFigures([interactiveFigure({
+    id: "figure-x", legend: ["series one", "series two"], caption: "Figure X. Chart with no picture."
+  })]);
+  assert.equal(pictureCount(text), 0);
+  assert.ok(text.includes("Figure X. Chart with no picture."));
+  assert.ok(!text.includes("series one") && !text.includes("series two"));
+
+  // A <canvas> chart is the same case as an <svg> one.
+  text = captureFigures([interactiveFigure({
+    id: "figure-c", legend: ["canvas series"], picture: { alt: "Canvas chart.", src: "c.png" },
+    caption: "Figure C. Canvas chart.", chart: "<canvas width=\"10\" height=\"10\"></canvas>"
+  })]);
+  assert.equal(pictureCount(text), 1);
+  assert.ok(text.includes("Figure C. Canvas chart.") && !text.includes("canvas series"));
+
+  // An <svg> icon inside the caption is not a chart: the figure is left alone.
+  text = captureFigures([`<figure><img alt="Plain photo." src="photo.png"><figcaption><svg><path d="M0 0"/></svg>Figure P. A photo with an icon.</figcaption></figure>`]);
+  assert.equal(pictureCount(text), 1);
+  assert.ok(text.includes("Figure P. A photo with an icon."));
+
+  // Two hidden pictures in one chart figure come out as the same figure written
+  // plainly would (Defuddle itself keeps only the first picture of a figure).
+  const panels = `<img alt="Left panel." src="left.png"><img alt="Right panel." src="right.png">`;
+  const plain = captureFigures([`<figure>${panels}<figcaption>Figure T. Two panels.</figcaption></figure>`]);
+  text = captureFigures([`<figure><div class="ix"><div class="ix-legend"><span>legend word</span></div><svg></svg></div>`
+    + `${panels.replace('src="left.png"', 'src="left.png" hidden').replace('src="right.png"', 'src="right.png" style="display:none"')}`
+    + `<figcaption>Figure T. Two panels.</figcaption></figure>`]);
+  assert.equal(text, plain);
+  assert.ok(!text.includes("legend word"));
+});
+
 // The app ships the built scripts, and the tests above that import the
 // sources never see them. A source edit with no rebuild would otherwise pass.
 test("every shipped script is exactly what its source builds to", async () => {
