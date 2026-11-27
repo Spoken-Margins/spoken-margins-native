@@ -57,6 +57,13 @@ struct ExperienceTimelineRailScreen: View {
         .followsPlaybackClock(model.playbackClock, tick: $playbackTick)
     }
 
+    /// The scheme of every sheet this screen opens (#5414). Inside Now Playing the screen draws dark through
+    /// `.environment(\.colorScheme, .dark)`, which a sheet's content inherits while the sheet itself follows the device:
+    /// in light mode the Link details sheet drew light with the dark scheme's white text, so the link's title vanished.
+    /// Asking the sheet for dark makes the whole sheet dark, as the player's other sheets are (Listening options, Find
+    /// in text). On its own, the Timeline and its sheets follow the device as before (nil asks for nothing).
+    private var presentedColorScheme: ColorScheme? { onReturnToPlayback != nil ? .dark : nil }
+
     private var content: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -217,19 +224,24 @@ struct ExperienceTimelineRailScreen: View {
         }
         .trackedSheet(item: $selectedSource) { entry in
             PlaybackTimelineSourceView(selection: entry)
+                .preferredColorScheme(presentedColorScheme)
         }
         .trackedSheet(item: $selectedElement) { element in
             PlaybackTimelineElementView(element: element)
+                .preferredColorScheme(presentedColorScheme)
         }
         .trackedFullScreenCover(item: $selectedClip) { clip in
             TimelineClipViewer(selection: clip)
+                .preferredColorScheme(presentedColorScheme)
         }
         .trackedSheet(item: $selectedSharedMargin) { row in
             SharedMarginDetailView(row: row).environmentObject(model)
+                .preferredColorScheme(presentedColorScheme)
         }
         .trackedSheet(item: $selectedMargin) { row in
             ExperienceMarginDetailView(row: row)
                 .environmentObject(model)
+                .preferredColorScheme(presentedColorScheme)
         }
     }
 

@@ -35,7 +35,7 @@ LOADED = re.compile(r'''^\s*(?:import|from)\s+([A-Za-z_]\w*)|["']([\w-]+)\.py["'
 SCANS = (
     'test_accent_color_wiring', 'test_adaptive_stack_fit', 'test_app_test_negative_sleeps', 'test_app_test_poll_loops',
     'test_article_entry_followups', 'test_baseline_build_34', 'test_beat_kindle_job_table', 'test_building_md',
-    'test_camera_wording', 'test_container_identifiers', 'test_dark_toolbar_background_visible', 'test_designated_agent_links',
+    'test_camera_wording', 'test_container_identifiers', 'test_dark_environment_sheets', 'test_dark_toolbar_background_visible', 'test_designated_agent_links',
     'test_dock_dynamic_type', 'test_dynamic_type_add_and_browse', 'test_dynamic_type_clock_and_titles', 'test_dynamic_type_following_rows',
     'test_dynamic_type_library_rows', 'test_dynamic_type_live_activity', 'test_filled_button_contrast', 'test_filled_button_labels', 'test_flow_map',
     'test_following_row_more_menu', 'test_friend_help', 'test_friend_path_words', 'test_hosted_app_paths', 'test_import_navigation_gate',
