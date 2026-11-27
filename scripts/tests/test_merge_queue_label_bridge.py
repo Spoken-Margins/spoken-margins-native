@@ -375,14 +375,14 @@ class OwnerApprovalTests(unittest.TestCase):
         # #5274 audit: the approval is the owner's tap, the gate on `.github/` and lane_merge_rules.py PRs. On any
         # other PR it would queue a PR nobody armed, which removing `automerge` or a manual dequeue could not stop.
         github = FakeGitHub({1: approved(1, auto=False, paths=('scripts/lane_merge_rules.py',)),
-                             2: approved(2, auto=False, paths=('App/Foo.swift', '.github/CODEOWNERS')),
-                             3: approved(3, auto=False, paths=('App/Foo.swift',)),
+                             2: approved(2, auto=False, paths=('Web/src/foo.ts', '.github/CODEOWNERS')),
+                             3: approved(3, auto=False, paths=('Web/src/foo.ts',)),
                              4: approved(4, auto=False, paths=('scripts/lane_merge_rules_test.py', 'x/.github/y')),
                              5: approved(5, auto=False, paths=())})
         self.assertEqual((run(github, '--sweep')[0], github.merged), (0, [1, 2]))
 
     def test_removing_automerge_from_an_approved_ordinary_pr_takes_it_out(self):
-        github = FakeGitHub({1: approved(1, queued=True, paths=('App/Foo.swift',))})
+        github = FakeGitHub({1: approved(1, queued=True, paths=('Web/src/foo.ts',))})
         self.assertEqual(run(github, '--pr', '1', '--action', 'unlabeled', '--label', 'automerge')[0], 0)
         self.assertEqual(github.dequeued, ['PR_1'])
 
