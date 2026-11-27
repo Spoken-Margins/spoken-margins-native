@@ -19,8 +19,11 @@ DARK_ENVIRONMENT = re.compile(r"\.environment\(\s*\\\.colorScheme\s*,\s*\.dark\s
 PRESENTATION = re.compile(r"\.(?:trackedSheet|sheet|trackedFullScreenCover|fullScreenCover|popover)\(")
 
 
+COMMENT = re.compile(r"(?<!:)//.*")  # a line comment, but not the `//` of a "https://" address
+
+
 def _strip_comments(text: str) -> str:
-    return "\n".join(line.split("//", 1)[0] for line in text.splitlines())
+    return "\n".join(COMMENT.sub("", line) for line in text.splitlines())
 
 
 def _closure_after(code: str, start: int) -> str:
@@ -28,6 +31,9 @@ def _closure_after(code: str, start: int) -> str:
     opening = code.find("{", start)
     if opening < 0:
         return ""
+    if code[start:opening].rstrip().endswith("onDismiss:"):
+        # An inline onDismiss closure comes first; the sheet's content is the closure after it.
+        return _closure_after(code, opening + len(_closure_after(code, opening)))
     depth = 0
     for index in range(opening, len(code)):
         if code[index] == "{":
@@ -71,6 +77,12 @@ class DarkEnvironmentSheetTests(unittest.TestCase):
         self.assertEqual(unmatched(nested), [2], "a scheme after the closure is on the presenter, not the sheet")
         commented = dark + ".fullScreenCover(item: $x) { x in\n    V(x) // .preferredColorScheme(.dark)\n}\n"
         self.assertEqual(unmatched(commented), [2])
+        dismiss = dark + ".sheet(isPresented: $on, onDismiss: { reset() }) {\n    V().preferredColorScheme(.dark)\n}\n"
+        self.assertEqual(unmatched(dismiss), [])
+        dismiss_bad = dark + ".sheet(isPresented: $on, onDismiss: { x.preferredColorScheme(.dark) }) {\n    V()\n}\n"
+        self.assertEqual(unmatched(dismiss_bad), [2])
+        address = dark + ".sheet(isPresented: $on) {\n    Link(\"a\", destination: URL(string: \"https://x\")!) }\n.preferredColorScheme(.dark)\n"
+        self.assertEqual(unmatched(address), [2], "the // of an address is not a comment")
         light = "content.environment(\\.colorScheme, .light)\n.sheet(isPresented: $on) { V() }\n"
         self.assertEqual(unmatched(light), [])
 
