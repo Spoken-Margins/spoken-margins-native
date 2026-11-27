@@ -154,6 +154,15 @@ public struct QuickFolderStatus: Sendable {
     public static let sectionFooter = "Files you save to a Quick Folder show up in Following, where you choose what to add."
     public static let newFilesFooter = "New files are listed on Following for you to add. Files saved on another device appear once they have synced to this iPhone."
     public static let addSheetFootnote = "You can also see and change it in Settings › Import & Export."
+    /// Under the Quick Folder rows in Settings and the Add sheet's Quick Folder route, while fewer than `QuickFolderList.limit`
+    /// folders are chosen (#3770, Design PR 5).
+    public static let addAnotherTitle = "Add Another Folder"
+    /// Shown in place of Add Another Folder once `QuickFolderList.limit` folders are chosen.
+    public static let limitFootnote = "Up to \(QuickFolderList.limit) Quick Folders."
+    /// The same folder chosen a second time, as a new folder or as another folder's Change Folder.
+    public static let duplicateFolderMessage = "That folder is already a Quick Folder."
+    /// A folder added past the limit (Add Another Folder is hidden then, so only a race reaches it).
+    public static let fullMessage = "You already have \(QuickFolderList.limit) Quick Folders. Remove one in Settings to add another."
 
     /// The "Last checked" value: the time, "Checking…" while a scan runs, or "Not checked yet".
     public func lastCheckedValue(isChecking: Bool) -> String {

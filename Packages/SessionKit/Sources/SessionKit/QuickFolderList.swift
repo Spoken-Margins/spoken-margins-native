@@ -397,3 +397,68 @@ public enum QuickFolderListStore {
         if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
     }
 }
+
+// MARK: - Following across folders (#3770, Design PR 5)
+
+extension QuickFolderList {
+    /// `file`, found in the folder `folderID` with its plain id, with the id it carries across the list (`qualifiedFileID`).
+    /// Its `relativePath` stays inside its own folder.
+    public func qualified(_ file: QuickAccessFile, in folderID: Entry.ID) -> QuickAccessFile {
+        QuickAccessFile(
+            id: qualifiedFileID(file.id, in: folderID),
+            name: file.name,
+            relativePath: file.relativePath,
+            modifiedAt: file.modifiedAt,
+            modifiedAtDescription: file.modifiedAtDescription
+        )
+    }
+
+    /// The folder a listed file (with its qualified id) belongs to, and the key it is dismissed under in that folder's own
+    /// `dismissedKeys` (unprefixed, as entry 1 always stored it). Nil when its id names no folder in the list.
+    public func dismissal(of file: QuickAccessFile) -> (folderID: Entry.ID, key: String)? {
+        guard let found = folderAndFileID(file.id) else { return nil }
+        let plain = QuickAccessFile(
+            id: found.fileID,
+            name: file.name,
+            relativePath: file.relativePath,
+            modifiedAt: file.modifiedAt,
+            modifiedAtDescription: file.modifiedAtDescription
+        )
+        return (found.folderID, plain.dismissalKey)
+    }
+
+    /// What Following lists from every folder: each folder's own first `limit` files not dismissed in that folder (`pools` holds
+    /// each folder's files with plain ids, by folder id), with qualified ids, in list order. A folder with no pool lists nothing.
+    public func listedFiles(
+        pools: [Entry.ID: [QuickAccessFile]],
+        limit: Int = QuickAccessFolderScanner.quickAddLimit
+    ) -> [QuickAccessFile] {
+        folders.flatMap { entry in
+            QuickFolderListing.listed(pools[entry.id] ?? [], dismissedKeys: entry.dismissedKeys, limit: limit)
+                .map { qualified($0, in: entry.id) }
+        }
+    }
+
+    /// How many listed files (qualified ids, as `listedFiles` gives them) each folder has. Folders with none are absent.
+    public func counts(of files: [QuickAccessFile]) -> [Entry.ID: Int] {
+        var counts: [Entry.ID: Int] = [:]
+        for file in files {
+            if let folderID = folderAndFileID(file.id)?.folderID { counts[folderID, default: 0] += 1 }
+        }
+        return counts
+    }
+
+    /// Following's order for the folders' rows (Design, "Second step"): by name, then by readable location, then by id, so two
+    /// folders never swap places between redraws.
+    public var followingOrder: [Entry] {
+        folders.sorted { lhs, rhs in
+            let names = lhs.name.compare(rhs.name, options: [.caseInsensitive, .numeric])
+            if names != .orderedSame { return names == .orderedAscending }
+            let left = lhs.path.flatMap(FolderLocationLabel.label(forPath:)) ?? ""
+            let right = rhs.path.flatMap(FolderLocationLabel.label(forPath:)) ?? ""
+            let locations = left.compare(right, options: [.caseInsensitive, .numeric])
+            if locations != .orderedSame { return locations == .orderedAscending }
+            return lhs.id < rhs.id
+        }
+    }
+}

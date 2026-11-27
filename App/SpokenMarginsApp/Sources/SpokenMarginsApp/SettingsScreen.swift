@@ -407,7 +407,7 @@ struct SettingsScreen: View, Equatable {
                 Section {
                     // Which folder files come in from (#3770): first in the section, drawn from the folder's own state.
                     // The Import Inbox row follows it (#4781).
-                    QuickFolderSettingsRow(model: model)
+                    QuickFolderSettingsRows(model: model)
                     // One row that says what is waiting; the list is its own page and never opens by itself (#4781).
                     ImportInboxRow(summary: ImportInboxSummary(
                         failedCount: inputs.importInbox.count, waitingCount: inputs.sourceLinksWaitingForNetwork))
