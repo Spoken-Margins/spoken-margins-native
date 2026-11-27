@@ -53,14 +53,8 @@ public enum SharedPacketArrival {
 
     /// How many of the Margins a file just added can be offered, for `announcement`: the count the offer and the item's
     /// screen use, so the arrival never promises one they can't play (#3402). `saved` is what the store holds for the
-    /// file's layer, `importedIds` what this import added to it.
-    public static func newMarginCount(importedIds: [String], saved: [ImportedCommentaryInterjection]) -> Int {
-        let added = Set(importedIds)
-        return saved.filter { added.contains($0.id) && $0.isNewToListener && SharedMarginAudio.canOffer($0) }.count
-    }
-
-    /// `newMarginCount(importedIds:saved:)` without the listener's own copies (#4910): a Margin that came back in a packet
-    /// is not "new from a friend". `ownMargins` are the own Margins of the file's item.
+    /// file's layer, `importedIds` what this import added to it. The listener's own copies are left out (#4910): a Margin
+    /// that came back in a packet is not "new from a friend". `ownMargins` are the own Margins of the file's item.
     public static func newMarginCount(
         importedIds: [String], saved: [ImportedCommentaryInterjection], layer: ImportedCommentaryLayer,
         ownMargins: [Interjection]
