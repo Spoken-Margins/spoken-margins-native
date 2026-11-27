@@ -229,6 +229,25 @@ final class OwnMarginEchoSourcesTests: XCTestCase {
         }
     }
 
+    // The line the import says, for every row of the Design's banner table. The own-copies line wins on every route.
+    func testTheImportSaysNothingNewForTheListenersOwnFileOnEveryRoute() {
+        func line(own: Int?, waits: Bool = false, direct: Bool = true, new: Int = 0, had: Bool = false) -> String? {
+            SharedPacketArrival.confirmation(
+                ownCopiesCount: own, openingWaits: waits, opensDirectly: direct, newMarginCount: new, itemHadFriendMargins: had,
+                senderName: "Ben")
+        }
+        let nothingNew = "Nothing new: these are your own Margins"
+        for (waits, direct, had) in [(false, true, true), (false, true, false), (true, true, true), (false, false, false)] {
+            XCTAssertEqual(line(own: 11, waits: waits, direct: direct, had: had), nothingNew, "waits \(waits), direct \(direct), had \(had)")
+        }
+        XCTAssertEqual(line(own: 1), "Nothing new: this is your own Margin")
+        XCTAssertEqual(line(own: nil, new: 3, had: true), "3 new Margins from Ben", "Ben's packet next to his earlier layer")
+        XCTAssertNil(line(own: nil, new: 3, had: false), "a first arrival: the item screen's intro says it")
+        XCTAssertNil(line(own: nil, new: 0, had: true), "nothing new from Ben, as before")
+        XCTAssertEqual(line(own: nil, waits: true, new: 3, had: true), SharedPacketArrival.waitingToOpenMessage(senderName: "Ben"))
+        XCTAssertEqual(line(own: nil, direct: false, new: 3, had: true), SharedPacketArrival.importedWithoutPlaybackMessage)
+    }
+
     // Test 10, the listener's own packet re-imported: "Nothing new", never "11 new Margins from <the listener>".
     func testTheListenersOwnPacketSaysNothingNewWithOrWithoutAFriendThere() throws {
         for withBen in [true, false] {

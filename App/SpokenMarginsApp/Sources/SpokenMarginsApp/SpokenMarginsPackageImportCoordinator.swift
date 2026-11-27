@@ -558,18 +558,12 @@ final class SpokenMarginsPackageImportCoordinator {
             queue.finish(review.id)
             isImporting = false
             review.releaseSource?()
-            if let ownCopiesCount = committed.ownCopiesCount {
-                // The listener's own file or link: whatever this branch would say, it brought nothing from a friend (#4910).
-                environment.reportConfirmation(SharedPacketArrival.ownCopiesMessage(count: ownCopiesCount))
-            } else if openingWaits {
-                environment.reportConfirmation(SharedPacketArrival.waitingToOpenMessage(senderName: review.contents.manifest.senderDisplayLabel))
-            } else if !review.opensDirectly {
-                environment.reportConfirmation("Imported shared Margins. Playback has not started.")
-            } else if let announcement = SharedPacketArrival.announcement(
-                newMarginCount: committed.newMarginCount, senderName: review.contents.manifest.senderDisplayLabel,
-                itemHadFriendMargins: committed.itemHadFriendMargins
+            if let line = SharedPacketArrival.confirmation(
+                ownCopiesCount: committed.ownCopiesCount, openingWaits: openingWaits, opensDirectly: review.opensDirectly,
+                newMarginCount: committed.newMarginCount, itemHadFriendMargins: committed.itemHadFriendMargins,
+                senderName: review.contents.manifest.senderDisplayLabel
             ) {
-                environment.reportConfirmation(announcement)
+                environment.reportConfirmation(line)
             }
             await removeFolderIfNothingNamesIt(review.extractionDirectory)
         } catch {
