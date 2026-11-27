@@ -126,6 +126,8 @@ extension Gate1AppModel {
             presentMarginDeleteUndo(interjection)
         }
         refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
+        // If it had been shared, a copy of it that came back in a packet is a friend's row again (#4910).
+        refreshMarginRowsInBackground(forItem: interjection.itemId)
     }
 
     /// Puts the sharing star on or off for a Margin of any session of any item (#4173). One setter for every place a Margin
