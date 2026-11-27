@@ -5,7 +5,8 @@ import { test } from 'node:test';
 import { keyFromFragment } from '../../packet/share-link.ts';
 import { sealPart } from '../../cli/link-sealing.ts';
 import {
-  LINK_PART, REPLY_FETCH_CEILING_MS, fetchReplyBox, openReplyPart, postAnswer, readReplyPart, replyFailureFor, sealAnswer, type ReplyBox,
+  LINK_PART, REPLY_FETCH_CEILING_MS, fetchReplyBox, fetchReplyOutcome, openReplyPart, postAnswer, readReplyBoxRow, readReplyPart, replyBoxRowValue, replyFailureFor,
+  sealAnswer, type ReplyBox,
 } from './reply-box.ts';
 
 const repo = new URL('../../../../', import.meta.url);
@@ -195,4 +196,63 @@ test('each server answer lands on Screen B’s row', async () => {
   assert.deepEqual(await postAnswer(box, packet, offline), { kind: 'failed', failure: 'retry' }, 'a network error');
   const hanging = (() => new Promise<Response>(() => {})) as unknown as typeof fetch;
   assert.deepEqual(await postAnswer(box, packet, hanging, 20), { kind: 'failed', failure: 'retry' }, 'no answer at all');
+});
+
+test('#5419: a kept reply box reads back as written, with no link key in it', () => {
+  const digest = 'a'.repeat(64);
+  const value = replyBoxRowValue({ box, sender: 'Sam', packetDigest: digest });
+  // Plain JSON values only, so any browser's store keeps it; the link key is never among them.
+  assert.deepEqual(JSON.parse(JSON.stringify(value)), value);
+  assert.ok(!JSON.stringify(value).includes(vector.linkKeyFragment));
+  assert.deepEqual(Object.keys(value).sort(), ['box', 'linkId', 'origin', 'packetDigest', 'post', 'seal', 'sender', 'v']);
+  const read = readReplyBoxRow(value);
+  assert.ok(read);
+  assert.deepEqual({ ...read.box, seal: [...read.box.seal] }, { ...box, seal: [...seal] });
+  assert.equal(read.sender, 'Sam');
+  assert.equal(read.packetDigest, digest);
+  // No sender name: none is written, and none reads back.
+  const unnamed = replyBoxRowValue({ box, sender: undefined, packetDigest: digest });
+  assert.equal(Object.hasOwn(unnamed, 'sender'), false);
+  assert.equal(readReplyBoxRow(unnamed)?.sender, undefined);
+});
+
+test('#5419: a kept reply box row that isn\'t one reads as none', () => {
+  const good = replyBoxRowValue({ box, sender: 'Sam', packetDigest: 'a'.repeat(64) });
+  const rows: unknown[] = [
+    undefined, null, 'box', [], {},
+    { ...good, v: 2 },
+    { ...good, origin: 'ftp://links.example' },
+    { ...good, origin: 'https://links.example/path' },
+    { ...good, origin: 'not a url' },
+    { ...good, linkId: '' },
+    { ...good, box: 'A'.repeat(32) },
+    { ...good, post: 'f'.repeat(63) },
+    { ...good, seal: 'short' },
+    { ...good, seal: 5 },
+    { ...good, packetDigest: '' },
+    { ...good, sender: 7 },
+  ];
+  for (const row of rows) assert.equal(readReplyBoxRow(row), undefined, JSON.stringify(row));
+  assert.ok(readReplyBoxRow(good));
+});
+
+test('#5419: fetchReplyOutcome says "gone" only when the link\'s server answers 404 or 410', async () => {
+  for (const status of [404, 410]) {
+    assert.deepEqual(await fetchReplyOutcome(link, server(status, JSON.stringify({ error: 'x' })).fetchImpl), { kind: 'gone' }, String(status));
+  }
+  // Anything that may pass is "unreachable", so a kept box still serves.
+  for (const status of [500, 502, 503, 429, 401]) {
+    assert.deepEqual(await fetchReplyOutcome(link, server(status, JSON.stringify({ error: 'x' })).fetchImpl), { kind: 'unreachable' }, String(status));
+  }
+  const offline = (async () => {
+    throw new TypeError('Failed to fetch');
+  }) as typeof fetch;
+  assert.deepEqual(await fetchReplyOutcome(link, offline), { kind: 'unreachable' });
+  assert.deepEqual(await fetchReplyOutcome(link, server(200, new Uint8Array(40) as BodyInit).fetchImpl), { kind: 'unreachable' });
+  const hanging = ((_url: string | URL | Request, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('aborted'))))) as typeof fetch;
+  assert.deepEqual(await fetchReplyOutcome(link, hanging, 20), { kind: 'unreachable' });
+  const opened = await fetchReplyOutcome(link, server(200, (await sealedHere()) as BodyInit).fetchImpl);
+  assert.equal(opened.kind, 'box');
+  assert.equal(opened.kind === 'box' && opened.box.box, vector.id);
 });

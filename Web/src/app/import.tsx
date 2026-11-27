@@ -13,7 +13,7 @@ import { packetPickerAccept, packetRoute } from './logic/native-packets.ts';
 import { plainError } from './logic/messages.ts';
 import { NotSavedError } from './logic/storage.ts';
 import { LINK_MESSAGES, ShareLinkError, openSharedPacket, type ParsedLink } from './logic/share-link.ts';
-import { fetchReplyBox } from './logic/reply-box.ts';
+import { fetchReplyOutcome } from './logic/reply-box.ts';
 import { fetchIntroMark, linkShareFetch } from './logic/intro-link.ts';
 import { senderNameOrNone } from './logic/reply-words.ts';
 import { usePlayer } from './player.tsx';
@@ -108,7 +108,7 @@ export function useOpenShareLink(onLanded: (landing: Landing) => void): OpenShar
         return;
       }
       // The link's reply part (#4675), fetched beside the packet and never waited on.
-      const replyFetch = fetchReplyBox(parsed.link);
+      const replyFetch = fetchReplyOutcome(parsed.link);
       // Its sealed preview (#4784): an introduction link's Margins are marked once stored, and it takes no answers.
       const introFetch = fetchIntroMark(parsed.link);
       let stored!: () => void;

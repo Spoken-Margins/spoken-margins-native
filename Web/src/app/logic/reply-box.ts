@@ -74,6 +74,58 @@ export function readReplyPart(plaintext: Uint8Array): Pick<ReplyBox, 'box' | 'po
   return { box, post, seal: key };
 }
 
+/**
+ * A link's reply box as this browser keeps it across a reload (#5419), with what the Share section needs beside it: the
+ * sender's name and the digest of the packet the link carried. Never the link key: only what posting an answer takes.
+ */
+export interface KeptReplyBox {
+  box: ReplyBox;
+  sender: string | undefined;
+  packetDigest: string;
+}
+
+function bytesBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** The stored value of a kept reply box (#5419): plain JSON values, the seal key as base64url, as the reply part has it. */
+export function replyBoxRowValue(kept: KeptReplyBox): Record<string, unknown> {
+  const { box } = kept;
+  return {
+    v: 1,
+    origin: box.origin,
+    linkId: box.linkId,
+    box: box.box,
+    post: box.post,
+    seal: bytesBase64Url(box.seal),
+    ...(kept.sender === undefined ? {} : { sender: kept.sender }),
+    packetDigest: kept.packetDigest,
+  };
+}
+
+/** Reads a stored reply box value back. Undefined for anything `replyBoxRowValue` wouldn't write, so a bad row is ignored. */
+export function readReplyBoxRow(value: unknown): KeptReplyBox | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const { v, origin, linkId, box, post, seal, sender, packetDigest } = value as Record<string, unknown>;
+  if (v !== 1 || typeof origin !== 'string' || typeof linkId !== 'string' || linkId === '') return undefined;
+  if (typeof box !== 'string' || typeof post !== 'string' || typeof seal !== 'string') return undefined;
+  if (!BOX_ID.test(box) || !POST_PROOF.test(post) || !SEAL_KEY.test(seal)) return undefined;
+  if (typeof packetDigest !== 'string' || packetDigest === '') return undefined;
+  if (sender !== undefined && typeof sender !== 'string') return undefined;
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return undefined;
+  }
+  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.origin !== origin) return undefined;
+  const key = base64UrlBytes(seal);
+  if (!key || key.length !== KEY_LENGTH) return undefined;
+  return { box: { origin, linkId, box, post, seal: key }, sender, packetDigest };
+}
+
 /** Opens a sealed reply part under the link key. Undefined when it doesn't open or isn't a reply part. */
 export async function openReplyPart(sealed: Uint8Array, linkKey: Uint8Array): Promise<Pick<ReplyBox, 'box' | 'post' | 'seal'> | undefined> {
   try {
@@ -105,16 +157,23 @@ export function withCeiling<T>(work: (signal: AbortSignal) => Promise<T>, ms: nu
 }
 
 /**
- * Fetches and opens a link's reply part. Undefined for every failure (no box, an expired link, offline, damage, an older
- * server) and for no answer within `ceilingMs`: the caller then shows today's Share section. Never throws.
+ * What a link's reply fetch found (#5419). `gone`: the link's server answered that this link has no reply part (404 or
+ * 410: never had one, removed or expired), which is definite. `unreachable`: no answer, a slow or failing server, or a
+ * part that didn't open, which may pass; the caller may fall back to a box it kept.
  */
-export function fetchReplyBox(
+export type ReplyFetchOutcome = { kind: 'box'; box: ReplyBox } | { kind: 'gone' } | { kind: 'unreachable' };
+
+const UNREACHABLE: ReplyFetchOutcome = Object.freeze({ kind: 'unreachable' });
+const GONE: ReplyFetchOutcome = Object.freeze({ kind: 'gone' });
+
+/** Fetches and opens a link's reply part, saying whether a missing part is definite. Never throws. */
+export function fetchReplyOutcome(
   link: ShareLinkRef,
   fetchImpl: typeof fetch = fetch,
   ceilingMs: number = REPLY_FETCH_CEILING_MS,
-): Promise<ReplyBox | undefined> {
+): Promise<ReplyFetchOutcome> {
   return withCeiling(
-    async (signal) => {
+    async (signal): Promise<ReplyFetchOutcome> => {
       const response = await fetchImpl(`${link.origin}/l/${link.id}/reply`, {
         cache: 'no-store',
         credentials: 'omit',
@@ -122,13 +181,27 @@ export function fetchReplyBox(
         referrerPolicy: 'no-referrer',
         signal,
       });
-      if (response.status !== 200) return undefined;
+      if (response.status === 404 || response.status === 410) return GONE;
+      if (response.status !== 200) return UNREACHABLE;
       const opened = await openReplyPart(new Uint8Array(await response.arrayBuffer()), link.key);
-      return opened && { origin: link.origin, linkId: link.id, ...opened };
+      return opened ? { kind: 'box', box: { origin: link.origin, linkId: link.id, ...opened } } : UNREACHABLE;
     },
     ceilingMs,
-    undefined,
+    UNREACHABLE,
   );
+}
+
+/**
+ * Fetches and opens a link's reply part. Undefined for every failure (no box, an expired link, offline, damage, an older
+ * server) and for no answer within `ceilingMs`: the caller then shows today's Share section. Never throws.
+ */
+export async function fetchReplyBox(
+  link: ShareLinkRef,
+  fetchImpl: typeof fetch = fetch,
+  ceilingMs: number = REPLY_FETCH_CEILING_MS,
+): Promise<ReplyBox | undefined> {
+  const outcome = await fetchReplyOutcome(link, fetchImpl, ceilingMs);
+  return outcome.kind === 'box' ? outcome.box : undefined;
 }
 
 /**

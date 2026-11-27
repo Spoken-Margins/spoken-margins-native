@@ -21,7 +21,7 @@ import { plainError } from '../logic/messages.ts';
 import { ShareLinkError, linkFooterText, openSharedPacketWithExpiry, type ParsedLink, type ShareLinkFailure, type ShareLinkRef } from '../logic/share-link.ts';
 import { FRIEND_HELP_WORDS, friendHelpForFailure } from '../logic/friend-help.ts';
 import { FriendHelpLink } from './FriendHelpLink.tsx';
-import { fetchReplyBox, type ReplyBox } from '../logic/reply-box.ts';
+import { fetchReplyOutcome, type ReplyFetchOutcome } from '../logic/reply-box.ts';
 import { fetchIntroMark, linkShareFetch } from '../logic/intro-link.ts';
 import { senderNameOrNone } from '../logic/reply-words.ts';
 import { trackReplyBox } from '../reply-boxes.ts';
@@ -85,7 +85,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
   const dataRef = useRef(data);
   dataRef.current = data;
   // The link's reply part (#4675), fetched beside the packet and never waited on: the Share section reads it once it settles.
-  const replyFetch = useRef<Promise<ReplyBox | undefined>>(undefined);
+  const replyFetch = useRef<Promise<ReplyFetchOutcome>>(undefined);
   // The link's sealed preview (#4784), fetched beside it: an introduction link names no one in Share and takes no answers.
   const introFetch = useRef<Promise<boolean>>(undefined);
 
@@ -108,7 +108,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
     }
     // Not inside the sender's hidden check (#4454), which shares nothing back.
     if (!playCheckHandler()) {
-      replyFetch.current = fetchReplyBox(serverFor(link.link));
+      replyFetch.current = fetchReplyOutcome(serverFor(link.link));
       introFetch.current = fetchIntroMark(serverFor(link.link));
     }
     void (async () => {

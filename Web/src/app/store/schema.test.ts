@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
-import { DB_VERSION, DEFAULT_SETTINGS, readDismissed, readMembership, readSettings, SCHEMA_KEY, SCHEMA_VERSION, storedVersion, upgrade, type StoredRows } from './schema.ts';
+import { DB_VERSION, DEFAULT_SETTINGS, readDismissed, readMembership, readReplyBoxRows, readSettings, SCHEMA_KEY, SCHEMA_VERSION, storedVersion, upgrade, type StoredRows } from './schema.ts';
 
 // The rows the web store held before #3012 (shape 1), as db.ts wrote them: no version row, three settings.
 function shapeOne(): StoredRows {
@@ -185,5 +185,15 @@ test('#4426: dismissed: rows read into snapshot.dismissed; malformed rows are sk
   });
   assert.deepEqual(readDismissed([{ key: 'dismissed:constructor', value: { dismissed: true, at: 'x' } }]).constructor, { dismissed: true, at: 'x' });
   assert.equal(readDismissed([]).constructor, undefined, 'no inherited value');
+  assert.deepEqual(readSettings(rows.settings), { ...DEFAULT_SETTINGS, relayAllowed: true, relayAsked: true, playbackRate: 1.5 });
+});
+
+test('#5419: replyBox: rows pass into snapshot.replyBoxes as stored; settings ignore them', () => {
+  const rows = shapeOne();
+  const value = { v: 1, box: 'x' };
+  rows.settings.push({ key: 'replyBox:ep-1', value }, { key: 'replyBox:', value }, { key: 'replyBox:constructor', value: 'odd' });
+  const { snapshot } = upgrade(rows);
+  assert.deepEqual({ ...snapshot.replyBoxes }, { 'ep-1': value, constructor: 'odd' });
+  assert.equal(readReplyBoxRows([]).constructor, undefined, 'no inherited value');
   assert.deepEqual(readSettings(rows.settings), { ...DEFAULT_SETTINGS, relayAllowed: true, relayAsked: true, playbackRate: 1.5 });
 });
