@@ -22,7 +22,8 @@ struct ExperienceAddSourceFlow: View {
     @FocusState private var focusedField: Field?
 
     private enum Field { case link, title, text }
-    private enum FileRequest { case files, quickFolder }
+    /// `anotherQuickFolder`: Add Another Folder (#3770 Design PR 5).
+    private enum FileRequest { case files, quickFolder, anotherQuickFolder }
 
     /// Closes the sheet and opens the podcast catalog's search by name; nil hides the button (#1784).
     private let onSearchPodcasts: (() -> Void)?
@@ -306,6 +307,9 @@ struct ExperienceAddSourceFlow: View {
                     }
                     .filledActionButton()
                     .disabled(model.sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isResolvingSourceLink)
+                    // The label is swapped for a bare spinner while the link resolves; the name sits on the Button so it
+                    // never goes blank for VoiceOver (#5036).
+                    .accessibilityLabel(model.isResolvingSourceLink ? "Adding to Library" : "Add to Library")
                     .accessibilityIdentifier("sourceLink.import.button")
                 }
                 SourceLinkImportStatusView()
@@ -403,31 +407,63 @@ struct ExperienceAddSourceFlow: View {
                 Text(QuickFolderStatus.addSheetFootnote)
                     .font(.footnote)
                     .foregroundStyle(AppColors.secondaryText)
-                if !model.quickAccessRecentFiles.isEmpty {
+                // Entry 1 is the folder above, as with one folder; each other folder follows as its own section (#3770 Design PR 5).
+                let folders = model.quickAccess.folders
+                if let first = folders.first {
+                    quickFolderFiles(model.quickAccess.newestFiles(in: first.id))
+                }
+                ForEach(folders.dropFirst()) { folder in
                     Divider()
-                    ForEach(model.quickAccessRecentFiles) { file in
-                        Button {
-                            model.importQuickAccessFile(file)
-                            dismiss()
-                        } label: {
-                            HStack {
-                                Image(systemName: "doc.text")
-                                    .accessibilityHidden(true)
-                                VStack(alignment: .leading) {
-                                    Text(file.name).font(.headline)
-                                    Text(file.modifiedAtDescription)
-                                        .font(.caption)
-                                        .foregroundStyle(AppColors.secondaryText)
-                                }
-                                Spacer()
-                                Image(systemName: "plus")
-                                    .accessibilityHidden(true)
-                            }
-                            .frame(minHeight: 44)
+                    let status = model.quickAccess.status(of: folder.id)
+                    Text(status.displayName).font(.headline)
+                    if let location = status.settingsLocationLine {
+                        Text(location)
+                            .font(.footnote)
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                    quickFolderFiles(model.quickAccess.newestFiles(in: folder.id))
+                }
+                if !folders.isEmpty {
+                    if model.quickAccess.canAddFolder {
+                        Button(QuickFolderStatus.addAnotherTitle, systemImage: "folder.badge.plus") {
+                            presentFileImporter(.anotherQuickFolder)
                         }
-                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("quickFolder.addAnother.button")
+                    } else {
+                        Text(QuickFolderStatus.limitFootnote)
+                            .font(.footnote)
+                            .foregroundStyle(AppColors.secondaryText)
                     }
                 }
+            }
+        }
+    }
+
+    /// One folder's newest files, each a tap to add.
+    @ViewBuilder private func quickFolderFiles(_ files: [QuickAccessFile]) -> some View {
+        if !files.isEmpty {
+            Divider()
+            ForEach(files) { file in
+                Button {
+                    model.importQuickAccessFile(file)
+                    dismiss()
+                } label: {
+                    HStack {
+                        Image(systemName: "doc.text")
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading) {
+                            Text(file.name).font(.headline)
+                            Text(file.modifiedAtDescription)
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                        Spacer()
+                        Image(systemName: "plus")
+                            .accessibilityHidden(true)
+                    }
+                    .frame(minHeight: 44)
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -468,7 +504,7 @@ struct ExperienceAddSourceFlow: View {
         switch fileRequest {
         case .files, .none:
             Self.filesContentTypes
-        case .quickFolder:
+        case .quickFolder, .anotherQuickFolder:
             [.folder]
         }
     }
@@ -588,6 +624,8 @@ struct ExperienceAddSourceFlow: View {
                 routeFilePick(urls)
             case .quickFolder:
                 if let url = urls.first { model.configureQuickAccessFolder(url: url) }
+            case .anotherQuickFolder:
+                if let url = urls.first { model.addQuickAccessFolder(url: url) }
             case .none:
                 model.reportImportFailure(ExperienceFileImportError.missingRequest)
             }

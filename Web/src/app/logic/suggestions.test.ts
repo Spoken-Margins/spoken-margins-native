@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SUGGESTED_SHOWS, suggestionsToShow } from './suggestions.ts';
+import { SUGGESTED_SHOWS, sameFeed, suggestionsToShow } from './suggestions.ts';
 
 test('the starter list is the owner’s four, in order (2026-11-06, #3610)', () => {
   assert.deepEqual(
@@ -42,4 +42,14 @@ test('a followed suggestion leaves the list, whichever way its address is spelle
     assert.deepEqual(suggestionsToShow([other]).map((s) => s.title), all, other);
   }
   assert.deepEqual(suggestionsToShow(SUGGESTED_SHOWS.map((s) => s.feedUrl)), []);
+});
+
+test('#4426: sameFeed compares spellings of one address, and an empty address matches nothing', () => {
+  assert.equal(sameFeed('https://dwarkesh.com/feed', 'http://www.dwarkesh.com/feed/'), true);
+  assert.equal(sameFeed('https://DWARKESH.com/feed', 'https://dwarkesh.com/feed'), true);
+  assert.equal(sameFeed('https://dwarkesh.com/feed', 'https://dwarkesh.com/other'), false);
+  assert.equal(sameFeed('https://dwarkesh.com/feed', 'https://dwarkesh.example/feed'), false);
+  assert.equal(sameFeed('', ''), false);
+  assert.equal(sameFeed('  ', ''), false);
+  assert.equal(sameFeed('', 'https://dwarkesh.com/feed'), false);
 });

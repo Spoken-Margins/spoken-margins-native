@@ -163,7 +163,13 @@ func (s *Server) uploadLink(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "path": "/l/" + id, "expiresAt": expires})
+	out := map[string]any{"id": id, "path": "/l/" + id, "expiresAt": expires}
+	// A reply box, if the phone sent one (#4675, reply_box.go). Made only after the link stands and is bound
+	// to its sender; if it cannot be made the link still stands, answered without "replyBox".
+	if s.makeReplyBox(r, id, expires, now) {
+		out["replyBox"] = true
+	}
+	writeJSON(w, http.StatusCreated, out)
 }
 
 func linkReadFailure(w http.ResponseWriter, err error) {
@@ -270,6 +276,17 @@ func (s *Server) getLinkScript(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// The picture a messenger's preview card shows for every share link (#5271). It is one constant file, so it answers
+// while the links service is off too, and it is cacheable. It skips linkHeaders: an image needs neither no-store nor
+// the page's CSP. Like every /l/ path it is logged only as the route /l/* in the hourly aggregate.
+func (s *Server) getLinkCard(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Robots-Tag", "noindex")
+	w.Write(links.CardPNG)
+}
+
 // LinkExpiresHeader carries the packet's expiry day, e.g. 2026-12-06.
 const LinkExpiresHeader = "X-SM-Link-Expires"
 
@@ -287,9 +304,69 @@ func (s *Server) getLinkPacket(w http.ResponseWriter, r *http.Request) {
 	// The day the link stops working, UTC, and nothing finer: the page words it for the friend (#2168). No
 	// creation time (Lifetime is fixed) and no key; a held link is 410 above and never reaches here.
 	w.Header().Set(LinkExpiresHeader, expires.UTC().Format("2006-01-02"))
+	// This server keeps opened marks, so a friend's client may offer to send one (#5275). A client that
+	// doesn't see it, against a server from before, sends nothing and shows no notice.
+	w.Header().Set(LinkOpenedHeader, "1")
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="shared.spokenmargins"`)
 	http.ServeContent(w, r, "", time.Time{}, f)
+}
+
+// Opened marks (#5275). A friend's browser or app posts the link's opened-token when they press Play or
+// another start control; the sender's app asks with the same token whether it was. The token is an
+// HMAC of the link id under the link's key, so only someone holding the whole link can make or read a
+// mark: a messenger's preview fetcher or a scanner holding /l/<id> can't. The store keeps only the
+// token's hash, with no time, address, device or count, and the request log names only /l/*.
+const (
+	LinkOpenedHeader      = "X-SM-Link-Opened"
+	LinkOpenedTokenHeader = "X-SM-Opened-Token"
+	// A token is 64 hex characters; anything much longer is not one, and is not read.
+	maxOpenedBody = 128
+	// Opened posts per client network and hour, in their own window: a friend's report allowance is
+	// separate (linkReportWindow).
+	linkOpenedPerHour = 30
+)
+
+// markLinkOpened answers 204 to every well-formed post, whether or not a mark was kept, so the answer
+// says nothing about the link.
+func (s *Server) markLinkOpened(w http.ResponseWriter, r *http.Request) {
+	linkHeaders(w)
+	if !s.linksOn(w) {
+		return
+	}
+	id := r.PathValue("id")
+	if !links.ValidID(id) {
+		fail(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxOpenedBody+1))
+	if err != nil || len(body) > maxOpenedBody || !links.ValidOpenedToken(string(body)) {
+		fail(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if !s.linkOpenedWindow.hit(s.clientKey(r), s.Now(), linkOpenedPerHour) {
+		fail(w, http.StatusTooManyRequests, "rate_limited")
+		return
+	}
+	// Unknown, expired and disabled links are answered like live ones; a write error is too, so the
+	// answer never tells a caller anything.
+	_ = s.Links.MarkOpened(id, string(body), s.Now())
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// linkOpened answers whether the token's mark is on the link. Only the sender's app asks, so it answers
+// no CORS.
+func (s *Server) linkOpened(w http.ResponseWriter, r *http.Request) {
+	linkHeaders(w)
+	if !s.linksOn(w) {
+		return
+	}
+	id, token := r.PathValue("id"), r.Header.Get(LinkOpenedTokenHeader)
+	if !links.ValidID(id) || !links.ValidOpenedToken(token) {
+		fail(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"opened": s.Links.IsOpened(id, token, s.Now())})
 }
 
 // Report this link (#2239). Every report takes the link down at once and blind: nobody reads what it

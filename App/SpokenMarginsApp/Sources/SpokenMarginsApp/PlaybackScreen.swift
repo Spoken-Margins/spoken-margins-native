@@ -51,6 +51,7 @@ struct PlaybackScreen: View {
     @State private var mediaScrubState = PlaybackScrubState()
     @State private var textScrubState = PlaybackScrubState()
     @State private var isSleepTimerPresented = false
+    @State private var isFindInTextPresented = false
     @State private var sourceTextTarget: PlaybackTextReaderTarget?
     @State private var isPlaybackOptionsPresented = false
     @State private var pendingOptionsDestination: OptionsDestination?
@@ -60,18 +61,105 @@ struct PlaybackScreen: View {
     @State private var timelinePull = TimelinePullHolder()
     @State private var playbackTick = 0 // bumped by each progress tick, so this screen follows the clock (#2074)
     @StateObject private var nowScene = NowSceneController()
+    /// A spoken note's own words for Now, read off the main actor (#4780).
+    @StateObject private var noteTranscript = SpokenNoteNowTranscript()
+    /// The note's own screen, opened from the no-words card or the part-missing line.
+    @State private var openedNote: SpokenNoteOpening?
+    @State private var firstMarginPromptAnnounced = false // said once per showing (#5036)
 
     /// Back to the Library while playback goes on. The Library label lower down stays; this one is where a listener
-    /// looks first. On Now it sits in line with the title, so the screen gets no taller (#2262).
-    private var libraryExitButton: some View {
+    /// looks first: the top-left corner on every tab (#5329).
+    private func libraryExitButton() -> some View {
         Button(action: model.openLibrary) {
             Image(systemName: "chevron.left").font(.body.weight(.semibold)).minimumTapTarget()
         }
         // On the always-dark plate the default tint is too dark in light mode (#3733); the tint is set on the button, never a container.
         .tint(AppColors.listeningAccent)
-        .accessibilityLabel("Library")
+        // "Back to Library", not "Library": the bottom row's Library button is on screen too, and a swipe-through heard
+        // "Library" twice (#5036). The bottom button keeps its visible word as its name.
+        .accessibilityLabel("Back to Library")
         .accessibilityHint("Leaves this screen. Playback keeps going.")
-        .accessibilityIdentifier("playback.exit.button")
+        .accessibilityIdentifier(PlaybackLeadingControl.libraryExitIdentifier)
+    }
+
+    /// The selected item is a spoken note (#4780). A note whose reference can't be read keeps the audio layout.
+    private var isSpokenNote: Bool { selectedNoteId != nil }
+    private var selectedNoteId: String? { SpokenNoteItem.noteId(fromReference: model.selectedItem.externalReference) }
+    /// The loaded words, only when they are the selected note's: a change of item never shows the last note's for a pass.
+    private var noteIsLoaded: Bool { selectedNoteId != nil && noteTranscript.noteId == selectedNoteId }
+
+    /// Which layout Now draws: a choice tested on the host (`SpokenNoteNowPassage.NowLayout.choose`).
+    private var nowLayout: SpokenNoteNowPassage.NowLayout {
+        SpokenNoteNowPassage.NowLayout.choose(
+            isNativeAudio: model.selectedItem.isNativeAudio, isSpokenNote: isSpokenNote,
+            availability: noteIsLoaded ? noteTranscript.availability : .loading)
+    }
+
+    private func reloadNoteWords() {
+        guard isSpokenNote else { return }
+        // The rows' times are on the clock of the file playing, which differs under Shorter pauses (#4779).
+        let playing = model.snapshot.itemId == model.selectedItem.id ? model.openSessionMediaURL : nil
+        noteTranscript.load(externalReference: model.selectedItem.externalReference, playingMediaURL: playing) {
+            try model.applicationSupportDirectory()
+        }
+    }
+
+    private func openNoteScreen() {
+        guard let noteId = SpokenNoteItem.noteId(fromReference: model.selectedItem.externalReference) else { return }
+        openedNote = SpokenNoteOpening(noteId: noteId, title: model.selectedItem.title, createdAt: nil)
+    }
+
+    @ViewBuilder
+    private var guidedCoach: some View {
+        if model.shouldShowGuidedOnboardingCoach {
+            GuidedOnboardingPlaybackCard {
+                openTimeline()
+            }
+        }
+    }
+
+    /// A note with no words yet: says so, and offers the note's own screen, where words are written down and a failed
+    /// take has Try again (#4780). Now itself never starts a transcription.
+    private var noteNoWordsCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("No words for this note yet").font(.headline).foregroundStyle(.white)
+            Text("Spoken Margins writes a note's words down on this device after you record it. Open the note to write them down, or to try again if it didn't work.")
+                .font(.subheadline)
+                .foregroundStyle(AppColors.watchSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Open the note", action: openNoteScreen)
+                .buttonStyle(.bordered)
+                .tint(AppColors.listeningAccent)
+                .accessibilityIdentifier("playback.now.note.open")
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // The Now screen's own always-dark plate, the one the mixed audio card draws and the colour audit measures: the
+        // light-mode panel would put white words on a pale card here (#3733).
+        .background(AppColors.watchControl.opacity(0.72), in: RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("playback.now.note.noWords")
+    }
+
+    /// Some takes have words and some don't (#4780).
+    private var notePartialWordsLine: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Part of this note has no words yet.")
+                .font(.subheadline)
+                .foregroundStyle(AppColors.watchSecondary)
+            Button("Open the note", action: openNoteScreen)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(AppColors.listeningAccent)
+                .accessibilityIdentifier("playback.now.note.open")
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("playback.now.note.partialWords")
+    }
+
+    /// The first-Margin prompt is on screen: it is due and the Now pane, the only one that draws it, is showing (#5036).
+    private var firstMarginPromptIsInView: Bool {
+        model.isFirstMarginPromptShowing && selectedPane == .now
     }
 
     private var leadingControlPane: PlaybackLeadingControl.Pane {
@@ -99,32 +187,38 @@ struct PlaybackScreen: View {
                                     }
                                     if model.isFirstMarginPromptShowing { FirstMarginPromptCard() }
                                     playbackHeader
-                                        // The Library arrow lives in the header; once following scrolls it away, the toolbar shows it (#4453).
-                                        // Gone below one threshold, back above another, so the toolbar arrow's own bar
-                                        // layout can't flip it on every pass (#4739).
-                                        .onScrollVisibilityChange(threshold: NowHeaderVisibility.goneBelow) {
-                                            nowScene.headerReachedGoneThreshold($0)
-                                        }
-                                        .onScrollVisibilityChange(threshold: NowHeaderVisibility.backAt) {
-                                            nowScene.headerReachedBackThreshold($0)
-                                        }
                                     capturePermissionRecovery
                                     importedCommentaryControl
-                                    if model.selectedItem.isNativeAudio {
+                                    switch nowLayout {
+                                    case .audio:
                                         PlaybackNowView()
-                                        if model.shouldShowGuidedOnboardingCoach {
-                                            GuidedOnboardingPlaybackCard {
-                                                openTimeline()
+                                        guidedCoach
+                                    case .noteNoWords:
+                                        noteNoWordsCard
+                                        PlaybackNowView()
+                                        guidedCoach
+                                    case .noteLoading:
+                                        // The note is being read: neither the card nor the words yet (#4780).
+                                        recentMarginPreview
+                                        guidedCoach
+                                    case .noteWords:
+                                        if noteIsLoaded, case .partial = noteTranscript.availability { notePartialWordsLine }
+                                        recentMarginPreview
+                                        guidedCoach
+                                        PlaybackLivePassageView(
+                                            scene: nowScene, proxy: proxy,
+                                            openReader: { _ in }, // a note has no reader: its rows play
+                                            noteWords: noteIsLoaded ? noteTranscript.words : nil,
+                                            noteRevision: noteTranscript.revision,
+                                            openMargin: { id in
+                                                selectedInterjection = model.marginRows.first { $0.interjection.id == id }?.interjection
+                                                    ?? model.selectedItem.interjections.first { $0.id == id }
                                             }
-                                        }
-                                    } else {
+                                        )
+                                    case .text:
                                         // Below a long scene these would be out of reach, so they sit above the text (#4453).
                                         recentMarginPreview
-                                        if model.shouldShowGuidedOnboardingCoach {
-                                            GuidedOnboardingPlaybackCard {
-                                                openTimeline()
-                                            }
-                                        }
+                                        guidedCoach
                                         PlaybackLivePassageView(scene: nowScene, proxy: proxy) { offset in
                                             sourceTextTarget = PlaybackTextReaderTarget.resolve(
                                                 text: model.selectedItem.text,
@@ -141,6 +235,18 @@ struct PlaybackScreen: View {
                                 .frame(maxWidth: .infinity, alignment: .top)
                             }
                             .scrollBounceBehavior(.always)
+                            // A spoken note's words: read when Now appears, and again whenever the note may have changed (#4780).
+                            .onAppear { reloadNoteWords() }
+                            .onChange(of: model.selectedItem.id) { _, _ in reloadNoteWords() }
+                            .onChange(of: model.snapshot.itemId == model.selectedItem.id) { _, isThisItem in
+                                if isThisItem { reloadNoteWords() }
+                            }
+                            .onChange(of: model.openSessionMediaURL) { _, _ in reloadNoteWords() }
+                            .onReceive(NotificationCenter.default.publisher(for: .spokenNoteChanged)
+                                .receive(on: DispatchQueue.main)) { _ in reloadNoteWords() }
+                            .trackedFullScreenCover(item: $openedNote, onDismiss: { reloadNoteWords() }) { opening in
+                                SpokenNoteRecordingView(opening: opening).environmentObject(model)
+                            }
                             // The sentences on screen, and the listener's own scrolling (a drag or a fling; a scroll the
                             // view makes itself reports `.animating`), which stops the scene following playback (#4453).
                             .onScrollTargetVisibilityChange(idType: Int.self, threshold: 0.1) { nowScene.sentencesOnScreen($0) }
@@ -159,7 +265,8 @@ struct PlaybackScreen: View {
                             }
                             .overlay(alignment: .bottom) {
                                 // Only over this item's own scene: not over a podcast, nor while another item plays.
-                                if !model.selectedItem.isNativeAudio, model.snapshot.itemId == model.selectedItem.id {
+                                if nowLayout == .text || (nowLayout == .noteWords && nowScene.showsLit),
+                                   model.snapshot.itemId == model.selectedItem.id {
                                     NowBackToPlayingButton(scene: nowScene)
                                 }
                             }
@@ -209,6 +316,9 @@ struct PlaybackScreen: View {
                                     .background(AppColors.listeningBackground)
                             }
                         }
+                        // The whole pinned stack is opaque, so nothing added to it later can let the scrolling passage
+                        // show through its words (#5016: the speech card was see-through).
+                        .background(AppColors.listeningBackground)
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if !timelineDock.hidesDock { playbackControls }
@@ -223,6 +333,13 @@ struct PlaybackScreen: View {
                 // "Go to this moment in the source" lands on Now for a written Margin too (#3961); a spoken one is also covered
                 // above, and both set the same pane. The first value is never acted on, so a later open never jumps panes.
                 .onChange(of: model.showNowRequests) { _, _ in selectedPane = .now }
+                .onChange(of: PublisherAudioAttribution.PlayingVoice(itemId: model.snapshot.itemId, source: model.snapshot.publisherAudioSource)) { old, new in
+                    // VoiceOver hears the automatic switches within one item; a tapped switch is announced by the row's
+                    // redraw, and a new item or the end of playback is no switch (#4640).
+                    guard !PublisherVoiceSwitchTap.consume(new.source), UIAccessibility.isVoiceOverRunning,
+                          let announcement = PublisherAudioAttribution.switchAnnouncement(from: old, to: new) else { return }
+                    UIAccessibility.post(notification: .announcement, argument: announcement)
+                }
                 // The dock returns only once the keyboard has left the Timeline editor (#4043); a missed hide can't
                 // strand it.
                 .tracksKeyboard(for: $timelineDock)
@@ -255,9 +372,20 @@ struct PlaybackScreen: View {
             .toolbar {
                 PlaybackLeadingToolbar(
                     pane: leadingControlPane, timelineEditorHasFocus: timelineDock.hidesDock,
-                    nowHeaderIsVisible: nowScene.headerIsVisible || model.selectedItem.isNativeAudio,
                     returnToNow: { selectedPane = .now }
-                ) { libraryExitButton }
+                ) { libraryExitButton() }
+                if selectedPane == .timeline,
+                   FindInTextPresentation.buttonState(isRecordedAudio: model.selectedItem.isNativeAudio, text: model.selectedItem.text) != .hidden {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { isFindInTextPresented = true } label: {
+                            Label(FindInTextPresentation.buttonLabel, systemImage: "magnifyingglass")
+                        }
+                        .accessibilityIdentifier("playback.findInText.button")
+                    }
+                }
+            }
+            .trackedSheet(isPresented: $isFindInTextPresented) {
+                FindInTextSheet().environmentObject(model)
             }
             .scrollDismissesKeyboard(.interactively)
             .trackedSheet(item: $selectedInterjection) { interjection in
@@ -276,21 +404,22 @@ struct PlaybackScreen: View {
             }
             .trackedSheet(isPresented: $isPlaybackOptionsPresented, onDismiss: performPendingOptionsNavigation) {
                 NavigationStack {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 18) {
-                            playbackRateControl
-                            mixedAudioControl
-                            PlaybackFollowOptionsView()
-                            PlaybackPreparedAudioView(
-                                fraction: model.renderedFractionForPlayback,
-                                isNativeAudio: model.selectedItem.isNativeAudio
-                            )
-                            onDeviceSpeechGenerationControl
-                            reflectionOptions
-                            conversation
-                            sessionActionDock
+                    ListeningOptionsColumn {
+                        if let noteId = playingSpokenNoteId {
+                            SpokenNoteAudioVersionControl(clean: model.spokenNoteClean, noteId: noteId, placement: .listeningOptions)
                         }
-                        .padding(20)
+                        playbackRateControl
+                        mixedAudioControl
+                        PlaybackFollowOptionsView()
+                        PlaybackPreparedAudioView(
+                            fraction: model.renderedFractionForPlayback,
+                            isNativeAudio: model.selectedItem.isNativeAudio
+                        )
+                        ListeningOptionsVoiceRow()
+                        onDeviceSpeechGenerationControl
+                        reflectionOptions
+                        conversation
+                        sessionActionDock
                     }
                     .background(AppColors.listeningBackground)
                     .navigationTitle("Listening options")
@@ -310,6 +439,16 @@ struct PlaybackScreen: View {
         // (#3790). The card lives on that pane, so another pane showing never marks it.
         .onChange(of: model.friendListenState, initial: true) { _, _ in
             if selectedPane == .now { model.noteFriendListen() }
+        }
+        // The first-Margin prompt appears above the header while VoiceOver's focus is usually on the play controls: say so
+        // once when it comes into view, without moving focus (#5036). It is drawn only on the Now pane, so "in view" is "due
+        // and Now showing"; `initial` covers a screen that opens with it already there, and the flag keeps a trip to the
+        // Timeline and back from repeating it. `VoiceOverAnnouncements` decides; VoiceOver off makes the post silent.
+        .onChange(of: firstMarginPromptIsInView, initial: true) { _, isInView in
+            if let text = VoiceOverAnnouncements.firstMarginPrompt(alreadyAnnounced: firstMarginPromptAnnounced, isInView: isInView) {
+                AccessibilityNotification.Announcement(text).post()
+                firstMarginPromptAnnounced = true
+            }
         }
         .onChange(of: selectedPane) { _, pane in
             // Now's scroll view is built fresh each time, so a drag or overscroll from the last one is stale (#4816).
@@ -535,40 +674,12 @@ struct PlaybackScreen: View {
     }
 
     private var sessionActionDock: some View {
-        HStack(spacing: 8) {
-            Button {
-                closeOptions(to: .item)
-            } label: {
-                Image(systemName: "info.circle")
-                    .frame(width: 48, height: 48)
-            }
-            .accessibilityLabel("Details")
-            .accessibilityIdentifier("playback.item.button")
-
-            Button(action: openTimeline) {
-                Label("Timeline", systemImage: "list.bullet.rectangle")
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(maxWidth: .infinity, minHeight: 48)
-            }
-            .accessibilityIdentifier("playback.timeline.button")
-
-            Button {
-                closeOptions(to: .export)
-            } label: {
-                Image(systemName: "doc.text")
-                    .frame(width: 48, height: 48)
-            }
-            .disabled(!model.hasActiveSession)
-            .accessibilityLabel("Export")
-            .accessibilityIdentifier("playback.export.button")
-        }
-        .font(.subheadline.weight(.semibold))
-        .buttonStyle(.bordered)
-        .tint(.white)
-        .foregroundStyle(.white)
-        .padding(8)
-        .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        ListeningOptionsActionDock(
+            exportDisabled: !model.hasActiveSession,
+            showDetails: { closeOptions(to: .item) },
+            showTimeline: openTimeline,
+            showExport: { closeOptions(to: .export) }
+        )
     }
 
     private func openTimeline() {
@@ -689,26 +800,39 @@ struct PlaybackScreen: View {
         // title is small for the whole friend listen and never changes with the card's stage (#3598, #3220).
         let titleMode = PlaybackTitleMode.choose(cardSlotHeld: model.pinnedMarginCard != nil)
         return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 4) {
-                libraryExitButton
-                PlaybackSourceTitleView(
-                    title: model.playbackItemHeaderTitle,
-                    mode: titleMode,
-                    sourceName: model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
-                    sleepTimerState: model.sleepTimerState,
-                    sleepTimerRemainingSeconds: model.sleepTimerRemainingSeconds,
-                    showItem: model.openCurrentPlaybackItem
-                )
-            }
+            // The title starts at the left margin, in line with the text below; the Library arrow is in the bar (#5329).
+            PlaybackSourceTitleView(
+                title: model.playbackItemHeaderTitle,
+                mode: titleMode,
+                sourceName: model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
+                sleepTimerState: model.sleepTimerState,
+                sleepTimerRemainingSeconds: model.sleepTimerRemainingSeconds,
+                showItem: model.openCurrentPlaybackItem
+            )
 
             // The compact title already is the show name, so the show appears once while a friend's card is up (#3598).
             if titleMode.showsSeparateShowLine, model.selectedItem.isNativeAudio,
-               let show = model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
-               !show.isEmpty {
+               let show = PlaybackTitleMode.showName(
+                   sourceTitle: model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle) {
                 Text(show)
                     .font(.subheadline)
                     .foregroundStyle(AppColors.watchSecondary)
                     .accessibilityIdentifier("playback.showTitle")
+            }
+
+            if let noteId = playingSpokenNoteId {
+                SpokenNoteAudioVersionLine(clean: model.spokenNoteClean, noteId: noteId)
+            }
+
+            // Whose audio reads the article (#4640): only while the publisher's recording plays it.
+            if titleMode.showsSeparateShowLine, !model.selectedItem.isNativeAudio, model.snapshot.itemId == model.selectedItem.id,
+               let line = PublisherAudioAttribution.headerLine(
+                   source: model.snapshot.publisherAudioSource,
+                   siteHost: PublisherAudioAttribution.siteName(fromOriginalLink: model.selectedItem.originalSourceURL?.absoluteString)) {
+                Text(line)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.watchSecondary)
+                    .accessibilityIdentifier("playback.publisherAudioLine")
             }
 
             // The line is about the listener's own Margins, so it waits while a friend's Margin has the screen (#3790).
@@ -725,8 +849,8 @@ struct PlaybackScreen: View {
             // The chapter title is not repeated here: the dock's chapter row, right above the bar, already shows it
             // and opens the same item details (#1475).
         }
-        // A container, so the Library chevron and the title button keep their own identifiers: an identifier on a
-        // plain stack is copied onto every child, which made the chevron the first "playback.title" button (#2894).
+        // A container, so the title button and the lines below keep their own identifiers: an identifier on a plain
+        // stack is copied onto every child, which made the old Library chevron the first "playback.title" button (#2894).
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("playback.title")
     }
@@ -1119,6 +1243,12 @@ struct PlaybackScreen: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("playback.mixedAudio.control")
         }
+    }
+
+    /// The note behind the item playing on Now, when it is a spoken note (#4779).
+    private var playingSpokenNoteId: String? {
+        guard model.selectedItem.id == model.snapshot.itemId else { return nil }
+        return SpokenNoteItem.noteId(fromReference: model.selectedItem.externalReference)
     }
 
     @ViewBuilder

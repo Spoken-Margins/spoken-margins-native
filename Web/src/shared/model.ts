@@ -21,6 +21,11 @@ export interface Show {
   followedAt: string;
   /** When the feed was last read successfully by a refresh (#2977). Unset until the first refresh after following. */
   refreshedAt?: string;
+  /**
+   * When the listener unfollowed the show, as an ISO date (#4426). The record and its episodes stay stored; the show
+   * leaves Following and refresh stops reading it. Absent (never `undefined`) on a followed show.
+   */
+  unfollowedAt?: string;
 }
 
 /** Where an episode's audio comes from. Substack posts play the publisher's or Substack's own voice. */
@@ -66,6 +71,11 @@ export interface Margin {
    * written into a packet. Absent on a Margin that was never shared, or shared before this was kept.
    */
   sharedAs?: string[];
+  /**
+   * The share link whose reply box this Margin went back through (#4675, "Send to <sender>"): the link's id, set after
+   * the server took the post. Never written into a packet. Absent on a Margin never sent that way.
+   */
+  sentThrough?: string;
   /** The Margin this one answers (2026-10-25 call: recorded during a friend's Margin = a reply). */
   replyToId?: string;
   /**
@@ -123,6 +133,19 @@ export interface PercentMargin {
   margin: Margin;
   /** How far through the article it sits, 0 to 100, as the sender's app measured it. */
   percent: number;
+}
+
+/**
+ * A Margin a friend left on a text's words, as the card for a link the browser can't play lists it (#5265): with the
+ * words it sits on (`quote`, the anchor's exact text) and how far through it sits, when the packet says.
+ */
+export interface PageMargin {
+  /** The Margin, with `atSeconds` 0: it has no time of its own. */
+  margin: Margin;
+  /** How far through the text it sits, 0 to 100, when the sender's app measured it. */
+  percent?: number;
+  /** The words the Margin sits on, when the packet carries them. */
+  quote?: string;
 }
 
 /** Where the listener left off in an episode. */

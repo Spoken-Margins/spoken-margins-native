@@ -29,6 +29,20 @@ test('nothing the web bundle reaches seals or uploads a share link', () => {
   assert.deepEqual(hits, []);
 });
 
+// A browser may post an answer into the reply box the sender's phone made with a link (#4675, owner 2026-11-26), at
+// `/api/v1/clubs/${box}/posts`. It never makes a box: club creation is `POST /api/v1/clubs` with nothing after it, so the
+// bare path, closed by a quote, must never appear. And the answer sealer is `sealAnswer`, never a link sealer.
+const BOX_CREATION = /\/api\/v1\/clubs['"`]/;
+
+test('nothing the web bundle reaches creates a club or a reply box', () => {
+  const hits = bundled.filter((path) => BOX_CREATION.test(readFileSync(path, 'utf8'))).map((path) => relative(web, path));
+  assert.deepEqual(hits, []);
+  // The guard itself catches both spellings of the creation path, and lets a post into a box through.
+  assert.match(`fetch('/api/v1/clubs', { method: 'POST' })`, BOX_CREATION);
+  assert.match(`fetch(origin + "/api/v1/clubs")`, BOX_CREATION);
+  assert.doesNotMatch('fetch(`${origin}/api/v1/clubs/${box}/posts`)', BOX_CREATION);
+});
+
 test('the web build has no link-creation switch or build mode left', () => {
   const config = readFileSync(join(web, 'vite.config.ts'), 'utf8');
   assert.doesNotMatch(config, /share-links-test|__SM_SHARE_LINKS__|SHARE_LINKS/);

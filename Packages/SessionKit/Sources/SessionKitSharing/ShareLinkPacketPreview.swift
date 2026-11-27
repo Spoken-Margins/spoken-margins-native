@@ -21,9 +21,32 @@ public enum ShareLinkPacketPreview {
         )
     }
 
+    /// What the sentence beside the link needs to know (#5264), from the same verified packet as the preview: the
+    /// item's type, the Margins going (how many, and whether each is the sender's own voice), and whether the packet
+    /// carries an audio address or the preview a public page.
+    public static func facts(of package: VerifiedSpokenMarginsPackage, preview: ShareLinkPreview) -> ShareLinkMessage.Facts {
+        let item = package.manifest.item
+        let kinds = package.commentaryLayers
+            .flatMap(\.interjections)
+            .map { $0.defaultRepresentation?.kind }
+        return ShareLinkMessage.Facts(
+            itemType: item.itemType,
+            notes: ShareLinkMessage.Notes(kinds: kinds),
+            hasAudioOrPage: item.enclosureURL != nil || preview.source.url != nil
+        )
+    }
+
+    /// Reads the packet file once and builds its preview and the sentence's facts. The audio is extracted into
+    /// `scratch` and left for the caller to delete.
+    public static func read(ofPackageAt url: URL, scratch: URL) throws -> (preview: ShareLinkPreview, facts: ShareLinkMessage.Facts) {
+        let package = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: scratch)
+        let preview = try preview(of: package)
+        return (preview, facts(of: package, preview: preview))
+    }
+
     /// Reads the packet file and builds its preview. The audio is extracted into `scratch` and left for the caller
     /// to delete.
     public static func preview(ofPackageAt url: URL, scratch: URL) throws -> ShareLinkPreview {
-        try preview(of: SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: scratch))
+        try read(ofPackageAt: url, scratch: scratch).preview
     }
 }

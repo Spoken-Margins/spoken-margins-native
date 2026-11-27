@@ -26,6 +26,8 @@ struct FirstMarginPromptCard: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // The visible words say "Tap"; VoiceOver listeners double-tap, so the hint says what happens (#5036).
+            .accessibilityHint("Opens recording.")
             .accessibilityIdentifier("playback.firstMargin.prompt")
             Button(action: model.dismissFirstMarginPrompt) {
                 TapTargetIcon(systemName: "xmark")

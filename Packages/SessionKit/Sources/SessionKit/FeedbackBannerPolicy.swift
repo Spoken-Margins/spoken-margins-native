@@ -50,15 +50,20 @@ public enum FeedbackBannerPolicy {
     /// Margin's transcript. That transcript's Retry stays on the Margin and its row, but a refused
     /// "saved" leaves the old "transcript failed" as the last word, which reads as if the new
     /// Margin were the one that failed.
+    ///
+    /// A second exception (#5418): the outcome of a Retry the listener has just tapped, on a Margins row or anywhere
+    /// else, may cover any Retry. They acted, so the answer to that act is the news; a refused result left an older,
+    /// unrelated "Retranscription failed." on screen and the retry looked as if it had done nothing.
     public static func mayReplace(
         currentKind: Kind,
         currentOffersRetry: Bool,
         with newKind: Kind,
         currentIsMarginTranscription: Bool = false,
-        newSavesMargin: Bool = false
+        newSavesMargin: Bool = false,
+        newAnswersRetryTap: Bool = false
     ) -> Bool {
         guard currentKind == .error, currentOffersRetry else { return true }
-        if newKind == .error { return true }
+        if newKind == .error || newAnswersRetryTap { return true }
         return currentIsMarginTranscription && newSavesMargin
     }
 }

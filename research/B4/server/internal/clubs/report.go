@@ -110,6 +110,8 @@ func (s *Store) Status(id string, post int, now time.Time) string {
 		return "disabled" + held
 	case s.expired(id, m, now):
 		return "expired" + held
+	case m.State == stateClosed && post == 0:
+		return "closed to answers, STILL SERVED to its sender" + held
 	}
 	if post > 0 {
 		info, err := os.Lstat(s.path(id, "posts", strconv.Itoa(post)))
@@ -142,7 +144,7 @@ func (s *Store) Reportable(id string, now time.Time, allowEnded bool) error {
 		}
 		return ErrNotFound
 	}
-	if m.State == "" && s.expired(id, m, now) && !allowEnded {
+	if (m.State == "" || m.State == stateClosed) && s.expired(id, m, now) && !allowEnded {
 		return ErrNotFound
 	}
 	return nil

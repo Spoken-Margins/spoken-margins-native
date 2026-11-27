@@ -53,6 +53,18 @@
 				<string>public.plain-text</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Podcast list</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.opml.opml</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
@@ -95,6 +107,8 @@
 	<true/>
 	<key>SMBuildCommit</key>
 	<string>$(SM_BUILD_COMMIT)</string>
+	<key>SMLinkReplies</key>
+	<string>$(SM_LINK_REPLIES)</string>
 	<key>SMPhoneBuild</key>
 	<string>$(SM_PHONE_BUILD)</string>
 	<key>SMShareLinkCreation</key>
@@ -171,6 +185,27 @@
 				<key>public.mime-type</key>
 				<array>
 					<string>application/x-subrip</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.xml</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>OPML podcast list</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.opml.opml</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>opml</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>text/x-opml</string>
 				</array>
 			</dict>
 		</dict>

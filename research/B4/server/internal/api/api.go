@@ -174,6 +174,7 @@ type Server struct {
 	linkWindow       window
 	relayWindow      window
 	linkReportWindow window
+	linkOpenedWindow window
 	clubWindow       window
 	clubReportWindow window
 	clubBytes        byteWindow
@@ -250,11 +251,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /l/{id}/preview", s.linkCORS(s.getLinkPreview))
 	mux.HandleFunc("GET /l/share-link-open.mjs", s.getLinkScript)
 	mux.HandleFunc("GET /l/share-link-page.mjs", s.getLinkScript)
+	mux.HandleFunc("GET /l/card.png", s.getLinkCard)
 	mux.HandleFunc("POST "+PathLinks, s.uploadLink)
 	mux.HandleFunc("POST "+PathLinkSender, s.attested(s.linkSender))
 	mux.HandleFunc("GET /l/{id}", s.getLink)
 	mux.HandleFunc("GET /l/{id}/packet", s.linkCORS(s.getLinkPacket))
+	mux.HandleFunc("GET /l/{id}/reply", s.linkCORS(s.getLinkReply))
 	mux.HandleFunc("POST /l/{id}/report", s.reportLink)
+	mux.HandleFunc("POST /l/{id}/opened", s.markLinkOpened)
+	mux.HandleFunc("GET /l/{id}/opened", s.linkOpened)
 	mux.HandleFunc("POST /l/{id}/report/reason", s.reportReason)
 	mux.HandleFunc("GET "+PathRelay, s.relay)
 	mux.HandleFunc("POST "+PathClubs, s.createClub)
@@ -263,6 +268,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+PathClubs+"/{id}/posts/{seq}", s.getClubItem)
 	mux.HandleFunc("POST "+PathClubs+"/{id}/report", s.reportClub)
 	mux.HandleFunc("POST "+PathClubs+"/{id}/report/reason", s.reportClubReason)
+	mux.HandleFunc("POST "+PathClubs+"/{id}/close", s.closeReplyBox)
 	mux.HandleFunc("GET /c/club-page.mjs", s.getClubScript)
 	mux.HandleFunc("GET /c/{id}", s.getClubPage)
 	if len(s.LinkOrigins) > 0 {
@@ -270,6 +276,8 @@ func (s *Server) Handler() http.Handler {
 		// OPTIONS answering 405 as it always has.
 		mux.HandleFunc("OPTIONS /l/{id}/preview", s.linkPreflight)
 		mux.HandleFunc("OPTIONS /l/{id}/packet", s.linkPreflight)
+		mux.HandleFunc("OPTIONS /l/{id}/reply", s.linkPreflight)
+		mux.HandleFunc("OPTIONS "+PathClubs+"/{id}/posts", s.replyPreflight)
 	}
 	return s.logRequests(mux)
 }

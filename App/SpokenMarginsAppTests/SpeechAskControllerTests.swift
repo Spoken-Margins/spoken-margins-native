@@ -1,4 +1,5 @@
 import SessionKit
+import SessionKitAudio
 import XCTest
 @testable import SpokenMarginsApp
 
@@ -30,6 +31,14 @@ final class SpeechAskControllerTests: XCTestCase {
             access: { [unowned self] in iosAnswer },
             isSuppressed: { false },
             askSystem: { [unowned self] in await MainActor.run { promptsRaised += 1 } })
+    }
+
+    /// #5398: the unit-test host keeps iOS's Speech Recognition prompt closed. Nothing in an app-hosted test answers that
+    /// prompt, so when a spoken save's transcription raised it the host app went inactive for the rest of the process, and
+    /// every later test that needs the app active failed (HearItLandAppTests, FootnotePlanWiringTests).
+    func testTheUnitTestHostKeepsIOSsSpeechPromptClosed() {
+        XCTAssertTrue(Gate1AppModel.isRunningUnitTests, "precondition: an app-hosted unit test")
+        XCTAssertFalse(SpeechAuthorizationAsk.mayAskSystem(), "SpokenMarginsApp.init closes the gate under unit tests")
     }
 
     func testCardShowsAfterASpokenSaveAndNotAfterAWrittenOne() {
@@ -91,6 +100,19 @@ final class SpeechAskControllerTests: XCTestCase {
         XCTAssertTrue(relaunched.isCardShowing(slotIsFree: true))
         XCTAssertTrue(relaunched.isOutstanding)
         XCTAssertTrue(relaunched.isWaiting(marginIdentity: "s1::m1"))
+    }
+
+    /// #5423: the save's own transcription meets the hold while hear it land plays the Margin back. Neither the waiting
+    /// Margin nor the gate's report lets the card out until the playback ends.
+    func testAHoldDuringHearItLandWaitsForThePlaybacksEnd() {
+        let controller = makeController()
+        controller.spokenMarginSaved(isWritten: false, hearItLandWillRun: true)
+        controller.marginIsWaiting(marginIdentity: "s1::m1")
+        controller.holdReported(.playerMargin)
+        XCTAssertNil(controller.cardSurface, "the card waits for the playback")
+        XCTAssertTrue(controller.isOutstanding, "but it is owed")
+        controller.hearItLandEnded()
+        XCTAssertEqual(controller.cardSurface, .now, "the playback's end lets it out")
     }
 
     func testNotNowIsOutstandingNoMoreAndTheListStaysUntilIOSDecides() {

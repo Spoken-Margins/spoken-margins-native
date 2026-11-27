@@ -325,11 +325,13 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         case "rule_suggestion_state": return columns(RuleSuggestionState.self, item: { _ in nil })
         case "item_collection": return columns(ItemCollection.self, item: { _ in nil })
         case LibraryFolderRecord.recordKind: return columns(LibraryFolderRecord.self, item: { _ in nil })
+        case PaperSourceRecord.recordKind: return columns(PaperSourceRecord.self, item: { _ in nil })
         case "follow_list": return columns(FollowList.self, item: { _ in nil })
         case "follow_list_link": return columns(ListLink.self, item: { _ in nil })
         case "listening_rule": return columns(ListeningRule.self, item: { _ in nil })
         case "show_less_mark": return columns(ShowLessMark.self, item: { _ in nil })
         case TranscriptTimes.recordKind: return columns(TranscriptTimes.self, item: { $0.itemId })
+        case ReplyBoxRecord.recordKind: return columns(ReplyBoxRecord.self, item: { _ in nil })
         default: return nil
         }
     }
@@ -1609,6 +1611,71 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         try deleteRecord(kind: "item_collection", id: id)
     }
 
+    /// A followed reading list (#4341). Its own record kind with no item_id: no table or index changes and schema 5 stays,
+    /// an older build never queries the kind, and deleting an item never deletes one.
+    public func savePaperSource(_ record: PaperSourceRecord) throws {
+        try save(kind: PaperSourceRecord.recordKind, id: record.id, sessionId: nil, itemId: nil, value: record)
+    }
+
+    /// In the order they were followed.
+    public func loadPaperSources() throws -> [PaperSourceRecord] {
+        let records: [PaperSourceRecord] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;",
+            [PaperSourceRecord.recordKind]
+        )
+        return records.sorted { ($0.followedAt, $0.id) < ($1.followedAt, $1.id) }
+    }
+
+    public func deletePaperSource(id: String) throws {
+        try deleteRecord(kind: PaperSourceRecord.recordKind, id: id)
+    }
+
+    /// The read and the save in one transaction: a delete waits for it or goes first, never between.
+    @discardableResult
+    public func updatePaperSource(id: String, _ change: (inout PaperSourceRecord) throws -> Void) throws -> PaperSourceRecord? {
+        try withTransaction {
+            guard var record = try loadPaperSources().first(where: { $0.id == id }) else { return nil }
+            try change(&record)
+            try savePaperSource(record)
+            return record
+        }
+    }
+
+    /// A reply box (#4675, `docs/design/reply-mailbox.md` piece 3): its own record kind with no item_id, so no table or
+    /// index changes and schema 5 stays, an older build never queries the kind, and deleting an item never deletes one.
+    /// The record id is the box id.
+    public func saveReplyBox(_ record: ReplyBoxRecord) throws {
+        try save(kind: ReplyBoxRecord.recordKind, id: record.boxId, sessionId: nil, itemId: nil, value: record)
+    }
+
+    /// Oldest first, then by id, so the order is the same on every read.
+    public func loadReplyBoxes() throws -> [ReplyBoxRecord] {
+        let records: [ReplyBoxRecord] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;",
+            [ReplyBoxRecord.recordKind]
+        )
+        return records.sorted { ($0.createdAt, $0.boxId) < ($1.createdAt, $1.boxId) }
+    }
+
+    public func loadReplyBox(id: String) throws -> ReplyBoxRecord? {
+        try loadOptional(kind: ReplyBoxRecord.recordKind, id: id)
+    }
+
+    public func deleteReplyBox(id: String) throws {
+        try deleteRecord(kind: ReplyBoxRecord.recordKind, id: id)
+    }
+
+    /// The read and the save in one transaction, so a pickup's cursor and a Stop Answers tap never undo each other.
+    @discardableResult
+    public func updateReplyBox(id: String, _ change: (inout ReplyBoxRecord) throws -> Void) throws -> ReplyBoxRecord? {
+        try withTransaction {
+            guard var record = try loadReplyBox(id: id) else { return nil }
+            try change(&record)
+            try saveReplyBox(record)
+            return record
+        }
+    }
+
     /// A Library folder's own details (#3769), beside its `ItemCollection` under the same ID. A new record kind with no
     /// item_id: no table or index changes and schema 5 stays, an older build never queries the kind, and deleting an item
     /// never deletes one.
@@ -1914,7 +1981,7 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         'podcast_download', 'owned_offline_asset', 'episode_map_preparation_job', 'audio_preparation_job', \
         'prepared_audio_manifest', 'edition_fingerprint_spine', 'transcript_phrase_sketch', \
         'resolved_listening_map_projection', 'watch_audio_package', 'watch_sync_event', 'watch_package_request', \
-        '\(TranscriptTimes.recordKind)'
+        '\(TranscriptTimes.recordKind)', 'publisher_audio_choice'
         """
 
     private static let quarantinedRowBelongsToItem = """
@@ -3078,6 +3145,22 @@ extension SQLiteSessionStore: PublisherAudioRepository {
     public func loadPublisherAudio(itemId: String) throws -> PublisherAudio? {
         try loadOptional(kind: Self.publisherAudioKind, id: itemId)
     }
+
+    /// The listener's voice choice (#4640), kind "publisher_audio_choice", one row per item, linked by the item id
+    /// like the recording's record. No table, column or schema_version change.
+    static let publisherAudioChoiceKind = "publisher_audio_choice"
+
+    public func loadPublisherAudioChoice(itemId: String) throws -> PublisherAudioChoice? {
+        try loadOptional(kind: Self.publisherAudioChoiceKind, id: itemId)
+    }
+
+    public func savePublisherAudioChoice(_ choice: PublisherAudioChoice) throws {
+        try save(kind: Self.publisherAudioChoiceKind, id: choice.itemId, sessionId: nil, itemId: choice.itemId, value: choice)
+    }
+
+    public func deletePublisherAudioChoice(itemId: String) throws {
+        try deleteRecord(kind: Self.publisherAudioChoiceKind, id: itemId)
+    }
 }
 
 /// Community map uploads (#552) live in the records table as kind "community_map_upload", one
@@ -3103,3 +3186,6 @@ extension SQLiteSessionStore: CommunityMapUploadRepository {
 
 /// SQLite serializes its own connection, so a streamed reply's cursor can be saved off the main thread (#2509).
 extension SQLiteSessionStore: ConcurrentSessionRepository {}
+
+extension SQLiteSessionStore: PaperSourceStoring {}
+extension SQLiteSessionStore: ReplyBoxStoring {}

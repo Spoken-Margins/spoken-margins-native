@@ -159,6 +159,17 @@ final class LibraryRowLinesTests: XCTestCase {
         XCTAssertEqual(lines(text(shared: two)).marginsSpoken, "5 Margins, 2 new from friends")
     }
 
+    /// A browser friend who typed no name arrives as one sender with an empty name (Test Desk run on #5397): VoiceOver
+    /// said "1 new from " with nothing after it.
+    func testASenderWithNoNameIsAFriend() {
+        for blank in ["", "  ", "\n"] {
+            let tally = SharedMarginTally(total: 1, new: 1, senders: [.init(key: "b", name: blank, count: 1)])
+            XCTAssertEqual(lines(text(shared: tally)).marginsSpoken, "1 Margin, 1 new from a friend")
+        }
+        let padded = SharedMarginTally(total: 1, new: 1, senders: [.init(key: "s", name: " Sam ", count: 1)])
+        XCTAssertEqual(lines(text(shared: padded)).marginsSpoken, "1 Margin, 1 new from Sam")
+    }
+
     func testOnlyAFriendsUnheardMarginsLightTheDot() {
         let heard = lines(text(marginCount: 2, shared: SharedMarginTally(total: 3, new: 0, senders: [.init(key: "c", name: "Cole", count: 3)])))
         XCTAssertFalse(heard.hasNewMargins)

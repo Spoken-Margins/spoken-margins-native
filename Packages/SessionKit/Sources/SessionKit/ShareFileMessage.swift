@@ -22,7 +22,19 @@ public enum ShareFileMessage {
     /// The caption under the file button. With links on it also says the link route is open to anyone; with links off
     /// there is no link to offer, so it is the first sentence only.
     public static func caption(linksOffered: Bool) -> String {
-        linksOffered ? "\(needsTheAppSentence) \(linkOpensAnywhereSentence)" : needsTheAppSentence
+        caption(linksOffered: linksOffered, repliesOffered: false)
+    }
+
+    /// The link sentence when links carry a reply box (#4675, screen A). It leads, since it is what the friend does.
+    public static let linkTakesAnswersSentence = "A link opens in any browser, and your friend can answer through it."
+
+    /// The caption with this build's reply boxes in mind. `repliesOffered` is the app's `SM_LINK_REPLIES` setting; it
+    /// changes nothing unless links are offered too.
+    public static func caption(linksOffered: Bool, repliesOffered: Bool) -> String {
+        guard linksOffered else { return needsTheAppSentence }
+        return repliesOffered
+            ? "\(linkTakesAnswersSentence) \(needsTheAppSentence)"
+            : "\(needsTheAppSentence) \(linkOpensAnywhereSentence)"
     }
 
     /// Whether a share target gets the line beside the file: Messages and Mail only. An unknown or missing type, which

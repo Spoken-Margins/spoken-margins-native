@@ -132,7 +132,8 @@ test('a Substack post is reported unverified, because settling it takes a publis
 test('an article on an ordinary site is the `article` verdict, and the card says the same thing', async ({ page }) => {
   const probe = await check(page, 'vectorarticle1');
   expect(await probe.messages()).toEqual([{ type: 'started' }, { type: 'verdict', verdict: 'cannot', reason: 'article' }]);
-  await expect(page.getByTestId('arrival').getByText('which the browser can’t play yet')).toBeVisible();
+  // The friend gets the listen-here card (#5265), which plays the Margins here; nothing is stored by opening it.
+  await expect(page.getByTestId('arrival-listen')).toBeVisible();
   assertReadOnlyPacketLoad(probe, 'vectorarticle1');
   expect(await probe.idbWrites()).toEqual([]);
 });

@@ -39,8 +39,9 @@ class ShareReviewCardWordsGuard(unittest.TestCase):
 
     def test_the_sentences_about_what_is_shared_stay_footnote_or_larger(self):
         # Replaces the literal pin in test_smallest_type_guard.py: the words live in ShareReviewCardWords now (#3337).
-        text = _code("Build23SenderSharingComponents.swift")
-        for shown in ["ShareReviewCardWords.whereItLandsCaption", "versionCaption", "note"]:
+        # The captions are drawn by the card pieces both sheets share (#4647).
+        text = _code("Build23MarginPieces.swift")
+        for shown in ["ShareReviewCardWords.whereItLandsCaption", "Self.text(for: representation)", "note"]:
             self.assertRegex(text, r"Text\(%s\)\s+\.font\(\.footnote\)" % re.escape(shown), shown)
 
     def test_the_card_reads_the_shared_words(self):

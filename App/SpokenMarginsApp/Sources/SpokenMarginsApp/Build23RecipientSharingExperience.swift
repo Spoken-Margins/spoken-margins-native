@@ -1,5 +1,6 @@
 import SwiftUI
 import SessionKit
+import SessionKitSharing
 
 enum Build23RecipientPrimaryAction: Equatable {
     case addSource
@@ -56,6 +57,7 @@ enum Build23RecipientPresentation {
 struct Build23RecipientSharingExperience: View {
     @ObservedObject var coordinator: Build23SharingCoordinator
     let onRequestMissingSource: (Build23RecipientSourceRequest) -> Void
+    @State private var helpTopic: FriendHelpTopic?
 
     init(
         coordinator: Build23SharingCoordinator,
@@ -95,6 +97,8 @@ struct Build23RecipientSharingExperience: View {
                 .background(.ultraThinMaterial)
             }
         }
+        // Over this sheet, so the friend's Margins are still waiting here after Done (#5268).
+        .trackedSheet(item: $helpTopic) { FriendHelpScreen(focus: $0) }
     }
 
     @ViewBuilder
@@ -226,6 +230,12 @@ struct Build23RecipientSharingExperience: View {
                     .filledActionButton()
                     .accessibilityIdentifier("build23.recipient.addToLibrary")
                     .accessibilityHint("Opens Add to Library and keeps these Margins ready to resume")
+                }
+
+                // A shared Listening Map is not what the friend help answers.
+                if !snapshot.isListeningMap {
+                    FriendHelpButton { helpTopic = .addEpisode }
+                        .accessibilityIdentifier("build23.recipient.help")
                 }
             }
         }

@@ -21,7 +21,7 @@ func TestLinkPacketExpiryDayHeader(t *testing.T) {
 	if got := w.Header().Get("X-SM-Link-Expires"); got != want {
 		t.Errorf("X-SM-Link-Expires %q, want %q", got, want)
 	}
-	if got := w.Header().Get("Access-Control-Expose-Headers"); got != "X-SM-Link-Expires" {
+	if got := w.Header().Get("Access-Control-Expose-Headers"); got != "X-SM-Link-Expires, X-SM-Link-Opened" {
 		t.Errorf("Access-Control-Expose-Headers %q", got)
 	}
 

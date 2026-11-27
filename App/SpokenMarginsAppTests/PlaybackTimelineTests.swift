@@ -462,6 +462,34 @@ final class PlaybackTimelineTests: XCTestCase {
         }
     }
 
+    /// A 5:00 spoken note whose Shorter pauses version is 4:00 (the minute from 1:00 to 2:00 was cut) names that version
+    /// (#4779). A Margin saved at the recording's 4:50 is at 3:50 on the file the Timeline's playhead runs on.
+    func testASpokenNotesMarginSitsAndReadsOnTheShorterFilesClock() throws {
+        let layout = SpokenNoteWholeAudioLayout(
+            requested: [.init(id: "t1", audioFileName: "take-1.m4a", durationMs: 300_000)],
+            placed: [.init(takeId: "t1", startMs: 0, durationMs: 300_000)], durationMs: 300_000)
+        let map = SpokenNoteCleanMap(placements: [
+            SpokenNoteCleanPlacement(takeId: "t1", takeStartMs: 0, takeEndMs: 60_000, outputStartMs: 0),
+            SpokenNoteCleanPlacement(takeId: "t1", takeStartMs: 120_000, takeEndMs: 300_000, outputStartMs: 60_000)
+        ], recorded: layout, cleanDurationMs: 240_000)
+        var item = ItemDetailState(id: SpokenNoteItem.itemId(forNoteId: "n1"), title: "Note", mediaDurationMs: 240_000, isNativeAudio: true)
+        item.interjections = [.init(id: "margin", itemId: item.id, sessionId: "session", targetType: .item,
+            targetId: item.id, createdAt: Date(), roughPercent: 97,
+            anchor: .init(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 290_000),
+            audioPath: nil, audioStatus: "not_recorded", transcriptionStatus: "transcribed", transcript: "Late thought",
+            cleanedTranscript: nil, displayText: nil, status: "active")]
+
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session", noteClock: map)
+        let margin = try XCTUnwrap(entries.first { $0.id == "session::margin" })
+        XCTAssertEqual(margin.cornerLabel, "3:50", "4:50 is past the end of a 4:00 file")
+        XCTAssertEqual(try XCTUnwrap(margin.precisePosition), 230.0 / 240.0 * 100, accuracy: 0.01)
+        guard case .margin(let row) = margin.action else { return XCTFail("the row lost its Margin") }
+        XCTAssertEqual(row.interjection.anchor.mediaTimeMs, 290_000, "a tap seeks from the saved time, which it moves itself")
+
+        let asRecorded = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session")
+        XCTAssertEqual(asRecorded.first { $0.id == "session::margin" }?.cornerLabel, "4:50", "no map: the recording plays")
+    }
+
     // MARK: #3862 one unit per item, matching its scrubber
 
     /// A podcast's publisher chapters are saved twice with one id: `chapters` (a percent) and `mediaChapters` (the exact start).

@@ -9,6 +9,12 @@ import UIKit
 struct ExportScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @State private var isSharePresented = false
+    /// Why the toolbar's Share has nothing to send here (#5306), as the item screen's Share says it (#4229).
+    @State private var shareExplanation: ItemShareStart.Explanation?
+    @State private var checksShare = false
+    /// The session this screen showed when its Share opened the sheet. Opening the sheet moves `exportSessionId` to the
+    /// newest pass with a sendable Margin, so it is put back when the sheet closes, with a fresh preview (#5306).
+    @State private var sessionBeforeShare: String?
 
     var body: some View {
         NavigationStack {
@@ -20,7 +26,7 @@ struct ExportScreen: View {
                     Text(model.selectedItem.title)
                         .font(.headline)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Take a session out for yourself or your tools, as Markdown or JSON. To send Margins to a friend, use Share.")
+                    Text(ShareExportSwitch.exportScreenIntro)
                         .foregroundStyle(AppColors.secondaryText)
                     Text("Export a session")
                         .font(.headline)
@@ -43,54 +49,35 @@ struct ExportScreen: View {
                             }
                             .accessibilityIdentifier("export.session.picker")
 
-                            Picker("Format", selection: $model.exportFormat) {
-                                Text("AI Handoff Markdown").tag("markdown")
-                                Text("Full JSON Archive").tag("json")
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(ExportFormatChoice.heading)
+                                    .font(.subheadline.weight(.semibold))
+                                Picker(
+                                    ExportFormatChoice.heading,
+                                    selection: Binding(
+                                        get: { ExportFormatChoice(storedFormat: model.exportFormat).rawValue },
+                                        set: { model.exportFormat = $0 }
+                                    )
+                                ) {
+                                    ForEach(ExportFormatChoice.allCases, id: \.self) { choice in
+                                        Text(choice.label).tag(choice.rawValue)
+                                    }
+                                }
+                                .segmentedUnlessLargeText()
+                                .accessibilityHint(ExportFormatChoice(storedFormat: model.exportFormat).caption)
+                                .accessibilityIdentifier("export.format.picker")
+                                .onCompatibleChange(of: model.exportFormat) { _ in model.exportOptionsChanged() }
+                                ExportOptionCaption(text: ExportFormatChoice(storedFormat: model.exportFormat).caption)
+                                    .accessibilityIdentifier("export.format.caption")
                             }
-                            .segmentedUnlessLargeText()
-                            .accessibilityIdentifier("export.format.picker")
-                            .onCompatibleChange(of: model.exportFormat) { _ in model.exportOptionsChanged() }
 
-                            Picker("Scope", selection: $model.exportScope) {
-                                Text("Original").tag("original")
-                                Text("Margins").tag("source_interjections")
-                                Text("Full Session").tag("full_session")
-                            }
-                            .segmentedUnlessLargeText()
-                            .accessibilityIdentifier("export.scope.picker")
-                            .onCompatibleChange(of: model.exportScope) { _ in model.exportOptionsChanged() }
-
-                            // A spoken note is the listener's own words: its Source Text has its own remembered value,
-                            // on by default, and is never disabled (#4782).
-                            Toggle("Source Text", isOn: model.selectedItem.isSpokenNote
-                                   ? $model.exportIncludesSpokenNoteText : $model.exportIncludesSourceText)
-                                .accessibilityIdentifier("export.includeSourceText.toggle")
-                                .onCompatibleChange(of: model.exportIncludesSourceText) { _ in model.exportOptionsChanged() }
-                                .onCompatibleChange(of: model.exportIncludesSpokenNoteText) { _ in model.exportOptionsChanged() }
-                                .disabled(!model.exportSourceTextAvailable)
-                            if !model.exportSourceTextAvailable {
-                                Text("Native audio exports include only bounded listening context, not full source text.")
-                                    .font(.footnote)
-                                    .foregroundStyle(AppColors.secondaryText)
-                            }
-                            if model.selectedItem.isSpokenNote, let footnote = model.exportSpokenNoteFootnote {
-                                Text(footnote)
-                                    .font(.footnote)
-                                    .foregroundStyle(AppColors.secondaryText)
-                                    .accessibilityIdentifier("export.spokenNoteFootnote")
-                            }
-                            Toggle("Reference", isOn: $model.exportIncludesReference)
-                                .accessibilityIdentifier("export.includeReference.toggle")
-                                .onCompatibleChange(of: model.exportIncludesReference) { _ in model.exportOptionsChanged() }
-                            Toggle("Listening Map", isOn: $model.exportIncludesListeningMap)
-                                .accessibilityIdentifier("export.includeListeningMap.toggle")
-                                .onCompatibleChange(of: model.exportIncludesListeningMap) { _ in model.exportOptionsChanged() }
-                            Toggle("Margins", isOn: $model.exportIncludesInterjections)
-                                .accessibilityIdentifier("export.includeInterjections.toggle")
-                                .onCompatibleChange(of: model.exportIncludesInterjections) { _ in model.exportOptionsChanged() }
-                            Toggle("AI Turns", isOn: $model.exportIncludesTurns)
-                                .accessibilityIdentifier("export.includeTurns.toggle")
-                                .onCompatibleChange(of: model.exportIncludesTurns) { _ in model.exportOptionsChanged() }
+                            ExportContentsOptions(
+                                idPrefix: "export",
+                                singleItemIsSpokenNote: model.selectedItem.isSpokenNote,
+                                sourceTextAvailable: model.exportSourceTextAvailable,
+                                showsSeparateSpokenNoteToggle: false,
+                                spokenNoteFootnote: model.selectedItem.isSpokenNote ? model.exportSpokenNoteFootnote : nil
+                            )
                         }
                     }
                     VStack(alignment: .leading, spacing: 12) {
@@ -173,8 +160,52 @@ struct ExportScreen: View {
                     }
                     .accessibilityIdentifier("export.home.button")
                 }
+                // One tap to the Share Margins sheet for the same item (#5306): the friend sheet the item screen's Share opens.
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(ShareExportSwitch.shareButtonTitle, systemImage: "square.and.arrow.up", action: switchToShare)
+                        .labelStyle(.titleAndIcon)
+                        .disabled(model.selectedItem.id.isEmpty || checksShare)
+                        .accessibilityHint(ShareExportSwitch.shareButtonHint)
+                        .accessibilityIdentifier("export.friendShare.button")
+                }
+            }
+            .onChange(of: model.isSharingInterjectionsPresented) { _, isPresented in
+                guard !isPresented, let sessionId = sessionBeforeShare else { return }
+                sessionBeforeShare = nil
+                model.openExport(sessionId: sessionId)
+            }
+            .alert(
+                shareExplanation?.title ?? "",
+                isPresented: Binding(get: { shareExplanation != nil }, set: { if !$0 { shareExplanation = nil } }),
+                presenting: shareExplanation
+            ) { _ in
+                Button("OK", role: .cancel) {}
+            } message: { explanation in
+                Text(explanation.message)
             }
             .miniPlayerKeepOut()
+        }
+    }
+
+    /// The toolbar's Share (#5306): the Share Margins sheet when this item has Margins to send, otherwise an alert that
+    /// says why, by the item screen's own rule (`ItemShareStart`). It starts where the item screen's Share starts (the
+    /// review with the listener's Margins picked, or the reply sheet when a friend's answers are waiting), so the two doors
+    /// can't disagree (Default taken on #5306). A second tap while the check runs does nothing.
+    private func switchToShare() {
+        guard !checksShare, !model.isSharingInterjectionsPresented else { return }
+        checksShare = true
+        let itemId = model.selectedItem.id
+        Task {
+            defer { checksShare = false }
+            let start = await model.itemShareStart()
+            guard model.selectedItem.id == itemId else { return }
+            switch start {
+            case .share:
+                let sessionId = model.exportSessionId
+                model.hangTelemetry.labels.scoped("exportShare") { model.openItemShareSheet() }
+                if model.isSharingInterjectionsPresented { sessionBeforeShare = sessionId }
+            case .nothingYet(let explanation): shareExplanation = explanation
+            }
         }
     }
 
@@ -186,6 +217,142 @@ struct ExportScreen: View {
         return [model.exportPreview]
     }
     #endif
+}
+
+/// A caption under an export choice: footnote size, secondary colour, wrapping (#4956).
+struct ExportOptionCaption: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.footnote)
+            .foregroundStyle(AppColors.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// The Contents picker and the toggles under it, shared by the Export and Export Sessions screens so the two can't
+/// drift apart (#4956). Every word comes from `ExportOptionWords.swift` in SessionKit, where a host test pins it.
+/// A toggle the Contents choice leaves out shows dimmed and off with a caption saying why; its saved value is kept.
+struct ExportContentsOptions: View {
+    @EnvironmentObject private var model: Gate1AppModel
+
+    /// `"export"` or `"batchExport"`: the accessibility ids keep each screen's existing prefix.
+    let idPrefix: String
+    /// The Export screen's item is a spoken note: Source Text follows the note's own switch and is never disabled.
+    let singleItemIsSpokenNote: Bool
+    /// False for a podcast or audio file on the Export screen: Source Text is disabled with its own caption.
+    let sourceTextAvailable: Bool
+    /// Export Sessions shows a separate Spoken Note Text toggle when a picked session is a spoken note.
+    let showsSeparateSpokenNoteToggle: Bool
+    /// The spoken note's own footnote on the Export screen, shown right after Source Text.
+    let spokenNoteFootnote: String?
+
+    private var contents: ExportContents { ExportContents(storedScope: model.exportScope) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(ExportContents.heading)
+                .font(.subheadline.weight(.semibold))
+            Picker(
+                ExportContents.heading,
+                selection: Binding(
+                    get: { ExportContents(storedScope: model.exportScope).tag },
+                    set: { model.exportScope = $0 }
+                )
+            ) {
+                ForEach(ExportContents.allCases, id: \.self) { choice in
+                    Text(choice.label).tag(choice.tag)
+                }
+            }
+            .segmentedUnlessLargeText()
+            .accessibilityHint(contents.caption)
+            .accessibilityIdentifier("\(idPrefix).scope.picker")
+            .onCompatibleChange(of: model.exportScope) { _ in model.exportOptionsChanged() }
+            ExportOptionCaption(text: contents.caption)
+                .accessibilityIdentifier("\(idPrefix).scope.caption")
+        }
+
+        if singleItemIsSpokenNote {
+            // A spoken note is the listener's own words: its Source Text has its own remembered value,
+            // on by default, and is never disabled (#4782).
+            toggleRow(
+                title: ExportToggle.spokenNoteText.title,
+                caption: ExportToggle.spokenNoteText.caption,
+                isOn: $model.exportIncludesSpokenNoteText
+            )
+            .accessibilityIdentifier("\(idPrefix).includeSourceText.toggle")
+            .onCompatibleChange(of: model.exportIncludesSourceText) { _ in model.exportOptionsChanged() }
+            .onCompatibleChange(of: model.exportIncludesSpokenNoteText) { _ in model.exportOptionsChanged() }
+        } else {
+            toggleRow(
+                title: ExportToggle.sourceText.title,
+                caption: sourceTextAvailable ? ExportToggle.sourceText.caption : ExportToggle.sourceTextUnavailableCaption,
+                isOn: $model.exportIncludesSourceText
+            )
+            .accessibilityIdentifier("\(idPrefix).includeSourceText.toggle")
+            .onCompatibleChange(of: model.exportIncludesSourceText) { _ in model.exportOptionsChanged() }
+            .disabled(!sourceTextAvailable)
+        }
+        if let spokenNoteFootnote {
+            Text(spokenNoteFootnote)
+                .font(.footnote)
+                .foregroundStyle(AppColors.secondaryText)
+                .accessibilityIdentifier("export.spokenNoteFootnote")
+        }
+        if showsSeparateSpokenNoteToggle {
+            // A picked session on a spoken note follows the note's own text switch, shared with the single
+            // Export screen (#4782); "Source Text" keeps applying to articles and PDFs.
+            toggleRow(
+                title: ExportToggle.spokenNoteText.title,
+                caption: ExportToggle.spokenNoteText.caption,
+                isOn: $model.exportIncludesSpokenNoteText
+            )
+            .accessibilityIdentifier("\(idPrefix).includeSpokenNoteText.toggle")
+            .onCompatibleChange(of: model.exportIncludesSpokenNoteText) { _ in model.exportOptionsChanged() }
+        }
+        overridableToggle(.sourceLink, stored: $model.exportIncludesReference)
+            .accessibilityIdentifier("\(idPrefix).includeReference.toggle")
+            .onCompatibleChange(of: model.exportIncludesReference) { _ in model.exportOptionsChanged() }
+        overridableToggle(.listeningMap, stored: $model.exportIncludesListeningMap)
+            .accessibilityIdentifier("\(idPrefix).includeListeningMap.toggle")
+            .onCompatibleChange(of: model.exportIncludesListeningMap) { _ in model.exportOptionsChanged() }
+        overridableToggle(.margins, stored: $model.exportIncludesInterjections)
+            .accessibilityIdentifier("\(idPrefix).includeInterjections.toggle")
+            .onCompatibleChange(of: model.exportIncludesInterjections) { _ in model.exportOptionsChanged() }
+        overridableToggle(.reflections, stored: $model.exportIncludesTurns)
+            .accessibilityIdentifier("\(idPrefix).includeTurns.toggle")
+            .onCompatibleChange(of: model.exportIncludesTurns) { _ in model.exportOptionsChanged() }
+    }
+
+    /// A toggle whose material the Contents choice may leave out: then it is disabled, shows off, and says why.
+    /// "Shows off" is display only; the stored value is written only while the toggle isn't overridden.
+    private func overridableToggle(_ toggle: ExportToggle, stored: Binding<Bool>) -> some View {
+        let overridden = toggle.overriddenCaption(by: contents)
+        let current = contents
+        return toggleRow(
+            title: toggle.title,
+            caption: overridden ?? toggle.caption,
+            isOn: Binding(
+                get: { toggle.shownOn(stored: stored.wrappedValue, contents: current) },
+                set: { if toggle.overriddenCaption(by: current) == nil { stored.wrappedValue = $0 } }
+            )
+        )
+        .disabled(overridden != nil)
+    }
+
+    /// The label pattern of `SettingsScreen`: a title with a caption under it, inside the label so it dims with it.
+    private func toggleRow(title: String, caption: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(caption)
+                    .font(.footnote)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
 }
 
 #if canImport(UIKit)
@@ -217,14 +384,15 @@ struct MarginExportShare {
 extension View {
     /// The share sheet for a Margin's export while `share` is set; closing it clears it and removes the files. One sheet
     /// carries both the note alone and the recording with the note, since two sheets on one view can drop each other.
-    func marginExportShareSheet(_ share: Binding<MarginExportShare?>) -> some View {
+    /// `onFinished` hears how the sheet ended: completed or not, which activity took the file, and any error (#5051).
+    func marginExportShareSheet(_ share: Binding<MarginExportShare?>, onFinished: @escaping (_ completed: Bool, _ activityType: String?, _ failed: Bool) -> Void = { _, _, _ in }) -> some View {
         trackedSheet(isPresented: Binding(get: { share.wrappedValue != nil }, set: {
             guard !$0 else { return }
             share.wrappedValue?.discard()
             share.wrappedValue = nil
         })) {
             if let current = share.wrappedValue {
-                SessionActivityView(activityItems: current.urls, onSuccessfulCompletion: {})
+                SessionActivityView(activityItems: current.urls, onSuccessfulCompletion: {}, onFinished: onFinished)
             }
         }
     }
@@ -346,10 +514,12 @@ private struct SessionActivityView: UIViewControllerRepresentable {
     @Environment(\.dismiss) private var dismiss
     let activityItems: [Any]
     let onSuccessfulCompletion: () -> Void
+    var onFinished: ((_ completed: Bool, _ activityType: String?, _ failed: Bool) -> Void)?
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
-        controller.completionWithItemsHandler = { _, completed, _, _ in
+        controller.completionWithItemsHandler = { activityType, completed, _, error in
+            onFinished?(completed, activityType?.rawValue, error != nil)
             if completed {
                 onSuccessfulCompletion()
             }

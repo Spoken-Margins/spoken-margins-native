@@ -93,5 +93,6 @@ test('with no episode, the run shows a not-read-aloud Margin for the usual time 
   await expect(arrived).toContainText(SPOKEN, { timeout: 30_000 });
   await expect(arrived).toContainText('2 of 2');
   await expect(arrived).toContainText('voice is reading');
-  await expect.poll(() => spoken(page)).toEqual([expect.stringContaining(SPOKEN)]);
+  // Before the read-aloud one, the voice says where it sits in the episode (#5265); nothing before the silent one.
+  await expect.poll(() => spoken(page)).toEqual([expect.stringMatching(/Margin is at \d+:\d\d in “/), expect.stringContaining(SPOKEN)]);
 });

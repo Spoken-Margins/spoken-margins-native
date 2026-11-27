@@ -227,7 +227,7 @@ test('the countdown and its Skip pass a Margin that is not read aloud (#3445)', 
 
 // #3798: the Arrival's hint and the Library row said two different places for the same episode.
 const own: Episode = { id: 'e1', showId: 's', title: 'T', guid: 'g-1', audioUrl: 'https://media.example.com/1.mp3', durationSeconds: 600 };
-const packet = (episode: PacketRead['episode']): PacketRead => ({ contentDigest: 'd'.repeat(64), episode, margins: [], textMarginCount: 0, percentMargins: [] });
+const packet = (episode: PacketRead['episode']): PacketRead => ({ contentDigest: 'd'.repeat(64), episode, margins: [], textMarginCount: 0, percentMargins: [], pageMargins: [] });
 const at = (seconds: number, episodeId = 'e1'): PlaybackPosition => ({ episodeId, seconds, updatedAt: '2026-11-08T10:00:00Z' });
 
 test('Play starts where the Library says Resume at, and the hint says so', () => {

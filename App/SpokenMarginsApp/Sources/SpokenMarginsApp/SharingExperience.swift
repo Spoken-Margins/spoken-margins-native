@@ -51,9 +51,14 @@ struct InterjectionSharingState {
     var draftFilter: ShareMarginDraftFilter = .all
     /// "Share replies with Ana" when the sheet was opened to share replies back (#3221, #3906); nil for an ordinary share.
     var replyBackTitle: String?
+    /// "These arrive marked new, so Ana can hear just them." under the replies heading (#4785); nil otherwise.
+    var replyBackCaption: String?
     var autoCleanSelectedEnabled = ShareAutoCleanPreference.isEnabled
     var needsAutoCleanDecision = !ShareAutoCleanPreference.hasRecordedDecision
     var automaticallyCleanedDraftIDs: Set<String> = []
+    /// The Margins whose voice without ums is queued or being made in the bulk run (#4647): a mirror of the run's queue
+    /// plus the one in progress, kept by the run itself. With the two draft flags it says whether a voice is on its way.
+    var queuedVoiceIDs: Set<String> = []
     /// Set by the export screen and by an item's Share, which prepare the drafts themselves: the export screen from the
     /// session picked there, an item's Share from every listening pass of the item (#4688). The sheet's `begin` keeps
     /// them once instead of rebuilding from the open item.

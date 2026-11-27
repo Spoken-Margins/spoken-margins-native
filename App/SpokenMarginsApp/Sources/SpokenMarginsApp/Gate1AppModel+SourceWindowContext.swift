@@ -107,7 +107,7 @@ extension Gate1AppModel {
         pendingSourceContextInterjectionIds.insert(key)
         diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "scheduled:heard_audio"
         diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", interjection)] = "heard_stream_audio"
-        if reportsResult { reportConfirmation("Recovering source context…") }
+        if reportsResult { reportConfirmation("Recovering source context…", answersRetryTap: true) }
         run { engine in
             snapshot = try engine.sourceWindowContextPending(interjectionId: interjection.id, sessionId: interjection.sessionId)
         }
@@ -151,7 +151,7 @@ extension Gate1AppModel {
                     } else if outcome == .unavailable {
                         self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjection.id, sessionId: interjection.sessionId)
                         self.diagnostics[transcriptionKey] = "failed:heard_audio:\(failure ?? "no_speech")"
-                        if reportsResult { self.reportWarning("Source context could not be recovered from the audio you heard.") }
+                        if reportsResult { self.reportWarning("Source context could not be recovered from the audio you heard.", answersRetryTap: true) }
                     } else {
                         self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjection.id, sessionId: interjection.sessionId, timeline: timeline)
                         self.diagnostics[transcriptionKey] = "complete:heard_audio:\(timeline.segments.count)_segments"
@@ -160,7 +160,7 @@ extension Gate1AppModel {
                     self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
                     // After the row refresh, so the banner reads the status the retry stored (#3856).
                     if reportsResult, outcome == .completed {
-                        self.reportConfirmation(self.contextRetryResultMessage(sessionId: interjection.sessionId, interjectionId: interjection.id))
+                        self.reportConfirmation(self.contextRetryResultMessage(sessionId: interjection.sessionId, interjectionId: interjection.id), answersRetryTap: true)
                     }
                 }
             }
@@ -216,7 +216,7 @@ extension Gate1AppModel {
                         self.refreshSelectedItemInBackground()
                         self.refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
                         if reportsResult {
-                            self.reportConfirmation(self.contextRetryResultMessage(sessionId: interjection.sessionId, interjectionId: interjection.id))
+                            self.reportConfirmation(self.contextRetryResultMessage(sessionId: interjection.sessionId, interjectionId: interjection.id), answersRetryTap: true)
                         }
                         self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "complete:stored_transcript"
                         self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", interjection)] = "stored_transcript"
@@ -251,13 +251,13 @@ extension Gate1AppModel {
                 transcribeHeardSourceWindow(for: interjection, itemId: item.id, reportsResult: reportsResult)
             } else if reportsResult {
                 // A manual retry comes long after the heard audio was used or dropped.
-                reportWarning("Context for a streamed episode comes from the audio around the Margin as you heard it, and that's no longer available. Download the episode to recover it.")
+                reportWarning("Context for a streamed episode comes from the audio around the Margin as you heard it, and that's no longer available. Download the episode to recover it.", answersRetryTap: true)
             } else {
                 awaitHeardSourceWindow(for: interjection)
             }
             return
         }
-        if reportsResult { reportConfirmation("Recovering source context…") }
+        if reportsResult { reportConfirmation("Recovering source context…", answersRetryTap: true) }
         diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "scheduled"
         // A stream URL returned above, so this is always a local file.
         let provenance = "downloaded_local_audio"
@@ -330,7 +330,7 @@ extension Gate1AppModel {
                         ? "unavailable:\(reference.failure ?? "temporary_audio_unavailable")"
                         : "complete:\(reference.evidence.count)"
                     if reportsResult {
-                        self.reportConfirmation(self.contextRetryResultMessage(sessionId: interjection.sessionId, interjectionId: interjectionId))
+                        self.reportConfirmation(self.contextRetryResultMessage(sessionId: interjection.sessionId, interjectionId: interjectionId), answersRetryTap: true)
                     }
                 }
             } catch {
@@ -344,7 +344,7 @@ extension Gate1AppModel {
                 self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "unavailable"
                 self.markSourceWindowUnavailable(interjection, diagnostic: failed)
                 if reportsResult {
-                    self.reportWarning(ListenerErrorText.line(prefix: "Source context could not be recovered:", error: error))
+                    self.reportWarning(ListenerErrorText.line(prefix: "Source context could not be recovered:", error: error), answersRetryTap: true)
                 }
                 // Source-window context is redundant, best-effort evidence: the Margin and its timestamp are durable and the Timeline
                 // shows the retry state, so this expected degradation is no global error banner after every Margin.
@@ -364,10 +364,12 @@ extension Gate1AppModel {
         }
     }
 
-    func scheduleTranscription(for interjection: Interjection) {
+    /// `capturesAnchorEvidence` is false for a Margin moved from a live session (#4233): its recording was not made while
+    /// the item played, so no fingerprint of the item is taken for it, and a friend places it by time alone.
+    func scheduleTranscription(for interjection: Interjection, capturesAnchorEvidence: Bool = true) {
         guard let audioPath = interjection.audioPath else { return }
         recordAnchorCaptureDiagnostics(for: interjection)
-        switch interjection.podcastAnchorEvidenceCaptureStatus {
+        switch capturesAnchorEvidence ? interjection.podcastAnchorEvidenceCaptureStatus : .ready {
         case .pendingPostResumeSample:
             diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", interjection)] = "sampling:decoded_playback_post_resume"
         case .pendingExactLocalCapture:
@@ -405,6 +407,13 @@ extension Gate1AppModel {
                     transcript = try await interjectionTranscriptionHandler(audioPath)
                 }
                 await MainActor.run {
+                    // A moved Margin whose move was undone meanwhile has no row any more (#4233 Design 2.9.2): the job
+                    // ends quietly, with no failure and no write.
+                    if LiveMarginMoving.wasTakenBack(interjection.id) {
+                        MarginEndPhraseSaving.finish(endPhraseCut, wordsSaved: false)
+                        retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
+                        return
+                    }
                     let wordsSaved = run { engine in
                         if let savedTranscript {
                             snapshot = try engine.transcriptionCompleted(
@@ -423,7 +432,12 @@ extension Gate1AppModel {
                         refreshMarginRow(sessionId: interjection.sessionId, interjectionId: interjection.id)
                         diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "complete"
                         withdrawRetryOffer(Self.transcriptionRetryKey(interjection))
-                        reportSuccess("Transcribed Margin.")
+                        // A Retry the listener tapped is answered on the banner that says it is running (#5418).
+                        if feedbackEvent?.answersRetryTap == true, feedbackEvent?.message == TranscriptionFailureWording.retranscribing {
+                            reportConfirmation(TranscriptionFailureWording.retranscribed, answersRetryTap: true)
+                        } else {
+                            reportSuccess(TranscriptionFailureWording.retranscribed)
+                        }
                     }
                     MarginEndPhraseSaving.finish(endPhraseCut, wordsSaved: wordsSaved)
                     retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
@@ -431,6 +445,10 @@ extension Gate1AppModel {
                 }
             } catch {
                 await MainActor.run {
+                    guard !LiveMarginMoving.wasTakenBack(interjection.id) else {
+                        retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
+                        return
+                    }
                     let failure = String(describing: error)
                     let diagnostic = SafeErrorText.describe(error)
                     let wasRetry = retryingInterjectionTranscriptionIds.contains(Self.marginIdentity(interjection))

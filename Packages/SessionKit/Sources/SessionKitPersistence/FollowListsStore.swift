@@ -80,6 +80,19 @@ public actor FollowListsStore {
         return try store.loadFollowLists()
     }
 
+    /// An edit worked out from the lists as stored now, in one step on this actor, so a list made meanwhile is seen (an
+    /// import's "Lists in this file" merges into it instead of duplicating it, #4046 PR 5). `change` gets the stored lists
+    /// and returns the lists to save (new or changed) and a value for the caller.
+    public func update<Value: Sendable>(
+        _ change: @Sendable ([FollowList]) -> (save: [FollowList], value: Value)
+    ) throws -> (lists: [FollowList], value: Value) {
+        let made = change(try store.loadFollowLists())
+        try store.withTransaction {
+            for list in made.save { try store.saveFollowList(list) }
+        }
+        return (try store.loadFollowLists(), made.value)
+    }
+
     /// Unfollow: the show leaves every list. Returns the lists it was in (for Undo) and the lists as they now are.
     public func removeFromAllLists(feedKey: String?, podcastGUID: String? = nil) throws -> (leftIDs: [String], lists: [FollowList]) {
         let left = try store.removeFromFollowLists(feedKey: feedKey, podcastGUID: podcastGUID)

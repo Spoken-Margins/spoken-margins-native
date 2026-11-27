@@ -391,7 +391,7 @@ public enum SpeechTextNormalizer {
     /// Real markup only. Speech normalizes a whole document at once, and a bare `<[^>]*>` ran from a table note's
     /// "p<0.05" to the next ">" pages later: one match took 107,043 characters, more than half of a paper's words (#3813).
     /// Comparisons keep their words: a tag's name follows the "<" directly, and anything after the name is attributes.
-    private static let markupTagPattern = #"(?s)<!--.*?-->|<![A-Za-z][^<>]*>|<\?[A-Za-z][^<>]*\?>|</?[A-Za-z][-A-Za-z0-9:_]*(?:\s+[-A-Za-z0-9_:.@]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)(?:\s+[-A-Za-z0-9_:.@]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*)?\s*/?>"#
+    private static let markupTagPattern = MarkupTag.pattern
 
     /// Math letters and private-use glyphs in any text (a PDF on the old reader, a pasted equation) are said as words:
     /// a voice has no tokens for them and makes noise instead. Everything else passes through untouched.

@@ -50,14 +50,16 @@ const recorder: RecorderPort = {
 const packets: PacketPort = {
   async readPacket(bytes, fileName) {
     const read = await readPacket(bytes, fileName === undefined ? {} : { fileName });
-    const { itemType: _itemType, ...episode } = read.episode;
+    const { itemType, ...episode } = read.episode;
     return {
       contentDigest: read.contentDigest,
+      ...(itemType && { itemType }),
       ...(read.sender && { sender: read.sender }),
       episode,
       margins: read.margins,
       textMarginCount: read.textMargins.length,
       percentMargins: read.percentMargins,
+      pageMargins: read.pageMargins,
     };
   },
   async writePacket(episode, margins, holder, sender) {

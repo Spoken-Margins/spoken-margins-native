@@ -128,6 +128,9 @@ public enum CommunityMapUploadPolicy {
         guard optedIn else { return .skip(.optedOut) }
         guard isPodcastEpisode(item) else { return .skip(.notPodcastEpisode) }
         guard linksArePublic(item) else { return .skip(.privateLink) }
+        // An episode whose feed blocks it from directories, or that came from a private feed, is not offered to the
+        // shared catalog either (#5340). Fetching a map for it is unchanged.
+        guard AutomaticSourceAccess.restriction(of: item) == nil else { return .skip(.privateLink) }
         guard feedIsVerified(item) else { return .skip(.unverifiedFeed) }
         guard let episodeKey = CommunityMapEpisodeKey.key(for: item) else { return .skip(.noEpisodeKey) }
         if let previous {

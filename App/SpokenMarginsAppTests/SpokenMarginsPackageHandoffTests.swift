@@ -214,6 +214,42 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         model.cancelSpokenMarginsPackageImport()
     }
 
+    /// Opening a link records whether its server keeps opened marks and the token a start tap would send, and sends
+    /// nothing itself: only the packet is fetched (#5275).
+    @MainActor
+    func testOpeningALinkRecordsTheOpenedOfferAndSendsNothing() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-share-link-opened")
+        let packageURL = root.appendingPathComponent("link.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-share-link-opened")
+        let key = ShareLinkSealing.Key.random()
+        let sealed = try ShareLinkSealing.seal(
+            packet: try Data(contentsOf: packageURL), preview: Data(#"{"schema":"spokenmargins.link-preview.v1"}"#.utf8), key: key
+        )
+        let requested = ShareLinkRequestLog()
+        let model = shareLinkModel(root: root) { _, _ in (200, Data()) }
+        model.shareLinkOpener.downloader = .offering { url, _ in
+            requested.record(url)
+            return (200, sealed.packet, true)
+        }
+        let suite = "opened-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        addTeardownBlock { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+        model.shareLinkOpener.signals = FriendLinkSignals(defaults: defaults)
+        let link = try XCTUnwrap(ShareLinkSealing.linkURL(
+            base: URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)")!, key: key
+        ))
+
+        model.handleIncomingURL(link)
+        try await waitForShareLink(model) { model.spokenMarginsPackageImportReview != nil }
+
+        let signal = try XCTUnwrap(FriendLinkSignals(defaults: defaults).signal(for: Self.shareLinkID, now: Date()))
+        XCTAssertTrue(signal.offered)
+        XCTAssertFalse(signal.sent, "nothing is sent until a start control")
+        XCTAssertEqual(signal.token, ShareLinkOpenedToken.make(key: key, id: Self.shareLinkID))
+        XCTAssertEqual(requested.urls.map(\.path), ["/l/\(Self.shareLinkID)/packet"], "only the packet is fetched")
+        model.cancelSpokenMarginsPackageImport()
+    }
+
     /// #3782: a share link pasted into Paste & go, the copied-link card or the Link or Podcast form opens as a tapped
     /// one does. It used to go to the article import and come back as a web page the app could not read.
     @MainActor

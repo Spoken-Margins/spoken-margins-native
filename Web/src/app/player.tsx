@@ -19,7 +19,8 @@ import { FINISHED_WITHIN_SECONDS } from './logic/library.ts';
 import { services } from './services.ts';
 import { PaidPostNoVoice } from '../sources/read.ts';
 import { ended, NOTHING_HEARD, replyForComposer, started, type ReplyMemory } from './logic/reply-memory.ts';
-import { primeSpeech, readWrittenMargin, tone, type Reading } from './speech.ts';
+import { primeSpeech, readWrittenMargin, speakLine, tone, type Reading } from './speech.ts';
+import { contextLine, contextText } from './logic/arrival-card.ts';
 import { useRelay, useUi } from './ui.tsx';
 
 export const SKIP_SECONDS = 15;
@@ -33,6 +34,8 @@ const DUCKED_VOLUME = 0.25;
 export interface Arrived {
   margin: Margin;
   blocked: boolean;
+  /** The browser's voice is reading the episode's words before this Margin, in a run without the episode (#5265). */
+  context?: boolean;
 }
 
 /** What `open` takes besides the episode's id. */
@@ -130,7 +133,7 @@ export interface PlayerApi {
 const PlayerContext = createContext<PlayerApi | null>(null);
 
 /** A tenth of a second of silence, as a WAV address: what `primeClip` plays from a tap to ready the clip element. */
-const SILENCE_WAV = (() => {
+export const SILENCE_WAV = (() => {
   const samples = 800;
   const bytes = new Uint8Array(44 + samples);
   const view = new DataView(bytes.buffer);
@@ -510,6 +513,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (list.length === 0) return;
     stopClip();
     const run = ++runId.current;
+    // The steps whose context line has been said, so a Margin is announced once.
+    const said = new Set<number>();
     setWithoutEpisode('playing');
     clearTimeout(shownTimer.current);
     const step = (index: number): void => {
@@ -521,6 +526,61 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         return;
       }
       const next = () => step(index + 1);
+      // Pause in a browser that can't hold speech (Chrome on Android) stops the voice instead (#5355). The run then waits
+      // here: Play says this Margin's line again, and Skip moves on, as with a held voice; nothing else starts.
+      const holdHere = (): Reading => {
+        let live = true;
+        const held: Reading = {
+          cancel() {
+            if (!live) return;
+            live = false;
+            if (run === runId.current) next();
+          },
+          pause() {},
+          resume() {
+            if (!live) return;
+            live = false;
+            if (reading.current === held) reading.current = undefined;
+            if (run === runId.current) step(index);
+          },
+        };
+        return held;
+      };
+      // The episode's words before it first, in the browser's voice, by the card's own rule (#5265): stored Margins carry
+      // the words before them, or the time. The pinned card already shows the coming Margin while it speaks.
+      const title = dataRef.current.episodes.find((e) => e.id === margin.episodeId)?.title ?? '';
+      const context = contextLine(
+        { margin, time: margin.atSeconds, ...(contextText(undefined, margin.leadIn) !== undefined && { context: contextText(undefined, margin.leadIn) }) },
+        { noun: 'episode', namedWords: true },
+        title,
+        margin.author,
+      );
+      if (context !== undefined && !said.has(index)) {
+        said.add(index);
+        setArrived({ margin, blocked: false, context: true });
+        const line = speakLine(context, {
+          onEnd: (ended) => {
+            if (run !== runId.current) return;
+            if (ended?.paused && reading.current === line) {
+              said.delete(index);
+              reading.current = holdHere();
+              setMarginPlaying(false);
+              return;
+            }
+            // Skip this Margin while its context is read clears the reading first: then the run moves past the Margin.
+            const skipped = reading.current !== line;
+            if (!skipped) reading.current = undefined;
+            setMarginPlaying(false);
+            step(skipped ? index + 1 : index);
+          },
+        });
+        if (line) {
+          reading.current = line;
+          // Pause holds the line, as it holds a reading (#4473).
+          setMarginPlaying(true);
+          return;
+        }
+      }
       if (margin.voice) {
         // The same clip path as a Margin that comes up in the episode: a refused clip waits for a tap, then carries on.
         playClip(margin, next);
@@ -529,8 +589,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         // Not read aloud (#3445): the words show for the usual time, then the run moves on, as with no voice.
         const heard = readsAloud(margin) ? readWrittenMargin(readingIntro(margin), margin.text ?? '', {
           onStart: () => markHeard(margin),
-          onEnd: () => {
+          onEnd: (ended) => {
             if (run !== runId.current) return;
+            if (ended?.paused && reading.current === heard) {
+              reading.current = holdHere();
+              setMarginPlaying(false);
+              return;
+            }
             if (reading.current === heard) reading.current = undefined;
             setMarginPlaying(false);
             next();
@@ -549,7 +614,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // One effect on `arrived` tells the memory every start and end, whichever path set or cleared it: a clip ending, a
   // written card's timer, the voice finishing, another Margin, a seek away or a new episode. A clip the browser blocked
   // has not started (`blocked`) until the listener plays it.
-  const sounding = arrived && !arrived.blocked ? arrived.margin : undefined;
+  // The context line read before a Margin (#5265) is the episode's words, not the Margin: the Margin hasn't started (#5355).
+  const sounding = arrived && !arrived.blocked && !arrived.context ? arrived.margin : undefined;
   const soundingId = sounding?.id;
   const soundingEpisode = sounding?.episodeId;
   useEffect(() => {

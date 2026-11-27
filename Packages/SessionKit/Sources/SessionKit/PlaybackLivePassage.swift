@@ -144,11 +144,17 @@ public enum PlaybackLivePassage {
         private var cachedRows: [Sentence]?
         private var rowBuilds = 0
 
-        fileprivate init(title: String?, bounds: Range<Int>, characters: [Character]) {
+        /// - Parameter sentenceStarts: where each sentence starts, when the source already knows its sentences (a spoken
+        ///   note's are its own, broken at pauses as well as stops, #4780). Nil splits the text at its stops as always.
+        fileprivate init(title: String?, bounds: Range<Int>, characters: [Character], sentenceStarts: [Int]? = nil) {
             self.title = title
             self.bounds = bounds
             self.characters = characters
-            ranges = sentenceRanges(in: characters, within: bounds)
+            if let sentenceStarts {
+                ranges = PlaybackLivePassage.ranges(fromStarts: sentenceStarts, within: bounds)
+            } else {
+                ranges = sentenceRanges(in: characters, within: bounds)
+            }
         }
 
         public func reader(at offset: Int) -> Reader {
@@ -241,6 +247,7 @@ public enum PlaybackLivePassage {
         }
         private let characters: [Character]
         private let chapters: [Chapter]
+        private let sentenceStarts: [Int]?
         private var cache: [ChapterKey: IndexedChapter] = [:]
         private var selection: Selection?
         public private(set) var chapter: IndexedChapter?
@@ -265,9 +272,13 @@ public enum PlaybackLivePassage {
             case scene
         }
 
-        public init(text: String, chapters: [Chapter] = []) {
+        /// - Parameter sentenceStarts: each sentence's first Character offset, in order, when the source knows its own
+        ///   sentences (a spoken note, #4780). Range `i` then runs from `starts[i]` to `starts[i+1]`, and the text is not
+        ///   split at its stops. Nil keeps the usual split.
+        public init(text: String, chapters: [Chapter] = [], sentenceStarts: [Int]? = nil) {
             characters = Array(text)
             self.chapters = chapters
+            self.sentenceStarts = sentenceStarts
         }
 
         /// Returns whether the displayed window changed. Whitespace belongs to the preceding sentence,
@@ -279,7 +290,7 @@ public enum PlaybackLivePassage {
             guard !characters.isEmpty else { return false }
             let span = PlaybackLivePassage.chapter(at: offset, in: chapters, textLength: characters.count)
             let key = ChapterKey(title: span?.title, bounds: span?.range ?? 0..<characters.count)
-            let parsed = cache[key] ?? IndexedChapter(title: key.title, bounds: key.bounds, characters: characters)
+            let parsed = cache[key] ?? IndexedChapter(title: key.title, bounds: key.bounds, characters: characters, sentenceStarts: sentenceStarts)
             cache[key] = parsed
             chapter = parsed
             let current = sentenceIndex(containing: offset, in: parsed.ranges)
@@ -300,7 +311,7 @@ public enum PlaybackLivePassage {
             guard !characters.isEmpty else { return .none }
             let span = PlaybackLivePassage.chapter(at: offset, in: chapters, textLength: characters.count)
             let key = ChapterKey(title: span?.title, bounds: span?.range ?? 0..<characters.count)
-            let parsed = cache[key] ?? IndexedChapter(title: key.title, bounds: key.bounds, characters: characters)
+            let parsed = cache[key] ?? IndexedChapter(title: key.title, bounds: key.bounds, characters: characters, sentenceStarts: sentenceStarts)
             cache[key] = parsed
             chapter = parsed
             let lit = parsed.currentSentence(at: offset)
@@ -419,6 +430,18 @@ public enum PlaybackLivePassage {
             ranges.append((position == 0 ? bounds.lowerBound : start)..<end)
         }
         return ranges
+    }
+
+    /// Ranges from known sentence starts: the starts inside `bounds`, in order and each once, every range running to the
+    /// next start and the last to the end. Space before the first start belongs to the first sentence, as in
+    /// `sentenceRanges`.
+    private static func ranges(fromStarts starts: [Int], within bounds: Range<Int>) -> [Range<Int>] {
+        let inside = Array(Set(starts.filter { bounds.contains($0) })).sorted()
+        guard !inside.isEmpty else { return [] }
+        return inside.enumerated().map { position, start in
+            let end = position + 1 < inside.count ? inside[position + 1] : bounds.upperBound
+            return (position == 0 ? bounds.lowerBound : start)..<end
+        }
     }
 
     /// A Margin at the very end of the text still belongs to the last chapter.

@@ -23,6 +23,12 @@
 //    row per episode the listener's Library holds or dropped, under the key `library:<episode id>` with the value
 //    `{ in, at }`. All are settings rows that default when missing, so an older copy ignores them (`readSettings` skips
 //    keys it doesn't know). Still shape 2: no record changed and no store was added.
+//    #4426: a show record may carry `unfollowedAt` (the listener unfollowed it; the record and its episodes stay), and
+//    one settings row per dismissed episode, under the key `dismissed:<episode id>` with the value `{ dismissed, at }`.
+//    An older copy ignores both. Still shape 2.
+//    #5419: one settings row per episode whose link carried a reply box, under the key `replyBox:<episode id>`, so
+//    "Send to <sender>" survives a reload. Its value is read by `readReplyBoxRow` (logic/reply-box.ts); here it passes
+//    through as it is. An older copy ignores it. Still shape 2.
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
 
 export const DB_VERSION = 1;
@@ -65,6 +71,16 @@ export interface Settings {
    * Cleared by Got it. Anything that is not an array of strings reads as empty.
    */
   libraryMovedOut: readonly string[];
+  /**
+   * Web Settings' "Tell friends when I open Margins they sent by link" (#5275). On by default; off means no opened mark
+   * ever leaves this browser and the arrival shows no notice. A backup never carries it.
+   */
+  openedReceipts: boolean;
+  /**
+   * The links this browser already told the server were opened (#5275): link id to the ISO date it was sent, so a link
+   * is signalled once. Entries older than 31 days are dropped. A backup never carries it.
+   */
+  openedSignalled: Readonly<Record<string, string>>;
 }
 
 export const DEFAULT_SETTINGS: Settings = Object.freeze({
@@ -78,6 +94,8 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
   marginAutoplay: 'unheard',
   libraryModel: '',
   libraryMovedOut: Object.freeze([]) as readonly string[],
+  openedReceipts: true,
+  openedSignalled: Object.freeze({}) as Readonly<Record<string, string>>,
 });
 
 /** The settings-store key prefix of a Library membership row (#4425): `library:<episode id>`. */
@@ -96,6 +114,24 @@ export interface Membership {
 /** Membership rows by episode id. Episodes with no row are not in the Library once it is migrated. */
 export type LibraryMembership = Readonly<Record<string, Membership>>;
 
+/** The settings-store key prefix of an episode's dismissal row (#4426): `dismissed:<episode id>`. */
+export const DISMISSED_PREFIX = 'dismissed:';
+
+/**
+ * Whether the listener dismissed an episode from its show's list (#4426). `dismissed: false` is a dismissal undone or
+ * brought back. `at` is when the row was written, as an ISO date.
+ */
+export interface DismissedRow {
+  dismissed: boolean;
+  at: string;
+}
+
+/** Dismissal rows by episode id. An episode with no row is not dismissed. */
+export type Dismissals = Readonly<Record<string, DismissedRow>>;
+
+/** The settings-store key prefix of an episode's kept reply box (#5419): `replyBox:<episode id>`. */
+export const REPLY_BOX_PREFIX = 'replyBox:';
+
 export interface Snapshot {
   shows: Show[];
   episodes: Episode[];
@@ -104,6 +140,10 @@ export interface Snapshot {
   settings: Settings;
   /** Library membership by episode id (#4425), read from the `library:` setting rows. */
   library: LibraryMembership;
+  /** Dismissals by episode id (#4426), read from the `dismissed:` setting rows. */
+  dismissed: Dismissals;
+  /** Kept reply boxes by episode id (#5419), the `replyBox:` rows' values as stored; reply-boxes.ts reads them. */
+  replyBoxes?: Readonly<Record<string, unknown>>;
 }
 
 export interface SettingRow {
@@ -145,6 +185,12 @@ export function readSettings(rows: readonly SettingRow[]): Settings {
     if (row.key === 'transcription' && !['', 'on', 'off'].includes(row.value as string)) continue;
     if (row.key === 'marginAutoplay' && !['unheard', 'all', 'none'].includes(row.value as string)) continue;
     if (row.key === 'libraryModel' && !['', 'added'].includes(row.value as string)) continue;
+    if (row.key === 'openedSignalled') {
+      const value = row.value as Record<string, unknown>;
+      if (value === null || Array.isArray(value) || !Object.values(value).every((at) => typeof at === 'string')) continue;
+      target[row.key] = Object.fromEntries(Object.entries(value));
+      continue;
+    }
     if (row.key === 'libraryMovedOut') {
       if (!Array.isArray(row.value) || !row.value.every((id) => typeof id === 'string')) continue;
       target[row.key] = [...(row.value as string[])];
@@ -176,6 +222,36 @@ export function readMembership(rows: readonly SettingRow[]): LibraryMembership {
 }
 
 /**
+ * Dismissals from the `dismissed:<episode id>` setting rows (#4426). A row whose value is not an object with a boolean
+ * `dismissed` and a string `at`, or whose key names no episode, is skipped. No prototype, as in `readMembership`.
+ */
+export function readDismissed(rows: readonly SettingRow[]): Dismissals {
+  const dismissed: Record<string, DismissedRow> = Object.create(null) as Record<string, DismissedRow>;
+  for (const row of rows) {
+    if (typeof row.key !== 'string' || !row.key.startsWith(DISMISSED_PREFIX)) continue;
+    const id = row.key.slice(DISMISSED_PREFIX.length);
+    if (!id) continue;
+    const value = row.value;
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) continue;
+    const { dismissed: isDismissed, at } = value as { dismissed?: unknown; at?: unknown };
+    if (typeof isDismissed !== 'boolean' || typeof at !== 'string') continue;
+    dismissed[id] = { dismissed: isDismissed, at };
+  }
+  return dismissed;
+}
+
+/** The `replyBox:<episode id>` rows' values by episode id (#5419), unread: `readReplyBoxRow` checks each. No prototype. */
+export function readReplyBoxRows(rows: readonly SettingRow[]): Readonly<Record<string, unknown>> {
+  const boxes: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  for (const row of rows) {
+    if (typeof row.key !== 'string' || !row.key.startsWith(REPLY_BOX_PREFIX)) continue;
+    const id = row.key.slice(REPLY_BOX_PREFIX.length);
+    if (id) boxes[id] = row.value;
+  }
+  return boxes;
+}
+
+/**
  * Reads stored rows of any shape into the current one. Records pass through as they are, unknown fields
  * included, so a write back keeps what a newer copy added. A store from a newer copy is read the same way and
  * its version row is left alone.
@@ -189,6 +265,8 @@ export function upgrade(rows: StoredRows): Upgraded {
     positions: rows.positions,
     settings: readSettings(rows.settings),
     library: readMembership(rows.settings),
+    dismissed: readDismissed(rows.settings),
+    replyBoxes: readReplyBoxRows(rows.settings),
   };
   // 1 to 2 changed no record, only added the version row (and settings that default when missing).
   const writes = from < SCHEMA_VERSION ? [{ key: SCHEMA_KEY, value: SCHEMA_VERSION }] : [];

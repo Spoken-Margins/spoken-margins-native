@@ -160,6 +160,13 @@ final class Build29DatabaseFixtureTests: XCTestCase {
         try store.saveShowLessMark(ShowLessMark(
             feedKey: "https://example.substack.com/feed", entryId: "entry-publisher-audio", title: "Post", markedAt: Date(timeIntervalSince1970: 1)
         ))
+        // #4675: a reply box is a record kind the shipped builds' readers never read, the same way.
+        try store.saveReplyBox(ReplyBoxRecord(
+            box: ReplyBox(key: ReplyBox.Key(bytes: Data(repeating: 7, count: 32))!), linkId: String(repeating: "d", count: 32),
+            itemId: v1.id, sharedPackageDigest: String(repeating: "b", count: 64), createdAt: Date(timeIntervalSince1970: 1),
+            expiresAt: Date(timeIntervalSince1970: 2_592_001), cursor: 1, answers: [.init(seq: 1, layerId: "layer-reply")]
+        ))
+        XCTAssertEqual(try store.loadReplyBoxes().count, 1)
         XCTAssertEqual(try store.loadPublisherAudio(itemId: v1.id)?.durationMs, 60_000)
         XCTAssertNil(try store.loadTranscriptTimeline(itemId: v1.id), "the map must not make the article transcript-backed")
         // #4046: a rule suggestion's "Not now", the same way.

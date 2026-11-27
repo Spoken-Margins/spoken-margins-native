@@ -18,6 +18,9 @@ const (
 	// PartClubHeader is a club's sealed header: its name and the creator's label, the first item in the
 	// box (internal/clubs, docs/design/club-mailbox.md section 2). A club's posts are PartPacket.
 	PartClubHeader byte = 3
+	// PartReply is a share link's reply part (#4675, docs/design/reply-mailbox.md): the reply box's id, post
+	// proof and sealing key, sealed with the link's key by the sender's phone and served at /l/<id>/reply.
+	PartReply byte = 4
 
 	sealedVersion  = 1
 	nonceBytes     = 12

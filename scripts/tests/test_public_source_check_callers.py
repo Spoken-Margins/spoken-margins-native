@@ -3,7 +3,7 @@ listener's action, never in the background").
 
 `PublicSourceChecks.ensureMark`, `startPublicSourceCheck` and `PublicSourceMarker.ensureMark` make an anonymous request to
 a publisher's page. The scan names every function allowed to call them: the add confirmation, the Prepare Listening Map tap,
-the share tap, the share review, and the export build. A call from anywhere else, above all a background import, a feed
+the share tap, the Share sheet's open, the share review, and the export build. A call from anywhere else, above all a background import, a feed
 refresh or a prewarm, fails here. The live transport and the verifier are built in one place only.
 """
 import re
@@ -21,6 +21,7 @@ ALLOWED_CALLS = {
     (APP + "ExperienceItemDetailScreen.swift", ".button"),  # the Prepare Listening Map button's own action
     (APP + "Gate1AppModel+ShareExport.swift", "exportSharedInterjections"),  # the share tap
     (APP + "PublicSourceChecks.swift", "refreshWithheldMapNote"),  # the share review the listener opened
+    (APP + "Build23SharingSeams.swift", "startWithheldMapNote"),  # the Share sheet the listener opened
     (APP + "PublicSourceChecks.swift", "startPublicSourceCheck"),  # the helper the two taps above call
     (APP + "PublicSourceChecks.swift", "ensureMark"),  # the app's one entry point
     (KIT + "SessionEngine.swift", "buildExportReadingOffMain"),  # the export build, with the Listening Map on

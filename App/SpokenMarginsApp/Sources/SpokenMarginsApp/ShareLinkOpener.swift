@@ -7,6 +7,8 @@ import SessionKit
 final class ShareLinkOpener {
     /// Tests swap in a stub transport.
     var downloader: ShareLinkPacketDownloader
+    /// Where the friend's side of opened marks is kept (#5275). Tests swap in their own defaults.
+    var signals = FriendLinkSignals()
     private var task: Task<Void, Never>?
 
     init(downloader: ShareLinkPacketDownloader = .live) {
@@ -29,14 +31,19 @@ final class ShareLinkOpener {
     ) {
         task?.cancel()
         let downloader = downloader
+        let signals = signals
         task = Task { @MainActor in
             let directory = FileManager.default.temporaryDirectory
                 .appendingPathComponent("ShareLink-\(UUID().uuidString)", isDirectory: true)
             defer { try? FileManager.default.removeItem(at: directory) }
             do {
-                let file = try await downloader.download(link, into: directory)
+                let download = try await downloader.downloadOffering(link, into: directory)
                 try Task.checkCancellation()
-                await stage(file)
+                // Whether this link's server keeps opened marks, and the token a start tap would send; nothing is sent here.
+                if let token = ShareLinkOpenedToken.make(for: link) {
+                    signals.recordArrival(id: link.id, token: token, offered: download.offersOpened, now: Date())
+                }
+                await stage(download.file)
             } catch is CancellationError {
                 return
             } catch let failure as ShareLinkPacketDownloader.Failure {

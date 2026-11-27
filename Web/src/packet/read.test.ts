@@ -207,6 +207,41 @@ test('a Margin on an article’s words with no rough place stays a text Margin o
   assert.equal(result.percentMargins.length, 0);
 });
 
+// #5265: the card a browser shows when it can't play a text's Margins lists every one of them, with its voice, its
+// words and the quote it sits on, whether or not it carries a rough place. `percentMargins` doesn't move.
+test('every Margin on the words is a page Margin, with its voice, words and quote; percent Margins are unchanged (#5265)', async () => {
+  const bytes = await writeVoice().then((w) => w.bytes);
+  const edited = await withLayer(bytes, (records) => {
+    records.forEach((record, i) => {
+      record.anchor = i === 0
+        ? { anchorType: 'text', exactText: 'the quoted sentence', prefix: 'Words before.', roughPercent: 40, machineEvidenceAssetIds: [] }
+        : { anchorType: 'text', prefix: 'Only the words before.', machineEvidenceAssetIds: [] };
+    });
+  });
+  const result = await readPacket(edited);
+  assert.ok(result.textMargins.length >= 2, 'the fixture has at least two Margins');
+  assert.equal(result.pageMargins.length, result.textMargins.length, 'every text Margin is listed');
+  const [first, second] = result.pageMargins;
+  assert.equal(first.percent, 40);
+  assert.equal(first.quote, 'the quoted sentence');
+  assert.equal(first.margin.leadIn, 'Words before.');
+  assert.equal(second.percent, undefined, 'one with no rough place is listed too');
+  assert.equal(second.quote, undefined);
+  assert.equal(second.margin.leadIn, 'Only the words before.');
+  assert.equal(second.margin.atSeconds, 0);
+  assert.equal(second.margin.text, result.textMargins[1].text);
+  assert.ok(result.pageMargins.some((p) => p.margin.voice && p.margin.voice.durationSeconds > 0), 'the voice clip is kept');
+  // Only the one with a place is placed by percent, exactly as before.
+  assert.deepEqual(result.percentMargins.map((p) => p.percent), [40]);
+  assert.equal(result.percentMargins[0].margin, first.margin);
+});
+
+test('a timed Margin is never a page Margin (#5265)', async () => {
+  const timed = await readPacket(podcast());
+  assert.equal(timed.pageMargins.length, 0);
+  assert.ok(timed.margins.length > 0);
+});
+
 test('a timed Margin is never a percent Margin, and a text anchor’s own percent beats the item length (#4421)', async () => {
   const timed = await readPacket(podcast());
   assert.equal(timed.percentMargins.length, 0);

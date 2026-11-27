@@ -12,6 +12,7 @@
 //	smserver show-reported-link -state DIR ID   print the reported links of a held link, never its content
 //	smserver release-hold -state DIR -reason TEXT ID   end a hold early and delete the held copy
 //	smserver make-test-ca DIR            a fake Apple CA for local testing
+//	smserver replies count -state DIR    how many reply boxes there are and how many have an answer, naming none
 //
 // Admin is CLI-only, on the box: there is no remote admin endpoint to attack.
 package main
@@ -91,6 +92,8 @@ func main() {
 		err = listReports(args, os.Stdout, time.Now())
 	case "club":
 		err = clubCommand(args, os.Stdout, time.Now())
+	case "replies":
+		err = repliesCommand(args, os.Stdout, time.Now())
 	default:
 		usage()
 	}
@@ -101,7 +104,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown|takedown-map|hold|show-reported-link|release-hold|reports|club [flags]")
+	fmt.Fprintln(os.Stderr, "usage: smserver serve|block|unblock|switch|purge|validate-manifest|publish-manifest|make-test-ca|takedown|takedown-map|hold|show-reported-link|release-hold|reports|club|replies [flags]")
 	os.Exit(2)
 }
 
@@ -137,7 +140,7 @@ func serve(args []string) error {
 	installURL := fs.String("links-install-url", "", "join guide path such as /join/, App Store listing or TestFlight invitation (required for links)")
 	relayOrigins := fs.String("relay-origins", "", "comma-separated web app origins that may use the feed relay (required for relay)")
 	linkOrigins := fs.String("link-origins", "", "comma-separated web app origins that may read sealed link packets and previews (CORS); empty sends no CORS headers")
-	requirePermit := fs.Bool("links-require-permit", false, "refuse a link upload that carries no sender permit (#2239). Do not turn on yet: builds before the permit, phones without App Attest, and any phone whose sender check fails send none, and the app reads the refusal as \"busy\"; see #4134")
+	requirePermit := fs.Bool("links-require-permit", false, "refuse a link upload that carries no sender permit (#2239). Do not turn on yet: builds before the permit, phones without App Attest, and any phone whose sender check fails send none. Order (#4134, README \"Turning on link permits\"): ship the build with refuse mode and the App Attest entitlement, then 'switch -minimum-build N links on', and only then this flag; undo in reverse")
 	dcKey := fs.String("devicecheck-key", "", "path to the DeviceCheck .p8 key (#1728); with -devicecheck-key-id, a reinstall keeps a sender's strikes")
 	dcKeyID := fs.String("devicecheck-key-id", "", "key id of the DeviceCheck key")
 	dcDev := fs.Bool("devicecheck-development", false, "use Apple's development DeviceCheck servers (debug builds)")

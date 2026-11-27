@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link href="https://feeds.simplecast.com/byk9wCEi" rel="self" title="MP3 Audio" type="application/atom+xml"/>
+    <atom:link href="https://simplecast.superfeedr.com" rel="hub" xmlns="http://www.w3.org/2005/Atom"/>
+    <generator>https://simplecast.com</generator>
+    <title>Welcome to Night Vale</title>
+    <description>Twice-monthly community updates for the small desert town of Night Vale, where every conspiracy theory is true. Turn on your radio and hide. Never listened before? It&apos;s an ongoing radio show. Start with the current episode, and you&apos;ll catch on in no time. Or, go right to Episode 1 if you wanna binge-listen.</description>
+    <copyright>2026, Night Vale Presents</copyright>
+    <language>en</language>
+    <pubDate>Sun, 15 Nov 2026 05:00:00 +0000</pubDate>
+    <lastBuildDate>Sun, 15 Nov 2026 15:18:21 +0000</lastBuildDate>
+    <image>
+      <link>https://welcome-to-night-vale-944040dd.simplecast.com</link>
+      <title>Welcome to Night Vale</title>
+      <url>https://image.simplecastcdn.com/images/2a5b2793-8836-4839-a6db-63f4ba9ac5e7/b14cb5c4-2dc8-4ab4-82e9-ad6569d1c11b/3000x3000/d6f0573de211e3ccc3403f81c80687d3.jpg?aid=rss_feed</url>
+    </image>
+    <link>https://welcome-to-night-vale-944040dd.simplecast.com</link>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>Twice-monthly community updates for the small desert town of Night Vale, where every conspiracy theory is true. Turn on your radio and hide. Never listened before? It&apos;s an ongoing radio show. Start with the current episode, and you&apos;ll catch on in no time. Or, go right to Episode 1 if you wanna binge-listen.</itunes:summary>
+    <itunes:author>Night Vale Presents</itunes:author>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://image.simplecastcdn.com/images/2a5b2793-8836-4839-a6db-63f4ba9ac5e7/b14cb5c4-2dc8-4ab4-82e9-ad6569d1c11b/3000x3000/d6f0573de211e3ccc3403f81c80687d3.jpg?aid=rss_feed"/>
+    <itunes:new-feed-url>https://feeds.simplecast.com/byk9wCEi</itunes:new-feed-url>
+    <itunes:owner>
+      <itunes:name>Welcome to Night Vale</itunes:name>
+      <itunes:email>info@welcometonightvale.com</itunes:email>
+    </itunes:owner>
+    <itunes:category text="Fiction">
+      <itunes:category text="Science Fiction"/>
+    </itunes:category>
+    

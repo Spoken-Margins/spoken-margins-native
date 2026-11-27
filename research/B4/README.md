@@ -49,6 +49,10 @@ Map uploads can require one of those tokens (#743, DESIGN.md §10): `smserver sw
 
 `/api/v1/clubs/*` is the club mailbox: a box of sealed packets that members of a club read and add to, with the club's key only in the invite link (`docs/design/club-mailbox.md`, section 5 has the wire format). Nothing is stored but the club id, two hashes of proofs, the sealed header and the sealed posts, in `<state>/clubs/`, with every file time at midnight UTC. It is off until `smserver switch -public DIR clubs on`, and answers 503 `disabled` until then. The request log names every club path as one route, `/api/v1/clubs/*` (and `/c/*` for the invitation page, `GET /c/<id>`: one shell for every well-formed id, never a lookup, no key), and Caddy's error log reduces those paths to the same names (`deploy/caddy-global.caddy`), so deploy that before switching clubs on. The daily sweep ends clubs with no post in their first 7 days or no use in 90, and a disabled club 30 days after it was disabled. `POST /api/v1/clubs/<id>/report` (and `.../report/reason`) reports a club or one post: a post-level report carries the read proof and disables that post (its bytes move to `disabled/<n>`, its place stays as an empty file so numbers keep no gaps); a whole-club report needs only the id and disables the club; an abuse-material report holds the club's ciphertext and the reported invite link for a year in `<state>/clubs-held/` and ends the club (`smserver club ...`, `docs/legal/cybertipline-runbook.md`, "Clubs").
 
+## Reply boxes (#4675)
+
+A share link made by the phone can bring a reply box with it: a club of two that a friend's browser posts sealed answers into and only the sender's phone reads (`docs/design/reply-mailbox.md`; store in `internal/clubs/reply.go`, routes in `internal/api/reply_box.go`). The upload carries the box in four headers (`X-SM-Reply-Id`, `-Read-Hash`, `-Post-Hash`, `-Part`); with all four well formed and the `replies` switch on, the server makes the box after the link stands and is bound to its sender, stores the sealed reply part as `reply` in the link's folder (served at `GET /l/<id>/reply` under the link's CORS, deleted with the link), and answers `"replyBox": true`. Anything else makes the link as before. For a box of kind reply every club route (post, list, fetch, report, report reason, and `POST /api/v1/clubs/<id>/close` with the read proof) answers to `replies` instead of `clubs`, so reply boxes work with clubs off and `POST /api/v1/clubs` stays closed. The post route of a reply box, and only it, answers CORS to the `-link-origins` origins, before every check, and refuses posts with `410` once the link has ended, been reported, held or taken down. Caps: 20 answers, 50 MB, 10 MB an answer, inside the clubs' 5 GB. The daily sweep ends a box seven days after its link. It is off until `smserver switch -public DIR replies on`; switching it off stops new boxes, hides every reply part (404) and answers `503 disabled` on the box routes. `smserver replies count -state DIR` prints how many boxes there are and how many have an answer, naming none.
+
 ## Feed relay (#2985)
 
 `GET /api/v1/relay?url=<http(s) URL>` fetches one feed or page for the web app when the publisher sends no CORS header, and keeps nothing: no URL in any log (the request log names the route only), no cache, and no cookies or listener headers in either direction. It answers the upstream body with its content type, or `{"error": code}`. It needs both `serve -relay-origins https://<web app origin>[,…]` (the origins that get `Access-Control-Allow-Origin`; a request with any other `Origin`, or none, is refused before the hourly limit counts it, so a cross-site `<img>` can't drive the relay, and the web app must be served from a listed origin other than this host) and `smserver switch ... relay on`; with either missing it answers 503 `disabled`. Limits, all in `internal/relay`: ports 80 and 443, public addresses only after resolution (the checked address is the one dialed, and every redirect is re-checked, at most 5), 10 s, 5 MB, feed and HTML types only, 4 fetches in flight, and 120 per client per hour. Caddy already proxies `/api/*`. Its error log (a 502 while smserver is down) drops every query string, so the fetched URL never reaches journald; that filter is in `deploy/caddy-global.caddy`, so deploy it before switching the relay on.
@@ -99,8 +103,33 @@ week, a month, then permanent) has someone to pause. The flow:
    today's behaviour and the default, so the app that exists keeps working. With
    `serve -links-require-permit` an upload with none is 403 `permit_required`. The
    app sends permits since #4130, but don't turn it on yet: older builds, phones
-   without App Attest and any phone whose sender check fails send none, and the app
-   shows that refusal as "busy". #4134 lists what has to land first.
+   without App Attest and any phone whose sender check fails send none. Follow
+   "Turning on link permits" below.
+
+#### Turning on link permits (#4134)
+
+Builds 35 to 37 send no permit, and the app before #4134 shows `permit_required` as
+"busy" (35) or the generic failure (36). Since #4134 the app shows it as "Links can't
+be made from this iPhone right now", with no retry, and a build below the `links`
+service's `minimumBuild` hides "Share link" and says to update. Builds 35 and 36
+already read `minimumBuild` and hide the button below it (Build 37 has no tag in the
+repository; this plan assumes it matches 36). So the order is:
+
+1. Ship build N: the first build with #4134, refuse mode on and the App Attest
+   entitlement (#1593). Refuse mode is the app target's Info.plist key
+   `SMShareLinkRefuseUnchecked: $(SM_SHARE_LINK_REFUSE_UNCHECKED)` in `project.yml`,
+   with the build setting `YES` in the Release configuration only, so Debug and
+   Simulator builds keep making links (the Simulator can't attest). Neither is in
+   `project.yml` today, which is off.
+2. `smserver switch -public DIR -minimum-build N links on`. Older builds lose
+   "Share link" and keep "Send as a file".
+3. Only then restart `serve` with `-links-require-permit`.
+4. To undo, reverse the order: drop `-links-require-permit` first, then lower or
+   remove the minimum build (`-minimum-build 0`).
+
+When steps 2 and 3 happen is the owner's call. His answer of 2026-11-21 (option B,
+`docs/decisions.md`): keep permits off until he has looked at which builds his testers
+are on and says the old ones are gone.
 
 DeviceCheck (#1728) keeps the ladder step across a reinstall. Off by default; start
 `serve -devicecheck-key AuthKey_XXXX.p8 -devicecheck-key-id XXXX` (the team id is read

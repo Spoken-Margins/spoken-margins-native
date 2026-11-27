@@ -12,7 +12,7 @@ The owner reads only the Claude project chats, never GitHub, and every ask costs
 Answer each in order. Any "yes" means don't ask.
 
 1. **Is it reversible or technical?** Refactors, tests, lanes, scheduling, labels, internal structure, dead code: post a **Default taken** on the issue (options, pick, why) and keep going. He vetoes by number.
-2. **Is it housekeeping?** Superseded PRs, merged-fix issues, labels, re-arming, stale claims, worktrees and caches that `ops/disk` calls safe, Test Desk and Mac worker starts. Do it.
+2. **Is it housekeeping?** Superseded PRs, merged-fix issues, labels, re-arming after a push (never without one: [lane-request skill](../lane-request/SKILL.md), "Re-arm only after a push"), stale claims, worktrees and caches that `ops/disk` calls safe, Test Desk and Mac worker starts. Do it.
 3. **Did he already answer?** Search `docs/decisions.md`, the issue, and project memory. If an earlier answer covers it, act on it and quote it.
 4. **Can a script, a thread or the coordinator do it?** Then they do it. Another session's work goes through the coordinator (threads use their message-the-coordinator tool), never through him. Never ask him to relay a message, paste text into another session, or check on another thread.
 5. **Was it asked before with no new facts?** Don't ask again. If a blocker repeats, file one issue for its lasting fix and stop repeating the ask.
@@ -40,3 +40,5 @@ Repeat the ask as an issue comment for the record. "Needs your decision, see #N"
 ## 3. After he answers
 
 An answer that will recur goes into `docs/decisions.md` the same day, quoting him with the date, in a docs-only PR. A tap on a question is his answer: quote the question and his pick.
+
+Then end the card and clear the label in one step: `python3 scripts/owner_card_guard.py --answered N --how "<where his answer is: the decisions.md date, the chat, the merged PR>"`. It posts the `<!-- owner-answered -->` marker and then takes `needs-owner` off. This is the only way to clear `needs-owner` (#5269): taking the label off by hand, or writing "answered" in prose, leaves the card live, and `scripts/owner_card_guard.py` puts the label back within the hour. A `**Step for Cole**` whose whole ask was tapping one PR ends by itself when that PR merges.

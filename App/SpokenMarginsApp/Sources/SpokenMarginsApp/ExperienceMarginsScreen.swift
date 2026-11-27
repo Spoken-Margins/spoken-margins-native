@@ -28,6 +28,11 @@ struct ExperienceMarginsScreen: View, Equatable {
     /// Saved live-session photos, keyed by saved Margin id (#4180). Observed directly, not through the feed's `Inputs`:
     /// it publishes about once per launch plus once per save or purge, and redraws this view through `.equatable()`.
     @ObservedObject private var photoIndex = SavedMarginPhotoIndex.shared
+    /// The links this install sent, for "Link sent today · Opened" under an item's heading (#5275). Observed directly,
+    /// like the photo index: it publishes when the file is read, a link is sent or a check answers.
+    @ObservedObject private var sentLinks = SentLinkStatus.shared
+    /// Settings' "Show when links are opened": off asks the server nothing and never shows "Opened".
+    @AppStorage(ShareLinkOpenedPolicy.defaultsKey) private var showsOpenedReceipts = true
 
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
@@ -196,6 +201,8 @@ struct ExperienceMarginsScreen: View, Equatable {
                 await model.refreshMarginRowsAsync() // off the main thread (#2505)
                 rowsLoaded = true
             }
+            // One screen-level check each time the tab appears, never per heading, never in the background (#5275).
+            .task { await sentLinks.runChecks() }
             .refreshable { await model.refreshMarginRowsAsync() }
             .scrollDismissesKeyboard(.interactively)
             .searchKeyboardDoneBar() // #4636
@@ -344,6 +351,9 @@ struct ExperienceMarginsScreen: View, Equatable {
     private func groupHeading(_ group: MarginGroup, offer: ReplyBackOffer?) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             groupHeadingRow(group)
+            if let line = sentLinks.line(forItem: group.itemID, receiptsOn: showsOpenedReceipts) {
+                SentLinkLineView(line: line, itemID: group.itemID)
+            }
             sendRepliesButton(group, offer: offer)
         }
     }
@@ -621,7 +631,12 @@ struct ExperienceMarginsScreen: View, Equatable {
     @ViewBuilder
     private func ownMarginActions(_ row: MarginRow, repair: MarginRowRepair) -> some View {
         if MarginPlacePresentation.offersGoToMoment(row.interjection) {
-            Button("Play this moment", systemImage: "play.fill") { MarginMomentTap.start(row, model: model) }
+            // Your own written Margin moves the source to its place and plays on, with nothing read aloud: it is not Play (#4938).
+            if SilentMarginWords.ownWrittenGoesTo(row.interjection) {
+                Button(SilentMarginWords.goToTitle, systemImage: "arrow.turn.down.right") { MarginMomentTap.start(row, model: model) }
+            } else {
+                Button("Play this moment", systemImage: "play.fill") { MarginMomentTap.start(row, model: model) }
+            }
         }
         // Also for VoiceOver and the long-press menu (#3856).
         if repair != .none {
@@ -726,7 +741,7 @@ struct ExperienceMarginsScreen: View, Equatable {
         let visibleIDs = Set(visible.map(\.interjection.id))
         let visibleByID = Dictionary(visible.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let sharedByID = Dictionary(model.sharedMarginRows.map { ($0.interjection.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let ownByID = Dictionary(model.marginRows.map { ($0.interjection.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let ownByID = Dictionary(model.marginRows.map { ($0.interjection.sessionScopedId, $0) }, uniquingKeysWith: { first, _ in first })
         // A layer with an item id has its item: `MarginCollection.build` drops the layers of deleted items.
         let libraryIDs = Set(visible.compactMap(\.layer.itemId))
         let groups = SharedMarginGroups.groups(
@@ -1175,5 +1190,32 @@ struct MarginsScopeRow: View, Equatable {
         .accessibilityLabel("Scope")
         .accessibilityValue(title)
         .accessibilityIdentifier("margins.scope.picker")
+    }
+}
+
+/// "Link sent today", or "Link sent today · Opened" with an open envelope, under an item's heading (#5275, Screen A).
+/// Static text: the words carry the meaning, and the icon and the accent colour only back them up.
+private struct SentLinkLineView: View {
+    let line: SentLinkLine
+    let itemID: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if line.showsOpenedIcon, let split = line.text.range(of: " · ") {
+                Text(line.text[..<split.lowerBound])
+                Text("·")
+                Image(systemName: "envelope.open")
+                    .foregroundStyle(AppColors.accent)
+                    .accessibilityHidden(true)
+                Text(line.text[split.upperBound...])
+            } else {
+                Text(line.text)
+            }
+        }
+        .font(.footnote)
+        .foregroundStyle(AppColors.secondaryText)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(line.accessibilityLabel)
+        .accessibilityIdentifier("margins.sentLink.\(itemID)")
     }
 }

@@ -21,17 +21,17 @@ struct AppAttestDeviceProvider: AppAttestKeyProvider {
     }
 
     func generateKey() async throws -> String {
-        guard ServerSendConsent.hasConsented(to: .shareLinks) else { throw AppAttestFailure.needsConsent }
+        guard ServerSendConsent.hasConsented(to: .shareLinks, repliesOffered: LinkReplies.offered) else { throw AppAttestFailure.needsConsent }
         return try await DCAppAttestService.shared.generateKey()
     }
 
     func attestKey(_ keyID: String, clientDataHash: Data) async throws -> Data {
-        guard ServerSendConsent.hasConsented(to: .shareLinks) else { throw AppAttestFailure.needsConsent }
+        guard ServerSendConsent.hasConsented(to: .shareLinks, repliesOffered: LinkReplies.offered) else { throw AppAttestFailure.needsConsent }
         return try await DCAppAttestService.shared.attestKey(keyID, clientDataHash: clientDataHash)
     }
 
     func generateAssertion(_ keyID: String, clientDataHash: Data) async throws -> Data {
-        guard ServerSendConsent.hasConsented(to: .shareLinks) else { throw AppAttestFailure.needsConsent }
+        guard ServerSendConsent.hasConsented(to: .shareLinks, repliesOffered: LinkReplies.offered) else { throw AppAttestFailure.needsConsent }
         do {
             return try await DCAppAttestService.shared.generateAssertion(keyID, clientDataHash: clientDataHash)
         } catch {

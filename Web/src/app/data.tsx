@@ -8,23 +8,45 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { formatClock } from '../shared/clock.ts';
 import type { Episode, Margin, PlaybackPosition, Show } from '../shared/model.ts';
-import { browserStorage, forgetMirrored, mergeMirror, pruneMirror, readMirror } from './logic/position-mirror.ts';
+import { browserStorage, mergeMirror, pruneMirror, readMirror } from './logic/position-mirror.ts';
+import { broughtBackRow, dismissedRow, findStoredShow, followedAgainRecord, refollowWrites, refreshable, restoredDismissal, unfollowedRecord } from './logic/follow-state.ts';
 import { addedRow, inLibrary, isMigrated, membershipRow, prepareLibrary, removedRow, restoredRow, stillMovedOut } from './logic/library-membership.ts';
 import { mergeRefresh } from './logic/refresh.ts';
 import { keepingSharedAs, withSharedAs, type WrittenFacts } from './logic/shared-as.ts';
+import { keepingSentThrough, withSentThrough } from './logic/reply-send.ts';
 import { keepingHeard, keepingStar, withStar } from './logic/star.ts';
 import { FailureGate, NotSavedError, notSavedMessage, shouldAskToPersist, type PersistState, type WriteKind } from './logic/storage.ts';
 import type { FeedRead } from './ports.ts';
-import { DEFAULT_SETTINGS, loadAll, putMany, putMargin, putSetting, putShowWithEpisodes, remove, removeShow, type Settings, type Snapshot } from './store/db.ts';
-import type { Membership } from './store/schema.ts';
+import { restoreReplyBoxes } from './reply-boxes.ts';
+import { DEFAULT_SETTINGS, loadAll, putMany, putMargin, putSetting, putShowWithEpisodes, remove, type Settings, type Snapshot } from './store/db.ts';
+import { DISMISSED_PREFIX, type DismissedRow, type Membership } from './store/schema.ts';
 import { useUi } from './ui.tsx';
 
 export interface DataApi extends Snapshot {
   ready: boolean;
   /** Whether the browser has agreed to keep this site's storage when space runs low. */
   persist: PersistState;
+  /**
+   * Follows a show from a fresh read. A show stored before (followed or unfollowed, matched by id or by its feed
+   * address, #4426) is merged with the read instead, so its episodes keep their ids, places, Margins and dismissals.
+   */
   follow(show: Show, episodes: Episode[]): Promise<void>;
-  unfollow(showId: string): Promise<void>;
+  /**
+   * Unfollows a show (#4426): marks its record `unfollowedAt` and deletes nothing. Throws a `NotSavedError` when the
+   * write fails, and the show stays followed.
+   */
+  unfollowShow(showId: string): Promise<void>;
+  /** Undo for `unfollowShow`: writes the record without the mark. Throws a `NotSavedError` when it isn't kept. */
+  undoUnfollow(showId: string): Promise<void>;
+  /**
+   * Dismisses an episode from its show's list (#4426): writes its `dismissed:` row. Returns the row it replaced, for
+   * `undoDismiss`. Throws a `NotSavedError` when the write fails, and the episode stays listed.
+   */
+  dismissEpisode(episodeId: string): Promise<DismissedRow | undefined>;
+  /** Undo for `dismissEpisode`: writes `previous` back, or "not dismissed" when there was none. Throws when not kept. */
+  undoDismiss(episodeId: string, previous: DismissedRow | undefined): Promise<void>;
+  /** Dismissed episodes' Bring back: writes "not dismissed". Throws a `NotSavedError` when it isn't kept. */
+  bringBack(episodeId: string): Promise<void>;
   /**
    * Merges a fresh read of a followed show's feed into what is stored (logic/refresh.ts) and returns how many
    * episodes are new. A show unfollowed while its feed was being read is left unfollowed (0).
@@ -38,6 +60,11 @@ export interface DataApi extends Snapshot {
    * stays deleted. Throws a `NotSavedError` when a write isn't kept.
    */
   addSharedAs(written: WrittenFacts): Promise<void>;
+  /**
+   * Marks the Margins that just went back through a link's reply box with `sentThrough: linkId` (#4675). Built from the
+   * Margins as stored now, like `addSharedAs`. Throws a `NotSavedError` when a write isn't kept.
+   */
+  markSentThrough(marginIds: readonly string[], linkId: string): Promise<void>;
   /** Stars or unstars the listener's own Margin for sharing (#4172). Throws a `NotSavedError` when it isn't kept. */
   setStarred(marginId: string, on: boolean): Promise<void>;
   /** Marks a friend's Margin heard: the listener listened to some of it (part of #3216). Once heard, it stays heard. */
@@ -71,7 +98,7 @@ export interface DataApi extends Snapshot {
   dismissLibraryNotice(): Promise<void>;
 }
 
-const empty: Snapshot = { shows: [], episodes: [], margins: [], positions: [], settings: DEFAULT_SETTINGS, library: {} };
+const empty: Snapshot = { shows: [], episodes: [], margins: [], positions: [], settings: DEFAULT_SETTINGS, library: {}, dismissed: {} };
 const DataContext = createContext<DataApi | null>(null);
 
 function upsert<T>(list: T[], items: readonly T[], key: (t: T) => string): T[] {
@@ -129,6 +156,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
           }
           loaded = { ...merged, library: prepared.library };
         }
+        // A link's reply box kept from an earlier visit (#5419), in place before the first screen draws.
+        restoreReplyBoxes(snapshot.replyBoxes);
         setData(loaded);
         if (written.length > 0) void putMany('positions', written).then(() => pruneMirror(storage, positions), () => undefined);
         else pruneMirror(storage, positions);
@@ -187,35 +216,89 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const follow = useCallback(
     async (show: Show, episodes: Episode[]) => {
+      // A show stored before is picked up rather than written over (#4426): a re-follow after an unfollow, the same feed
+      // under another address, or a show an earlier build unfollowed that kept an episode with Margins.
+      const current = dataRef.current;
+      const record = findStoredShow(current.shows, show);
+      const storedId = record?.id ?? show.id;
+      const storedEpisodes = current.episodes.filter((e) => e.showId === storedId);
+      const writes =
+        record || storedEpisodes.length > 0
+          ? refollowWrites(record ?? show, storedEpisodes, { show, episodes }, new Date().toISOString())
+          : { show, episodes };
       const failed = await run('follow', `Following ${show.title} wasn’t saved.`, async () => {
-        await putMany('shows', [show]);
-        await putMany('episodes', episodes);
+        await putMany('shows', [writes.show]);
+        await putMany('episodes', writes.episodes);
       });
       if (failed) throw failed;
-      setData((d) => ({ ...d, shows: upsert(d.shows, [show], (s) => s.id), episodes: upsert(d.episodes, episodes, (e) => e.id) }));
+      const next = (d: Snapshot): Snapshot => ({ ...d, shows: upsert(d.shows, [writes.show], (s) => s.id), episodes: upsert(d.episodes, writes.episodes, (e) => e.id) });
+      setData(next);
+      dataRef.current = next(dataRef.current);
     },
     [run],
   );
 
-  const unfollow = useCallback(
-    async (showId: string) => {
-      // Episodes that carry Margins stay, so the Margins tab can still name them.
-      const current = dataRef.current;
-      const title = current.shows.find((s) => s.id === showId)?.title ?? 'that show';
-      const withMargins = new Set(current.margins.map((m) => m.episodeId));
-      const doomed = current.episodes.filter((e) => e.showId === showId && !withMargins.has(e.id)).map((e) => e.id);
-      const failed = await run('unfollow', `Unfollowing ${title} wasn’t saved.`, () => removeShow(showId, doomed));
+  /** Writes one show record and updates the mirror at once, so the screen can move on in the same tick. */
+  const writeShow = useCallback(
+    async (kind: WriteKind, lead: string, record: Show) => {
+      const failed = await run(kind, lead, () => putMany('shows', [record]));
       if (failed) throw failed;
-      const gone = new Set(doomed);
-      forgetMirrored(browserStorage(), gone);
-      setData((d) => ({
-        ...d,
-        shows: d.shows.filter((s) => s.id !== showId),
-        episodes: d.episodes.filter((e) => !gone.has(e.id)),
-        positions: d.positions.filter((p) => !gone.has(p.episodeId)),
-      }));
+      const next = (d: Snapshot): Snapshot => ({ ...d, shows: upsert(d.shows, [record], (s) => s.id) });
+      setData(next);
+      dataRef.current = next(dataRef.current);
     },
     [run],
+  );
+
+  const unfollowShow = useCallback(
+    async (showId: string) => {
+      const stored = dataRef.current.shows.find((s) => s.id === showId);
+      if (!stored) return;
+      await writeShow('unfollow', `Unfollowing ${stored.title} wasn’t saved.`, unfollowedRecord(stored, new Date().toISOString()));
+    },
+    [writeShow],
+  );
+
+  const undoUnfollow = useCallback(
+    async (showId: string) => {
+      const stored = dataRef.current.shows.find((s) => s.id === showId);
+      if (!stored) return;
+      await writeShow('follow', `Following ${stored.title} again wasn’t saved.`, followedAgainRecord(stored));
+    },
+    [writeShow],
+  );
+
+  /** Writes one dismissal row and updates the mirror at once. */
+  const writeDismissal = useCallback(
+    async (episodeId: string, lead: (title: string) => string, row: DismissedRow) => {
+      const title = dataRef.current.episodes.find((e) => e.id === episodeId)?.title;
+      const failed = await run('dismiss', lead(title ? `“${title}”` : 'That episode'), () => putMany('settings', [{ key: `${DISMISSED_PREFIX}${episodeId}`, value: { dismissed: row.dismissed, at: row.at } }]));
+      if (failed) throw failed;
+      const next = (d: Snapshot): Snapshot => ({ ...d, dismissed: { ...d.dismissed, [episodeId]: row } });
+      setData(next);
+      dataRef.current = next(dataRef.current);
+    },
+    [run],
+  );
+
+  const dismissEpisode = useCallback(
+    async (episodeId: string) => {
+      const previous = Object.hasOwn(dataRef.current.dismissed, episodeId) ? dataRef.current.dismissed[episodeId] : undefined;
+      await writeDismissal(episodeId, (what) => `Dismissing ${what} wasn’t saved.`, dismissedRow(new Date().toISOString()));
+      return previous;
+    },
+    [writeDismissal],
+  );
+
+  const undoDismiss = useCallback(
+    (episodeId: string, previous: DismissedRow | undefined) =>
+      writeDismissal(episodeId, (what) => `Bringing back ${what} wasn’t saved.`, restoredDismissal(previous, new Date().toISOString())),
+    [writeDismissal],
+  );
+
+  const bringBack = useCallback(
+    (episodeId: string) => writeDismissal(episodeId, (what) => `Bringing back ${what} wasn’t saved.`, broughtBackRow(new Date().toISOString())),
+    [writeDismissal],
   );
 
   const applyRefresh = useCallback(
@@ -223,18 +306,25 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // Merged against what is stored now, not when the read began: a post tapped meanwhile keeps its voice.
       const current = dataRef.current;
       const stored = current.shows.find((s) => s.id === showId);
-      if (!stored) return 0;
+      // An unfollowed show is never read or written by refresh (#4426).
+      if (!stored || !refreshable(stored)) return 0;
       const merged = mergeRefresh({ show: stored, episodes: current.episodes.filter((e) => e.showId === showId) }, read, new Date().toISOString());
       const failed = await run('refresh', `New episodes of ${stored.title} weren’t saved.`, () => putShowWithEpisodes(merged.show, merged.write));
       if (failed) throw failed;
+      // A show unfollowed while the write ran keeps its mark: the store kept it (db.ts), and so does the mirror. Its new
+      // episodes were written and are added to the mirror, but count as nothing new.
+      const followedNow = (d: Snapshot) => d.shows.some((s) => s.id === showId && refreshable(s));
+      const stillFollowed = followedNow(dataRef.current);
       const next = (d: Snapshot): Snapshot =>
-        d.shows.some((s) => s.id === showId)
+        followedNow(d)
           ? { ...d, shows: upsert(d.shows, [merged.show], (s) => s.id), episodes: upsert(d.episodes, merged.write, (e) => e.id) }
-          : d;
+          : d.shows.some((s) => s.id === showId)
+            ? { ...d, episodes: upsert(d.episodes, merged.write, (e) => e.id) }
+            : d;
       setData(next);
       // Feeds finish one after another; the next merge must see this one without waiting for a render.
       dataRef.current = next(dataRef.current);
-      return merged.added;
+      return stillFollowed ? merged.added : 0;
     },
     [run],
   );
@@ -267,7 +357,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const addMargin = useCallback(
     (margin: Margin) => {
       const stored = dataRef.current.margins.find((m) => m.id === margin.id);
-      return saveMargin(keepingHeard(keepingSharedAs(keepingStar(margin, stored), stored), stored));
+      return saveMargin(keepingSentThrough(keepingHeard(keepingSharedAs(keepingStar(margin, stored), stored), stored), stored));
     },
     [saveMargin],
   );
@@ -275,6 +365,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const addSharedAs = useCallback(
     async (written: WrittenFacts) => {
       for (const margin of withSharedAs(written, dataRef.current.margins)) await saveMargin(margin);
+    },
+    [saveMargin],
+  );
+
+  const markSentThrough = useCallback(
+    async (marginIds: readonly string[], linkId: string) => {
+      for (const margin of withSentThrough(marginIds, linkId, dataRef.current.margins)) await saveMargin(margin);
     },
     [saveMargin],
   );
@@ -372,7 +469,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const putBackMovedOut = useCallback(async () => {
     const current = dataRef.current;
-    const ids = stillMovedOut(current.settings.libraryMovedOut, current.episodes, current.library);
+    const ids = stillMovedOut(current.settings.libraryMovedOut, current.episodes, current.library, current.shows);
     const now = new Date().toISOString();
     const rows = [...ids.map((id) => membershipRow(id, { in: true, at: now })), { key: 'libraryMovedOut', value: [] as string[] }];
     const failed = await run('library', 'Your Library wasn’t updated.', () => putMany('settings', rows));
@@ -392,8 +489,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const migrated = isMigrated(data.settings);
 
   const api = useMemo<DataApi>(
-    () => ({ ...data, ready, persist, migrated, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, removeFromLibrary, putBackInLibrary, putBackMovedOut, dismissLibraryNotice }),
-    [data, ready, persist, migrated, follow, unfollow, applyRefresh, updateEpisode, addMargin, addSharedAs, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, removeFromLibrary, putBackInLibrary, putBackMovedOut, dismissLibraryNotice],
+    () => ({ ...data, ready, persist, migrated, follow, unfollowShow, undoUnfollow, dismissEpisode, undoDismiss, bringBack, applyRefresh, updateEpisode, addMargin, addSharedAs, markSentThrough, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, removeFromLibrary, putBackInLibrary, putBackMovedOut, dismissLibraryNotice }),
+    [data, ready, persist, migrated, follow, unfollowShow, undoUnfollow, dismissEpisode, undoDismiss, bringBack, applyRefresh, updateEpisode, addMargin, addSharedAs, markSentThrough, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, removeFromLibrary, putBackInLibrary, putBackMovedOut, dismissLibraryNotice],
   );
   return <DataContext.Provider value={api}>{children}</DataContext.Provider>;
 }

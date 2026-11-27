@@ -189,6 +189,34 @@ public enum ShareLinkResult: Equatable, Sendable {
     case needsConsent
 }
 
+/// What a link upload that may carry a reply box comes back with (#4675).
+public struct ShareLinkMade: Equatable, Sendable {
+    /// What the sender sees, exactly as `makeLink` without a box would say it.
+    public let result: ShareLinkResult
+    /// The new link's public id (32 lowercase hex), set with `.link`.
+    public let linkId: String?
+    /// The box, only when the server answered `201` with `"replyBox": true`. Nil means store no record.
+    public let replyBox: ReplyBox?
+
+    public init(result: ShareLinkResult, linkId: String? = nil, replyBox: ReplyBox? = nil) {
+        self.result = result
+        self.linkId = linkId
+        self.replyBox = replyBox
+    }
+
+    /// The record to keep for the box, or nil when no box was made. `itemId` is the shared item in the sender's Library,
+    /// `sharedPackageDigest` the digest of the package the link carried. The link's end comes from the server's
+    /// `expiresAt`; when that can't be read, 30 days from `now` (the server's link lifetime).
+    public func replyBoxRecord(itemId: String, sharedPackageDigest: String, now: Date = Date()) -> ReplyBoxRecord? {
+        guard let replyBox, let linkId, case .link(_, let expiresAt) = result else { return nil }
+        let end = expiresAt.flatMap(ReplyBoxRecord.parseServerDate) ?? now.addingTimeInterval(ReplyBoxRecord.linkLifetime)
+        return ReplyBoxRecord(
+            box: replyBox, linkId: linkId, itemId: itemId, sharedPackageDigest: sharedPackageDigest,
+            createdAt: now, expiresAt: end
+        )
+    }
+}
+
 public enum ShareLinkFallback: Error, Equatable, Sendable {
     /// The server's `links` switch is off, or its config is missing or stale.
     case unavailable
@@ -206,6 +234,17 @@ public enum ShareLinkFallback: Error, Equatable, Sendable {
     case sharingPaused
     /// Link sharing has ended for this phone. The file share still works.
     case sharingEnded
+    /// The server said the phone's clock is off (401 `clock_skew`), in refuse mode (#4134). Fixing the clock lets it pass.
+    case clockWrong
+    /// The sender check couldn't finish (Apple's call, the registration), in refuse mode. A later try may pass.
+    case notVerified
+    /// The sender check or the upload was refused in a way a retry won't fix (#4134): `permit_required`, a second
+    /// `bad_permit`, a key the server keeps refusing.
+    case cantVerify
+    /// This phone can't attest, in refuse mode.
+    case phoneCantMakeLinks
+    /// The server's `links` switch is off for this build (`minimumBuild`).
+    case updateNeeded
 
     /// The one line the sender sees, with the file share still on offer.
     public var message: String {
@@ -216,6 +255,81 @@ public enum ShareLinkFallback: Error, Equatable, Sendable {
         case .sharingPaused: "Sharing links is paused for a while. You can still send them as a file."
         case .sharingEnded: "Sharing links isn't available on this phone any more. You can still send them as a file."
         case .unavailable, .offline, .failed: "Links aren't available right now. Send as a file instead?"
+        case .clockWrong: "Your iPhone's date and time look wrong, so a link can't be made. Turn on Set Automatically in Settings, General, Date & Time, then try again. You can still send them as a file."
+        case .notVerified: "This iPhone couldn't be checked for links just now. Try again in a few minutes, or send them as a file."
+        case .cantVerify: "Links can't be made from this iPhone right now. You can still send them as a file."
+        case .phoneCantMakeLinks: "This iPhone can't make links. You can still send them as a file."
+        case .updateNeeded: "Update Spoken Margins to share links. You can still send them as a file."
+        }
+    }
+
+    /// What "Share link" does after this line (#4134): a refusal that won't pass on a retry never invites one.
+    public var shareLinkAfterwards: ShareLinkButtonAfterFallback {
+        switch self {
+        case .cantVerify: .disabledUntilReopened
+        case .phoneCantMakeLinks: .disabled
+        case .updateNeeded: .hidden
+        default: .enabled
+        }
+    }
+}
+
+/// The "Share link" button after a line (#4134 Design, section 2).
+public enum ShareLinkButtonAfterFallback: Equatable, Sendable {
+    /// Tapping again may work (fixing the clock, a few minutes, a smaller selection).
+    case enabled
+    /// Not again on this sheet; a new sheet may try once more.
+    case disabledUntilReopened
+    /// Not on this phone.
+    case disabled
+    /// Not in this build: the button is hidden and the line says to update.
+    case hidden
+
+    /// Whether the sender can tap "Share link" while this is on show.
+    public var allowsShareLink: Bool { self == .enabled }
+
+    /// Whether any Share tap may make a link now, with links `offered` by the server and this build. Every Share button
+    /// on the sender screen picks the link through this, or sends the file (#4134 audit: "Share without episode
+    /// matching" went on asking for a link after a refusal had disabled "Share link", and did nothing).
+    public func makesLink(offered: Bool) -> Bool { offered && allowsShareLink }
+}
+
+/// Refuse mode (#4134): what a sender check with no standing does to the link. Off, a fault makes the link with no
+/// permit, unattributed, as the owner's call of 2026-11-12 says for as long as the App Attest entitlement isn't shipped
+/// and no real phone is accepted (#1593). On, a fault stops the link with its own line. The switch ships in a build
+/// (`SMShareLinkRefuseUnchecked` in Info.plist, Release only), never from the server or the device; the key is absent
+/// today, which is off. The server operator's 503 `disabled` keeps meaning "make the link unattributed" in both modes.
+public struct ShareLinkFaultPolicy: Equatable, Sendable {
+    public static let infoPlistKey = "SMShareLinkRefuseUnchecked"
+    public static let off = ShareLinkFaultPolicy(refusesUnchecked: false)
+    public static let refuse = ShareLinkFaultPolicy(refusesUnchecked: true)
+
+    public var refusesUnchecked: Bool
+
+    public init(refusesUnchecked: Bool) {
+        self.refusesUnchecked = refusesUnchecked
+    }
+
+    /// The build's switch: on when the Info.plist key is the Boolean true, or `YES` / `true` as a build setting writes it
+    /// (`SMShareLinkRefuseUnchecked: $(SM_SHARE_LINK_REFUSE_UNCHECKED)`, set in Release only). Anything else is off.
+    public static func fromInfoPlist(_ info: [String: Any]?) -> ShareLinkFaultPolicy {
+        let value = info?[infoPlistKey]
+        if let flag = value as? Bool { return ShareLinkFaultPolicy(refusesUnchecked: flag) }
+        let text = (value as? String)?.trimmingCharacters(in: .whitespaces).lowercased()
+        return ShareLinkFaultPolicy(refusesUnchecked: text == "yes" || text == "true")
+    }
+
+    /// The line for an unchecked sender, or nil to make the link without a permit.
+    public func fallback(for reason: ShareLinkUncheckedReason) -> ShareLinkFallback? {
+        if reason == .operatorDisabled { return nil }
+        guard refusesUnchecked else { return nil }
+        switch reason {
+        case .cannotAttest: return .phoneCantMakeLinks
+        case .attestFailed, .invalidAssertionOnce: return .notVerified
+        case .clockSkew: return .clockWrong
+        case .serverError: return .unavailable
+        case .registrationWaiting, .unknownKey, .invalidAssertion, .missingAssertion, .rejected: return .cantVerify
+        case .operatorDisabled: return nil
         }
     }
 }
@@ -277,67 +391,129 @@ public struct ShareLinkClient: Sendable {
 
     /// Seals and uploads. Never throws: every way it can fail comes back as `.useFile`, so the sender screen has
     /// one thing to handle. Nothing is sealed or sent unless the listener has agreed and `linksState` is on.
-    public func makeLink(packet: Data, preview: ShareLinkPreview, linksState: ServerFeatureState) async -> ShareLinkResult {
-        guard hasConsent() else { return .needsConsent }
-        guard linksState.isOn else { return .useFile(.unavailable) }
+    /// `faultPolicy` decides what a sender check with no standing does (#4134); the app passes its build's switch.
+    public func makeLink(
+        packet: Data, preview: ShareLinkPreview, linksState: ServerFeatureState, faultPolicy: ShareLinkFaultPolicy = .off
+    ) async -> ShareLinkResult {
+        await make(packet: packet, preview: preview, linksState: linksState, faultPolicy: faultPolicy, replyBox: nil).result
+    }
+
+    /// The same, with a reply box riding the upload as four headers (#4675, `docs/design/reply-mailbox.md`). With a nil
+    /// box the request is byte for byte the one `makeLink(packet:preview:linksState:faultPolicy:)` sends. The answer's
+    /// `replyBox` is set only when the server answered `201` with `"replyBox": true`; any other `201` (an older server,
+    /// its `replies` switch off, headers it refused) is the same link with no box, and the phone stores no record.
+    public func makeLink(
+        packet: Data, preview: ShareLinkPreview, linksState: ServerFeatureState, faultPolicy: ShareLinkFaultPolicy = .off,
+        replyBox: ReplyBox?
+    ) async -> ShareLinkMade {
+        await make(packet: packet, preview: preview, linksState: linksState, faultPolicy: faultPolicy, replyBox: replyBox)
+    }
+
+    private func make(
+        packet: Data, preview: ShareLinkPreview, linksState: ServerFeatureState, faultPolicy: ShareLinkFaultPolicy,
+        replyBox: ReplyBox?
+    ) async -> ShareLinkMade {
+        func file(_ result: ShareLinkResult) -> ShareLinkMade { ShareLinkMade(result: result) }
+        guard hasConsent() else { return file(.needsConsent) }
+        if case .off(.buildTooOld) = linksState { return file(.useFile(.updateNeeded)) }
+        guard linksState.isOn else { return file(.useFile(.unavailable)) }
         // Who is asking, before the packet is read or sealed: a paused or ended sender makes no link, and the
         // permit the server hands back is what ties this link to the install for the strike ladder.
         var permit: String?
-        if let senderCheck {
-            switch await senderCheck() {
-            case .notChecked: break
-            case .failed(let fallback): return .useFile(fallback)
-            case .standing(let standing):
-                if standing.hasTakedownNotice { takedownNoticeSeen() }
-                if standing.sharingEnded { return .useFile(.sharingEnded) }
-                guard let granted = standing.permit else { return .useFile(.sharingPaused) }
-                permit = granted
-            }
+        switch await askSender(faultPolicy) {
+        case .proceed(let granted): permit = granted
+        case .stop(let fallback): return file(.useFile(fallback))
         }
         let sealed: ShareLinkSealing.SealedLink
         let key = makeKey()
+        var replyHeaders: [String: String] = [:]
         do {
             let previewBytes = try ShareLinkPreviewBuilder.encoded(preview)
             sealed = try ShareLinkSealing.seal(packet: packet, preview: previewBytes, key: key)
+            if let replyBox { replyHeaders = try replyBox.uploadHeaders(linkKey: key) }
         } catch {
-            return .useFile(.failed)
+            return file(.useFile(.failed))
         }
         // The size is known before anything leaves the phone.
-        guard sealed.packet.count <= Self.maximumSealedPacketBytes else { return .useFile(.tooLarge) }
-        guard sealed.preview.count <= Self.maximumPreviewPartBytes else { return .useFile(.failed) }
+        guard sealed.packet.count <= Self.maximumSealedPacketBytes else { return file(.useFile(.tooLarge)) }
+        guard sealed.preview.count <= Self.maximumPreviewPartBytes else { return file(.useFile(.failed)) }
 
         let boundary = "SM-" + UUID().uuidString
         let body = Self.multipartBody(boundary: boundary, preview: sealed.preview, packet: sealed.packet)
-        let response: (status: Int, body: Data)
+        let contentType = "multipart/form-data; boundary=\(boundary)"
+        func headers(_ permit: String?) -> [String: String] {
+            var all = replyHeaders
+            if let permit { all[Self.permitHeader] = permit }
+            return all
+        }
+        var response: (status: Int, body: Data)
         do {
-            let headers = permit.map { [Self.permitHeader: $0] } ?? [:]
-            response = try await post(server(Self.linksPath), "multipart/form-data; boundary=\(boundary)", headers, body)
+            response = try await post(server(Self.linksPath), contentType, headers(permit), body)
+            // A permit can expire between the check and the upload (ten minutes, or a server restart): one fresh check
+            // and one more upload. A second `bad_permit` is final (#4134).
+            if response.status == 403, AttestedServerClient.errorCode(response.body) == "bad_permit", senderCheck != nil {
+                switch await askSender(faultPolicy) {
+                case .proceed(let granted): permit = granted
+                case .stop(let fallback): return file(.useFile(fallback))
+                }
+                response = try await post(server(Self.linksPath), contentType, headers(permit), body)
+                if response.status == 403, AttestedServerClient.errorCode(response.body) == "bad_permit" { return file(.useFile(.cantVerify)) }
+            }
         } catch {
-            return .useFile(.offline)
+            return file(.useFile(.offline))
         }
         switch response.status {
         case 201:
             guard let created = try? JSONDecoder().decode(Created.self, from: response.body),
                   Self.isLinkPath(created.path),
-                  let link = ShareLinkSealing.linkURL(base: server(created.path), key: key) else { return .useFile(.failed) }
-            return .link(link, expiresAt: created.expiresAt)
+                  let link = ShareLinkSealing.linkURL(base: server(created.path), key: key) else { return file(.useFile(.failed)) }
+            let made = replyBox != nil && created.replyBox == true
+            return ShareLinkMade(
+                result: .link(link, expiresAt: created.expiresAt),
+                linkId: String(created.path.dropFirst(3)),
+                replyBox: made ? replyBox : nil
+            )
         case 403:
             // The permit from the sender check: spent, expired (ten minutes, or a server restart) or paused in between.
             switch AttestedServerClient.errorCode(response.body) {
-            case "sharing_paused": return .useFile(.sharingPaused)
-            case "bad_permit", "permit_required": return .useFile(.busy)
-            default: return .useFile(.failed)
+            case "sharing_paused": return file(.useFile(.sharingPaused))
+            // `permit_required` comes only once the server requires permits; a retry won't bring one (#4134).
+            case "bad_permit", "permit_required": return file(.useFile(.cantVerify))
+            default: return file(.useFile(.failed))
             }
-        case 413: return .useFile(.tooLarge)
-        case 429: return .useFile(.busy)
-        case 503: return .useFile(.unavailable)
-        default: return .useFile(.failed)
+        case 413: return file(.useFile(.tooLarge))
+        case 429: return file(.useFile(.busy))
+        case 503: return file(.useFile(.unavailable))
+        default: return file(.useFile(.failed))
+        }
+    }
+
+    private enum SenderAnswer {
+        case proceed(permit: String?)
+        case stop(ShareLinkFallback)
+    }
+
+    /// The sender check, read under `policy`. No check configured makes the link as it always was, with no identity.
+    private func askSender(_ policy: ShareLinkFaultPolicy) async -> SenderAnswer {
+        guard let senderCheck else { return .proceed(permit: nil) }
+        switch await senderCheck() {
+        case .notChecked(let reason):
+            if let fallback = policy.fallback(for: reason) { return .stop(fallback) }
+            return .proceed(permit: nil)
+        case .failed(let fallback): return .stop(fallback)
+        case .standing(let standing):
+            if standing.hasTakedownNotice { takedownNoticeSeen() }
+            if standing.sharingEnded { return .stop(.sharingEnded) }
+            guard let granted = standing.permit else { return .stop(.sharingPaused) }
+            return .proceed(permit: granted)
         }
     }
 
     private struct Created: Decodable {
         var path: String
         var expiresAt: String?
+        /// `true` only when the server made the reply box sent in the upload's headers (#4675).
+        var replyBox: Bool?
     }
 
     /// `/l/<id>` with the id the server mints and the app opens: 32 lowercase hex characters. Anything else is

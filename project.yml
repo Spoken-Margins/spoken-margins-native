@@ -30,6 +30,14 @@ settings:
     # reaches the app and its tests only, not SessionKit, so the `#if` belongs in app code.
     SM_SHARE_LINK_CREATION_CONDITIONS_YES: SM_SHARE_LINK_CREATION
     SM_SHARE_LINK_CREATION_CONDITIONS_NO: ""
+    # Reply boxes on share links (#4675, docs/design/reply-mailbox.md change 3), also set when the app is built. It
+    # follows SM_SHARE_LINK_CREATION, so every build that makes links makes reply boxes and no upload or phone build
+    # needs a new input: a value passed on the command line or in Config/PhoneBuild.xcconfig for link creation reaches
+    # this one too. It writes the Info.plist key SMLinkReplies and the Swift condition SM_LINK_REPLIES, which does
+    # nothing unless SM_SHARE_LINK_CREATION is on as well. The server's `replies` switch can only turn boxes off.
+    SM_LINK_REPLIES: $(SM_SHARE_LINK_CREATION)
+    SM_LINK_REPLIES_CONDITIONS_YES: SM_LINK_REPLIES
+    SM_LINK_REPLIES_CONDITIONS_NO: ""
   configs:
     Debug:
       SM_PHONE_BUILD: YES
@@ -146,7 +154,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsApp/SpokenMarginsApp.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "37"
+        CURRENT_PROJECT_VERSION: "39"
         INFOPLIST_FILE: App/SpokenMarginsApp/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Spoken Margins
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
@@ -154,7 +162,7 @@ targets:
         REMOVE_STATIC_EXECUTABLES_FROM_EMBEDDED_BUNDLES: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION))
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION)) $(SM_LINK_REPLIES_CONDITIONS_$(SM_LINK_REPLIES))
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1,2"
     postBuildScripts:
@@ -172,6 +180,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         SMBuildCommit: $(SM_BUILD_COMMIT)
         SMShareLinkCreation: $(SM_SHARE_LINK_CREATION)
+        SMLinkReplies: $(SM_LINK_REPLIES)
         SMPhoneBuild: $(SM_PHONE_BUILD)
         CFBundleURLTypes:
           - CFBundleURLName: SpokenMarginsCompactControls
@@ -198,6 +207,12 @@ targets:
               - com.spokenmargins.subrip
               - org.openxmlformats.wordprocessingml.document
               - public.plain-text
+          # A list of shows from another podcast app or a friend (#4046 PR 5). Alternate: one more choice in Open In.
+          - CFBundleTypeName: Podcast list
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - org.opml.opml
         UTExportedTypeDeclarations:
           - UTTypeIdentifier: com.spokenmargins.package
             UTTypeDescription: Spoken Margins Package
@@ -221,6 +236,16 @@ targets:
                 - srt
               public.mime-type:
                 - application/x-subrip
+          # OPML (.opml): the system declares no type for it, so an .opml file could not be opened in the app (#4046 PR 5).
+          - UTTypeIdentifier: org.opml.opml
+            UTTypeDescription: OPML podcast list
+            UTTypeConformsTo:
+              - public.xml
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - opml
+              public.mime-type:
+                - text/x-opml
         LSRequiresIPhoneOS: true
         LSSupportsOpeningDocumentsInPlace: true
         ITSAppUsesNonExemptEncryption: false
@@ -269,7 +294,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.watchkitapp
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "37"
+        CURRENT_PROJECT_VERSION: "39"
         MARKETING_VERSION: "0.1"
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "4"
@@ -301,7 +326,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.gate2widget
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "37"
+        CURRENT_PROJECT_VERSION: "39"
         ENABLE_DEBUG_DYLIB: NO
         MARKETING_VERSION: "0.1"
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD))
@@ -334,7 +359,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.browsertext
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "37"
+        CURRENT_PROJECT_VERSION: "39"
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsBrowserTextExtension/Info.plist
         MARKETING_VERSION: "0.1"
@@ -371,7 +396,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.share
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "37"
+        CURRENT_PROJECT_VERSION: "39"
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsShareExtension/Info.plist
         MARKETING_VERSION: "0.1"
@@ -444,7 +469,7 @@ targets:
         # Names the file-descriptor guard (OpenDescriptorGuard.swift) as the bundle's NSPrincipalClass (#2818).
         INFOPLIST_FILE: Config/SpokenMarginsAppTestsInfo.plist
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.tests
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION))
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION)) $(SM_LINK_REPLIES_CONDITIONS_$(SM_LINK_REPLIES))
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/SpokenMarginsApp.app/SpokenMarginsApp"
         BUNDLE_LOADER: "$(TEST_HOST)"
 schemes:

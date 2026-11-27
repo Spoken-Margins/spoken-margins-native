@@ -627,6 +627,101 @@ final class QuickAccessFolderStateTests: XCTestCase {
         try await waitFor("the view re-reads the new state") { log.lines.last == "Vault|Notes" }
     }
 
+    // MARK: More than one folder (#3770 Design PR 4 and 5)
+
+    /// Two real folders holding a file of the same name: both are listed on Following with ids that never clash, a dismissal
+    /// stays in its own folder, each file imports from its own folder, a reopen keeps both, and the single keys still name
+    /// folder 1 for an older build. Removing folder 1 makes folder 2 entry 1, and its dismissal still holds. Before the list
+    /// there was one folder, so the second `add` didn't exist and only one folder's files could be listed.
+    func testTwoFoldersAreBothListedAndEachKeepsItsOwnDismissals() async throws {
+        let defaults = try makeDefaults()
+        let one = try makeFolder(named: "Clippings")
+        let two = try makeFolder(named: "Notes")
+        for (folder, names) in [(one, ["same.md"]), (two, ["same.md", "only.md"])] {
+            for name in names { try "# \(name)".write(to: folder.appendingPathComponent(name), atomically: true, encoding: .utf8) }
+        }
+        let state = QuickAccessFolderState(defaults: defaults)
+        try state.configure(url: one) {}
+        try state.add(url: two) {}
+        XCTAssertEqual(state.folders.map(\.name), ["Clippings", "Notes"])
+        try await waitFor("both folders scanned") { !state.isRefreshing && state.folders.allSatisfy { $0.lastCheckedAt != nil } }
+        let second = state.folders[1].id
+        XCTAssertEqual(Set(Self.localFileIDs(state)), ["same.md", "\(second)/same.md", "\(second)/only.md"])
+        XCTAssertEqual(state.newestFiles(in: second).map(\.id).sorted(), ["\(second)/only.md", "\(second)/same.md"])
+
+        let secondSame = try XCTUnwrap(Self.localFiles(state).first { $0.id == "\(second)/same.md" })
+        state.dismiss(secondSame)
+        XCTAssertEqual(Set(Self.localFileIDs(state)), ["same.md", "\(second)/only.md"], "only folder 2's copy is hidden")
+        XCTAssertEqual(state.dismissedFileKeys, [], "folder 1's set is untouched")
+        XCTAssertEqual(state.status(ofFile: secondSame).fileCaption(dateText: "now"), "Notes · now")
+
+        let only = try XCTUnwrap(Self.localFiles(state).first { $0.id == "\(second)/only.md" })
+        let urls = try XCTUnwrap(state.importURLs(for: only))
+        XCTAssertEqual(urls.folderURL.resolvingSymlinksInPath().path, two.resolvingSymlinksInPath().path)
+        XCTAssertEqual(urls.fileURL.lastPathComponent, "only.md")
+
+        let reopened = QuickAccessFolderState(defaults: defaults)
+        XCTAssertEqual(reopened.folders.map(\.id), state.folders.map(\.id))
+        XCTAssertEqual(defaults.string(forKey: "quickAccessFolderName"), "Clippings", "an older build still finds folder 1")
+
+        state.remove()
+        XCTAssertEqual(state.folderName, "Notes")
+        XCTAssertEqual(defaults.string(forKey: "quickAccessFolderName"), "Notes", "folder 2 now writes the single keys")
+        XCTAssertEqual(Self.localFileIDs(state), ["only.md"], "folder 2's files take plain ids and its dismissal still holds")
+    }
+
+    /// The same folder chosen twice is refused, as a new folder or as another folder's Change Folder, and nothing is saved; at
+    /// five folders a sixth is refused.
+    func testTheSameFolderTwiceAndASixthFolderAreRefused() throws {
+        let defaults = try makeDefaults()
+        let state = QuickAccessFolderState(defaults: defaults, dependencies: ScanBench().dependencies())
+        let folders = try (1...6).map { try makeFolder(named: "F\($0)") }
+        try state.configure(url: folders[0]) {}
+        try state.add(url: folders[1]) {}
+        XCTAssertThrowsError(try state.add(url: folders[1]) { XCTFail("must not report success") }) {
+            XCTAssertEqual($0 as? QuickAccessFolderState.ChoiceError, .duplicate)
+        }
+        XCTAssertThrowsError(try state.configure(url: folders[1], folder: state.folders[0].id) { XCTFail("must not report success") }) {
+            XCTAssertEqual($0 as? QuickAccessFolderState.ChoiceError, .duplicate)
+        }
+        XCTAssertEqual(state.folders.map(\.name), ["F1", "F2"])
+        // Change Folder clears folder 1's stored path until its next scan; the folder it now points at still can't be added again.
+        try state.configure(url: folders[5], folder: state.folders[0].id) {}
+        XCTAssertNil(state.folders[0].path)
+        XCTAssertThrowsError(try state.add(url: folders[5]) {}) {
+            XCTAssertEqual($0 as? QuickAccessFolderState.ChoiceError, .duplicate)
+        }
+        try state.configure(url: folders[0], folder: state.folders[0].id) {}
+        for folder in folders[2...4] { try state.add(url: folder) {} }
+        XCTAssertFalse(state.canAddFolder)
+        XCTAssertThrowsError(try state.add(url: folders[5]) {}) {
+            XCTAssertEqual($0 as? QuickAccessFolderState.ChoiceError, .full)
+        }
+        XCTAssertEqual(QuickAccessFolderState(defaults: defaults, dependencies: ScanBench().dependencies()).folders.count, 5)
+    }
+
+    /// Removing a folder that isn't entry 1 leaves entry 1 and the single keys alone, and choosing it again brings its dismissed
+    /// files back with it.
+    func testRemovingAndChoosingAgainASecondFolderKeepsItsDismissals() throws {
+        let defaults = try makeDefaults()
+        let state = QuickAccessFolderState(defaults: defaults, dependencies: ScanBench().dependencies())
+        let one = try makeFolder(named: "One")
+        let two = try makeFolder(named: "Two")
+        try state.configure(url: one) {}
+        try state.add(url: two) {}
+        let second = state.folders[1].id
+        state.dismiss(state.list.qualified(Self.file("gone.md"), in: second))
+        XCTAssertEqual(state.list.entry(second)?.dismissedKeys, [Self.file("gone.md").dismissalKey])
+
+        state.remove(second)
+        XCTAssertEqual(state.folders.map(\.name), ["One"])
+        XCTAssertEqual(state.folderName, "One")
+        XCTAssertEqual(defaults.string(forKey: "quickAccessFolderName"), "One")
+
+        try state.add(url: two) {}
+        XCTAssertEqual(state.folders.last?.dismissedKeys, [Self.file("gone.md").dismissalKey], "its dismissed files came back with it")
+    }
+
     // MARK: Helpers
 
     /// 2026-09-21 14:13:20 UTC: when the fixture's folder counts as chosen.

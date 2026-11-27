@@ -1,0 +1,337 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" version="2.0">
+  <channel>
+    <title>crispr base editing</title>
+    <link>https://pubmed.ncbi.nlm.nih.gov/rss-feed/?feed_id=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;v=2.20.1&amp;utm_medium=rss&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;utm_source=Mobile Safari&amp;ff=20261123210253</link>
+    <description>crispr base editing: Latest results from PubMed</description>
+    <atom:link href="https://pubmed.ncbi.nlm.nih.gov/rss-feed/?feed_id=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;v=2.20.1&amp;utm_medium=rss&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;utm_source=Mobile Safari&amp;ff=20261123210253" rel="self"/>
+    <docs>http://www.rssboard.org/rss-specification</docs>
+    <generator>PubMed RSS feeds (2.20.1)</generator>
+    <language>en</language>
+    <lastBuildDate>Tue, 24 Nov 2026 02:02:53 +0000</lastBuildDate>
+    <pubDate>Mon, 23 Nov 2026 06:00:00 -0500</pubDate>
+    <ttl>120</ttl>
+    <item>
+      <title>Gene Therapy for Leukocyte Adhesion Deficiency Type I: Current Advances, Clinical Translation, and Future Perspectives</title>
+      <link>https://pubmed.ncbi.nlm.nih.gov/43070506/?utm_source=Mobile Safari&amp;utm_medium=rss&amp;utm_campaign=None&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;fc=None&amp;ff=20261123210253&amp;v=2.20.1</link>
+      <description>Leukocyte adhesion deficiency (LAD) is a group of rare autosomal recessive primary immunodeficiencies characterized by impaired leukocyte migration resulting from defective expression or function of adhesion molecules. The most common and severe form, LAD-I, is caused by biallelic mutations in Integrin Subunit Beta 2 (ITGB2), which encodes the β2-integrin subunit CD18, leading to recurrent life-threatening infections and impaired wound healing. LAD-II arises from mutations in the...</description>
+      <content:encoded><![CDATA[<div><p style="color: #4aa564;">Hum Gene Ther. 2026 Nov 23:10430342261508676. doi: 10.1177/10430342261508676. Online ahead of print.</p><p><b>ABSTRACT</b></p><p xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:p1="http://pubmed.gov/pub-one">Leukocyte adhesion deficiency (LAD) is a group of rare autosomal recessive primary immunodeficiencies characterized by impaired leukocyte migration resulting from defective expression or function of adhesion molecules. The most common and severe form, LAD-I, is caused by biallelic mutations in Integrin Subunit Beta 2 (ITGB2), which encodes the β2-integrin subunit CD18, leading to recurrent life-threatening infections and impaired wound healing. LAD-II arises from mutations in the fucose-metabolism gene SLC35C1, and LAD-III from mutations in FERMT3, which disrupt integrin activation through kindlin-3. Allogeneic hematopoietic stem cell transplantation (HSCT) has historically been the only established curative treatment for severe LAD-I, but donor availability, conditioning toxicity, and graft-versus-host disease limit its use and have motivated the development of autologous approaches. Autologous gene therapy using self-inactivating lentiviral vectors to introduce functional ITGB2 into patient-derived hematopoietic stem and progenitor cells has shown promising clinical results, including restored CD18 expression, improved leukocyte function, and fewer severe infections. In March 2026, the FDA granted accelerated approval to marnetegragene autotemcel (Kresladi; RP-L201), making it the first approved gene therapy for severe LAD-I in the United States. CRISPR/Cas9, base editing, and prime editing are also being investigated as alternative approaches for correcting ITGB2 mutations, although their application in LAD-I remains preclinical. These methods could allow correction of pathogenic ITGB2 variants without relying on integrating viral vectors, but their efficacy and long-term safety in LAD-I have yet to be established. However, conditioning-related toxicity, the need for long-term safety monitoring, and the complexity and cost of manufacturing remain important limitations to wider clinical use. This review examines the molecular basis of LAD, preclinical and clinical studies of gene therapy for LAD-I, and the challenges that remain in translating genome-editing approaches into clinical practice.</p><p style="color: lightgray">PMID:<a href="https://pubmed.ncbi.nlm.nih.gov/43070506/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">43070506</a> | DOI:<a href=https://doi.org/10.1177/10430342261508676>10.1177/10430342261508676</a></p></div>]]></content:encoded>
+      <guid isPermaLink="false">pubmed:43070506</guid>
+      <pubDate>Mon, 23 Nov 2026 06:00:00 -0500</pubDate>
+      <dc:creator>Hossein Soltaninejad</dc:creator>
+      <dc:creator>Mohadeseh Khoshandam</dc:creator>
+      <dc:creator>Najibe Karami</dc:creator>
+      <dc:creator>Maryam Behfar</dc:creator>
+      <dc:creator>Behnaz Nikoubin</dc:creator>
+      <dc:creator>Sevil Raji</dc:creator>
+      <dc:creator>Saman Hosseinkhani</dc:creator>
+      <dc:creator>Amir Ali Hamidieh</dc:creator>
+      <dc:date>2026-11-23</dc:date>
+      <dc:source>Human gene therapy</dc:source>
+      <dc:title>Gene Therapy for Leukocyte Adhesion Deficiency Type I: Current Advances, Clinical Translation, and Future Perspectives</dc:title>
+      <dc:identifier>pmid:43070506</dc:identifier>
+      <dc:identifier>doi:10.1177/10430342261508676</dc:identifier>
+    </item>
+    <item>
+      <title>Problem-Driven Innovation in Genome Editing: From Programmable Nucleases to DSB-Free Precision Editors and the Path to Clinical Translation</title>
+      <link>https://pubmed.ncbi.nlm.nih.gov/43070491/?utm_source=Mobile Safari&amp;utm_medium=rss&amp;utm_campaign=None&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;fc=None&amp;ff=20261123210253&amp;v=2.20.1</link>
+      <description>Precise, heritable modification of living genomes is among the most consequential advances in modern biology, offering the prospect of correcting molecular lesions underlying monogenic diseases. Realizing this potential has required successive rounds of innovation, in which each generation of tools addressed limitations while revealing new constraints. This Review traces that trajectory through a problem-driven lens, from programmable nucleases to RNA-guided systems and double-strand break...</description>
+      <content:encoded><![CDATA[<div><p style="color: #4aa564;">Hum Gene Ther. 2026 Nov 23:10430342261509806. doi: 10.1177/10430342261509806. Online ahead of print.</p><p><b>ABSTRACT</b></p><p xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:p1="http://pubmed.gov/pub-one">Precise, heritable modification of living genomes is among the most consequential advances in modern biology, offering the prospect of correcting molecular lesions underlying monogenic diseases. Realizing this potential has required successive rounds of innovation, in which each generation of tools addressed limitations while revealing new constraints. This Review traces that trajectory through a problem-driven lens, from programmable nucleases to RNA-guided systems and double-strand break (DSB)-avoiding precision editors. Zinc-finger nucleases and TALENs established programmable DSB induction, whereas CRISPR-Cas9 simplified retargeting through an RNA guide but retained DSB-associated risks, including stochastic indels, large deletions, and chromosomal rearrangements. Base and prime editors avoid programmed DSBs but are not consequence-free: Most base editors use Cas9 nickase and can generate bystander editing, off-target deamination, and low-frequency indels, whereas prime editing also uses nicked intermediates and remains sensitive to endogenous repair, editor architecture, and locus-specific efficiency. Clinical programs likewise use distinct mechanisms. Exagamglogene autotemcel (Casgevy) is an <i>ex vivo</i> SpCas9-ribonucleoprotein therapy in autologous HSPCs that disrupts the BCL11A erythroid enhancer through nonhomologous end joining (NHEJ)-dominated DSB repair; NTLA-2001 is an <i>in vivo</i> liver-directed lipid nanoparticle (LNP) therapy that codelivers Cas9 mRNA and a TTR-targeting guide RNA for NHEJ-mediated gene disruption; and VERVE programs deliver adenine base editor mRNA with a PCSK9-targeting guide RNA in LNPs for targeted base conversion. Translational constraints now include efficient and safe delivery, particularly beyond the liver and <i>ex vivo</i>-accessible cell populations, immunogenicity, long-term genomic safety, manufacturing scalability, and equitable access. Resolving these challenges will determine the ultimate clinical impact of genome editing on human health.</p><p style="color: lightgray">PMID:<a href="https://pubmed.ncbi.nlm.nih.gov/43070491/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">43070491</a> | DOI:<a href=https://doi.org/10.1177/10430342261509806>10.1177/10430342261509806</a></p></div>]]></content:encoded>
+      <guid isPermaLink="false">pubmed:43070491</guid>
+      <pubDate>Mon, 23 Nov 2026 06:00:00 -0500</pubDate>
+      <dc:creator>Jun-Young Park</dc:creator>
+      <dc:creator>Kyung-Soo Lee</dc:creator>
+      <dc:creator>Chang-Ung Kim</dc:creator>
+      <dc:date>2026-11-23</dc:date>
+      <dc:source>Human gene therapy</dc:source>
+      <dc:title>Problem-Driven Innovation in Genome Editing: From Programmable Nucleases to DSB-Free Precision Editors and the Path to Clinical Translation</dc:title>
+      <dc:identifier>pmid:43070491</dc:identifier>
+      <dc:identifier>doi:10.1177/10430342261509806</dc:identifier>
+    </item>
+    <item>
+      <title>Correction to 'Multiplexed CRISPR base editing enables pulse-activated irreversible biocontainment of engineered bacteria'</title>
+      <link>https://pubmed.ncbi.nlm.nih.gov/43070160/?utm_source=Mobile Safari&amp;utm_medium=rss&amp;utm_campaign=None&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;fc=None&amp;ff=20261123210253&amp;v=2.20.1</link>
+      <description>No abstract</description>
+      <content:encoded><![CDATA[<div><p style="color: #4aa564;">Nucleic Acids Res. 2026 Nov 23;54(22):gkag1308. doi: 10.1093/nar/gkag1308.</p><p><b>NO ABSTRACT</b></p><p style="color: lightgray">PMID:<a href="https://pubmed.ncbi.nlm.nih.gov/43070160/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">43070160</a> | DOI:<a href=https://doi.org/10.1093/nar/gkag1308>10.1093/nar/gkag1308</a></p></div>]]></content:encoded>
+      <guid isPermaLink="false">pubmed:43070160</guid>
+      <pubDate>Mon, 23 Nov 2026 06:00:00 -0500</pubDate>
+      <dc:date>2026-11-23</dc:date>
+      <dc:source>Nucleic acids research</dc:source>
+      <dc:title>Correction to 'Multiplexed CRISPR base editing enables pulse-activated irreversible biocontainment of engineered bacteria'</dc:title>
+      <dc:identifier>pmid:43070160</dc:identifier>
+      <dc:identifier>doi:10.1093/nar/gkag1308</dc:identifier>
+    </item>
+    <item>
+      <title>AAV-mediated XIST deletion in female human hepatocytes with skewed X-inactivation induces limited reactivation of the X-linked OTC gene in vivo</title>
+      <link>https://pubmed.ncbi.nlm.nih.gov/43070157/?utm_source=Mobile Safari&amp;utm_medium=rss&amp;utm_campaign=None&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;fc=None&amp;ff=20261123210253&amp;v=2.20.1</link>
+      <description>Reactivation of silenced wild-type alleles on the inactive X chromosome (Xi) offers a promising therapeutic avenue for X-linked disorders affecting females. The long non-coding RNA XIST is central to Xi silencing, yet its complete loss risks chromosome-wide dosage imbalance. To explore reactivation in a translational context, we employed chimeric mouse-human FRG livers repopulated with primary hepatocytes from a female patient with ornithine transcarbamylase (OTC) deficiency exhibiting highly...</description>
+      <content:encoded><![CDATA[<div><p style="color: #4aa564;">Nucleic Acids Res. 2026 Nov 23;54(22):gkag1237. doi: 10.1093/nar/gkag1237.</p><p><b>ABSTRACT</b></p><p xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:p1="http://pubmed.gov/pub-one">Reactivation of silenced wild-type alleles on the inactive X chromosome (Xi) offers a promising therapeutic avenue for X-linked disorders affecting females. The long non-coding RNA XIST is central to Xi silencing, yet its complete loss risks chromosome-wide dosage imbalance. To explore reactivation in a translational context, we employed chimeric mouse-human FRG livers repopulated with primary hepatocytes from a female patient with ornithine transcarbamylase (OTC) deficiency exhibiting highly skewed X-inactivation. Adeno-associated virus (AAV)-mediated CRISPR-Cas9 delivery was used to disrupt XIST in vivo to assess effects on chromatin landscape and OTC expression. Despite differential XIST promoter methylation, the Xi remained accessible to CRISPR-Cas9, with editing frequencies comparable to those of the active X chromosome. XIST deletion induced limited reactivation of the wild-type OTC allele and was accompanied by broader epigenetic effects. CUT&amp;RUN profiling distinguished effects of vector delivery and XIST deletion, including global H3K4me3 reduction after AAV transduction, X chromosome-restricted H3K27me3 reduction after XIST deletion, and broader H3K27ac reduction in edited hepatocytes. These findings demonstrate the feasibility of manipulating the human Xi in vivo while revealing distinct Xi-specific and broader chromatin effects. Together, they highlight the need for precise, locus-specific strategies to achieve therapeutic gene reactivation while preserving chromosome-wide epigenetic regulation.</p><p style="color: lightgray">PMID:<a href="https://pubmed.ncbi.nlm.nih.gov/43070157/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">43070157</a> | DOI:<a href=https://doi.org/10.1093/nar/gkag1237>10.1093/nar/gkag1237</a></p></div>]]></content:encoded>
+      <guid isPermaLink="false">pubmed:43070157</guid>
+      <pubDate>Mon, 23 Nov 2026 06:00:00 -0500</pubDate>
+      <dc:creator>Mawj Mandwie</dc:creator>
+      <dc:creator>Sharon C Cunningham</dc:creator>
+      <dc:creator>Erhua Zhu</dc:creator>
+      <dc:creator>Katherine A Giles</dc:creator>
+      <dc:creator>Samantha L Ginn</dc:creator>
+      <dc:creator>Eva B van Dijk</dc:creator>
+      <dc:creator>Suzanne Scott</dc:creator>
+      <dc:creator>Anne H Klein</dc:creator>
+      <dc:creator>Maya Sugden</dc:creator>
+      <dc:creator>Laurence O W Wilson</dc:creator>
+      <dc:creator>Susan M Siew</dc:creator>
+      <dc:creator>Grant J Logan</dc:creator>
+      <dc:creator>James Kerr</dc:creator>
+      <dc:creator>Nader Aryamanesh</dc:creator>
+      <dc:creator>Phillippa C Taberlay</dc:creator>
+      <dc:creator>Anthony J Cesare</dc:creator>
+      <dc:creator>Ryan Lister</dc:creator>
+      <dc:creator>Ian E Alexander</dc:creator>
+      <dc:date>2026-11-23</dc:date>
+      <dc:source>Nucleic acids research</dc:source>
+      <dc:title>AAV-mediated XIST deletion in female human hepatocytes with skewed X-inactivation induces limited reactivation of the X-linked OTC gene in vivo</dc:title>
+      <dc:identifier>pmid:43070157</dc:identifier>
+      <dc:identifier>doi:10.1093/nar/gkag1237</dc:identifier>
+    </item>
+    <item>
+      <title>Engineering Theranostic Nanomedicines for Clinical Translation: Nano-Bio Interactions, Responsive Design, Multimodal Function, and Scale-Up</title>
+      <link>https://pubmed.ncbi.nlm.nih.gov/43070049/?utm_source=Mobile Safari&amp;utm_medium=rss&amp;utm_campaign=None&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;fc=None&amp;ff=20261123210253&amp;v=2.20.1</link>
+      <description>Theranostic nanomedicines are engineered multifunctional systems that integrate diagnostic sensing, imaging, and therapeutic delivery within a single nanoscale platform. Their performance depends not only on material composition but also on controllable nano-bio interactions, transport, targeting, stimulus responsiveness, and manufacturability. This review examines the bioengineering principles underlying next-generation theranostic nanomedicines, including lipid, polymeric, mesoporous silica,...</description>
+      <content:encoded><![CDATA[<div><p style="color: #4aa564;">Biotechnol Bioeng. 2026 Nov 23. doi: 10.1002/bit.70420. Online ahead of print.</p><p><b>ABSTRACT</b></p><p xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:p1="http://pubmed.gov/pub-one">Theranostic nanomedicines are engineered multifunctional systems that integrate diagnostic sensing, imaging, and therapeutic delivery within a single nanoscale platform. Their performance depends not only on material composition but also on controllable nano-bio interactions, transport, targeting, stimulus responsiveness, and manufacturability. This review examines the bioengineering principles underlying next-generation theranostic nanomedicines, including lipid, polymeric, mesoporous silica, inorganic, extracellular-vesicle-derived, and cell-membrane-camouflaged platforms. Particular emphasis is placed on how physicochemical design governs protein-corona formation, circulation, biodistribution, cellular uptake, and clearance, and how endogenous or externally applied stimuli can be engineered for spatiotemporally controlled cargo release and imaging feedback. We further discuss the integration of multimodal imaging with nucleic-acid delivery, CRISPR/Cas gene editing, immunotherapy, ferroptosis, sonodynamic therapy, and photothermal therapy, together with emerging uses of artificial intelligence and machine learning for formulation optimization, image analysis, toxicity prediction, and treatment-response modeling. Despite rapid technological progress, clinical translation remains constrained by heterogeneous biological behavior, limited targeting efficiency, long-term safety uncertainties, complex manufacturing, batch-to-batch variability, and regulatory challenges. Future development should shift from increasingly complex multifunctional constructs toward platforms with measurable design-function relationships, scalable Good Manufacturing Practice-compatible production, standardized characterization, and clinically relevant validation. Such an engineering-focused approach could help advance theranostic nanomedicine from predominantly preclinical multifunctional systems toward reproducible technologies for precision diagnosis and therapy.</p><p style="color: lightgray">PMID:<a href="https://pubmed.ncbi.nlm.nih.gov/43070049/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">43070049</a> | DOI:<a href=https://doi.org/10.1002/bit.70420>10.1002/bit.70420</a></p></div>]]></content:encoded>
+      <guid isPermaLink="false">pubmed:43070049</guid>
+      <pubDate>Mon, 23 Nov 2026 06:00:00 -0500</pubDate>
+      <dc:creator>Niamat Ullah</dc:creator>
+      <dc:creator>Touseef Nawaz</dc:creator>
+      <dc:creator>Mohamed El Fadili</dc:creator>
+      <dc:creator>Adnan Amin</dc:creator>
+      <dc:date>2026-11-23</dc:date>
+      <dc:source>Biotechnology and bioengineering</dc:source>
+      <dc:title>Engineering Theranostic Nanomedicines for Clinical Translation: Nano-Bio Interactions, Responsive Design, Multimodal Function, and Scale-Up</dc:title>
+      <dc:identifier>pmid:43070049</dc:identifier>
+      <dc:identifier>doi:10.1002/bit.70420</dc:identifier>
+    </item>
+    <item>
+      <title>CRISPR-Cas gene regulation in mycobacteria: From single-gene targeting to dynamic network rewiring</title>
+      <link>https://pubmed.ncbi.nlm.nih.gov/43068270/?utm_source=Mobile Safari&amp;utm_medium=rss&amp;utm_campaign=None&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;fc=None&amp;ff=20261123210253&amp;v=2.20.1</link>
+      <description>Mycobacteria represent both clinically important pathogens and valuable microbial chassis, creating a demand for precise and scalable gene-regulatory technologies. However, conventional genetic approaches suffer from inefficient recombination, lengthy strain construction, and restricted capacity for multiplex manipulation. The application of diverse CRISPR-Cas systems in mycobacterial genetics has substantially expanded the genetic toolbox available for these organisms, enabling programmable...</description>
+      <content:encoded><![CDATA[<div><p style="color: #4aa564;">Eng Microbiol. 2026 Oct 12;6(4):100309. doi: 10.1016/j.engmic.2026.100309. eCollection 2026 Dec.</p><p><b>ABSTRACT</b></p><p xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:p1="http://pubmed.gov/pub-one">Mycobacteria represent both clinically important pathogens and valuable microbial chassis, creating a demand for precise and scalable gene-regulatory technologies. However, conventional genetic approaches suffer from inefficient recombination, lengthy strain construction, and restricted capacity for multiplex manipulation. The application of diverse CRISPR-Cas systems in mycobacterial genetics has substantially expanded the genetic toolbox available for these organisms, enabling programmable genome editing and transcriptional regulation. Among these platforms, Cas9-based systems have facilitated essential-gene interrogation and resistance-associated genetic screens; however, their broader application is constrained by protospacer adjacent motif (PAM) dependence, DNA-break-associated toxicity, and limited multiplex capability. Cas12-family effectors, characterized by their distinct PAM preferences, compact architectures, and intrinsic CRISPR RNA (crRNA) processing capacity, provide alternative strategies for expanding target accessibility and regulatory scalability. Here, we critically review the development of CRISPR-based regulatory platforms in mycobacteria, focusing on the transition from the Cas9-centered single-gene manipulation toward the Cas12-enabled multiplex and network-level regulation. We discuss emerging miniature effectors and dynamic regulatory modules that may overcome current limitations in target coverage, temporal control, and host compatibility. Finally, we highlight key engineering challenges and future directions toward programmable regulatory systems integrating protein engineering, synthetic biology, and spatiotemporal control, with potential applications in tuberculosis research and mycobacterial metabolic engineering.</p><p style="color: lightgray">PMID:<a href="https://pubmed.ncbi.nlm.nih.gov/43068270/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">43068270</a> | PMC:<a href="https://www.ncbi.nlm.nih.gov/pmc/PMC13788774/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">PMC13788774</a> | DOI:<a href=https://doi.org/10.1016/j.engmic.2026.100309>10.1016/j.engmic.2026.100309</a></p></div>]]></content:encoded>
+      <guid isPermaLink="false">pubmed:43068270</guid>
+      <pubDate>Sun, 22 Nov 2026 06:00:00 -0500</pubDate>
+      <dc:creator>Wenping Wei</dc:creator>
+      <dc:creator>Hongbo Wei</dc:creator>
+      <dc:creator>Mingxia He</dc:creator>
+      <dc:creator>Liping Liu</dc:creator>
+      <dc:creator>Li Xu</dc:creator>
+      <dc:creator>Xiaoman Xie</dc:creator>
+      <dc:creator>Jinyong Yan</dc:creator>
+      <dc:creator>Yunjun Yan</dc:creator>
+      <dc:creator>Chun-Hui Gao</dc:creator>
+      <dc:creator>Min Yang</dc:creator>
+      <dc:date>2026-11-22</dc:date>
+      <dc:source>Engineering microbiology</dc:source>
+      <dc:title>CRISPR-Cas gene regulation in mycobacteria: From single-gene targeting to dynamic network rewiring</dc:title>
+      <dc:identifier>pmid:43068270</dc:identifier>
+      <dc:identifier>pmc:PMC13788774</dc:identifier>
+      <dc:identifier>doi:10.1016/j.engmic.2026.100309</dc:identifier>
+    </item>
+    <item>
+      <title>Protocol for generation, immunophenotyping, and live-cell cytotoxicity analysis of primary human CAR-NK cells using CRISPR-SaCas9 and AAV6</title>
+      <link>https://pubmed.ncbi.nlm.nih.gov/43066938/?utm_source=Mobile Safari&amp;utm_medium=rss&amp;utm_campaign=None&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;fc=None&amp;ff=20261123210253&amp;v=2.20.1</link>
+      <description>Targeted gene editing enables controlled integration and consistent expression of a chimeric antigen receptor (CAR) in natural killer (NK) cells. We present a protocol for homology-directed repair-mediated CAR knockin into the AAVS1 safe-harbor locus of expanded human NK cells using CRISPR-SaCas9 ribonucleoprotein electroporation and AAV6 donor-template delivery. We also detail the phenotypic analysis of CAR-NK cells using a 23-marker flow cytometry panel including CAR detection and describe a...</description>
+      <content:encoded><![CDATA[<div><p style="color: #4aa564;">STAR Protoc. 2026 Nov 20;7(4):104989. doi: 10.1016/j.xpro.2026.104989. Online ahead of print.</p><p><b>ABSTRACT</b></p><p xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:p1="http://pubmed.gov/pub-one">Targeted gene editing enables controlled integration and consistent expression of a chimeric antigen receptor (CAR) in natural killer (NK) cells. We present a protocol for homology-directed repair-mediated CAR knockin into the AAVS1 safe-harbor locus of expanded human NK cells using CRISPR-SaCas9 ribonucleoprotein electroporation and AAV6 donor-template delivery. We also detail the phenotypic analysis of CAR-NK cells using a 23-marker flow cytometry panel including CAR detection and describe a live-cell imaging assay to evaluate CAR-mediated and antibody-dependent cellular cytotoxicity kinetics.</p><p style="color: lightgray">PMID:<a href="https://pubmed.ncbi.nlm.nih.gov/43066938/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">43066938</a> | DOI:<a href=https://doi.org/10.1016/j.xpro.2026.104989>10.1016/j.xpro.2026.104989</a></p></div>]]></content:encoded>
+      <guid isPermaLink="false">pubmed:43066938</guid>
+      <pubDate>Sat, 21 Nov 2026 06:00:00 -0500</pubDate>
+      <dc:creator>Meric Birben</dc:creator>
+      <dc:creator>Nicky A Beelen</dc:creator>
+      <dc:creator>Hardikkumar Jetani</dc:creator>
+      <dc:creator>Lynn Janssen</dc:creator>
+      <dc:creator>Steven C Koetzier</dc:creator>
+      <dc:creator>Roel G J Klein Wolterink</dc:creator>
+      <dc:creator>Lotte Wieten</dc:creator>
+      <dc:creator>Wilfred T V Germeraad</dc:creator>
+      <dc:date>2026-11-21</dc:date>
+      <dc:source>STAR protocols</dc:source>
+      <dc:title>Protocol for generation, immunophenotyping, and live-cell cytotoxicity analysis of primary human CAR-NK cells using CRISPR-SaCas9 and AAV6</dc:title>
+      <dc:identifier>pmid:43066938</dc:identifier>
+      <dc:identifier>doi:10.1016/j.xpro.2026.104989</dc:identifier>
+    </item>
+    <item>
+      <title>Postharvest senescence of broccoli in the multi-omics era: molecular mechanisms, regulatory networks, and prospects for germplasm innovation</title>
+      <link>https://pubmed.ncbi.nlm.nih.gov/43066338/?utm_source=Mobile Safari&amp;utm_medium=rss&amp;utm_campaign=None&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;fc=None&amp;ff=20261123210253&amp;v=2.20.1</link>
+      <description>Broccoli (Brassica oleracea var. italica) heads are harvested as immature inflorescences whose metabolism remains vigorous after detachment, making postharvest senescence and floret yellowing the leading cause of quality loss and economic devaluation. Over the past decade, the molecular dissection of broccoli senescence has progressed from single-gene expression studies to integrated multi-omics atlases spanning transcriptomes, small RNA and degradome libraries, quantitative proteomes, and...</description>
+      <content:encoded><![CDATA[<div><p style="color: #4aa564;">Front Plant Sci. 2026 Nov 6;17:1985976. doi: 10.3389/fpls.2026.1985976. eCollection 2026.</p><p><b>ABSTRACT</b></p><p xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:p1="http://pubmed.gov/pub-one">Broccoli (<i>Brassica oleracea</i> var. <i>italica</i>) heads are harvested as immature inflorescences whose metabolism remains vigorous after detachment, making postharvest senescence and floret yellowing the leading cause of quality loss and economic devaluation. Over the past decade, the molecular dissection of broccoli senescence has progressed from single-gene expression studies to integrated multi-omics atlases spanning transcriptomes, small RNA and degradome libraries, quantitative proteomes, and metabolomes. This review synthesizes the recent literature along three axes. First, we revisit the chlorophyll degradation pathway as it operates in harvested broccoli florets (from chlorophyll b reductase (<i>BoNYC1</i>) and pheophytinase (<i>BoPPH</i>) to pheophorbide a oxygenase (<i>BoPaO</i>), RCC reductase (<i>BoRCCR</i>), and the STAY-GREEN (<i>BoSGR</i>) master switch) and we highlight how the visible yellow phenotype additionally requires carotenoid retention and biosynthesis. Second, we organize the regulatory architecture now emerging from omics studies. Its hormonal tier is an ethylene-auxin-jasmonate-abscisic acid axis that promotes senescence and is antagonized by cytokinins, brassinosteroids, melatonin, hydrogen sulfide, and the peptide signal CLE14. Its transcriptional tier is dominated by NAC, WRKY, MYB, bHLH, ERF, and TCP factors, exemplified by the <i>BoNAC52</i>-<i>BoRBOHF</i> module that couples hormone signals to reactive oxygen species (ROS) homeostasis. A third tier is post-transcriptional: miRNAs modulate transcript abundance to fine-tune peroxidase activity, chlorophyll biosynthesis, and ROS balance. Third, we connect mechanism to application. We map how preservation technologies (1-MCP, controlled atmospheres, UV and LED irradiation, melatonin, and CLE14) converge on defined molecular nodes. We then ask how the new genomic resources of <i>B. oleracea</i> - the chromosome-scale broccoli reference genome and the 27-genome pan-genome - and CRISPR/Cas9 editing, now demonstrated in broccoli, provide a realistic route toward stay-green, slow-senescing cultivars. We close by identifying six priority frontiers: cell-type-resolved atlases, epigenomic time courses, standardized multi-omics protocols, GWAS for shelf life, rationally designed editing targets, and network-level validation. Broccoli thus illustrates a general arc of postharvest biology, moving from physiology to networks and from networks to designed genotypes.</p><p style="color: lightgray">PMID:<a href="https://pubmed.ncbi.nlm.nih.gov/43066338/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">43066338</a> | PMC:<a href="https://www.ncbi.nlm.nih.gov/pmc/PMC13787113/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">PMC13787113</a> | DOI:<a href=https://doi.org/10.3389/fpls.2026.1985976>10.3389/fpls.2026.1985976</a></p></div>]]></content:encoded>
+      <guid isPermaLink="false">pubmed:43066338</guid>
+      <pubDate>Sat, 21 Nov 2026 06:00:00 -0500</pubDate>
+      <dc:creator>Han-Min Jiang</dc:creator>
+      <dc:creator>Li-Li Liu</dc:creator>
+      <dc:creator>Zheng-Hua Wen</dc:creator>
+      <dc:creator>Guo-Bao Niu</dc:creator>
+      <dc:creator>Xiao-Li Zhang</dc:creator>
+      <dc:creator>Xing-Wei Yao</dc:creator>
+      <dc:creator>Xiao-Zheng Shan</dc:creator>
+      <dc:creator>De-Ling Sun</dc:creator>
+      <dc:date>2026-11-21</dc:date>
+      <dc:source>Frontiers in plant science</dc:source>
+      <dc:title>Postharvest senescence of broccoli in the multi-omics era: molecular mechanisms, regulatory networks, and prospects for germplasm innovation</dc:title>
+      <dc:identifier>pmid:43066338</dc:identifier>
+      <dc:identifier>pmc:PMC13787113</dc:identifier>
+      <dc:identifier>doi:10.3389/fpls.2026.1985976</dc:identifier>
+    </item>
+    <item>
+      <title>flexiAsCas12a and other Cas12a variants enhance the applicability of Cas12a nucleases in prime editing</title>
+      <link>https://pubmed.ncbi.nlm.nih.gov/43065054/?utm_source=Mobile Safari&amp;utm_medium=rss&amp;utm_campaign=None&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;fc=None&amp;ff=20261123210253&amp;v=2.20.1</link>
+      <description>CONCLUSIONS: flexiAsCas12a joins the repertoire of Cas12a PAM variants, enabling access to an increasing number of target sequences by Cas12a nucleases.</description>
+      <content:encoded><![CDATA[<div><p style="color: #4aa564;">Genome Biol. 2026 Aug 28;27(1):369. doi: 10.1186/s13059-026-04249-x.</p><p><b>ABSTRACT</b></p><p xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:p1="http://pubmed.gov/pub-one">BACKGROUND: Amongst the genome manipulation tools based on the versatile CRISPR-Cas system, prime editing is the most prominent one as a method that enables precise insertions, deletions, and substitutions without inducing double-strand breaks. Cas12a nucleases are widely used for genome editing and nucleic acid detection, owing to their unique properties; however, their relatively long PAM requirements limit their applicability.</p><p xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:p1="http://pubmed.gov/pub-one">RESULTS: We develop PAM-flexible Cas12a variants capable of functioning effectively within mammalian cells, thereby enabling the cleavage of targets previously inaccessible to Cas12a nucleases. Amongst the Lb-, As-, Mb-, and FnCas12a variants we develop, flexiAsCas12a (AsCas12a with flexible PAM recognition) is the most effective, expanding the range of recognized PAM sequences by Cas12a variants to include NATN, NCCN and GTCN sequences. Using the currently available Cas12a variants with relaxed PAM recognition (impLbCas12a, flexiAsCas12a, and enAsCas12a), we develop circular RNA-guided split prime editors and validate their functionality on non-canonical PAM sequences.</p><p xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:p1="http://pubmed.gov/pub-one">CONCLUSIONS: flexiAsCas12a joins the repertoire of Cas12a PAM variants, enabling access to an increasing number of target sequences by Cas12a nucleases.</p><p style="color: lightgray">PMID:<a href="https://pubmed.ncbi.nlm.nih.gov/43065054/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">43065054</a> | PMC:<a href="https://www.ncbi.nlm.nih.gov/pmc/PMC13786991/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">PMC13786991</a> | DOI:<a href=https://doi.org/10.1186/s13059-026-04249-x>10.1186/s13059-026-04249-x</a></p></div>]]></content:encoded>
+      <guid isPermaLink="false">pubmed:43065054</guid>
+      <pubDate>Fri, 20 Nov 2026 06:00:00 -0500</pubDate>
+      <dc:creator>Éva Varga</dc:creator>
+      <dc:creator>Luca Gál</dc:creator>
+      <dc:creator>Krisztina Huszár</dc:creator>
+      <dc:creator>Balázs Csoma</dc:creator>
+      <dc:creator>Dorottya A Simon</dc:creator>
+      <dc:creator>Zsuzsanna Biczók</dc:creator>
+      <dc:creator>Vivien R Karl</dc:creator>
+      <dc:creator>Sarah L Krausz</dc:creator>
+      <dc:creator>Eszter Tóth</dc:creator>
+      <dc:date>2026-11-20</dc:date>
+      <dc:source>Genome biology</dc:source>
+      <dc:title>flexiAsCas12a and other Cas12a variants enhance the applicability of Cas12a nucleases in prime editing</dc:title>
+      <dc:identifier>pmid:43065054</dc:identifier>
+      <dc:identifier>pmc:PMC13786991</dc:identifier>
+      <dc:identifier>doi:10.1186/s13059-026-04249-x</dc:identifier>
+    </item>
+    <item>
+      <title>Microbial maestros: Advancements through synthetic biology engineering in biofuel production</title>
+      <link>https://pubmed.ncbi.nlm.nih.gov/43064489/?utm_source=Mobile Safari&amp;utm_medium=rss&amp;utm_campaign=None&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;fc=None&amp;ff=20261123210253&amp;v=2.20.1</link>
+      <description>This article discusses biofuel production through synthetic biology engineering, focusing on advancements and strategies that have revolutionized the field. It discusses the shift from using food crops for first-generation biofuels to fourth-generation biofuels involving advanced technologies and the significance of sustainable feedstock. Synthetic biology, particularly CRISPR-Cas systems, is a key tool for precise genome editing, enabling the manipulation of metabolic processes in...</description>
+      <content:encoded><![CDATA[<div><p style="color: #4aa564;">Adv Appl Microbiol. 2026;135:75-88. doi: 10.1016/bs.aambs.2026.09.008. Epub 2026 Oct 5.</p><p><b>ABSTRACT</b></p><p xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:p1="http://pubmed.gov/pub-one">This article discusses biofuel production through synthetic biology engineering, focusing on advancements and strategies that have revolutionized the field. It discusses the shift from using food crops for first-generation biofuels to fourth-generation biofuels involving advanced technologies and the significance of sustainable feedstock. Synthetic biology, particularly CRISPR-Cas systems, is a key tool for precise genome editing, enabling the manipulation of metabolic processes in microorganisms. The optimization of biofuel production pathways using different tools like CRISPR and modifying microbes, such as bacteria and yeast, through by manipulating processes like carbon flux redirection, enhanced substrate utilization, and improved solvent production is also demonstrated. The article also highlights the importance of balancing host fitness and metabolic pathways to achieve optimal biofuel yields. The rapid advancements facilitated by CRISPR-Cas technology, making genome editing more efficient, cost-effective, and applicable to diverse feedstocks, are also discussed. Overall, the article provides insights into the background of biofuel production and the role of synthetic biology in shaping a sustainable energy future.</p><p style="color: lightgray">PMID:<a href="https://pubmed.ncbi.nlm.nih.gov/43064489/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">43064489</a> | DOI:<a href=https://doi.org/10.1016/bs.aambs.2026.09.008>10.1016/bs.aambs.2026.09.008</a></p></div>]]></content:encoded>
+      <guid isPermaLink="false">pubmed:43064489</guid>
+      <pubDate>Fri, 20 Nov 2026 06:00:00 -0500</pubDate>
+      <dc:creator>Aiman Shehzadi</dc:creator>
+      <dc:creator>Dian Nugraheni</dc:creator>
+      <dc:creator>Afsana Huseynova Anvar</dc:creator>
+      <dc:creator>Titin Haryati</dc:creator>
+      <dc:creator>Hafiz Abdullah Shakir</dc:creator>
+      <dc:creator>Muhammad Khan</dc:creator>
+      <dc:creator>Marcelo Franco</dc:creator>
+      <dc:creator>Abd Rahman Jabir Mohd Din</dc:creator>
+      <dc:creator>Muhammad Irfan</dc:creator>
+      <dc:date>2026-11-20</dc:date>
+      <dc:source>Advances in applied microbiology</dc:source>
+      <dc:title>Microbial maestros: Advancements through synthetic biology engineering in biofuel production</dc:title>
+      <dc:identifier>pmid:43064489</dc:identifier>
+      <dc:identifier>doi:10.1016/bs.aambs.2026.09.008</dc:identifier>
+    </item>
+    <item>
+      <title>The Acr-Aca Fusion Protein AcrIF16 Dually Inhibits the Type I-F CRISPR-Cas System Through DNA Sequestration</title>
+      <link>https://pubmed.ncbi.nlm.nih.gov/43062821/?utm_source=Mobile Safari&amp;utm_medium=rss&amp;utm_campaign=None&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;fc=None&amp;ff=20261123210253&amp;v=2.20.1</link>
+      <description>Anti-CRISPR (Acr) proteins are natural inhibitors of CRISPR-Cas systems, offering valuable tools for regulating genome editing. Most characterized Acrs function through direct protein-protein interactions with Cas effectors. Here, we report that AcrIF16, an Acr-Aca fusion protein from Pectobacterium parmentieri, inhibits the type I-F CRISPR-Cas system through a DNA-binding-dependent dual mechanism without forming stable complexes with the Csy surveillance complex or the Cas2/3 nuclease. The...</description>
+      <content:encoded><![CDATA[<div><p style="color: #4aa564;">FASEB J. 2026 Nov 30;40(22):e72406. doi: 10.1096/fj.202602129R.</p><p><b>ABSTRACT</b></p><p xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:p1="http://pubmed.gov/pub-one">Anti-CRISPR (Acr) proteins are natural inhibitors of CRISPR-Cas systems, offering valuable tools for regulating genome editing. Most characterized Acrs function through direct protein-protein interactions with Cas effectors. Here, we report that AcrIF16, an Acr-Aca fusion protein from Pectobacterium parmentieri, inhibits the type I-F CRISPR-Cas system through a DNA-binding-dependent dual mechanism without forming stable complexes with the Csy surveillance complex or the Cas2/3 nuclease. The high-resolution crystal structure of its N-terminal domain (NTD) reveals a canonical helix-turn-helix (HTH) motif that specifically binds inverted repeat sequences upstream of the acrIF16 locus. Structural prediction of the C-terminal domain (CTD) suggests a previously uncharacterized fold, although its functional role remains to be determined. Biochemical assays demonstrate that AcrIF16 binds double-stranded DNA in a sequence-non-specific manner, thereby competing with Csy for target DNA binding and destabilizing pre-assembled Csy-DNA complexes. Furthermore, AcrIF16 inhibits Cas2/3-mediated single-stranded and double-stranded DNA cleavage, an effect attributable to substrate sequestration rather than direct Cas2/3 binding. In vivo, AcrIF16 restores phage plaque formation in E. coli cells expressing the type I-F CRISPR-Cas system, supporting its anti-CRISPR activity. Thus, AcrIF16 employs a DNA-sequestration strategy to block both target recognition and DNA degradation in the type I-F CRISPR-Cas system. This work expands the mechanistic repertoire of anti-CRISPR proteins and highlights DNA-binding Acrs as a distinct class of CRISPR inhibitors.</p><p style="color: lightgray">PMID:<a href="https://pubmed.ncbi.nlm.nih.gov/43062821/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">43062821</a> | DOI:<a href=https://doi.org/10.1096/fj.202602129R>10.1096/fj.202602129R</a></p></div>]]></content:encoded>
+      <guid isPermaLink="false">pubmed:43062821</guid>
+      <pubDate>Fri, 20 Nov 2026 06:00:00 -0500</pubDate>
+      <dc:creator>Lingguang Yang</dc:creator>
+      <dc:creator>Xi Liu</dc:creator>
+      <dc:creator>Jiaxin Hou</dc:creator>
+      <dc:creator>Hui Liu</dc:creator>
+      <dc:creator>Peipei Yin</dc:creator>
+      <dc:creator>Hao Wang</dc:creator>
+      <dc:creator>Yi Zhang</dc:creator>
+      <dc:date>2026-11-20</dc:date>
+      <dc:source>FASEB journal : official publication of the Federation of American Societies for Experimental Biology</dc:source>
+      <dc:title>The Acr-Aca Fusion Protein AcrIF16 Dually Inhibits the Type I-F CRISPR-Cas System Through DNA Sequestration</dc:title>
+      <dc:identifier>pmid:43062821</dc:identifier>
+      <dc:identifier>doi:10.1096/fj.202602129R</dc:identifier>
+    </item>
+    <item>
+      <title>Engineering GFPuv Reporters for Visual Screening across Filamentous Fungi to Enable CRISPR Genome Editing in Aspergillus pseudoterreus</title>
+      <link>https://pubmed.ncbi.nlm.nih.gov/43061970/?utm_source=Mobile Safari&amp;utm_medium=rss&amp;utm_campaign=None&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;fc=None&amp;ff=20261123210253&amp;v=2.20.1</link>
+      <description>GFPuv is a UV-excitable fluorescent reporter that enables rapid monitoring of gene expression, particularly in microbial systems. However, its application in filamentous fungi remains limited. Here, we evaluated GFPuv variants and identified one that performs robustly across Aspergillus species and the yeast Yarrowia lipolytica. Under UV illumination, transformed green fluorescent colonies can be visualized without colony dissection or microscopy, significantly simplifying screening....</description>
+      <content:encoded><![CDATA[<div><p style="color: #4aa564;">ACS Synth Biol. 2026 Nov 20;15(11):4882-4888. doi: 10.1021/acssynbio.6c00361.</p><p><b>ABSTRACT</b></p><p xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:p1="http://pubmed.gov/pub-one">GFPuv is a UV-excitable fluorescent reporter that enables rapid monitoring of gene expression, particularly in microbial systems. However, its application in filamentous fungi remains limited. Here, we evaluated GFPuv variants and identified one that performs robustly across Aspergillus species and the yeast Yarrowia lipolytica. Under UV illumination, transformed green fluorescent colonies can be visualized without colony dissection or microscopy, significantly simplifying screening. CRISPR-based genome editing has not been previously established in Aspergillus pseudoterreus. By integrating the optimized GFPuv reporter into a transformation and selection system, we established, to our knowledge, the first CRISPR knockout platform in this species. Targeted disruption of the genes pyrG, CAD, and PrID505606 validated the platform. PCR and Sanger sequencing confirmed that GFPuv-positive colonies were true mutants, while loss-of-function phenotypes of pyrG and CAD further supported platform reliability. This work establishes GFPuv as a rapid, microscopy-independent screening tool in select fungi and provides a foundational CRISPR framework for engineering A. pseudoterreus.</p><p style="color: lightgray">PMID:<a href="https://pubmed.ncbi.nlm.nih.gov/43061970/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">43061970</a> | DOI:<a href=https://doi.org/10.1021/acssynbio.6c00361>10.1021/acssynbio.6c00361</a></p></div>]]></content:encoded>
+      <guid isPermaLink="false">pubmed:43061970</guid>
+      <pubDate>Fri, 20 Nov 2026 06:00:00 -0500</pubDate>
+      <dc:creator>Guoliang Yuan</dc:creator>
+      <dc:creator>Shuang Deng</dc:creator>
+      <dc:creator>Sarah L Lemmon</dc:creator>
+      <dc:creator>Ziyu Dai</dc:creator>
+      <dc:creator>Beth A Hofstad</dc:creator>
+      <dc:creator>Kyle R Pomraning</dc:creator>
+      <dc:date>2026-11-20</dc:date>
+      <dc:source>ACS synthetic biology</dc:source>
+      <dc:title>Engineering GFPuv Reporters for Visual Screening across Filamentous Fungi to Enable CRISPR Genome Editing in Aspergillus pseudoterreus</dc:title>
+      <dc:identifier>pmid:43061970</dc:identifier>
+      <dc:identifier>doi:10.1021/acssynbio.6c00361</dc:identifier>
+    </item>
+    <item>
+      <title>Translational nanotechnology for precision gene therapy delivery systems</title>
+      <link>https://pubmed.ncbi.nlm.nih.gov/43061576/?utm_source=Mobile Safari&amp;utm_medium=rss&amp;utm_campaign=None&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;fc=None&amp;ff=20261123210253&amp;v=2.20.1</link>
+      <description>Gene therapy is one of the breakthrough strategies for treating genetically acquired and complicated disorders owing to its potential in regulating the expression of genes precisely. Nevertheless, the success of any gene therapy will depend upon the development of a safe and efficient system for gene delivery. Nanotechnology has brought about great changes in the field of non-viral gene delivery systems by providing carriers that increase stability, facilitate cellular uptake, allow endosomal...</description>
+      <content:encoded><![CDATA[<div><p style="color: #4aa564;">Nanoscale Adv. 2026 Nov 5. doi: 10.1039/d6na00727a. Online ahead of print.</p><p><b>ABSTRACT</b></p><p xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:p1="http://pubmed.gov/pub-one">Gene therapy is one of the breakthrough strategies for treating genetically acquired and complicated disorders owing to its potential in regulating the expression of genes precisely. Nevertheless, the success of any gene therapy will depend upon the development of a safe and efficient system for gene delivery. Nanotechnology has brought about great changes in the field of non-viral gene delivery systems by providing carriers that increase stability, facilitate cellular uptake, allow endosomal escape, and have tissue specificity without causing systemic toxicity. This review examines the basic concepts underlying the design of nanocarriers for the delivery of plasmid DNA, mRNA, siRNA, and the CRISPR-Cas genome editing system. The current review provides an overview of different viral and non-viral delivery platforms for plasmid DNA, mRNA, siRNA, and CRISPR-Cas genome editing systems. The discussion focuses on adenoviral, adeno-associated viral, lentiviral, retroviral, herpes simplex viral and virus-like particle delivery platforms, as well as non-viral nanocarriers. The review further highlights clinically validated examples, such as liposomal nanoparticles used for the delivery of RNA-based therapies and discusses some of the translational challenges that still exist in terms of transfection efficiency, long-term safety issues, manufacturability at a large scale, and regulatory acceptance. Finally, some of the latest trends in gene delivery, such as artificial intelligence-assisted nanoparticle design, smart multi-responsive nanoparticles, and personalized nanomedicine, have been outlined as the most important driving forces in developing the next generation of gene delivery technologies.</p><p style="color: lightgray">PMID:<a href="https://pubmed.ncbi.nlm.nih.gov/43061576/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">43061576</a> | PMC:<a href="https://www.ncbi.nlm.nih.gov/pmc/PMC13784287/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">PMC13784287</a> | DOI:<a href=https://doi.org/10.1039/d6na00727a>10.1039/d6na00727a</a></p></div>]]></content:encoded>
+      <guid isPermaLink="false">pubmed:43061576</guid>
+      <pubDate>Fri, 20 Nov 2026 06:00:00 -0500</pubDate>
+      <dc:creator>Gayathri Muddala</dc:creator>
+      <dc:creator>Ravikumar Gujar</dc:creator>
+      <dc:creator>Sarvesh Thakur</dc:creator>
+      <dc:creator>Unnati Bhanushali</dc:creator>
+      <dc:creator>Priyalakshmi Karthik</dc:creator>
+      <dc:creator>Sukhvinder Singh</dc:creator>
+      <dc:creator>Rohit Srivastava</dc:creator>
+      <dc:creator>Roshan Keshari</dc:creator>
+      <dc:date>2026-11-20</dc:date>
+      <dc:source>Nanoscale advances</dc:source>
+      <dc:title>Translational nanotechnology for precision gene therapy delivery systems</dc:title>
+      <dc:identifier>pmid:43061576</dc:identifier>
+      <dc:identifier>pmc:PMC13784287</dc:identifier>
+      <dc:identifier>doi:10.1039/d6na00727a</dc:identifier>
+    </item>
+    <item>
+      <title>An integrated workflow for dual-guide CRISPR-Cas9 targeting and amplicon-based genotyping of Pla2g6 in primary mouse bone marrow-derived macrophages</title>
+      <link>https://pubmed.ncbi.nlm.nih.gov/43060140/?utm_source=Mobile Safari&amp;utm_medium=rss&amp;utm_campaign=None&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;fc=None&amp;ff=20261123210253&amp;v=2.20.1</link>
+      <description>CRISPR-Cas9 editing in primary bone marrow-derived macrophages (BMD-Mɸs) requires coordinated assessment of cellular morphology, target modification, and sequence-level editing outcomes. We describe a workflow for dual-guide targeting of murine Pla2g6 that integrates guide design, ribonucleoprotein nucleofection, PCR-heteroduplex mobility analysis (PCR-HMA), and targeted amplicon sequencing. At 24 h after nucleofection, cells receiving ribonucleoproteins assembled with chemically synthesized...</description>
+      <content:encoded><![CDATA[<div><p style="color: #4aa564;">bioRxiv [Preprint]. 2026 Nov 6:2026.11.03.763930. doi: 10.64898/2026.11.03.763930.</p><p><b>ABSTRACT</b></p><p xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:p1="http://pubmed.gov/pub-one">CRISPR-Cas9 editing in primary bone marrow-derived macrophages (BMD-Mɸs) requires coordinated assessment of cellular morphology, target modification, and sequence-level editing outcomes. We describe a workflow for dual-guide targeting of murine <i>Pla2g6</i> that integrates guide design, ribonucleoprotein nucleofection, PCR-heteroduplex mobility analysis (PCR-HMA), and targeted amplicon sequencing. At 24 h after nucleofection, cells receiving ribonucleoproteins assembled with chemically synthesized single-guide RNAs preserved the elongated, adherent morphology, whereas cultures receiving <i>in vitro</i> -transcribed guides contained predominantly poorly adhered, rounded cells and appeared less densely populated; both guide preparations generated indels and deletions, so the difference observed was in cell appearance rather than in target modification. PCR-HMA provided a simple, qualitative screen for sequence heterogeneity and for a putative deletion product, which was subsequently characterized by sequencing. In two independent BMDM samples, one each from C57BL/6 and NOD mice, breakpoint-based analysis identified editing-associated indels in 54.7% and 44.5% of analyzed reads, compared with 0.28% and 0.07% in matched Cas9-only controls. Deletions spanning both target sites represented 33.1% and 26.2% of analyzed reads; none were detected among 4,383 analyzed control reads. The modal spanning deletion was 137 bp, the size predicted from precise joining of the two blunt Cas9 ends. Sequence interpretation depended on verified guide coordinates, deletion-aware analysis settings, and matched controls: scored permissively, the same control reads returned 22-23% apparent editing. Modest-depth Nanopore sequencing recovered the major editing classes, although low-frequency variants and small indels required additional caution. This workflow supports a simple and streamlined screening and sequence-based genotyping of edited BMDM populations, allowing the discernment of the comprehensive mutation spectrum arising from CRISPR-Cas9 gene targeting.</p><p style="color: lightgray">PMID:<a href="https://pubmed.ncbi.nlm.nih.gov/43060140/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">43060140</a> | PMC:<a href="https://www.ncbi.nlm.nih.gov/pmc/PMC13780618/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">PMC13780618</a> | DOI:<a href=https://doi.org/10.64898/2026.11.03.763930>10.64898/2026.11.03.763930</a></p></div>]]></content:encoded>
+      <guid isPermaLink="false">pubmed:43060140</guid>
+      <pubDate>Fri, 20 Nov 2026 06:00:00 -0500</pubDate>
+      <dc:creator>Anil K Challa</dc:creator>
+      <dc:creator>Rithvikha Nair</dc:creator>
+      <dc:creator>Arumugam Gurusamy</dc:creator>
+      <dc:creator>Thi Yen Ly Huynh</dc:creator>
+      <dc:creator>Jonathan R Folmar</dc:creator>
+      <dc:creator>Aaliya Ahamed</dc:creator>
+      <dc:creator>Sriharsha Chowdarapu</dc:creator>
+      <dc:creator>Sasanka Ramanadham</dc:creator>
+      <dc:date>2026-11-20</dc:date>
+      <dc:source>bioRxiv : the preprint server for biology</dc:source>
+      <dc:title>An integrated workflow for dual-guide CRISPR-Cas9 targeting and amplicon-based genotyping of Pla2g6 in primary mouse bone marrow-derived macrophages</dc:title>
+      <dc:identifier>pmid:43060140</dc:identifier>
+      <dc:identifier>pmc:PMC13780618</dc:identifier>
+      <dc:identifier>doi:10.64898/2026.11.03.763930</dc:identifier>
+    </item>
+    <item>
+      <title>Deconvoluting the mode of action of antileishmanial aminopyrazoles through chemical mutagenesis</title>
+      <link>https://pubmed.ncbi.nlm.nih.gov/43058095/?utm_source=Mobile Safari&amp;utm_medium=rss&amp;utm_campaign=None&amp;utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&amp;fc=None&amp;ff=20261123210253&amp;v=2.20.1</link>
+      <description>Aminopyrazoles have emerged as a promising series of antileishmanial compounds. Molecular target deconvolution has been a major challenge because successive drug exposure failed to select for resistance. Chemical mutagenesis combined with aminopyrazole selective pressure and whole genome sequencing was used as an alternative approach. From the obtained panel of 28 resistant lines, an association was discovered between &gt;10-49-fold resistance and multiple independent heterozygous mutations in the...</description>
+      <content:encoded><![CDATA[<div><p style="color: #4aa564;">Nat Commun. 2026 Oct 22;17(1):11852. doi: 10.1038/s41467-026-78576-9.</p><p><b>ABSTRACT</b></p><p xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:p1="http://pubmed.gov/pub-one">Aminopyrazoles have emerged as a promising series of antileishmanial compounds. Molecular target deconvolution has been a major challenge because successive drug exposure failed to select for resistance. Chemical mutagenesis combined with aminopyrazole selective pressure and whole genome sequencing was used as an alternative approach. From the obtained panel of 28 resistant lines, an association was discovered between &gt;10-49-fold resistance and multiple independent heterozygous mutations in the C-terminal FYVE Zn finger domain of LINF_180011100. LINF_180011100 gene overexpression and CRISPR-Cas9 gene editing has independently confirmed the association with 10- to 30-fold aminopyrazole resistance. Genetic fusion with an N-terminal green fluorescent protein tag and partial colocalization with a C-terminal mCherry-tagged small GTPase Rab5 demonstrated that the functional protein primarily localizes in endocytic vesicles. In situ target engagement assays confirmed a selective effect of aminopyrazoles and its abrogation by introducing a resistance-conferring mutation. Finally, a direct interaction between the lead compound and recombinantly produced LINF_180011100 FYVE Zn finger domain was demonstrated through a biophysical assay. Hence, this work formally validates LINF_180011100 as a drug target and resistance determinant for several aminopyrazole leads and provides insights into the mechanism of action.</p><p style="color: lightgray">PMID:<a href="https://pubmed.ncbi.nlm.nih.gov/43058095/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">43058095</a> | PMC:<a href="https://www.ncbi.nlm.nih.gov/pmc/PMC13785654/?utm_source=Mobile Safari&utm_medium=rss&utm_content=1FomMFNkGLRzSnqdOiowkcxSL5oy1xngKlcjtPLJRMv8GfPMJ3&ff=20261123210253&v=2.20.1">PMC13785654</a> | DOI:<a href=https://doi.org/10.1038/s41467-026-78576-9>10.1038/s41467-026-78576-9</a></p></div>]]></content:encoded>
+      <guid isPermaLink="false">pubmed:43058095</guid>
+      <pubDate>Thu, 19 Nov 2026 06:00:00 -0500</pubDate>
+      <dc:creator>Rokaya Ahmad</dc:creator>
+      <dc:creator>Magali Van den Kerkhof</dc:creator>
+      <dc:creator>Philippe Leprohon</dc:creator>
+      <dc:creator>Natalia Smiejkowska</dc:creator>
+      <dc:creator>Ellen Wuyts</dc:creator>
+      <dc:creator>Pieter Van Wielendaele</dc:creator>
+      <dc:creator>Sara Dufour</dc:creator>
+      <dc:creator>Simon Devos</dc:creator>
+      <dc:creator>Alvaro Baeza Garcia</dc:creator>
+      <dc:creator>Stéphanie Braillard</dc:creator>
+      <dc:creator>Charles E Mowbray</dc:creator>
+      <dc:creator>Louis Maes</dc:creator>
+      <dc:creator>Yann G-J Sterckx</dc:creator>
+      <dc:creator>Marc Ouellette</dc:creator>
+      <dc:creator>Guy Caljon</dc:creator>
+      <dc:date>2026-11-19</dc:date>
+      <dc:source>Nature communications</dc:source>
+      <dc:title>Deconvoluting the mode of action of antileishmanial aminopyrazoles through chemical mutagenesis</dc:title>
+      <dc:identifier>pmid:43058095</dc:identifier>
+      <dc:identifier>pmc:PMC13785654</dc:identifier>
+      <dc:identifier>doi:10.1038/s41467-026-78576-9</dc:identifier>
+    </item>
+  </channel>
+</rss>

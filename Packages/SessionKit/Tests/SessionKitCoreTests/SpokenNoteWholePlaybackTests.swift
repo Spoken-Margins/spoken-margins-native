@@ -190,6 +190,102 @@ final class SpokenNoteWholePlaybackTests: XCTestCase {
 
     // MARK: when the joined file is made
 
+    /// #4779: Shorter pauses attaches the version and its timeline when one is made from exactly these takes; otherwise,
+    /// and for As recorded, the recording. A take added since the version was made falls back to the recording.
+    func testShorterPausesAttachesTheVersionOnlyWhenItMatchesTheTakes() async throws {
+        let store = try makeStore(takes: [("a", ["One.", "Two.", "Three."])])
+        let joiner = FakeJoiner()
+        let writer = RecordingWriter()
+        let recordedURL = SpokenNoteWholePlayback.audioURL(inFolder: store.folderURL)
+        let cleanURL = SpokenNoteCleanFiles.audioURL(inNoteFolder: store.folderURL)
+
+        let noVersionYet = try await SpokenNoteWholePlayback.prepare(store: store, joiner: joiner, writer: writer, version: .shorterPauses)
+        XCTAssertEqual(noVersionYet.audioURL, recordedURL, "nothing made yet: the recording plays")
+
+        // The version keeps 0–1.5 s and 2–4 s of the one 4 s take: 3.5 s long, sentence two (at 1 s) unmoved, three (at 2 s) at 1.5 s.
+        let requested = SpokenNoteWholePlayback.requestedTakes(of: store.load(), inFolder: store.folderURL)
+        try SpokenNoteCleanFiles.write(SpokenNoteCleanLayout(
+            requested: requested, cutFingerprints: ["a": "x"],
+            placements: [
+                .init(takeId: "a", takeStartMs: 0, takeEndMs: 1_500, outputStartMs: 0),
+                .init(takeId: "a", takeStartMs: 2_000, takeEndMs: 4_000, outputStartMs: 1_500),
+            ],
+            durationMs: 3_500, result: .made(savedMs: 500)
+        ), to: SpokenNoteCleanFiles.layoutURL(inNoteFolder: store.folderURL))
+        try Data("clean".utf8).write(to: cleanURL)
+
+        let version = try await SpokenNoteWholePlayback.prepare(store: store, joiner: joiner, writer: writer, version: .shorterPauses)
+        XCTAssertEqual(version.audioURL, cleanURL)
+        XCTAssertEqual(version.durationMs, 3_500)
+        XCTAssertEqual(version.timeline.entries.map(\.startMs), [0, 1_000, 1_500])
+        XCTAssertEqual(writer.calls.last?.audioURL, cleanURL)
+
+        let recorded = try await SpokenNoteWholePlayback.prepare(store: store, joiner: joiner, writer: writer, version: .asRecorded)
+        XCTAssertEqual(recorded.audioURL, recordedURL)
+
+        try append("b", ["Four."], to: store)
+        let afterTake = try await SpokenNoteWholePlayback.prepare(store: store, joiner: joiner, writer: writer, version: .shorterPauses)
+        XCTAssertEqual(afterTake.audioURL, recordedURL, "a take added since the version was made: the recording plays until it is made again")
+        XCTAssertEqual(try Data(contentsOf: store.folderURL.appendingPathComponent("take-a.m4a")), Data("audio-a".utf8), "takes are never written")
+    }
+
+    /// #4780 with #4779: Now's rows take their times from the clock of the file playing. Under Shorter pauses the
+    /// recording's times light the wrong sentence and a tap seeks to the wrong place.
+    func testNowsWordsFollowTheClockOfTheFilePlaying() async throws {
+        let store = try makeStore(takes: [("a", ["One.", "Two.", "Three."])])
+        _ = try await SpokenNoteWholePlayback.prepare(store: store, joiner: FakeJoiner(), writer: RecordingWriter())
+        // As in the test above: sentence three, at 2 s in the recording, is at 1.5 s in the version.
+        let requested = SpokenNoteWholePlayback.requestedTakes(of: store.load(), inFolder: store.folderURL)
+        try SpokenNoteCleanFiles.write(SpokenNoteCleanLayout(
+            requested: requested, cutFingerprints: ["a": "x"],
+            placements: [
+                .init(takeId: "a", takeStartMs: 0, takeEndMs: 1_500, outputStartMs: 0),
+                .init(takeId: "a", takeStartMs: 2_000, takeEndMs: 4_000, outputStartMs: 1_500),
+            ],
+            durationMs: 3_500, result: .made(savedMs: 500)
+        ), to: SpokenNoteCleanFiles.layoutURL(inNoteFolder: store.folderURL))
+        let cleanURL = SpokenNoteCleanFiles.audioURL(inNoteFolder: store.folderURL)
+        try Data("clean".utf8).write(to: cleanURL)
+
+        func words(playing url: URL?) -> SpokenNoteNowPassage.Words {
+            SpokenNoteNowPassage.Words(note: store.load(), inFolder: store.folderURL, playingMediaURL: url?.absoluteString)
+        }
+        let version = words(playing: cleanURL)
+        XCTAssertEqual(version.rows.map(\.startMs), [0, 1_000, 1_500], "a tap seeks on the version's clock")
+        XCTAssertEqual(version.sourceOffset(mediaTimeMs: 1_600), version.sentenceStarts[2], "the sentence heard is lit")
+
+        for recording in [SpokenNoteWholePlayback.audioURL(inFolder: store.folderURL), nil] {
+            let recorded = words(playing: recording)
+            XCTAssertEqual(recorded.rows.map(\.startMs), [0, 1_000, 2_000])
+            XCTAssertEqual(recorded.sourceOffset(mediaTimeMs: 1_600), recorded.sentenceStarts[1])
+        }
+
+        // A Margin is saved on the recording's clock whichever version plays (#4779). One with no segment id (made while
+        // the note had no words) at 1.6 s of the recording, in the pause the version cuts, sits after sentence two on
+        // every clock, as on the note's own screen; the version's clock would put it after sentence three.
+        let itemId = SpokenNoteItem.itemId(forNoteId: store.load().id)
+        let margin = Interjection(
+            id: "m", itemId: itemId, sessionId: "session", targetType: .item, targetId: itemId,
+            createdAt: Date(timeIntervalSince1970: 0), roughPercent: 50,
+            anchor: Anchor(anchorType: .transcript, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "",
+                           mediaTimeMs: 1_600, transcriptSegmentId: nil),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+            displayText: "A Margin", status: "active")
+        for (playing, url) in [("the version", cleanURL), ("the recording", SpokenNoteWholePlayback.audioURL(inFolder: store.folderURL)),
+                               ("nothing", nil)] {
+            let shown = words(playing: url)
+            XCTAssertEqual(shown.marginItems([margin], itemId: itemId).map(\.afterRowId), [shown.rows[1].id], "playing \(playing)")
+        }
+
+        try append("b", ["Four."], to: store)
+        _ = try await SpokenNoteWholePlayback.prepare(store: store, joiner: FakeJoiner(), writer: RecordingWriter())
+        let stale = words(playing: cleanURL)
+        XCTAssertEqual(stale.rows.map(\.startMs), [nil, nil, nil, nil], "a version that no longer matches gives no times")
+        XCTAssertNil(stale.sourceOffset(mediaTimeMs: 1_600))
+        XCTAssertEqual(stale.marginItems([margin], itemId: itemId).map(\.afterRowId), [stale.rows[1].id],
+                       "a version that no longer matches keeps the Margin rows")
+    }
+
     func testTheFirstPlayJoinsTakesInOrderAndLaterPlaysReuseTheFile() async throws {
         let store = try makeStore(takes: [("a", ["One."]), ("b", ["Two."])])
         let joiner = FakeJoiner()

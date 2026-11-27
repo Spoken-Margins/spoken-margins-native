@@ -34,7 +34,11 @@ class RowAccessibilityActionTests(unittest.TestCase):
                 self.assertRegex(text, r"\.accessibilityActions?\b", f"{name} has a row menu but no accessibility action")
 
     def test_timeline_and_margin_rows_reuse_their_menu_content(self):
-        self.assertIn(".accessibilityActions { details(entry.action) }", _read("PlaybackTimelineListView.swift"))
+        # One `.accessibilityActions` block after the row's `.contextMenu`, holding the menu's own content first: the
+        # chain the long-press menu had when it last dismissed on the Test Desk (#4778; cause not yet proven).
+        timeline = _read("PlaybackTimelineListView.swift")
+        self.assertEqual(timeline.count(".accessibilityActions"), 1)
+        self.assertRegex(timeline, r"\.contextMenu \{ details\(entry\.action\) \}\s*\.accessibilityActions \{\s*details\(entry\.action\)\n")
         margins = _read("ExperienceMarginsScreen.swift")
         self.assertIn(".contextMenu { ownMarginActions(row, repair: repair) }", margins)
         self.assertIn(".accessibilityActions { ownMarginActions(row, repair: repair) }", margins)

@@ -17,10 +17,10 @@ public enum FeedEntryMediaKind: String, Equatable, Sendable {
 public enum PublisherAudioDetector {
     /// A minimum article body, applied only after affirmative narration evidence.
     public static let minimumBodyWords = 600
-    public static let detectedFromFeedEnclosure = "feed_enclosure"
-    public static let detectedFromPublisherNarration = "substack_post_voiceover"
+    public static let detectedFromFeedEnclosure = PublisherAudioSource.feedEnclosure.rawValue
+    public static let detectedFromPublisherNarration = PublisherAudioSource.substackPostVoiceover.rawValue
     /// Substack's automatic narration of a post whose author recorded nothing (#810).
-    public static let detectedFromGeneratedNarration = "substack_post_generated_voice"
+    public static let detectedFromGeneratedNarration = PublisherAudioSource.substackPostGeneratedVoice.rawValue
 
     public static func kind(audioURL: String?, pageURL: String, bodyWordCount: Int?, publisherNarrationConfirmed: Bool = false) -> FeedEntryMediaKind {
         guard let audio = httpsURL(audioURL) else { return .article }

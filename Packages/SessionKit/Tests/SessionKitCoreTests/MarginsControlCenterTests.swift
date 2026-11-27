@@ -23,8 +23,8 @@ final class MarginsControlCenterTests: XCTestCase {
         // Playback order by thread root; the conversation sits under the listener's Margin at 3:10.
         XCTAssertEqual(rows.map(\.id), [
             "imported-rae-ui-tab-forty",
-            "local-own-ui-tab-sleep", "imported-sam-ui-tab-reply", "local-own-ui-tab-answer", "imported-sam-ui-tab-tried",
-            "imported-sam-ui-tab-placeholder", "imported-rae-ui-tab-guest", "local-own-ui-tab-walk",
+            "local-session-item-ui-podcast-ui-tab::own-ui-tab-sleep", "imported-sam-ui-tab-reply", "local-session-item-ui-podcast-ui-tab::own-ui-tab-answer", "imported-sam-ui-tab-tried",
+            "imported-sam-ui-tab-placeholder", "imported-rae-ui-tab-guest", "local-session-item-ui-podcast-ui-tab::own-ui-tab-walk",
             "imported-sam-ui-tab-naps", "imported-rae-ui-tab-ending",
         ])
         XCTAssertEqual(rows.map(\.depth), [0, 0, 1, 2, 3, 0, 0, 0, 0, 0])
@@ -37,14 +37,14 @@ final class MarginsControlCenterTests: XCTestCase {
         XCTAssertEqual(hearing["imported-rae-ui-tab-forty"], .heard)
         XCTAssertEqual(hearing["imported-sam-ui-tab-naps"], .heard)
         XCTAssertEqual(hearing["imported-sam-ui-tab-reply"], .unheard)
-        XCTAssertEqual(hearing["local-own-ui-tab-sleep"], .yours)
+        XCTAssertEqual(hearing["local-session-item-ui-podcast-ui-tab::own-ui-tab-sleep"], .yours)
         XCTAssertEqual(MarginsControlCenter.unheardCount(rows), 5)
         XCTAssertTrue(MarginsControlCenter.opensOnMarginsTab(rows))
     }
 
     func testOnlyYourOwnMarginsCarryAStar() {
         let starred = seedRows().filter(\.isStarred).map(\.id)
-        XCTAssertEqual(starred, ["local-own-ui-tab-walk"])
+        XCTAssertEqual(starred, ["local-session-item-ui-podcast-ui-tab::own-ui-tab-walk"])
     }
 
     func testPlaceholderWordsShowAsComingNotAsTheFriendsWords() {
@@ -55,7 +55,7 @@ final class MarginsControlCenterTests: XCTestCase {
     func testEveryRowQuotesItsLeadInAndStartsTwentySecondsBefore() {
         let rows = seedRows()
         XCTAssertTrue(rows.allSatisfy { $0.leadIn != nil })
-        let sleep = rows.first { $0.id == "local-own-ui-tab-sleep" }
+        let sleep = rows.first { $0.id == "local-session-item-ui-podcast-ui-tab::own-ui-tab-sleep" }
         XCTAssertEqual(sleep?.timeMs, 190_000)
         XCTAssertEqual(sleep?.startHereMs, 170_000)
     }
@@ -93,7 +93,7 @@ final class MarginsControlCenterTests: XCTestCase {
         let all = NextMarginSkip.next(playheadMs: 780_000, rows: rows, autoplay: .all)
         XCTAssertEqual(all, NextMarginSkip(
             marginTimeMs: 930_000, leadInStartMs: 910_000, msUntilMargin: 150_000, action: .seekToLeadIn,
-            firstToPlay: .local(MarginsControlCenterFixture.ownWalkId)))
+            firstToPlay: .local(Interjection.sessionScopedId(sessionId: MarginsControlCenterFixture.sessionId, id: MarginsControlCenterFixture.ownWalkId))))
         XCTAssertEqual(all?.countdown, "2:30")
         // Under Unheard it passes the walk (yours) and Sam's heard 19:05 for Rae's unheard 22:40.
         XCTAssertEqual(NextMarginSkip.next(playheadMs: 780_000, rows: rows, autoplay: .unheard)?.marginTimeMs, 1_360_000)
@@ -110,7 +110,7 @@ final class MarginsControlCenterTests: XCTestCase {
         XCTAssertEqual(NextMarginSkip.next(playheadMs: 100_000, rows: rows, autoplay: .none)?.firstToPlay,
                        .imported("sam-ui-tab-reply"), "prototype v3: only All starts at the root")
         XCTAssertEqual(NextMarginSkip.next(playheadMs: 100_000, rows: rows, autoplay: .all)?.firstToPlay,
-                       .local(MarginsControlCenterFixture.ownFirstId))
+                       .local(Interjection.sessionScopedId(sessionId: MarginsControlCenterFixture.sessionId, id: MarginsControlCenterFixture.ownFirstId)))
     }
 
     func testAutoplayLabels() {

@@ -169,4 +169,18 @@ final class SharedMarginReplyMemoryTests: XCTestCase {
         let padded = MarginReplyChoice(suggested: draft("a1", from: layer("a", label: "  Ana  ")))
         XCTAssertEqual(padded.writingPrompt, "What do you want to say to Ana?")
     }
+
+    /// A conductor jump or the listener's own voice ends the window at once (#5238); without it a voice cut with no end
+    /// call would stay "still sounding" for good.
+    func testForgetEndsTheWindowAndAnUnendedVoiceStaysOpen() {
+        let ana = draft("a1", from: layer("a", label: "Ana"))
+        memory.began(ana, itemId: "item")
+        XCTAssertEqual(memory.reply(forItem: "item", at: t0.addingTimeInterval(3_600)), ana, "no end call: open until one comes")
+        memory.forget()
+        XCTAssertNil(memory.reply(forItem: "item", at: t0))
+        memory.began(ana, itemId: "item")
+        memory.ended(at: t0)
+        memory.forget()
+        XCTAssertNil(memory.reply(forItem: "item", at: t0.addingTimeInterval(5)), "inside the 20 s, but forgotten")
+    }
 }

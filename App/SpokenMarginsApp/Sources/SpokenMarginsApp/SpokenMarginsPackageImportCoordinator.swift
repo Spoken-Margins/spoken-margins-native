@@ -73,6 +73,9 @@ final class SpokenMarginsPackageImportCoordinator {
         /// Brings the Library rows up to date with an item an import added, without opening it. It reads off the main
         /// thread and returns once the rows are on screen, so the callers after it can read them (#2256).
         var refreshImportedLibrary: @MainActor (_ store: SQLiteSessionStore) async throws -> Void = { _ in }
+        /// Re-reads the open item off the main thread, so its friend cards and Margins show an answer that a reply box's
+        /// quiet import put on it (#4675). Nothing else changes: no navigation, no playback.
+        var refreshSelectedItemQuietly: @MainActor () -> Void = {}
         /// Names main-thread work for the hang probe. `stage` no longer has any (#2510).
         var labels = MainThreadOperationLabels()
     }
@@ -275,6 +278,95 @@ final class SpokenMarginsPackageImportCoordinator {
         }
     }
 
+    // MARK: Quiet import (#4675)
+
+    /// A reply box's answer (`docs/design/reply-mailbox.md` piece 7): the `stage` and `confirm` steps with none of their
+    /// output. It never offers the packet to the review queue and never shows the waiting message, the duplicate-open,
+    /// the imported item, confirm's banners, the open-failure sheet or a restore: banner C, which the reply box
+    /// coordinator builds from the outcome, is the only thing the listener sees. It never touches playback. Only an
+    /// answer the matcher places on the record's shared item gets in (`ReplyBoxQuietImport`); anything else is a silent
+    /// drop with a Diagnostics line. The caller owns `sourceURL` and removes it afterwards.
+    func stageQuietly(from sourceURL: URL, for record: ReplyBoxRecord) async -> ReplyBoxImportOutcome {
+        guard !Task.isCancelled else { return .notNow }
+        environment.bootstrapLibrary()
+        guard let store = try? environment.requireStore(),
+              let support = try? environment.applicationSupportDirectory() else { return .notNow }
+        let root = support.appending(path: "SpokenMargins/IncomingPackages/\(UUID().uuidString)", directoryHint: .isDirectory)
+        stagingFolders.insert(root.lastPathComponent)
+        defer { stagingFolders.remove(root.lastPathComponent) }
+        func drop(_ reason: ReplyBoxAdmission.DropReason, _ detail: String) async -> ReplyBoxImportOutcome {
+            environment.recordDiagnostic("lastReplyBoxImport", "dropped:\(reason.code):\(detail)")
+            await removeFolderIfNothingNamesIt(root)
+            return .dropped(reason)
+        }
+        let contents: VerifiedSpokenMarginsPackage
+        do {
+            contents = try await Self.copyAndRead(from: sourceURL, into: root)
+        } catch {
+            if error is CancellationError { await removeFolderIfNothingNamesIt(root); return .notNow }
+            return await drop(.unreadable, SharedMarginsImportMessage.diagnosticDetail(error))
+        }
+        do {
+            guard let digest = contents.manifest.contentDigest else { return await drop(.unreadable, "no_digest") }
+            var earlier: ReplyBoxQuietImport.EarlierImport?
+            if case .alreadyImported(let itemId) = try await lookUpDuplicate(digest: digest, store: store).check,
+               let layerId = try await StoreReader(store).read({ try $0.loadImportedCommentaryLayer(packageDigest: digest)?.id }) {
+                earlier = ReplyBoxQuietImport.EarlierImport(layerId: layerId, itemId: itemId)
+            }
+            var matchingItemId: String?
+            if earlier == nil { matchingItemId = try await lookUpSourceMatch(for: contents, store: store).itemId }
+            let review = SpokenMarginsPackageImportReview(
+                packageURL: root.appending(path: "package.spokenmargins"), extractionDirectory: root,
+                contents: contents, matchingItemId: matchingItemId
+            )
+            let decision = ReplyBoxQuietImport.decide(
+                record: record, earlier: earlier, matchingItemId: matchingItemId, isListeningMap: review.isListeningMap,
+                requiresRecipientItem: review.requiresRecipientItem,
+                parentPackageDigests: contents.conversations.flatMap { $0.replies.map(\.parentPackageDigest) }
+            )
+            let itemId: String
+            switch decision {
+            case .drop(let reason):
+                return await drop(reason, digest)
+            case .alreadyIn(let layerId):
+                await removeFolderIfNothingNamesIt(root)
+                let title = try? await StoreReader(store).read { try $0.loadItem(id: record.itemId).title }
+                return .imported(ReplyBoxImported(
+                    layerId: layerId, senderLabel: contents.manifest.senderDisplayLabel, itemTitle: title ?? "", newMarginCount: 0))
+            case .importOnto(let shared):
+                itemId = shared
+            }
+            guard !Task.isCancelled else { await removeFolderIfNothingNamesIt(root); return .notNow }
+            let committed = try await commit(contents, itemId: itemId, shareLinkId: nil, store: store)
+            // From here the answer is in the Library: whatever happens next, a cancellation included, the outcome is
+            // `.imported`. Returning `.notNow` would leave the post for the next check, which finds it already in
+            // (`newMarginCount` 0), and banner C would never say it arrived.
+            // The Library row's new-Margins dot and the open item's cards; nothing opens and nothing plays.
+            try? await environment.refreshImportedLibrary(store)
+            if environment.selectedItemID() == itemId { environment.refreshSelectedItemQuietly() }
+            do {
+                if let item = committed.item, let admission = committed.localAudioAdmission {
+                    try await placeOnOwnedAudio(item, contents: contents, admission: admission)
+                } else if let localURL = environment.validatedLocalURL(itemId) {
+                    environment.resolvePodcastCommentary(itemId, localURL)
+                }
+            } catch {
+                // The Margins are saved; placing them on the listener's own audio can be done again by a restore.
+                let detail = error is CancellationError ? "cancelled" : SafeErrorText.describe(error)
+                environment.recordDiagnostic("lastReplyBoxImportPlacement", "not_placed:\(committed.layerId):\(detail)")
+            }
+            environment.recordDiagnostic("lastReplyBoxImport", "imported:\(committed.layerId):\(committed.newMarginCount)")
+            await removeFolderIfNothingNamesIt(root)
+            return .imported(ReplyBoxImported(
+                layerId: committed.layerId, senderLabel: contents.manifest.senderDisplayLabel,
+                itemTitle: committed.item?.title ?? "", newMarginCount: committed.newMarginCount
+            ))
+        } catch {
+            if error is CancellationError { await removeFolderIfNothingNamesIt(root); return .notNow }
+            return await drop(.rejected, SafeErrorText.describe(error))
+        }
+    }
+
     /// The model's restore-audio task: places an already-imported listening package on the listener's audio.
     func restoreAudio(_ restore: RestoreAudio) async {
         defer { restoringFolders.remove(restore.directory.lastPathComponent) }
@@ -445,67 +537,9 @@ final class SpokenMarginsPackageImportCoordinator {
             case .acquireArticle:
                 itemId = try await environment.acquireArticle(review.contents.manifest.item)
             }
-            // The item, the duplicate check and the import commit run on a background thread (#2509). `isImporting`
-            // already keeps a second confirm, a cancel and a re-match out until this ends, so nothing else writes
-            // meanwhile; the writes keep their order inside one step.
-            let reader = StoreReader(store)
-            let item: Item? = if let itemId { try await reader.read { try $0.loadItem(id: itemId) } } else { nil }
-            let ownedAudiobookDigest = item.flatMap { environment.localAudiobookDigest($0) }
-            var localAudioAdmission: LocalAudioPacketAdmission?
-            if let item, item.mediaType == "audiobook" {
-                localAudioAdmission = try await verifyLocalAudioForImport(item, contents: review.contents)
-            }
-            let itemText = item?.text
-            let contents = review.contents
-            // Whether a friend's Margins were already on the item, for "2 new Margins from Cole" (#3291).
-            let itemHadFriendMargins = try await reader.read { store in
-                try itemId.map { try store.loadImportedCommentaryLayers(itemId: $0).contains { $0.deletedAt == nil } } ?? false
-            }
-            let (disposition, repairedLayerId) = try await reader.read { store -> (ImportedCommentaryImportDisposition, String?) in
-                let localItem = item.map {
-                    SharedPacketItemMatcher.localIdentity(for: $0, ownedAudiobookDigest: ownedAudiobookDigest)
-                }
-                if let digest = contents.manifest.contentDigest,
-                   let existing = try store.loadImportedCommentaryLayer(packageDigest: digest) {
-                    try SpokenMarginsPackageImporter.repairAssociation(
-                        existing: existing,
-                        contents: contents,
-                        itemId: itemId,
-                        localItem: localItem,
-                        itemText: itemText,
-                        repository: store
-                    )
-                    // After the repair, which saves its own copy of the layer (#2846).
-                    try ImportedMarginResends.rememberShareLink(review.shareLinkId, onLayerWithDigest: digest, repository: store)
-                    return (.duplicate(existingLayerId: existing.id), existing.id)
-                }
-                return (try SpokenMarginsPackageImporter.importPackage(
-                    contents,
-                    itemId: itemId,
-                    localItem: localItem,
-                    itemText: itemText,
-                    shareLinkId: review.shareLinkId,
-                    repository: store
-                ), nil)
-            }
-            if let repairedLayerId, let itemId {
-                environment.recordDiagnostic("lastSpokenMarginsPackageRepair", "reassociated:\(repairedLayerId):\(itemId)")
-            }
-            var newMarginCount = 0
-            switch disposition {
-            case .duplicate(let existingLayerId):
-                environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate_layer:\(existingLayerId)")
-            case .imported(let layerId, let interjectionIds):
-                // What the offer can play, so the arrival says what the item's screen says (#3402). Nothing redraws the arrival,
-                // so it waits for the voices if this count is what first asks. A failed read is no reason to fail a finished import.
-                newMarginCount = await WrittenMarginVoiceCoverage.shared.onceVoicesAreKnown {
-                    (try? await reader.read { store in
-                        SharedPacketArrival.newMarginCount(importedIds: interjectionIds, saved: try store.loadImportedCommentaryInterjections(layerId: layerId))
-                    }) ?? interjectionIds.count
-                }
-                environment.recordDiagnostic("lastSpokenMarginsPackageImport", "imported:\(layerId):\(interjectionIds.count)")
-                environment.recordPacketImport(itemId, review.contents.manifest.packageId, interjectionIds.count)
-            }
+            // `isImporting` already keeps a second confirm, a cancel and a re-match out until this ends (#2509).
+            let committed = try await commit(review.contents, itemId: itemId, shareLinkId: review.shareLinkId, store: store)
+            let item = committed.item, localAudioAdmission = committed.localAudioAdmission
             var openingWaits = false
             if let itemId {
                 openingWaits = try await presentImportedItem(itemId, store: store)
@@ -529,8 +563,8 @@ final class SpokenMarginsPackageImportCoordinator {
             } else if !review.opensDirectly {
                 environment.reportConfirmation("Imported shared Margins. Playback has not started.")
             } else if let announcement = SharedPacketArrival.announcement(
-                newMarginCount: newMarginCount, senderName: review.contents.manifest.senderDisplayLabel,
-                itemHadFriendMargins: itemHadFriendMargins
+                newMarginCount: committed.newMarginCount, senderName: review.contents.manifest.senderDisplayLabel,
+                itemHadFriendMargins: committed.itemHadFriendMargins
             ) {
                 environment.reportConfirmation(announcement)
             }
@@ -548,6 +582,90 @@ final class SpokenMarginsPackageImportCoordinator {
             environment.recordDiagnostic("lastSpokenMarginsPackageImport", "failed:\(SafeErrorText.describe(error))")
             environment.reportFailure(error, "Shared Margins import failed")
         }
+    }
+
+    // MARK: Commit
+
+    /// What a commit wrote, for the caller's announcement and placement.
+    private struct CommittedImport {
+        let item: Item?
+        let localAudioAdmission: LocalAudioPacketAdmission?
+        /// Whether a friend's Margins were already on the item, for "2 new Margins from Cole" (#3291).
+        let itemHadFriendMargins: Bool
+        let newMarginCount: Int
+        /// The layer the packet is now, new or the one an earlier import of it made.
+        let layerId: String
+    }
+
+    /// The item, the duplicate check and the import commit, on a background thread (#2509). The caller keeps every other
+    /// write out until this ends (`isImporting` for a review; the pickup runs one answer at a time), and the writes keep
+    /// their order inside one step. `confirm` and the reply box's quiet import (#4675) both come through here.
+    private func commit(
+        _ contents: VerifiedSpokenMarginsPackage, itemId: String?, shareLinkId: String?, store: SQLiteSessionStore
+    ) async throws -> CommittedImport {
+        let reader = StoreReader(store)
+        let item: Item? = if let itemId { try await reader.read { try $0.loadItem(id: itemId) } } else { nil }
+        let ownedAudiobookDigest = item.flatMap { environment.localAudiobookDigest($0) }
+        var localAudioAdmission: LocalAudioPacketAdmission?
+        if let item, item.mediaType == "audiobook" {
+            localAudioAdmission = try await verifyLocalAudioForImport(item, contents: contents)
+        }
+        let itemText = item?.text
+        let itemHadFriendMargins = try await reader.read { store in
+            try itemId.map { try store.loadImportedCommentaryLayers(itemId: $0).contains { $0.deletedAt == nil } } ?? false
+        }
+        let (disposition, repairedLayerId) = try await reader.read { store -> (ImportedCommentaryImportDisposition, String?) in
+            let localItem = item.map {
+                SharedPacketItemMatcher.localIdentity(for: $0, ownedAudiobookDigest: ownedAudiobookDigest)
+            }
+            if let digest = contents.manifest.contentDigest,
+               let existing = try store.loadImportedCommentaryLayer(packageDigest: digest) {
+                try SpokenMarginsPackageImporter.repairAssociation(
+                    existing: existing,
+                    contents: contents,
+                    itemId: itemId,
+                    localItem: localItem,
+                    itemText: itemText,
+                    repository: store
+                )
+                // After the repair, which saves its own copy of the layer (#2846).
+                try ImportedMarginResends.rememberShareLink(shareLinkId, onLayerWithDigest: digest, repository: store)
+                return (.duplicate(existingLayerId: existing.id), existing.id)
+            }
+            return (try SpokenMarginsPackageImporter.importPackage(
+                contents,
+                itemId: itemId,
+                localItem: localItem,
+                itemText: itemText,
+                shareLinkId: shareLinkId,
+                repository: store
+            ), nil)
+        }
+        if let repairedLayerId, let itemId {
+            environment.recordDiagnostic("lastSpokenMarginsPackageRepair", "reassociated:\(repairedLayerId):\(itemId)")
+        }
+        var newMarginCount = 0
+        let layerId: String
+        switch disposition {
+        case .duplicate(let existingLayerId):
+            layerId = existingLayerId
+            environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate_layer:\(existingLayerId)")
+        case .imported(let importedLayerId, let interjectionIds):
+            layerId = importedLayerId
+            // What the offer can play, so the arrival says what the item's screen says (#3402). Nothing redraws the arrival,
+            // so it waits for the voices if this count is what first asks. A failed read is no reason to fail a finished import.
+            newMarginCount = await WrittenMarginVoiceCoverage.shared.onceVoicesAreKnown {
+                (try? await reader.read { store in
+                    SharedPacketArrival.newMarginCount(importedIds: interjectionIds, saved: try store.loadImportedCommentaryInterjections(layerId: importedLayerId))
+                }) ?? interjectionIds.count
+            }
+            environment.recordDiagnostic("lastSpokenMarginsPackageImport", "imported:\(importedLayerId):\(interjectionIds.count)")
+            environment.recordPacketImport(itemId, contents.manifest.packageId, interjectionIds.count)
+        }
+        return CommittedImport(
+            item: item, localAudioAdmission: localAudioAdmission, itemHadFriendMargins: itemHadFriendMargins,
+            newMarginCount: newMarginCount, layerId: layerId
+        )
     }
 
     // MARK: Opening the imported item
@@ -581,6 +699,17 @@ final class SpokenMarginsPackageImportCoordinator {
         deferredItemId = itemId
         environment.recordDiagnostic("lastSpokenMarginsPackageOpen", "waiting_for_margin:\(itemId)")
         return true
+    }
+
+    /// Banner C's **Open** for one friend on one item (#4675): the item screen, as a finished import opens it, starting
+    /// nothing. Under a Margin being recorded or written it waits like any import's opening.
+    func openAnsweredItem(_ itemId: String) async {
+        do {
+            let store = try environment.requireStore()
+            try await presentImportedItem(itemId, store: store)
+        } catch {
+            environment.reportFailure(error, "Opening the answer failed")
+        }
     }
 
     /// Opens the item an import finished under a Margin, once nothing is being recorded or written. The root view asks
@@ -762,6 +891,16 @@ final class SpokenMarginsPackageImportCoordinator {
             let digestsById = Dictionary(rows.compactMap { row in row.textDigests.map { (row.item.id, $0) } },
                                          uniquingKeysWith: { first, _ in first })
             guard let proposal = ListeningMapPacket.proposal(in: contents) else {
+                // Replies go to the row holding the Margins they answer, whatever edition the friend heard (#5286).
+                let parents = ReplyParentItemMatch.parents(in: contents.conversations)
+                if !parents.isEmpty, let replied = ReplyParentItemMatch.itemId(
+                    for: contents.manifest.item,
+                    holdingParents: try store.itemIdsHoldingOwnMargins(sharedAs: parents),
+                    among: items,
+                    ownedAudiobookDigest: { Self.ownedAudiobookDigest(for: $0, store: store) },
+                    textDigests: { digestsById[$0.id] }) {
+                    return PackageSourceMatch(itemId: replied)
+                }
                 return PackageSourceMatch(itemId: SharedPacketItemMatcher.matchingItemId(
                     for: contents.manifest.item, among: items,
                     ownedAudiobookDigest: { Self.ownedAudiobookDigest(for: $0, store: store) },

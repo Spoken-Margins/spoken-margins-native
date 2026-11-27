@@ -221,6 +221,7 @@ final class QueueSwipeAppTests: XCTestCase {
         let keys = [
             "quickAccessFolderBookmark", "quickAccessFolderName", "quickAccessFolderPath", "quickAccessLastCheckedAt",
             "quickAccessFolderProblem", "quickAccessFolderChosenAt", "dismissedQuickAccessFilesV1",
+            QuickFolderListStore.listKey, QuickFolderListStore.retiredDismissalsKey,
         ] + QuickAccessFolderState.retiredKeys
         let prior = keys.map { ($0, UserDefaults.standard.object(forKey: $0)) }
         addTeardownBlock {

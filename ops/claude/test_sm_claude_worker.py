@@ -677,6 +677,41 @@ class FinishEligibleTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn('Mac finisher goes first', why)
 
+    def test_a_merge_conflict_hand_off_is_taken_at_once(self):
+        # Owner, 2026-11-24: a conflict needs no Mac and no person, so it skips the finisher's hour.
+        # Since the resolver went live (#5320), a conflict reaches the finisher by one of four hand-offs: the
+        # resolver's own, lane_conflicts.py's for a resolver PR left too long, its hand-off of a PR with no
+        # `automerge`, and its no-merge-ref one. The bodies
+        # come from those scripts, so a change to their marker breaks this test.
+        import importlib.util
+        import sys
+        scripts = Path(__file__).resolve().parents[2] / 'scripts'
+        sys.path.insert(0, str(scripts))
+        try:
+            def load(name):
+                spec = importlib.util.spec_from_file_location(name, scripts / f'{name}.py')
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                return module
+            lc, cr = load('lane_conflicts'), load('conflict_resolver')
+        finally:
+            sys.path.remove(str(scripts))
+        conflict_marker = lc.marker('a' * 40, 'b' * 40)
+        record = {'head': 'a' * 7, 'sort': 'hard', 'outcome': 'hard'}
+        for body in (cr.finisher_text(record, conflict_marker),
+                     lc.finisher_body('main', 'b' * 40, 'a' * 40, ['docs/decisions.md']),
+                     lc.stale_body('main', lc.STALE_HOURS, conflict_marker),
+                     lc.no_merge_ref_body('main', 'b' * 40, 'a' * 40)):
+            with self.subTest(body=body[:60]):
+                ok, why = self.ok(labels=('needs-mac',), comments=[c(body, ago(minutes=5))])
+                self.assertTrue(ok, why)
+                self.assertEqual(why, 'merge conflict')
+        # A newer hand-off for another reason puts the hour back.
+        conflict = c(lc.stale_body('main', lc.STALE_HOURS, conflict_marker), ago(hours=3))
+        ok, why = self.ok(labels=('needs-mac',), comments=[conflict], handing_at=ago(minutes=20))
+        self.assertFalse(ok)
+        self.assertIn('Mac finisher goes first', why)
+
     def test_lane_fail_on_the_head_qualifies_but_an_older_head_or_a_runner_fault_does_not(self):
         head = 'a' * 40
         report = ('Lane report x — FAIL\n\ncommit `aaaaaaa`\nsimulator build (fail)\nGate1AppModel.swift:10:5: error: x')

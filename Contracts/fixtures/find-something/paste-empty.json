@@ -1,0 +1,5 @@
+{
+  "description": "An empty paste and a paste with no links have no entries.",
+  "text": "",
+  "expected": []
+}

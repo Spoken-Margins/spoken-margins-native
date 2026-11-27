@@ -9,6 +9,11 @@ import type { ParsedLink } from './logic/share-link.ts';
 import { PlayerProvider, usePlayer } from './player.tsx';
 import { FeedRefreshProvider } from './refresh.tsx';
 import { Arrival } from './screens/Arrival.tsx';
+import { ArrivalListen } from './screens/ArrivalListen.tsx';
+import { showIphoneStep } from './logic/arrival-card.ts';
+import type { PacketRead } from './ports.ts';
+import { capacitorBridge } from '../sources/native-http.ts';
+import { useData } from './data.tsx';
 import { Following } from './screens/Following.tsx';
 import { Library } from './screens/Library.tsx';
 import { Margins } from './screens/Margins.tsx';
@@ -61,7 +66,10 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
     setLanding(at);
     setNowPlaying(true);
   }, [clearSearches]);
-  const openMarginFile = useOpenMarginFile(landed);
+  // A file of Margins on a text the web app can't play opens the card that plays them here (#5265).
+  const [listening, setListening] = useState<PacketRead>();
+  const openMarginFile = useOpenMarginFile(landed, setListening);
+  const data = useData();
   // Every way a file arrives goes through the same unpacking, so a backup `.zip` shared to the installed app, or
   // opened with the Android app, opens its packets as a picked one does.
   const openArrivedFile = useCallback<OpenMarginFile>((bytes, fileName) => openFileBytes(bytes, fileName, openMarginFile), [openMarginFile]);
@@ -119,7 +127,7 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
       }}
       onDrop={onDrop}
     >
-      <nav className="tabbar" aria-label="Sections" inert={nowPlayingShown || arriving}>
+      <nav className="tabbar" aria-label="Sections" inert={nowPlayingShown || arriving || listening !== undefined}>
         <span className="brand" aria-hidden="true">
           <img src="./icons/icon.svg" alt="" width="28" height="28" />
           Spoken Margins
@@ -131,7 +139,7 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
           </button>
         ))}
       </nav>
-      <main className="content" inert={nowPlayingShown || arriving}>
+      <main className="content" inert={nowPlayingShown || arriving || listening !== undefined}>
         {tab === 'library' && (
           <Library
             onPlay={openPlayer}
@@ -162,8 +170,23 @@ function Shell({ launchLink }: { launchLink: ParsedLink }) {
         {tab === 'margins' && <Margins onPlay={openPlayer} onOpenFile={openMarginFile} onOpenLink={openShareLink} />}
         {tab === 'settings' && <Settings />}
       </main>
-      {!nowPlayingShown && !arriving && <MiniPlayer onOpen={openPlayer} />}
+      {!nowPlayingShown && !arriving && !listening && <MiniPlayer onOpen={openPlayer} />}
       {arriving && <Arrival link={launchLink} onDone={arrived} />}
+      {listening && !arriving && (
+        <ArrivalListen
+          key={listening.contentDigest}
+          read={listening}
+          origin="file"
+          iphoneStep={showIphoneStep(capacitorBridge() !== undefined, navigator.userAgent)}
+          libraryFirst
+          heardBefore={new Set()}
+          setHeard={data.setHeard}
+          onLibrary={() => {
+            setListening(undefined);
+            setTab('library');
+          }}
+        />
+      )}
       {nowPlayingShown && (
         <NowPlaying
           landing={landing}

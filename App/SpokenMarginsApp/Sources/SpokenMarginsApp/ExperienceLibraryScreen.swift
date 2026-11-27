@@ -17,6 +17,8 @@ struct ExperienceLibraryScreen: View {
     @State private var isAudioPreparationQueuePresented = false
     @State private var isPlayQueuePresented = false
     @ObservedObject private var playQueue = PlayQueueState.shared
+    /// Holds the queue entry back while a first add's swipe settles (#5360).
+    @State private var queueReveal = QueueEntryReveal()
     /// The thumbnail each row shows in place of its icon, when the item's feed or page gave one (#3864).
     @ObservedObject private var itemArtwork = ItemArtworkModel.shared
     /// The item whose Continue is waiting on the "hear new Margins first?" question (#474).
@@ -48,6 +50,30 @@ struct ExperienceLibraryScreen: View {
 
     private var continueItem: LibraryItemRow? {
         LibraryPresentation.continueItem(in: model.libraryItems, activeItemId: model.activePlaybackItemId)
+    }
+
+    /// Holds the queue entry back until a first add's swipe has settled, then brings it in; it goes at once when the
+    /// queue empties, and a queue holding items when the Library appears shows with no wait (#5360). Reduce Motion keeps the wait, so the list still holds still under the finger, but drops
+    /// the animation.
+    private func queueEmptinessChanged(isQueued: Bool, onAppear: Bool) {
+        var next = queueReveal
+        if onAppear {
+            next.appeared(isQueued: isQueued)
+            queueReveal = next
+            return
+        }
+        switch next.queueChanged(isQueued: isQueued) {
+        case .hideNow:
+            withMotion(.smooth(duration: 0.24)) { queueReveal = next }
+        case let .showAfter(delay, generation):
+            queueReveal = next
+            Task { @MainActor in
+                try? await Task.sleep(for: delay)
+                var settled = queueReveal
+                guard settled.settleFinished(generation: generation) else { return }
+                withMotion(.smooth(duration: 0.24)) { queueReveal = settled }
+            }
+        }
     }
 
     /// The play queue's rows (#1990); empty while nothing is queued, which is when the Library shows no entry.
@@ -94,8 +120,11 @@ struct ExperienceLibraryScreen: View {
                         PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
                     }
 
-                    if !queuedRows.isEmpty {
+                    // Shows once a first add's swipe has settled, so the block doesn't grow while the row slides
+                    // back (#5360).
+                    if queueReveal.showsEntry(isQueued: !queuedRows.isEmpty) {
                         PlayQueueSummaryRow(rows: queuedRows) { isPlayQueuePresented = true }
+                            .transition(.opacity)
                     }
 
                     // Above the items while audio is queued, so a listener sees it without scrolling past the list
@@ -105,7 +134,19 @@ struct ExperienceLibraryScreen: View {
                         LibraryPreparationLine(line: line) { isAudioPreparationQueuePresented = true }
                     }
                 }
+                // When this row's height changes (the queue entry coming or going), the list's cell and its content
+                // seem to reach their new heights at different moments (read from the Test Desk's frames on 55d399b, not
+                // traced in UIKit): the search box and chips dropped and came back, by about 50 pt at the largest text
+                // size, as content centred in a cell of the wrong height would, and the entry drew over the next row,
+                // with Reduce Motion on too (#5360). Pinned to the top and cut a little past its edge, the header stays put and the entry is
+                // uncovered as the cell grows. The 4 pt margin is this row's own inset, so nothing is cut that the
+                // row draws today (no shadows here), and nothing spills onto the item rows, whose insets are 0.
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .clipShape(Rectangle().inset(by: -4))
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                .onChange(of: queuedRows.isEmpty, initial: true) { wasEmpty, isEmpty in
+                    queueEmptinessChanged(isQueued: !isEmpty, onAppear: wasEmpty == isEmpty)
+                }
 
                 items
 
@@ -378,10 +419,13 @@ struct ExperienceLibraryScreen: View {
     /// 44 pt without moving the row's layout (#2899).
     private var completedVisibilityButton: some View {
         Button {
-            if model.libraryQuery.query.isEmpty { model.showCompletedLibraryItems() }
-            else { model.libraryQuery.listeningState = .all }
+            // The rule is in SessionKit (#5006); the screen's onChange of the query saves the new Listening choice.
+            model.libraryQuery = LibraryQueryEngine.queryRevealingFinished(model.libraryQuery)
+            // Keyboard down too, so the finished rows aren't left under it: the same resign the Done bar sends
+            // (ExperienceDesignSystem.swift:417). The search text and filters stay.
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         } label: {
-            Text(model.libraryQuery.query.isEmpty ? "Show" : "Include in search")
+            Text(LibraryQueryEngine.revealsFinishedWithinSearch(query: model.libraryQuery) ? "Include in search" : "Show")
                 .expandedHitArea(horizontal: 8, vertical: 12)
         }
     }
@@ -515,6 +559,10 @@ struct ExperienceLibraryScreen: View {
             ) { model.showCompletedLibraryItems() }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
         case .noMatches:
+            // Above the empty card, not after it: with the keyboard up the end of this short list sat against the
+            // keyboard's top edge and the "Include in search" tap was lost there (#5006). A search that only finished
+            // items match says so here, with the way to include them.
+            completedHiddenFooter
             SMExperienceEmptyState(
                 systemImage: "magnifyingglass",
                 title: "No matches",
@@ -525,8 +573,6 @@ struct ExperienceLibraryScreen: View {
                 model.libraryQueryChanged()
             }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-            // A search that only finished items match says so here, with the way to include them.
-            completedHiddenFooter
         case .list:
             ForEach(listEntries) { entry in
                 listRow(entry)
@@ -591,7 +637,7 @@ struct ExperienceLibraryScreen: View {
                             return
                         }
                         // A note plays whole, start to finish, like any item; its own screen is where a sentence is picked.
-                        if let noteId = row.spokenNoteId { notePlay.play(noteId: noteId, app: model) } else { model.continueListening(itemId: row.id) { pendingNewMarginsOffer = $0 } }
+                        if let noteId = row.spokenNoteId { notePlay.play(noteId: noteId, app: model) } else { model.continueListening(itemId: row.id, offersCatchUp: true) { pendingNewMarginsOffer = $0 } }
                     },
                     onComplete: { model.markItemCompleted(id: row.id) },
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },
@@ -1146,25 +1192,32 @@ struct LibraryRowPlayLabel: View {
 /// above Sort, each as wide as its words and aligned to the leading edge; always stacked at accessibility sizes (#4762).
 /// It is a `Layout`, not `ViewThatFits` or `AdaptiveStack`, so each `Menu` keeps one identity: a pick that changes a
 /// label's width (such as `Needs Repreparation`) then never rebuilds the chip under VoiceOver focus as its menu closes.
+///
+/// No chip is ever measured with `.unspecified`. The Test Desk saw both chips placed about 45 pt wide on iOS 26, the
+/// chip's 44 pt tap-target floor, so a `Menu` appears to answer an unspecified proposal with that floor rather than its
+/// label's width (inferred from the capture, not traced in SwiftUI). The wrap-safe label then broke its words a letter
+/// per line into tall glyph-only columns at the default text size (#4762, Test Desk FAIL on 17b235a). Instead, a chip's
+/// one-line width is read by offering it unlimited width (nothing in it is greedy, so it answers with its words' width,
+/// as `HStack`'s probes did before), and a stacked chip is offered the column's width so its label can wrap.
 /// Internal for its test.
 struct LibraryChipRowLayout: Layout {
     var spacing: CGFloat
     var forcesColumn: Bool
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let ideal = subviews.map { $0.sizeThatFits(.unspecified) }
+        let ideal = oneLineSizes(subviews)
         if isRow(ideal: ideal, width: proposal.width) {
             let width = ideal.reduce(0) { $0 + $1.width } + gaps(subviews.count)
             return CGSize(width: width, height: ideal.map(\.height).max() ?? 0)
         }
-        let sizes = subviews.map { $0.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)) }
+        let sizes = subviews.map { $0.sizeThatFits(columnOffer(proposal.width)) }
         var width = sizes.map(\.width).max() ?? 0
         if let limit = proposal.width { width = min(width, limit) }
         return CGSize(width: width, height: sizes.reduce(0) { $0 + $1.height } + gaps(subviews.count))
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let ideal = subviews.map { $0.sizeThatFits(.unspecified) }
+        let ideal = oneLineSizes(subviews)
         if isRow(ideal: ideal, width: bounds.width) {
             var x = bounds.minX
             for (subview, size) in zip(subviews, ideal) {
@@ -1173,14 +1226,24 @@ struct LibraryChipRowLayout: Layout {
             }
             return
         }
-        // Never `.unspecified` here: a label only wraps when it is offered the column's width.
-        let offer = ProposedViewSize(width: bounds.width, height: nil)
+        // A label only wraps when it is offered the column's width.
+        let offer = columnOffer(bounds.width)
         var y = bounds.minY
         for subview in subviews {
             let size = subview.sizeThatFits(offer)
             subview.place(at: CGPoint(x: bounds.minX, y: y), anchor: .topLeading, proposal: offer)
             y += size.height + spacing
         }
+    }
+
+    /// Each chip's width with its words on one line: unlimited width, never `.unspecified` (see above).
+    private func oneLineSizes(_ subviews: Subviews) -> [CGSize] {
+        subviews.map { $0.sizeThatFits(ProposedViewSize(width: .infinity, height: nil)) }
+    }
+
+    /// The width a stacked chip is offered; never nil, which would be `.unspecified` again.
+    private func columnOffer(_ width: CGFloat?) -> ProposedViewSize {
+        ProposedViewSize(width: width ?? .infinity, height: nil)
     }
 
     private func isRow(ideal: [CGSize], width: CGFloat?) -> Bool {

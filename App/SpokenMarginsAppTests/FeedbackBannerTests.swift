@@ -188,6 +188,20 @@ final class FeedbackBannerTests: XCTestCase {
         XCTAssertFalse(transcriptRetry.mayBeReplaced(by: copied))
     }
 
+    /// #5418: the answer to a Retry the listener tapped covers an older Retry; other confirmations still don't.
+    func testARetryResultCoversAnOlderRetryButAnotherConfirmationDoesNot() {
+        let origin = FeedbackOrigin(itemId: "item", sessionId: "session", work: .marginTranscription)
+        let olderRetry = UserFeedbackEvent(
+            kind: .error, message: "Saved audio and current transcript kept. Retranscription failed.", retry: .init(key: "t") {}, origin: origin)
+        let result = UserFeedbackEvent(kind: .success, message: "No words were found near this Margin.", answersRetryTap: true)
+        let warning = UserFeedbackEvent(kind: .warning, message: "Source context could not be recovered.", answersRetryTap: true)
+        let copied = UserFeedbackEvent(kind: .success, message: "Copied.")
+
+        XCTAssertTrue(olderRetry.mayBeReplaced(by: result))
+        XCTAssertTrue(olderRetry.mayBeReplaced(by: warning))
+        XCTAssertFalse(olderRetry.mayBeReplaced(by: copied))
+    }
+
     func testFailedTimelineSummaryStaysOnItsItemAfterBannerCloses() async throws {
         try await withPendingLocalSummary { model, summarizer in
             XCTAssertEqual(model.screen, .timeline)

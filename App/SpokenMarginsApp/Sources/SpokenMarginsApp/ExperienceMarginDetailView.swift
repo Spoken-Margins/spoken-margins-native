@@ -204,7 +204,7 @@ struct ExperienceMarginDetailView: View {
                 }
                 if current.interjection.replyTo != nil {
                     Section("Replying to") {
-                        if let context = model.marginParentContext(of: .local(current.interjection.id), itemId: current.interjection.itemId) {
+                        if let context = model.marginParentContext(of: .local(current.interjection.sessionScopedId), itemId: current.interjection.itemId) {
                             MarginParentContextView(context: context)
                         } else {
                             Text(MarginThreadPresentation.missingParentNote)
@@ -272,7 +272,12 @@ struct ExperienceMarginDetailView: View {
             .task(id: MarginTidyCardModel.key(for: current.interjection)) {
                 await tidy.refresh(for: current.interjection, using: model)
             }
-            .marginExportShareSheet($exportShare)
+            .marginExportShareSheet($exportShare) { completed, activityType, failed in
+                // Save to Files leaves nothing on screen; say it worked. A cancel or a failure says nothing here (#5051).
+                if let message = ExportSavedConfirmation.message(completed: completed, activityType: activityType, failed: failed) {
+                    model.reportConfirmation(message)
+                }
+            }
             .confirmationDialog("What do you want to export?", isPresented: $showsExportQuestion, titleVisibility: .visible) {
                 Button("Text only") { exportThisMargin(.textOnly) }
                     .accessibilityIdentifier("marginDetail.export.textOnly")

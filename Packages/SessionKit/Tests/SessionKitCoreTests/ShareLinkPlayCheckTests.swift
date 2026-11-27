@@ -49,8 +49,22 @@ final class ShareLinkPlayCheckTests: XCTestCase {
             XCTAssertEqual(line?.accessibilityLabel, "Warning. \(words.heading) \(words.remedy)")
             XCTAssertEqual(line?.isAnnounced, true)
         }
-        XCTAssertEqual(Check.words(for: .article).heading, "Your friend's browser can't play this article yet.")
+        // The friend's browser now plays each Margin after its words (#5265): the line says what they get, not a failure.
+        XCTAssertEqual(Check.words(for: .article).heading, "Your friend's browser plays your Margins on their own, not in place.")
+        XCTAssertEqual(
+            Check.words(for: .article).remedy,
+            "Each one plays after the words just before it. To hear them in place, they need Spoken Margins on iPhone.")
+        XCTAssertEqual(Check.words(for: .noEpisodeAudio).heading, "Your friend's browser plays your Margins without the episode.")
+        XCTAssertEqual(
+            Check.words(for: .noEpisodeAudio).remedy,
+            "It has no public audio link. If the show has a public feed, add the episode from there and share again.")
         XCTAssertEqual(Check.words(for: .linkBroken).remedy, "Make a new link, or tap Send as a file.")
+        // #5264: the browser shows only timed Margin words for a post with no voice.
+        // The article line is #5265's (#5355): its listen-here card shows every Margin.
+        XCTAssertEqual(Check.words(for: .noPostVoice).remedy, "To hear it read aloud with your Margins, they need Spoken Margins on iPhone.")
+        for reason in Check.Reason.allCases where reason != .article {
+            XCTAssertFalse(Check.words(for: reason).remedy.contains("They'll see your Margins' words"), "\(reason)")
+        }
     }
 
     func testOnlyAProblemIsAWarningOrAnnouncedOrReachesTheBanner() {
@@ -71,7 +85,7 @@ final class ShareLinkPlayCheckTests: XCTestCase {
         XCTAssertEqual(Check.line(for: .notChecked(.didNotFinish))?.heading, "Not checked: the check didn't finish.")
         XCTAssertEqual(
             Check.bannerText(for: .problem(.noEpisodeAudio), title: "Episode 4"),
-            "Your link for \u{201C}Episode 4\u{201D}: Your friend's browser can't play this episode.")
+            "Your link for \u{201C}Episode 4\u{201D}: Your friend's browser plays your Margins without the episode.")
     }
 
     // MARK: One check

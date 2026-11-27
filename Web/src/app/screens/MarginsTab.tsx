@@ -129,6 +129,15 @@ export interface ListProps {
   onStart: (row: Row) => void;
 }
 
+/** The source's words a Margin follows, as "After “…”": on a Margins row and on the card a browser can't play (#5265). */
+export function LeadInLine({ text }: { text: string }) {
+  return (
+    <p className="mc-leadin">
+      <span className="mc-leadin-after">After</span> “{text}”
+    </p>
+  );
+}
+
 function MarginRowView({ row, parent, props }: { row: Row; parent: Row | undefined; props: ListProps }) {
   const [expanded, setExpanded] = useState(false);
   const [cut, setCut] = useState(false);
@@ -162,11 +171,7 @@ function MarginRowView({ row, parent, props }: { row: Row; parent: Row | undefin
         {own && stored && <RowStar margin={stored} />}
       </p>
       {row.note && <p className="mc-note">{row.note}</p>}
-      {row.depth === 0 && row.leadIn && (
-        <p className="mc-leadin">
-          <span className="mc-leadin-after">After</span> “{row.leadIn}”
-        </p>
-      )}
+      {row.depth === 0 && row.leadIn && <LeadInLine text={row.leadIn} />}
       {row.words === null ? (
         <p className="mc-placeholder">No transcript yet</p>
       ) : (

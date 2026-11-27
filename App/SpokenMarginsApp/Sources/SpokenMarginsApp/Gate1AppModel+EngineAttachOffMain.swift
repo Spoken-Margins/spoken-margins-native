@@ -77,7 +77,6 @@ extension Gate1AppModel {
             generateListeningMap()
         }
         retrySourceWindowContexts(itemId: itemId)
-        if let store { CommunityMapUploadService.shared.transcriptAttached(itemId: itemId, store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
         if let localURL = importedPodcastRecipientLocalURLs[itemId]
             ?? podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
             resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)

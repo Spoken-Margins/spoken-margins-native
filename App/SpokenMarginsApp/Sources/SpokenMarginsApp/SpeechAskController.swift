@@ -13,7 +13,8 @@ final class SpeechAskController: ObservableObject {
         case now, margins, detail
     }
 
-    static let shared = SpeechAskController()
+    /// Tests swap it for one with their own defaults and access, and put the real one back.
+    static var shared = SpeechAskController()
 
     private let defaults: UserDefaults
     private let access: () -> SpeechRecognitionAccessState
@@ -115,9 +116,16 @@ final class SpeechAskController: ObservableObject {
     // MARK: What the app tells it
 
     /// A spoken Margin was saved (a written one brings no card).
-    func spokenMarginSaved(isWritten: Bool) {
-        guard let moment = SpeechRecognitionAsk.Moment.forSavedMargin(isWritten: isWritten, hearItLandWillRun: false) else { return }
+    /// `hearItLandWillRun`: the save plays back in place first (#4713), so the card waits for `hearItLandEnded()`.
+    func spokenMarginSaved(isWritten: Bool, hearItLandWillRun: Bool = false) {
+        guard let moment = SpeechRecognitionAsk.Moment.forSavedMargin(isWritten: isWritten, hearItLandWillRun: hearItLandWillRun) else { return }
         if ask.cardDue(at: moment, access: access(), shownThisLaunchForReAsk: false) { cardSurface = .now }
+    }
+
+    /// Hear it land's playback is over: its voice ended or was skipped, or it was cancelled or could not start. The card
+    /// that waited for it is due now.
+    func hearItLandEnded() {
+        if ask.cardDue(at: .hearItLandEnded, access: access(), shownThisLaunchForReAsk: false) { cardSurface = .now }
     }
 
     /// The Margin's transcription met the hold: it waits for the answer. `marginIdentity` is `Gate1AppModel.marginIdentity`.
@@ -127,10 +135,11 @@ final class SpeechAskController: ObservableObject {
         defaults.set(waiting.stored, forKey: SpeechAskWaitingList.storageKey)
         if SpeechAskSettling.settlesOnReport(access: access()) { return reconcile(model: model) }
         // A relaunch arms the card from this list; this launch is armed by the save, but a Margin that arrives here alone
-        // (a retry) arms it too.
+        // (a retry) arms it too. The save's own transcription lands here during its hear it land playback, so the card
+        // waits for that playback's end (#5423).
         if cardSurface == nil, ask.answer == .unanswered {
-            _ = ask.cardDue(at: .spokenMarginSaved(hearItLandWillRun: true), access: access(), shownThisLaunchForReAsk: false)
-            if ask.isOwed(access: access()) { cardSurface = .now }
+            ask.transcriptionHeld(.playerMargin)
+            if ask.mayShowOwedCard(access: access()) { cardSurface = .now }
         }
     }
 
@@ -147,7 +156,7 @@ final class SpeechAskController: ObservableObject {
             defaults.set(true, forKey: key)
         }
         if settleLateHold() { return }
-        if cardSurface == nil, ask.isOwed(access: access()) { cardSurface = .now }
+        if cardSurface == nil, ask.mayShowOwedCard(access: access()) { cardSurface = .now }
     }
 
     /// Transcription work met the hold (`HeldTranscription`): `retry` runs on Allow, whatever bookkeeping the caller kept.
@@ -157,7 +166,7 @@ final class SpeechAskController: ObservableObject {
         heldRetries.hold(kind, key: key, retry: retry)
         ask.transcriptionHeld(kind)
         if settleLateHold() { return }
-        if cardSurface == nil, ask.isOwed(access: access()) { cardSurface = .now }
+        if cardSurface == nil, ask.mayShowOwedCard(access: access()) { cardSurface = .now }
     }
 
     /// A hold the listener's answer has already overtaken (it was met while iOS was undecided and reached here after the

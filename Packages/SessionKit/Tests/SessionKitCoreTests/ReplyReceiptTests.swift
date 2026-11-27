@@ -1,5 +1,5 @@
 import Foundation
-import SessionKit
+@testable import SessionKit
 import XCTest
 
 /// The "Tell Sam you got it" offer (#3902, Design E1): when a friend's packet answers one of the listener's own Margins,
@@ -68,6 +68,17 @@ final class ReplyReceiptTests: XCTestCase {
         let offer = try XCTUnwrap(newest([ben], margins, local: local))
         XCTAssertEqual(offer.replyCount, 2)
         XCTAssertEqual(offer.message(itemTitle: "Harbour Lights"), "Got your replies on \u{201C}Harbour Lights\u{201D} in Spoken Margins.")
+    }
+
+    /// An answer that came through a reply box offers no receipt (#4675); other packets keep theirs.
+    func testExcludingALayerDropsItsOfferAndTheIntroWhenItWasNewest() {
+        let a = ReplyReceipt.Offer.forTest(layerId: "box")
+        let b = ReplyReceipt.Offer.forTest(layerId: "file")
+        let offers = ReplyReceipt.ItemOffers.forTest(byLayer: ["box": a, "file": b], newest: a)
+        let kept = offers.excluding { $0 == "box" }
+        XCTAssertEqual(Array(kept.byLayer.keys), ["file"])
+        XCTAssertNil(kept.newest)
+        XCTAssertEqual(offers.excluding { $0 == "file" }.newest, a)
     }
 
     func testAFriendsFirstShareIsNotAReplyAndGetsNoButton() {
@@ -283,4 +294,12 @@ final class ReplyReceiptTests: XCTestCase {
             XCTAssertEqual(ReplyReceipt.message(itemTitle: row.title, replyCount: row.count), row.message, "title \(String(describing: row.title))")
         }
     }
+}
+
+private extension ReplyReceipt.Offer {
+    static func forTest(layerId: String) -> Self { Self(layerId: layerId, senderLabel: nil, replyCount: 1) }
+}
+
+private extension ReplyReceipt.ItemOffers {
+    static func forTest(byLayer: [String: ReplyReceipt.Offer], newest: ReplyReceipt.Offer?) -> Self { Self(byLayer: byLayer, newest: newest) }
 }

@@ -1,21 +1,21 @@
 {
  "schemaVersion": "source-catalog.v1",
  "catalogId": "onboarding-top-podcasts",
- "contentVersion": 3,
+ "contentVersion": 4,
  "title": "Popular podcasts",
- "generatedAt": "2026-10-17T11:38:41Z",
+ "generatedAt": "2026-11-23T21:13:46Z",
  "locale": "en-US",
  "provenance": [
   {
    "id": "hand-picked-shows",
    "kind": "hand_curated",
-   "fetchedAt": "2026-10-17T11:38:41Z",
+   "fetchedAt": "2026-11-23T21:13:46Z",
    "note": "Which shows, and which lead each subject, is chosen by hand in research/B1/shows.json. Edit it freely."
   },
   {
    "id": "publisher-feeds",
    "kind": "publisher_feed",
-   "fetchedAt": "2026-10-17T11:38:41Z",
+   "fetchedAt": "2026-11-23T21:13:46Z",
    "note": "Title, author, description, explicit flag, website and artwork URL are read from each show's own RSS feed."
   }
  ],
@@ -328,7 +328,29 @@
    ],
    "author": "NPR",
    "websiteURL": "https://www.npr.org/podcasts/510289/planet-money",
-   "summary": "Wanna see a trick? Give us any topic and we can tie it back to the economy. At Planet Money, we explore the forces that shape our lives and bring you along for the ride. Don't just understand the economy – understand the world. Support public media by joining NPR+ at plus.npr.org. You’ll get perks…"
+   "summary": "Wanna see a trick? Give us any topic and we can tie it back to the economy. At Planet Money, we explore the forces that shape our lives and bring you along for the ride. Don't just understand the economy – understand the world. Support public media by joining NPR+ at plus.npr.org. You’ll get perks…",
+   "recentPublishedAt": [
+    "2026-11-20T22:00:00Z",
+    "2026-11-18T08:00:00Z",
+    "2026-11-13T23:49:12Z",
+    "2026-11-11T13:03:29Z",
+    "2026-11-06T22:30:00Z",
+    "2026-11-04T08:00:00Z",
+    "2026-10-31T00:15:00Z",
+    "2026-10-28T12:57:50Z",
+    "2026-10-23T21:00:00Z",
+    "2026-10-21T07:00:00Z",
+    "2026-10-16T21:30:00Z",
+    "2026-10-14T21:30:18Z",
+    "2026-10-09T21:07:00Z",
+    "2026-10-07T07:00:00Z",
+    "2026-10-02T23:14:21Z",
+    "2026-09-30T14:55:43Z",
+    "2026-09-25T21:46:44Z",
+    "2026-09-23T07:00:00Z",
+    "2026-09-18T20:00:00Z",
+    "2026-09-16T07:00:00Z"
+   ]
   },
   {
    "id": "apple-152249110",
@@ -348,7 +370,29 @@
    ],
    "author": "WNYC Studios",
    "websiteURL": "https://www.radiolab.org",
-   "summary": "Radiolab is on a curiosity bender. We ask deep questions and use investigative journalism to get the answers. A given episode might whirl you through science, legal history, and into the home of someone halfway across the world. The show is known for innovative sound design, smashing information…"
+   "summary": "Radiolab is on a curiosity bender. We ask deep questions and use investigative journalism to get the answers. A given episode might whirl you through science, legal history, and into the home of someone halfway across the world. The show is known for innovative sound design, smashing information…",
+   "recentPublishedAt": [
+    "2026-11-20T15:00:00Z",
+    "2026-11-13T15:00:00Z",
+    "2026-11-06T15:00:00Z",
+    "2026-10-30T14:00:00Z",
+    "2026-10-23T14:00:00Z",
+    "2026-10-16T14:00:00Z",
+    "2026-10-09T14:00:00Z",
+    "2026-10-02T14:00:00Z",
+    "2026-09-25T14:00:00Z",
+    "2026-09-18T14:00:00Z",
+    "2026-09-11T14:00:00Z",
+    "2026-09-04T14:00:00Z",
+    "2026-08-28T14:00:00Z",
+    "2026-08-21T14:00:00Z",
+    "2026-08-14T14:00:00Z",
+    "2026-08-07T14:00:00Z",
+    "2026-07-31T14:00:00Z",
+    "2026-07-24T14:00:00Z",
+    "2026-07-17T14:00:00Z",
+    "2026-07-10T14:00:00Z"
+   ]
   },
   {
    "id": "apple-1537788786",
@@ -356,7 +400,7 @@
    "contentKind": "podcast",
    "title": "The Rest Is History",
    "feedURL": "https://feeds.megaphone.fm/GLT4787413333",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/00c0a118-2426-11ee-b258-73d331d0123b/image/db3295fcd9d3a7113e8000e931f0541d.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/00c0a118-2426-11ee-b258-73d331d0123b/image/fc1621e5c07895ac8ebabab7c8e2e40d.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "history"
    ],
@@ -367,7 +411,29 @@
    ],
    "author": "Goalhanger",
    "websiteURL": "https://therestishistory.com",
-   "summary": "Take a deep dive into History’s biggest moments with Tom Holland & Dominic Sandbrook. Explore the stories of History’s most brutal rulers, deadly battles, and world-changing events. From the rise and fall of the Roman Empire, the Nazi conquest of Europe, and Hitler’s evil master plan for world…"
+   "summary": "Take a deep dive into History’s biggest moments with Tom Holland & Dominic Sandbrook. Explore the stories of History’s most brutal rulers, deadly battles, and world-changing events. From the rise and fall of the Roman Empire, the Nazi conquest of Europe, and Hitler’s evil master plan for world…",
+   "recentPublishedAt": [
+    "2026-11-23T00:05:00Z",
+    "2026-11-19T00:05:00Z",
+    "2026-11-16T00:05:00Z",
+    "2026-11-12T00:05:00Z",
+    "2026-11-09T00:05:00Z",
+    "2026-11-05T00:05:00Z",
+    "2026-11-02T00:05:00Z",
+    "2026-10-29T00:05:00Z",
+    "2026-10-26T00:05:00Z",
+    "2026-10-21T23:05:00Z",
+    "2026-10-18T23:05:00Z",
+    "2026-10-14T23:05:00Z",
+    "2026-10-11T23:05:00Z",
+    "2026-10-07T23:05:00Z",
+    "2026-10-04T23:05:00Z",
+    "2026-09-30T23:05:00Z",
+    "2026-09-27T23:05:00Z",
+    "2026-09-23T23:05:00Z",
+    "2026-09-20T23:05:00Z",
+    "2026-09-16T23:05:00Z"
+   ]
   },
   {
    "id": "apple-1545953110",
@@ -375,7 +441,7 @@
    "contentKind": "podcast",
    "title": "Huberman Lab",
    "feedURL": "https://feeds.megaphone.fm/hubermanlab",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/042e6144-725e-11ec-a75d-c38f702aecad/image/ee4f0b7b466ca35620792970d9bce2d2.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/042e6144-725e-11ec-a75d-c38f702aecad/image/ee4f0b7b466ca35620792970d9bce2d2.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "health-fitness",
     "science"
@@ -387,7 +453,29 @@
    ],
    "author": "Scicomm Media",
    "websiteURL": "https://www.hubermanlab.com",
-   "summary": "The Huberman Lab podcast is hosted by Andrew Huberman, Ph.D., a neuroscientist and tenured professor in the department of neurobiology, and by courtesy, psychiatry and behavioral sciences at Stanford School of Medicine. The podcast discusses neuroscience and science-based tools, including how our…"
+   "summary": "The Huberman Lab podcast is hosted by Andrew Huberman, Ph.D., a neuroscientist and tenured professor in the department of neurobiology, and by courtesy, psychiatry and behavioral sciences at Stanford School of Medicine. The podcast discusses neuroscience and science-based tools, including how our…",
+   "recentPublishedAt": [
+    "2026-11-23T09:00:00Z",
+    "2026-11-19T09:00:00Z",
+    "2026-11-16T09:00:00Z",
+    "2026-11-12T09:00:00Z",
+    "2026-11-09T13:42:00Z",
+    "2026-11-05T09:00:00Z",
+    "2026-11-02T09:00:00Z",
+    "2026-10-29T08:00:00Z",
+    "2026-10-26T08:00:00Z",
+    "2026-10-22T08:00:00Z",
+    "2026-10-19T08:00:00Z",
+    "2026-10-15T08:00:00Z",
+    "2026-10-12T08:00:00Z",
+    "2026-10-08T08:00:00Z",
+    "2026-10-05T08:00:00Z",
+    "2026-10-01T08:00:00Z",
+    "2026-09-28T08:00:00Z",
+    "2026-09-24T08:00:00Z",
+    "2026-09-21T08:00:00Z",
+    "2026-09-17T08:00:00Z"
+   ]
   },
   {
    "id": "apple-1528594034",
@@ -407,7 +495,13 @@
    ],
    "author": "The New York Times",
    "websiteURL": "https://www.nytimes.com/column/hard-fork",
-   "summary": "“Hard Fork” is a show about the future that’s already here. Each week, New York Times journalists explore and make sense of the latest in the rapidly changing world of tech. Subscribe today at nytimes.com/podcasts or on Apple Podcasts, Spotify and Amazon Music. You can also subscribe via your…"
+   "summary": "“Hard Fork” is a show about the future that’s already here. Each week, New York Times journalists explore and make sense of the latest in the rapidly changing world of tech. Subscribe today at nytimes.com/podcasts or on Apple Podcasts, Spotify and Amazon Music. You can also subscribe via your…",
+   "recentPublishedAt": [
+    "2026-11-20T11:00:00Z",
+    "2026-11-12T23:55:00Z",
+    "2026-10-30T10:00:00Z",
+    "2022-09-27T14:00:00Z"
+   ]
   },
   {
    "id": "apple-1685093486",
@@ -426,7 +520,7 @@
    ],
    "author": "The Athletic",
    "websiteURL": "https://www.pablo.show",
-   "summary": "Follow Pablo down the rabbit hole, beyond the game — every Tuesday, Thursday and Friday — on his Pulitzer-winning video podcast, part of The Athletic Podcast Network. You’ll get a deep-dive \"talkumentary\" episode, reported by Pablo and Curiosity Correspondents like Emmy-winning comedian Wyatt Cenac…"
+   "summary": "Follow Pablo down the rabbit hole, beyond the game — every Tuesday, Thursday and Friday — on his award-winning video podcast, part of The Athletic Podcast Network. You’ll get a deep-dive \"talkumentary\" episode, reported by Pablo and his correspondents. (The show's journalism has been honored by the…"
   },
   {
    "id": "philosophize-this",
@@ -434,7 +528,7 @@
    "contentKind": "podcast",
    "title": "Philosophize This!",
    "feedURL": "https://feeds.megaphone.fm/QCD6036500916",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/24779146-88be-11ee-95a6-7b19628c6840/image/e231c2472d3da5c7bb06ad6651cdf3ea.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/24779146-88be-11ee-95a6-7b19628c6840/image/e231c2472d3da5c7bb06ad6651cdf3ea.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "education",
     "society-culture"
@@ -446,7 +540,29 @@
    ],
    "author": "Stephen West",
    "websiteURL": "https://www.philosophizethis.org",
-   "summary": "Beginner friendly if listened to in order! For anyone interested in an educational podcast about philosophy where you don't need to be a graduate-level philosopher to understand it. In chronological order, the thinkers and ideas that forged the world we live in are broken down and explained."
+   "summary": "Beginner friendly if listened to in order! For anyone interested in an educational podcast about philosophy where you don't need to be a graduate-level philosopher to understand it. In chronological order, the thinkers and ideas that forged the world we live in are broken down and explained.",
+   "recentPublishedAt": [
+    "2026-10-27T16:46:00Z",
+    "2026-08-29T13:44:00Z",
+    "2026-08-08T11:28:00Z",
+    "2026-07-14T15:10:00Z",
+    "2026-06-27T18:47:00Z",
+    "2026-05-31T15:31:00Z",
+    "2026-05-10T17:13:00Z",
+    "2026-04-26T17:24:00Z",
+    "2026-04-12T15:08:00Z",
+    "2026-02-11T23:21:00Z",
+    "2025-12-27T00:43:00Z",
+    "2025-11-29T15:26:00Z",
+    "2025-11-16T21:47:00Z",
+    "2025-11-08T22:45:00Z",
+    "2025-10-17T20:11:00Z",
+    "2025-10-08T14:52:00Z",
+    "2025-09-30T21:01:00Z",
+    "2025-09-13T01:41:00Z",
+    "2025-09-04T00:33:00Z",
+    "2025-08-13T13:57:00Z"
+   ]
   },
   {
    "id": "apple-214089682",
@@ -506,7 +622,14 @@
    ],
    "author": "New York Times Opinion",
    "websiteURL": "https://www.nytimes.com/ezra-klein-podcast",
-   "summary": "Ezra Klein invites you into a conversation on something that matters. How do we address climate change if the political system fails to act? Has the logic of markets infiltrated too many aspects of our lives? What is the future of the Republican Party? What do psychedelics teach us about…"
+   "summary": "Ezra Klein invites you into a conversation on something that matters. How do we address climate change if the political system fails to act? Has the logic of markets infiltrated too many aspects of our lives? What is the future of the Republican Party? What do psychedelics teach us about…",
+   "recentPublishedAt": [
+    "2026-11-20T10:00:00Z",
+    "2026-11-17T10:00:00Z",
+    "2026-11-13T10:00:00Z",
+    "2024-10-02T09:00:00Z",
+    "2021-01-13T01:40:00Z"
+   ]
   },
   {
    "id": "apple-1795483480",
@@ -514,7 +637,7 @@
    "contentKind": "podcast",
    "title": "Good Hang with Amy Poehler",
    "feedURL": "https://feeds.megaphone.fm/good-hang-with-amy-poehler",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/aa039a8e-de63-11ef-a44c-17dcb97c571d/image/39dfe060dbf437bfe5e5e0f0e8a88681.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/aa039a8e-de63-11ef-a44c-17dcb97c571d/image/39dfe060dbf437bfe5e5e0f0e8a88681.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "comedy"
    ],
@@ -565,7 +688,29 @@
    ],
    "author": "Russ Roberts",
    "websiteURL": "https://simplecast.econtalk.org",
-   "summary": "EconTalk: Conversations for the Curious is an award-winning weekly podcast hosted by Russ Roberts of Shalem College in Jerusalem and Stanford's Hoover Institution. The eclectic guest list includes authors, doctors, psychologists, historians, philosophers, economists, and more. Learn how the health…"
+   "summary": "EconTalk: Conversations for the Curious is an award-winning weekly podcast hosted by Russ Roberts of Shalem College in Jerusalem and Stanford's Hoover Institution. The eclectic guest list includes authors, doctors, psychologists, historians, philosophers, economists, and more. Learn how the health…",
+   "recentPublishedAt": [
+    "2026-11-23T11:30:00Z",
+    "2026-11-16T11:30:00Z",
+    "2026-11-09T11:30:00Z",
+    "2026-11-02T11:30:00Z",
+    "2026-10-26T10:30:00Z",
+    "2026-10-19T10:30:00Z",
+    "2026-10-12T10:30:00Z",
+    "2026-10-05T10:30:00Z",
+    "2026-09-28T10:30:00Z",
+    "2026-09-21T10:30:00Z",
+    "2026-09-14T10:30:00Z",
+    "2026-09-07T10:30:00Z",
+    "2026-08-31T10:30:00Z",
+    "2026-08-24T10:30:00Z",
+    "2026-08-17T10:30:00Z",
+    "2026-08-10T10:30:00Z",
+    "2026-08-03T10:30:00Z",
+    "2026-07-27T10:30:00Z",
+    "2026-07-20T10:30:00Z",
+    "2026-07-13T10:30:00Z"
+   ]
   },
   {
    "id": "apple-1028908750",
@@ -585,7 +730,29 @@
    ],
    "author": "Hidden Brain, Shankar Vedantam",
    "websiteURL": "https://www.siriusxm.com",
-   "summary": "Why do I feel stuck? How can I become more creative? What can I do to improve my relationships? If you’ve ever asked yourself these questions, you’re not alone. On Hidden Brain, we help you understand your own mind — and the minds of the people around you. (We're routinely rated the #1 science…"
+   "summary": "Why do I feel stuck? How can I become more creative? What can I do to improve my relationships? If you’ve ever asked yourself these questions, you’re not alone. On Hidden Brain, we help you understand your own mind — and the minds of the people around you. (We're routinely rated the #1 science…",
+   "recentPublishedAt": [
+    "2026-11-23T15:00:00Z",
+    "2026-11-16T15:00:00Z",
+    "2026-11-09T15:00:00Z",
+    "2026-11-02T15:00:00Z",
+    "2026-10-26T14:00:00Z",
+    "2026-10-19T16:04:39Z",
+    "2026-10-12T17:35:10Z",
+    "2026-10-05T19:00:00Z",
+    "2026-09-28T14:00:00Z",
+    "2026-09-21T15:21:37Z",
+    "2026-09-14T15:14:37Z",
+    "2026-09-07T14:00:00Z",
+    "2026-08-31T20:33:53Z",
+    "2026-08-24T19:00:00Z",
+    "2026-08-17T19:00:00Z",
+    "2026-08-10T19:00:00Z",
+    "2026-08-03T19:00:00Z",
+    "2026-07-27T19:00:00Z",
+    "2026-07-20T14:00:00Z",
+    "2026-07-13T19:00:00Z"
+   ]
   },
   {
    "id": "apple-173001861",
@@ -612,7 +779,7 @@
    "contentKind": "podcast",
    "title": "On Purpose with Jay Shetty",
    "feedURL": "https://feeds.megaphone.fm/on-purpose",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/0cb56516-756e-11f1-942d-1f48449dfbbc/image/c621e53ad8ba502502befb29ac9a0752.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/0cb56516-756e-11f1-942d-1f48449dfbbc/image/84d12d96a2edfe636653e0bb2df57346.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "health-fitness",
     "education"
@@ -631,7 +798,7 @@
    "contentKind": "podcast",
    "title": "Lex Fridman Podcast",
    "feedURL": "https://lexfridman.com/feed/podcast/",
-   "artworkURL": "https://lexfridman.com/wordpress/wp-content/uploads/powerpress/artwork_3000-230.png",
+   "artworkURL": "https://lexfridman.com/wordpress/wp-content/uploads/powerpress/lex_fridman_podcast_cover_3000.jpg",
    "subjects": [
     "technology",
     "science"
@@ -651,7 +818,7 @@
    "contentKind": "podcast",
    "title": "The Dan Le Batard Show",
    "feedURL": "https://feeds.megaphone.fm/ESP2298543312",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/353b02e2-4f64-11eb-938f-27ae6b16a7ea/image/dfafed6e502111909da5caedf08ce224.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/353b02e2-4f64-11eb-938f-27ae6b16a7ea/image/dfafed6e502111909da5caedf08ce224.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "sports"
    ],
@@ -710,7 +877,7 @@
    "contentKind": "podcast",
    "title": "Today, Explained",
    "feedURL": "https://feeds.megaphone.fm/VMP5705694065",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/23d52a2a-1c5f-11ea-9a0e-b70170f2a827/image/uploads_2F1588357113366-jjsdfzx6x4m-c0339c10f9b113a5fcc93436e66e5ef4_2FTodayExplained+V2_Tile_3000x3000+_281_29.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/23d52a2a-1c5f-11ea-9a0e-b70170f2a827/image/uploads_2F1588357113366-jjsdfzx6x4m-c0339c10f9b113a5fcc93436e66e5ef4_2FTodayExplained+V2_Tile_3000x3000+_281_29.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "news"
    ],
@@ -769,7 +936,7 @@
    "contentKind": "podcast",
    "title": "Criminal",
    "feedURL": "https://feeds.megaphone.fm/VMP7924981569",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/f547b046-5de4-11ec-acc5-733706bb297f/image/9ed2d59bc3ab179245d05a3c10636f99.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/f547b046-5de4-11ec-acc5-733706bb297f/image/9ed2d59bc3ab179245d05a3c10636f99.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "true-crime",
     "society-culture"
@@ -820,7 +987,29 @@
    ],
    "author": "Science Friday and WNYC Studios",
    "websiteURL": "https://www.wnycstudios.org/podcasts/science-friday",
-   "summary": "Covering the outer reaches of space to the tiniest microbes in our bodies, Science Friday is the source for entertaining and educational stories about science, technology, and other cool stuff."
+   "summary": "Covering the outer reaches of space to the tiniest microbes in our bodies, Science Friday is the source for entertaining and educational stories about science, technology, and other cool stuff.",
+   "recentPublishedAt": [
+    "2026-11-23T11:00:00Z",
+    "2026-11-21T11:00:00Z",
+    "2026-11-20T11:00:00Z",
+    "2026-11-19T11:00:00Z",
+    "2026-11-18T11:00:00Z",
+    "2026-11-17T11:05:00Z",
+    "2026-11-17T11:00:00Z",
+    "2026-11-16T11:00:00Z",
+    "2026-11-13T11:00:00Z",
+    "2026-11-12T11:00:00Z",
+    "2026-11-11T11:00:00Z",
+    "2026-11-10T11:00:00Z",
+    "2026-11-09T11:00:00Z",
+    "2026-11-06T11:00:00Z",
+    "2026-11-05T11:00:00Z",
+    "2026-11-04T11:00:00Z",
+    "2026-11-03T11:00:00Z",
+    "2026-11-02T11:00:00Z",
+    "2026-10-30T10:00:00Z",
+    "2026-10-29T10:00:00Z"
+   ]
   },
   {
    "id": "apple-1520403988",
@@ -847,7 +1036,7 @@
    "contentKind": "podcast",
    "title": "Nothing much happens: bedtime stories to help you sleep",
    "feedURL": "https://feeds.megaphone.fm/SSM2868305742",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/b9613576-c92e-11ef-b24f-47750642b5c1/image/31338a0c042fa4d81e40b2eb4b15621e.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/b9613576-c92e-11ef-b24f-47750642b5c1/image/31338a0c042fa4d81e40b2eb4b15621e.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "health-fitness",
     "arts"
@@ -937,7 +1126,29 @@
    ],
    "author": "Roman Mars",
    "websiteURL": "https://www.siriusxm.com",
-   "summary": "Design is everywhere in our lives, perhaps most importantly in the places where we've just stopped noticing. 99% Invisible is a weekly exploration of the process and power of design and architecture. From award winning producer Roman Mars. Learn more at 99percentinvisible.org."
+   "summary": "Design is everywhere in our lives, perhaps most importantly in the places where we've just stopped noticing. 99% Invisible is a weekly exploration of the process and power of design and architecture. From award winning producer Roman Mars. Learn more at 99percentinvisible.org.",
+   "recentPublishedAt": [
+    "2026-11-20T08:00:00Z",
+    "2026-11-17T09:00:00Z",
+    "2026-11-13T08:00:00Z",
+    "2026-11-10T09:00:00Z",
+    "2026-11-06T08:00:00Z",
+    "2026-11-03T09:00:00Z",
+    "2026-10-30T07:00:00Z",
+    "2026-10-27T08:00:00Z",
+    "2026-10-23T07:00:00Z",
+    "2026-10-21T08:00:00Z",
+    "2026-10-20T08:00:00Z",
+    "2026-10-13T08:00:00Z",
+    "2026-10-06T08:00:00Z",
+    "2026-10-02T07:00:00Z",
+    "2026-09-29T08:00:00Z",
+    "2026-09-25T13:17:35Z",
+    "2026-09-22T08:00:00Z",
+    "2026-09-18T07:00:00Z",
+    "2026-09-15T08:00:00Z",
+    "2026-09-11T07:00:00Z"
+   ]
   },
   {
    "id": "apple-1469394914",
@@ -945,7 +1156,7 @@
    "contentKind": "podcast",
    "title": "The Journal.",
    "feedURL": "https://video-api.shdsvc.dowjones.io/api/podcasts/feed/the%20journal",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/b84f9932-8174-11e9-bbd8-7f261513f0c9/image/d84a4f4d55158df9d14f6f2d4b219a28.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/b84f9932-8174-11e9-bbd8-7f261513f0c9/image/d84a4f4d55158df9d14f6f2d4b219a28.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "news",
     "business"
@@ -977,7 +1188,29 @@
    ],
    "author": "Freakonomics Radio + Stitcher",
    "websiteURL": "https://freakonomics.com",
-   "summary": "Freakonomics co-author Stephen J. Dubner uncovers the hidden side of everything. Why is it safer to fly in an airplane than drive a car? How do we decide whom to marry? Why is the media so full of bad news? Also: things you never knew you wanted to know about wolves, bananas, pollution, search…"
+   "summary": "Freakonomics co-author Stephen J. Dubner uncovers the hidden side of everything. Why is it safer to fly in an airplane than drive a car? How do we decide whom to marry? Why is the media so full of bad news? Also: things you never knew you wanted to know about wolves, bananas, pollution, search…",
+   "recentPublishedAt": [
+    "2026-11-20T11:00:00Z",
+    "2026-11-13T11:00:00Z",
+    "2026-11-06T11:00:00Z",
+    "2026-11-04T13:00:00Z",
+    "2026-10-30T10:00:00Z",
+    "2026-10-23T10:00:00Z",
+    "2026-10-21T00:00:00Z",
+    "2026-10-16T10:00:00Z",
+    "2026-10-09T10:00:00Z",
+    "2026-10-02T10:00:00Z",
+    "2026-09-25T10:00:00Z",
+    "2026-09-18T10:00:00Z",
+    "2026-09-16T00:00:00Z",
+    "2026-09-11T10:00:00Z",
+    "2026-09-09T00:00:00Z",
+    "2026-09-04T10:00:00Z",
+    "2026-09-02T00:00:00Z",
+    "2026-08-28T10:00:00Z",
+    "2026-08-26T01:00:00Z",
+    "2026-08-21T10:00:00Z"
+   ]
   },
   {
    "id": "apple-1135137367",
@@ -1042,7 +1275,7 @@
    "contentKind": "podcast",
    "title": "Science Vs",
    "feedURL": "https://feeds.megaphone.fm/sciencevs",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/f521b120-2c30-11e6-b5f3-63ee984ee1a4/image/e7470287efbfa0aff068175bb6c31805.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/f521b120-2c30-11e6-b5f3-63ee984ee1a4/image/e7470287efbfa0aff068175bb6c31805.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "science"
    ],
@@ -1053,7 +1286,29 @@
    ],
    "author": "Spotify Studios",
    "websiteURL": "https://gimletmedia.com/science-vs/",
-   "summary": "There are a lot of fads, blogs and strong opinions, but then there’s SCIENCE. Science Vs is the show from Spotify Studios that finds out what’s fact, what’s not, and what’s somewhere in between. We do the hard work of sifting through all the science so you don't have to and cover everything from 5G…"
+   "summary": "There are a lot of fads, blogs and strong opinions, but then there’s SCIENCE. Science Vs is the show from Spotify Studios that finds out what’s fact, what’s not, and what’s somewhere in between. We do the hard work of sifting through all the science so you don't have to and cover everything from 5G…",
+   "recentPublishedAt": [
+    "2026-11-19T10:00:00Z",
+    "2026-11-12T17:07:00Z",
+    "2026-11-05T10:00:00Z",
+    "2026-10-29T09:00:00Z",
+    "2026-10-22T09:00:00Z",
+    "2026-10-15T09:00:00Z",
+    "2026-10-08T09:00:00Z",
+    "2026-10-01T09:00:00Z",
+    "2026-09-24T09:00:00Z",
+    "2026-09-17T20:25:00Z",
+    "2026-09-10T09:00:00Z",
+    "2026-09-03T09:00:00Z",
+    "2026-08-27T09:00:00Z",
+    "2026-08-20T09:00:00Z",
+    "2026-08-13T13:37:00Z",
+    "2026-08-06T09:00:00Z",
+    "2026-07-30T09:00:00Z",
+    "2026-07-02T09:00:00Z",
+    "2026-06-25T09:00:00Z",
+    "2026-06-18T09:00:00Z"
+   ]
   },
   {
    "id": "apple-1451109634",
@@ -1073,7 +1328,29 @@
    ],
    "author": "NPR",
    "websiteURL": "https://www.npr.org/podcasts/510333/throughline",
-   "summary": "Throughline is a time machine. Each episode, we travel beyond the headlines to answer the question, \"How did we get here?\" We use sound and stories to bring history to life and put you into the middle of it. From ancient civilizations to forgotten figures, we take you directly to the moments that…"
+   "summary": "Throughline is a time machine. Each episode, we travel beyond the headlines to answer the question, \"How did we get here?\" We use sound and stories to bring history to life and put you into the middle of it. From ancient civilizations to forgotten figures, we take you directly to the moments that…",
+   "recentPublishedAt": [
+    "2026-11-19T08:04:59Z",
+    "2026-11-17T05:05:00Z",
+    "2026-11-12T10:14:29Z",
+    "2026-11-10T08:05:00Z",
+    "2026-11-05T08:05:01Z",
+    "2026-11-03T10:57:36Z",
+    "2026-10-29T07:05:00Z",
+    "2026-10-22T07:05:01Z",
+    "2026-10-20T04:05:01Z",
+    "2026-10-15T05:05:02Z",
+    "2026-10-13T07:05:00Z",
+    "2026-10-08T07:00:00Z",
+    "2026-10-01T07:05:00Z",
+    "2026-09-29T07:05:01Z",
+    "2026-09-24T07:00:00Z",
+    "2026-09-17T09:05:00Z",
+    "2026-09-10T07:05:00Z",
+    "2026-09-08T07:05:00Z",
+    "2026-09-03T07:05:00Z",
+    "2026-09-01T07:05:01Z"
+   ]
   },
   {
    "id": "apple-1487513861",
@@ -1081,7 +1358,7 @@
    "contentKind": "podcast",
    "title": "Get Sleepy: stories for sleep",
    "feedURL": "https://feeds.megaphone.fm/SGP8517078272",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/784ec55a-44d1-11ed-bc62-2b0607f8c6a2/image/f8a91fecce3e75aaf5d9f1f7569af4d5.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/784ec55a-44d1-11ed-bc62-2b0607f8c6a2/image/f8a91fecce3e75aaf5d9f1f7569af4d5.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "health-fitness",
     "arts"
@@ -1121,7 +1398,7 @@
    "contentKind": "podcast",
    "title": "The Zach Lowe Show",
    "feedURL": "https://feeds.megaphone.fm/zach-lowe",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/745e06ba-08ef-11f0-ac3b-234508f92d6b/image/aef7061da638e1893d0ab7fdb85207d4.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/745e06ba-08ef-11f0-ac3b-234508f92d6b/image/d601314fb6b283cfa6197d91702334b3.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "sports"
    ],
@@ -1210,7 +1487,29 @@
    ],
    "author": "PJ Vogt",
    "websiteURL": "https://www.pjvogt.com",
-   "summary": "We try to make sense of the world, one question at a time. No question too big, no question too small.Hosted by PJ Vogt, edited by Sruthi Pinnamaneni. Named one of the best podcasts of all time by Time Magazine"
+   "summary": "We try to make sense of the world, one question at a time. No question too big, no question too small.Hosted by PJ Vogt, edited by Sruthi Pinnamaneni. Named one of the best podcasts of all time by Time Magazine",
+   "recentPublishedAt": [
+    "2026-11-20T10:00:00Z",
+    "2026-11-11T22:05:52Z",
+    "2026-11-06T22:35:00Z",
+    "2026-10-29T00:47:53Z",
+    "2026-10-23T09:00:00Z",
+    "2026-10-16T19:00:00Z",
+    "2026-10-09T09:00:00Z",
+    "2026-10-02T09:00:00Z",
+    "2026-09-29T18:30:00Z",
+    "2026-09-18T18:05:00Z",
+    "2026-09-11T14:20:00Z",
+    "2026-08-28T09:00:00Z",
+    "2026-08-21T13:15:00Z",
+    "2026-08-11T17:00:00Z",
+    "2026-08-06T23:05:00Z",
+    "2026-07-24T09:00:00Z",
+    "2026-07-17T09:00:00Z",
+    "2026-07-10T09:00:00Z",
+    "2026-07-03T09:00:00Z",
+    "2026-06-25T21:10:00Z"
+   ]
   },
   {
    "id": "apple-1368081567",
@@ -1218,7 +1517,7 @@
    "contentKind": "podcast",
    "title": "The Toast",
    "feedURL": "https://feeds.megaphone.fm/DEARMEDIALLC7892434789",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/98f67050-9f0a-11f0-b2a5-d3600b74e328/image/591f9b381e2aefc1f457f98f58cd1aa6.jpeg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/98f67050-9f0a-11f0-b2a5-d3600b74e328/image/591f9b381e2aefc1f457f98f58cd1aa6.jpeg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "comedy"
    ],
@@ -1256,7 +1555,7 @@
    "contentKind": "podcast",
    "title": "Young and Profiting (YAP) with Hala Taha: Entrepreneurship and Self-Improvement Podcast",
    "feedURL": "https://rss.introcast.io/1368888880/feeds.megaphone.fm/yap",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/12efd0fa-03fa-11ec-bec8-cf1cdc53b9e2/image/94b713f2df24c8a4a881973a0df7bc4f.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/12efd0fa-03fa-11ec-bec8-cf1cdc53b9e2/image/94b713f2df24c8a4a881973a0df7bc4f.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "business"
    ],
@@ -1286,7 +1585,29 @@
    ],
    "author": "NPR",
    "websiteURL": "https://www.npr.org/podcasts/510351/short-wave",
-   "summary": "New discoveries, everyday mysteries, and the science behind the headlines — in just under 15 minutes. It's science for everyone, using a lot of creativity and a little humor. Join hosts Emily Kwong and Regina Barber for science on a different wavelength. Support public media by joining NPR+ at…"
+   "summary": "New discoveries, everyday mysteries, and the science behind the headlines — in just under 15 minutes. It's science for everyone, using a lot of creativity and a little humor. Join hosts Emily Kwong and Regina Barber for science on a different wavelength. Support public media by joining NPR+ at…",
+   "recentPublishedAt": [
+    "2026-11-23T08:00:00Z",
+    "2026-11-20T08:00:00Z",
+    "2026-11-18T08:00:00Z",
+    "2026-11-17T08:00:00Z",
+    "2026-11-16T08:00:00Z",
+    "2026-11-13T08:00:00Z",
+    "2026-11-11T08:00:00Z",
+    "2026-11-10T08:00:00Z",
+    "2026-11-09T08:00:00Z",
+    "2026-11-05T08:00:00Z",
+    "2026-11-04T08:00:00Z",
+    "2026-11-03T08:00:00Z",
+    "2026-11-02T08:00:00Z",
+    "2026-10-30T07:00:00Z",
+    "2026-10-28T07:00:00Z",
+    "2026-10-27T07:00:00Z",
+    "2026-10-26T07:00:00Z",
+    "2026-10-23T07:00:00Z",
+    "2026-10-21T07:00:00Z",
+    "2026-10-20T07:00:00Z"
+   ]
   },
   {
    "id": "apple-1042631089",
@@ -1325,7 +1646,7 @@
    ],
    "author": "Passion Struck with John R. Miles",
    "websiteURL": "https://www.spreaker.com/podcast/passion-struck-with-john-r-miles--6958246",
-   "summary": "You built the life you were supposed to want. So why doesn't it feel like enough? Passion Struck is the #1 Health and Fitness podcast — and it exists to answer exactly that question. I'm John R. Miles — Navy veteran, former Fortune 50 executive, bestselling author — and I built this show because I…"
+   "summary": "Are you genuinely living, or just managing the life in front of you? Success without physical vitality, emotional resilience, and authentic purpose is an empty pursuit. Passion Struck explores the science, psychology, and daily choices behind what it means to live fully alive. Host John R. Miles…"
   },
   {
    "id": "darknet-diaries",
@@ -1470,7 +1791,7 @@
    "contentKind": "podcast",
    "title": "20/20",
    "feedURL": "https://feeds.megaphone.fm/ESP3456903052",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/ac00eed0-99e0-11ea-aeb9-d3bdda2ad25d/image/e82f0e492d40910541fac6ccd8656611.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/ac00eed0-99e0-11ea-aeb9-d3bdda2ad25d/image/e82f0e492d40910541fac6ccd8656611.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "true-crime"
    ],
@@ -1536,7 +1857,7 @@
     "hand-picked-shows",
     "publisher-feeds"
    ],
-   "author": "Audible",
+   "author": "Audible Original",
    "websiteURL": "https://wondery.com/shows/american-history-tellers/?utm_source=rss",
    "summary": "The Cold War, Prohibition, the Gold Rush, the Space Race. Every part of your life - the words you speak, the ideas you share - can be traced to our history, but how well do you really know the stories that made America? We'll take you to the events, the times and the people that shaped our nation.…"
   },
@@ -1616,6 +1937,48 @@
    "author": "Helen Zaltzman",
    "websiteURL": "https://art19.com/shows/the-allusionist",
    "summary": "Adventures in language with Helen Zaltzman. TheAllusionist.org"
+  },
+  {
+   "id": "philosophy-bites",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Philosophy Bites",
+   "feedURL": "https://philosophybites.libsyn.com/rss",
+   "artworkURL": "https://static.libsyn.com/p/assets/6/6/2/9/6629afb289ae5c80/philo_bites.jpg",
+   "subjects": [
+    "education",
+    "society-culture"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Edmonds and Warburton",
+   "websiteURL": "https://www.philosophybites.com",
+   "summary": "David Edmonds (Uehiro Centre, Oxford University) and Nigel Warburton (freelance philosopher/writer) interview top philosophers on a wide range of topics. Two books based on the series have been published by Oxford University Press. We are currently self-funding - donations very welcome via our…",
+   "recentPublishedAt": [
+    "2026-10-19T09:16:00Z",
+    "2026-10-11T10:00:00Z",
+    "2026-09-21T12:06:00Z",
+    "2026-09-10T13:44:00Z",
+    "2026-08-22T11:13:00Z",
+    "2026-07-30T09:18:00Z",
+    "2026-07-21T09:17:00Z",
+    "2026-06-05T13:12:00Z",
+    "2026-05-18T17:04:00Z",
+    "2026-05-11T11:00:00Z",
+    "2026-04-20T13:28:00Z",
+    "2026-03-24T17:01:00Z",
+    "2026-02-26T09:44:00Z",
+    "2026-01-24T04:47:00Z",
+    "2026-01-01T18:57:00Z",
+    "2025-12-11T09:06:00Z",
+    "2025-11-21T17:22:00Z",
+    "2025-11-02T17:32:00Z",
+    "2025-10-17T07:45:00Z",
+    "2025-10-05T09:36:00Z"
+   ]
   },
   {
    "id": "apple-1730358737",
@@ -1732,7 +2095,29 @@
    ],
    "author": "Sean Carroll",
    "websiteURL": "https://www.preposterousuniverse.com/podcast/",
-   "summary": "Ever wanted to know how music affects your brain, what quantum mechanics really is, or how black holes work? Do you wonder why you get emotional each time you see a certain movie, or how on earth video games are designed? Then you've come to the right place. Each week, Sean Carroll will host…"
+   "summary": "Ever wanted to know how music affects your brain, what quantum mechanics really is, or how black holes work? Do you wonder why you get emotional each time you see a certain movie, or how on earth video games are designed? Then you've come to the right place. Each week, Sean Carroll will host…",
+   "recentPublishedAt": [
+    "2026-11-23T12:07:00Z",
+    "2026-11-16T11:50:00Z",
+    "2026-11-09T11:44:00Z",
+    "2026-11-02T11:53:00Z",
+    "2026-10-26T11:30:00Z",
+    "2026-10-19T10:43:00Z",
+    "2026-10-12T10:48:00Z",
+    "2026-10-03T15:50:00Z",
+    "2026-09-28T10:51:00Z",
+    "2026-09-21T10:51:00Z",
+    "2026-09-14T10:58:00Z",
+    "2026-09-07T11:20:00Z",
+    "2026-08-31T10:42:00Z",
+    "2026-08-24T12:02:00Z",
+    "2026-08-17T12:06:00Z",
+    "2026-08-10T10:59:00Z",
+    "2026-08-03T12:28:00Z",
+    "2026-07-27T13:33:00Z",
+    "2026-07-20T13:23:00Z",
+    "2026-07-13T11:34:00Z"
+   ]
   },
   {
    "id": "apple-1291579828",
@@ -1759,7 +2144,7 @@
    "contentKind": "podcast",
    "title": "Decoded | Unlock The Secrets of Human Behavior, Emotion and Motivation",
    "feedURL": "https://feeds.megaphone.fm/ARML6214944307",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/a8b0be3e-9b2f-11f1-8732-df87a56ae1b0/image/05d25208b5326b272aacb972ca6577a4.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/a8b0be3e-9b2f-11f1-8732-df87a56ae1b0/image/05d25208b5326b272aacb972ca6577a4.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "health-fitness"
    ],
@@ -1778,7 +2163,7 @@
    "contentKind": "podcast",
    "title": "Cortex",
    "feedURL": "https://relay.fm/cortex/feed",
-   "artworkURL": "https://files.relay.fm/uploads/broadcast/image/17/cortex_artwork_bc912281-9faa-4538-b034-74a2acf872bd.png",
+   "artworkURL": "https://files.relay.fm/uploads/broadcast/image/17/cortex_artwork_00f0e303-4559-422e-85f7-596bf4270bbb.png",
    "subjects": [
     "technology",
     "education"
@@ -1829,6 +2214,48 @@
    "author": "Avery Trufelman",
    "websiteURL": "https://play.prx.org/listen?uf=https%3A%2F%2Ffeed.articlesofinterest.club%2F",
    "summary": "Articles of Interest is a show about what we wear. Produced and Hosted by Avery Trufelman"
+  },
+  {
+   "id": "hi-phi-nation",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Hi-Phi Nation",
+   "feedURL": "https://feeds.megaphone.fm/hiphination",
+   "artworkURL": "https://assets.pippa.io/shows/69a1aa8467ae12eb0a8b58a7/show-cover.jpg",
+   "subjects": [
+    "education",
+    "society-culture"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Slate Podcasts",
+   "websiteURL": "https://slate.com/podcasts/hi-phi-nation",
+   "summary": "Hi-Phi Nation is philosophy in story-form, integrating narrative journalism with big ideas. We look at stories from everyday life, law, science, popular culture, and strange corners of human experiences that raise thought-provoking questions about things like justice, knowledge, the self, morality…",
+   "recentPublishedAt": [
+    "2026-11-17T08:00:00Z",
+    "2026-11-10T08:00:00Z",
+    "2026-11-03T08:00:00Z",
+    "2026-10-26T21:18:02Z",
+    "2023-05-16T04:00:00Z",
+    "2023-05-09T04:00:00Z",
+    "2023-05-02T04:00:00Z",
+    "2023-04-25T04:00:00Z",
+    "2023-04-18T04:00:00Z",
+    "2023-04-11T04:00:00Z",
+    "2023-04-04T15:31:00Z",
+    "2022-02-12T06:00:00Z",
+    "2022-01-22T06:00:00Z",
+    "2022-01-08T06:00:00Z",
+    "2021-12-18T06:00:00Z",
+    "2021-12-04T06:00:00Z",
+    "2021-11-27T06:00:00Z",
+    "2021-11-20T06:00:00Z",
+    "2021-11-06T05:00:00Z",
+    "2021-10-30T05:00:00Z"
+   ]
   },
   {
    "id": "apple-121493675",
@@ -1912,7 +2339,7 @@
    "contentKind": "podcast",
    "title": "Something You Should Know",
    "feedURL": "https://rss.pdrl.fm/60a606/feeds.megaphone.fm/WWO9761275037",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/c24d0a5a-b25b-11ea-bef6-ef68671ea875/image/88a8b82e5fae6701e778c1709b714e7a.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/c24d0a5a-b25b-11ea-bef6-ef68671ea875/image/88a8b82e5fae6701e778c1709b714e7a.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "science",
     "education"
@@ -2027,12 +2454,95 @@
    "summary": "The stories behind the world's most recognizable and interesting sounds. Whether you're a professional audio engineer with decades of experience, a fourth grader who loves sound and music, or anyone in between, Twenty Thousand Hertz will help unlock your sonic world… from the sound design secrets…"
   },
   {
+   "id": "odd-lots",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Odd Lots",
+   "feedURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/8a94442e-5a74-4fa2-8b8d-ae27003a8d6b/982f5071-765c-403d-969d-ae27003a8d83/podcast.rss",
+   "artworkURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/8a94442e-5a74-4fa2-8b8d-ae27003a8d6b/982f5071-765c-403d-969d-ae27003a8d83/image.jpg?t=1681322812&size=Large",
+   "subjects": [
+    "business"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Bloomberg",
+   "websiteURL": "https://bloomberg.com/podcasts/odd_lots",
+   "summary": "Bloomberg's Joe Weisenthal and Tracy Alloway explore the most interesting topics in finance, markets and economics. Join the conversation every Monday, Thursday, and Friday",
+   "recentPublishedAt": [
+    "2026-11-23T09:00:00Z",
+    "2026-11-21T09:00:00Z",
+    "2026-11-20T09:00:00Z",
+    "2026-11-19T09:00:00Z",
+    "2026-11-18T11:00:00Z",
+    "2026-11-16T09:00:00Z",
+    "2026-11-14T09:00:00Z",
+    "2026-11-13T09:00:00Z",
+    "2026-11-12T09:00:00Z",
+    "2026-11-11T09:00:00Z",
+    "2026-11-09T09:00:00Z",
+    "2026-11-06T09:00:00Z",
+    "2026-11-05T09:00:00Z",
+    "2026-11-03T09:00:00Z",
+    "2026-11-02T09:00:00Z",
+    "2026-10-30T08:00:00Z",
+    "2026-10-29T08:00:00Z",
+    "2026-10-26T08:00:00Z",
+    "2026-10-24T08:00:00Z",
+    "2026-10-23T08:00:00Z"
+   ]
+  },
+  {
+   "id": "philosophy-talk",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Philosophy Talk",
+   "feedURL": "https://philosophytalk.org/feed/podcast",
+   "artworkURL": "https://f.prxu.org/15207/images/2590c7d5-183c-42b7-91cc-a660407457ca/Logo_sq_hires_blank-copy-2.jpg",
+   "subjects": [
+    "education",
+    "society-culture"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Philosophy Talk",
+   "websiteURL": "https://philosophytalk.org",
+   "summary": "\"The program that questions everything—except your intelligence.\" Philosophy Talk began as a weekly one-hour radio series and has been on the air for more than two decades. The host-professors bring clarity, depth, and humor to everyday topics that are lofty (Truth, Beauty, Justice), arresting…",
+   "recentPublishedAt": [
+    "2026-11-22T20:00:00Z",
+    "2026-11-15T20:00:00Z",
+    "2026-11-08T20:00:00Z",
+    "2026-11-01T20:00:00Z",
+    "2026-10-25T20:30:00Z",
+    "2026-10-18T19:00:00Z",
+    "2026-10-11T19:00:00Z",
+    "2026-10-04T19:00:00Z",
+    "2026-09-27T19:00:00Z",
+    "2026-09-20T19:00:00Z",
+    "2026-09-13T19:00:00Z",
+    "2026-09-06T19:00:00Z",
+    "2026-08-30T19:00:00Z",
+    "2026-08-23T19:00:00Z",
+    "2026-08-16T19:00:00Z",
+    "2026-08-09T19:00:00Z",
+    "2026-08-02T19:00:00Z",
+    "2026-07-26T19:00:00Z",
+    "2026-07-19T19:00:00Z",
+    "2026-07-12T19:00:00Z"
+   ]
+  },
+  {
    "id": "apple-1073226719",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Pivot",
    "feedURL": "https://feeds.megaphone.fm/pivot",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/d6280242-e5c9-11e8-a7e3-d766bb7d2d3e/image/bbb7849ef30865b87218347b3a090613.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/d6280242-e5c9-11e8-a7e3-d766bb7d2d3e/image/bbb7849ef30865b87218347b3a090613.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "news",
     "technology",
@@ -2072,7 +2582,7 @@
    "contentKind": "podcast",
    "title": "The Joe Rogan Experience",
    "feedURL": "https://feeds.megaphone.fm/GLT1412515089",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/8e5bcebc-ca16-11ee-89f0-0fa0b9bdfc7c/image/760b684379d2f5f6a98c67f65cf7b53f.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/8e5bcebc-ca16-11ee-89f0-0fa0b9bdfc7c/image/8be4c98f6aff9e407c1257ce3c35beea.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "comedy"
    ],
@@ -2168,7 +2678,7 @@
    "contentKind": "podcast",
    "title": "DOUBLE COVERAGE PODCAST",
    "feedURL": "https://feeds.megaphone.fm/YMH1796246858",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/f97a0396-a456-11f0-8c65-03c1ab5f9b55/image/01089e3bcfc50a9f7f85bc1ee4d8fe33.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/f97a0396-a456-11f0-8c65-03c1ab5f9b55/image/01089e3bcfc50a9f7f85bc1ee4d8fe33.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "sports"
    ],
@@ -2199,6 +2709,89 @@
    "author": "The New York Times",
    "websiteURL": "https://www.nytimes.com/column/book-review-podcast",
    "summary": "The world's top authors and critics join host Gilbert Cruz and editors at The New York Times Book Review to talk about the week's top books, what we're reading and what's going on in the literary world. Subscribe today at nytimes.com/podcasts or on Apple Podcasts, Spotify and Amazon Music. You can…"
+  },
+  {
+   "id": "macro-musings",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Macro Musings with David Beckworth",
+   "feedURL": "https://macromusings.libsyn.com/rss",
+   "artworkURL": "https://static.libsyn.com/p/assets/5/6/4/8/5648d73583b24c6ed959afa2a1bf1c87/MM_Podcast_Cover_Art_Update_V02_3000x3000.png",
+   "subjects": [
+    "business"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Mercatus Center at George Mason University",
+   "websiteURL": "https://macroeconomicpolicynexus.substack.com/",
+   "summary": "Hosted by David Beckworth of the Mercatus Center, Macro Musings pulls back the curtain on the important macroeconomic issues of the past, present, and future.",
+   "recentPublishedAt": [
+    "2026-11-23T10:00:00Z",
+    "2026-11-16T10:00:00Z",
+    "2026-11-09T10:00:00Z",
+    "2026-11-02T09:00:00Z",
+    "2026-10-26T09:00:00Z",
+    "2026-10-19T09:00:00Z",
+    "2026-10-12T09:00:00Z",
+    "2026-10-05T09:00:00Z",
+    "2026-09-28T09:00:00Z",
+    "2026-09-21T09:00:00Z",
+    "2026-09-14T09:00:00Z",
+    "2026-09-07T09:00:00Z",
+    "2026-08-31T09:00:00Z",
+    "2026-08-24T09:00:00Z",
+    "2026-08-17T09:00:00Z",
+    "2026-08-10T09:00:00Z",
+    "2026-08-03T09:00:00Z",
+    "2026-07-27T09:00:00Z",
+    "2026-07-20T09:00:00Z",
+    "2026-07-13T09:00:00Z"
+   ]
+  },
+  {
+   "id": "the-peter-attia-drive",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Peter Attia Drive",
+   "feedURL": "https://peterattiadrive.libsyn.com/rss",
+   "artworkURL": "https://static.libsyn.com/p/assets/e/d/6/0/ed60b3def918dca516c3140a3186d450/the_Drive_public.png",
+   "subjects": [
+    "health-fitness",
+    "science"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Peter Attia, MD",
+   "websiteURL": "https://www.PeterAttiaMD.com",
+   "summary": "Expert insight on health, performance, longevity, critical thinking, and pursuing excellence. Dr. Peter Attia (Stanford/Hopkins/NIH-trained MD) talks with leaders in their fields.",
+   "recentPublishedAt": [
+    "2026-11-23T05:15:00Z",
+    "2026-11-16T05:15:00Z",
+    "2026-11-09T05:15:00Z",
+    "2026-11-02T05:15:00Z",
+    "2026-10-26T04:15:00Z",
+    "2026-10-19T04:15:00Z",
+    "2026-10-12T04:15:00Z",
+    "2026-10-05T04:15:00Z",
+    "2026-09-28T04:15:00Z",
+    "2026-09-21T04:15:00Z",
+    "2026-09-14T04:15:00Z",
+    "2026-09-07T04:15:00Z",
+    "2026-08-31T04:15:00Z",
+    "2026-08-24T04:15:00Z",
+    "2026-08-17T04:15:00Z",
+    "2026-08-10T04:15:00Z",
+    "2026-08-03T04:15:00Z",
+    "2026-07-27T04:15:00Z",
+    "2026-07-20T04:15:00Z",
+    "2026-07-13T04:15:00Z"
+   ]
   },
   {
    "id": "apple-1794450472",
@@ -2377,12 +2970,95 @@
    "summary": "Stories of Art brings together art historian Dr. James Fox and art critic Alastair Sooke to uncover the most inspiring and compelling stories from the history of art. From the lives of the world’s greatest artists to the turning points that changed art, to the hidden histories of great…"
   },
   {
+   "id": "the-indicator-from-planet-money",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Indicator from Planet Money",
+   "feedURL": "https://feeds.npr.org/510325/podcast.xml",
+   "artworkURL": "https://media.npr.org/assets/img/2024/03/25/the-indicator_2024_sq-121249a297878ab2327b321c997ab870300ec659.jpg?s=1400&c=66&f=jpg",
+   "subjects": [
+    "business"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "NPR",
+   "websiteURL": "https://www.npr.org/podcasts/510325/the-indicator-from-planet-money",
+   "summary": "A bite-sized show about big ideas. From the people who make Planet Money, The Indicator helps you make sense of what's happening in today's economy. It's a quick hit of insight into money, work, and business. Monday through Friday, in 10 minutes or less. Sign up for our newsletter. Support public…",
+   "recentPublishedAt": [
+    "2026-11-23T08:00:00Z",
+    "2026-11-20T08:00:00Z",
+    "2026-11-19T08:00:00Z",
+    "2026-11-18T08:00:00Z",
+    "2026-11-17T08:00:00Z",
+    "2026-11-16T08:00:00Z",
+    "2026-11-13T08:00:00Z",
+    "2026-11-12T08:00:00Z",
+    "2026-11-11T08:00:00Z",
+    "2026-11-10T08:00:00Z",
+    "2026-11-09T08:00:00Z",
+    "2026-11-06T15:35:42Z",
+    "2026-11-05T08:00:00Z",
+    "2026-11-04T08:00:00Z",
+    "2026-11-03T08:00:00Z",
+    "2026-11-02T08:00:00Z",
+    "2026-10-30T07:00:00Z",
+    "2026-10-29T07:00:00Z",
+    "2026-10-28T07:00:00Z",
+    "2026-10-27T07:00:00Z"
+   ]
+  },
+  {
+   "id": "sensible-medicine",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Sensible Medicine",
+   "feedURL": "https://api.substack.com/feed/podcast/1000397.rss",
+   "artworkURL": "https://substackcdn.com/feed/podcast/1000397/9d8b0eb3317508997427c6de49c3a792.jpg",
+   "subjects": [
+    "health-fitness",
+    "science"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Sensible Medicine Authors and Editors",
+   "websiteURL": "https://www.sensible-med.com/podcast",
+   "summary": "Common sense and original thinking in bio-medicine A platform for diverse views and debate www.sensible-med.com",
+   "recentPublishedAt": [
+    "2026-11-18T10:00:54Z",
+    "2026-11-06T10:01:17Z",
+    "2026-11-04T10:02:01Z",
+    "2026-10-21T09:01:22Z",
+    "2026-10-13T16:54:45Z",
+    "2026-10-07T09:02:04Z",
+    "2026-09-23T14:30:59Z",
+    "2026-09-22T20:37:56Z",
+    "2026-09-15T21:43:02Z",
+    "2026-09-11T09:00:39Z",
+    "2026-09-09T09:13:37Z",
+    "2026-09-08T22:02:14Z",
+    "2026-09-01T16:43:15Z",
+    "2026-08-26T09:01:57Z",
+    "2026-08-25T17:45:01Z",
+    "2026-08-18T16:15:09Z",
+    "2026-08-12T09:00:18Z",
+    "2026-07-29T09:00:25Z",
+    "2026-07-15T09:02:51Z",
+    "2026-07-01T09:01:35Z"
+   ]
+  },
+  {
    "id": "apple-1347973549",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Modern Wisdom",
    "feedURL": "https://feeds.megaphone.fm/SIXMSB5088139739",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/a62f84c0-f8b6-11ed-a4fc-fb9e7841d45b/image/76ed638554a4be965517200d1cd5f30d.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/a62f84c0-f8b6-11ed-a4fc-fb9e7841d45b/image/76ed638554a4be965517200d1cd5f30d.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "society-culture",
     "health-fitness"
@@ -2430,7 +3106,7 @@
     "hand-picked-shows",
     "publisher-feeds"
    ],
-   "author": "Audible / Patrick Wyman",
+   "author": "Audible Original / Patrick Wyman",
    "websiteURL": "https://wondery.com/shows/tides-of-history/?utm_source=rss",
    "summary": "Everywhere around us are echoes of the past. Those echoes define the boundaries of states and countries, how we pray and how we fight. They determine what money we spend and how we earn it at work, what language we speak and how we raise our children. From Wondery, host Patrick Wyman, PhD (“Fall Of…"
   },
@@ -2440,7 +3116,7 @@
    "contentKind": "podcast",
    "title": "The Bill Simmons Podcast",
    "feedURL": "https://feeds.megaphone.fm/the-bill-simmons-podcast",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/ca047470-781a-11ea-9a10-cfa05a5eeb3b/image/e2dde0a311d907e0f1f37664859283fe.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/ca047470-781a-11ea-9a10-cfa05a5eeb3b/image/9bf20801d31b2dae9810340aab263ac8.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "sports"
    ],
@@ -2459,7 +3135,7 @@
    "contentKind": "podcast",
    "title": "Welcome to Night Vale",
    "feedURL": "https://feeds.megaphone.fm/SBP4591212513",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/83c028bc-3b63-11f0-86bb-17a55ed91a19/image/d6f0573de211e3ccc3403f81c80687d3.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://image.simplecastcdn.com/images/2a5b2793-8836-4839-a6db-63f4ba9ac5e7/b14cb5c4-2dc8-4ab4-82e9-ad6569d1c11b/3000x3000/d6f0573de211e3ccc3403f81c80687d3.jpg?aid=rss_feed",
    "subjects": [
     "arts"
    ],
@@ -2469,8 +3145,214 @@
     "publisher-feeds"
    ],
    "author": "Night Vale Presents",
-   "websiteURL": "https://welcometonightvale.com",
+   "websiteURL": "https://welcome-to-night-vale-944040dd.simplecast.com",
    "summary": "Twice-monthly community updates for the small desert town of Night Vale, where every conspiracy theory is true. Turn on your radio and hide. Never listened before? It's an ongoing radio show. Start with the current episode, and you'll catch on in no time. Or, go right to Episode 1 if you wanna…"
+  },
+  {
+   "id": "unexplainable",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Unexplainable",
+   "feedURL": "https://feeds.megaphone.fm/unexplainable",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/bf04a680-6afe-11eb-a86a-3f07259749a3/image/d510ec950f9a501094c11003381fcedc.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "subjects": [
+    "science"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Vox",
+   "summary": "Unexplainable takes listeners right up to the edge of what we know…and then keeps on going. The Unexplainable team — Noam Hassenfeld, Julia Longoria, Byrd Pinkerton, and Meradith Hoddinott — tackles scientific mysteries, unanswered questions, and everything we learn diving into the unknown. New…",
+   "recentPublishedAt": [
+    "2026-11-23T09:00:00Z",
+    "2026-11-18T10:30:00Z",
+    "2026-11-16T09:00:00Z",
+    "2026-11-11T09:00:00Z",
+    "2026-11-09T09:00:00Z",
+    "2026-11-04T09:00:00Z",
+    "2026-11-02T09:00:00Z",
+    "2026-10-26T08:00:00Z",
+    "2026-10-23T08:00:00Z",
+    "2026-10-21T08:00:00Z",
+    "2026-10-19T08:00:00Z",
+    "2026-10-14T08:00:00Z",
+    "2026-10-12T08:00:00Z",
+    "2026-10-07T08:00:00Z",
+    "2026-10-05T08:00:00Z",
+    "2026-09-28T08:00:00Z",
+    "2026-09-23T08:00:00Z",
+    "2026-09-21T08:00:00Z",
+    "2026-09-16T08:00:00Z",
+    "2026-09-14T08:00:00Z"
+   ]
+  },
+  {
+   "id": "open-to-debate",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Open to Debate",
+   "feedURL": "https://feeds.megaphone.fm/PNP1207584390",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/bcc042ec-fb48-11e5-b604-930d2eb6cae2/image/91ce7bbfeea734ae7e63a6e6e8a9cd70.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "subjects": [
+    "news",
+    "society-culture"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Open to Debate",
+   "websiteURL": "https://opentodebate.org",
+   "summary": "America is more divided than ever—but it doesn’t have to be. Open to Debate offers an antidote to the chaos. We bring multiple perspectives together for real, nonpartisan debates. Debates that are structured, respectful, clever, provocative, and driven by the facts. Open to Debate is on a mission…",
+   "recentPublishedAt": [
+    "2026-11-20T10:00:00Z",
+    "2026-11-17T22:22:00Z",
+    "2026-11-13T10:00:00Z",
+    "2026-11-06T10:00:00Z",
+    "2026-10-30T09:00:00Z",
+    "2026-10-23T09:00:00Z",
+    "2026-10-16T09:00:00Z",
+    "2026-10-09T09:00:00Z",
+    "2026-10-02T09:00:00Z",
+    "2026-09-25T09:00:00Z",
+    "2026-09-18T09:00:00Z",
+    "2026-09-09T09:00:00Z",
+    "2026-09-04T09:00:00Z",
+    "2026-08-28T11:32:00Z",
+    "2026-08-21T09:00:00Z",
+    "2026-08-14T09:00:00Z",
+    "2026-08-07T09:00:00Z",
+    "2026-07-31T09:00:00Z",
+    "2026-07-24T09:00:00Z",
+    "2026-07-17T09:00:00Z"
+   ]
+  },
+  {
+   "id": "decoder-with-nilay-patel",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Decoder with Nilay Patel",
+   "feedURL": "https://feeds.megaphone.fm/recodedecode",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/5c6a4f4a-e69c-11e8-8066-17a10182e4c8/image/893066b59c33b28520ea09510cc6a37e.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "subjects": [
+    "technology"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "The Verge",
+   "websiteURL": "https://theverge.com",
+   "summary": "Decoder is a show from The Verge about big ideas — and other problems. Verge editor-in-chief Nilay Patel talks to a diverse cast of innovators and policymakers at the frontiers of business and technology to reveal how they’re navigating an ever-changing landscape, what keeps them up at night, and…",
+   "recentPublishedAt": [
+    "2026-11-23T10:00:00Z",
+    "2026-11-21T10:00:00Z",
+    "2026-11-19T10:00:00Z",
+    "2026-11-16T10:00:00Z",
+    "2026-11-14T10:00:00Z",
+    "2026-11-12T15:45:00Z",
+    "2026-11-09T10:00:00Z",
+    "2026-11-07T10:00:00Z",
+    "2026-11-05T10:00:00Z",
+    "2026-11-02T10:00:00Z",
+    "2026-10-29T09:00:00Z",
+    "2026-10-26T09:00:00Z",
+    "2026-10-22T09:00:00Z",
+    "2026-10-19T09:00:00Z",
+    "2026-10-17T09:00:00Z",
+    "2026-10-15T09:00:00Z",
+    "2026-10-12T09:00:00Z",
+    "2026-10-10T09:00:00Z",
+    "2026-10-08T09:00:00Z",
+    "2026-10-05T09:00:00Z"
+   ]
+  },
+  {
+   "id": "the-economics-show-with-soumaya-keynes",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Economics Show with Soumaya Keynes",
+   "feedURL": "https://feeds.acast.com/public/shows/the-economics-show-with-soumaya-keynes",
+   "artworkURL": "https://assets.pippa.io/shows/664394a442f6710013618119/1769764604173-577f36d4-d96a-42ee-96b9-7aaee7724352.jpeg",
+   "subjects": [
+    "business"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Financial Times",
+   "websiteURL": "https://shows.acast.com/the-economics-show-with-soumaya-keynes",
+   "summary": "The Economics Show with Soumaya Keynes is a new weekly podcast from the Financial Times packed full of smart, digestible analysis and incisive conversation. Soumaya Keynes digs deep into the hottest topics in economics along with a cast of FT colleagues and special guests. Come for the big ideas…",
+   "recentPublishedAt": [
+    "2026-11-21T05:00:00Z",
+    "2026-11-13T05:00:00Z",
+    "2026-11-06T05:00:00Z",
+    "2026-10-30T05:00:00Z",
+    "2026-10-23T04:00:00Z",
+    "2026-10-16T04:00:00Z",
+    "2026-10-09T04:00:00Z",
+    "2026-10-02T04:00:00Z",
+    "2026-09-25T04:00:00Z",
+    "2026-09-18T04:00:00Z",
+    "2026-09-11T04:00:00Z",
+    "2026-09-04T04:00:00Z",
+    "2026-08-29T00:15:54Z",
+    "2026-08-21T04:00:00Z",
+    "2026-08-14T04:00:00Z",
+    "2026-08-07T04:00:00Z",
+    "2026-07-31T04:00:00Z",
+    "2026-07-24T04:00:00Z",
+    "2026-07-17T04:00:00Z",
+    "2026-07-10T04:00:00Z"
+   ]
+  },
+  {
+   "id": "bbc-inside-health",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Inside Health",
+   "feedURL": "https://podcasts.files.bbci.co.uk/b019dl1b.rss",
+   "artworkURL": "https://ichef.bbci.co.uk/images/ic/3000x3000/p0m1r8hv.jpg",
+   "subjects": [
+    "health-fitness",
+    "science"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "BBC Radio 4",
+   "websiteURL": "https://www.bbc.co.uk/programmes/b019dl1b",
+   "summary": "Series that demystifies health issues, separating fact from fiction and bringing clarity to conflicting health advice.",
+   "recentPublishedAt": [
+    "2026-11-17T09:30:00Z",
+    "2026-11-10T09:30:00Z",
+    "2026-11-03T10:00:00Z",
+    "2026-10-27T09:30:00Z",
+    "2026-10-20T08:30:00Z",
+    "2026-09-22T14:31:00Z",
+    "2026-08-18T08:30:00Z",
+    "2026-08-11T09:00:00Z",
+    "2026-07-28T08:30:00Z",
+    "2026-07-21T08:30:00Z",
+    "2026-07-14T08:30:00Z",
+    "2026-04-07T08:30:00Z",
+    "2026-03-31T08:30:00Z",
+    "2026-03-24T09:30:00Z",
+    "2026-03-17T09:30:00Z",
+    "2026-03-10T09:30:00Z",
+    "2026-03-03T09:30:00Z",
+    "2026-02-24T10:00:00Z",
+    "2026-02-17T09:30:00Z",
+    "2026-02-10T09:30:00Z"
+   ]
   },
   {
    "id": "apple-1379959217",
@@ -2510,7 +3392,29 @@
    ],
    "author": "BBC Radio 4",
    "websiteURL": "https://www.bbc.co.uk/programmes/b006qykl",
-   "summary": "A world-class seminar, every week. In Our Time explores the ideas, people and discoveries that have shaped our world, spanning history, philosophy, religion, science, literature, art and culture. On Thursdays, hear brand-new episodes hosted by Misha Glenny and leading academics. On Mondays…"
+   "summary": "A world-class seminar, every week. In Our Time explores the ideas, people and discoveries that have shaped our world, spanning history, philosophy, religion, science, literature, art and culture. On Thursdays, hear brand-new episodes hosted by Misha Glenny and leading academics. On Mondays…",
+   "recentPublishedAt": [
+    "2026-11-23T09:45:00Z",
+    "2026-11-19T09:45:00Z",
+    "2026-11-16T09:45:00Z",
+    "2026-11-12T09:45:00Z",
+    "2026-11-09T09:45:00Z",
+    "2026-11-05T09:45:00Z",
+    "2026-11-02T09:45:00Z",
+    "2026-10-29T09:45:00Z",
+    "2026-10-26T09:45:00Z",
+    "2026-10-22T08:45:00Z",
+    "2026-10-19T08:45:00Z",
+    "2026-10-15T08:45:00Z",
+    "2026-10-12T08:45:00Z",
+    "2026-10-08T08:45:00Z",
+    "2026-10-01T08:45:00Z",
+    "2026-09-24T08:45:00Z",
+    "2026-09-17T08:45:00Z",
+    "2026-09-10T08:45:00Z",
+    "2026-09-07T09:15:00Z",
+    "2026-09-03T08:45:00Z"
+   ]
   },
   {
    "id": "apple-1643745036",
@@ -2518,7 +3422,7 @@
    "contentKind": "podcast",
    "title": "New Heights with Jason & Travis Kelce",
    "feedURL": "https://rss.art19.com/new-heights",
-   "artworkURL": "https://content.production.cdn.art19.com/images/6e/d6/06/35/6ed60635-c302-40b2-bc44-4dba56b10203/a1632c567236a82411be7fe7f3b31a692a684cbf22bc3c12b4ed8d9e458a23d2b1a467ea2fba901a52e2333df8b66eddf9b9585b03b4203d6105536b307337ba.jpeg",
+   "artworkURL": "https://content.production.cdn.art19.com/images/60/29/38/50/60293850-821c-47b4-9aaa-93bb3b5f82f6/ff3a5bae9d7072af7ec4ffc32188eaab2df14bd81d2b54f11a2ab73f21d1a3bf75224a1f8fbdf30e0981ac16970f9def2d58ff5d18a6059b330d9341cba62de9.jpeg",
    "subjects": [
     "sports"
    ],
@@ -2551,6 +3455,171 @@
    "summary": "“Make your statement, face your fear.” The Magnus Archives is an award winning weekly horror fiction audiodrama podcast examining what lurks in the archives of the Magnus Institute, an organisation dedicated to researching the esoteric and the weird. Join Jonathan Sims as he explores the archive…"
   },
   {
+   "id": "cautionary-tales",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Cautionary Tales with Tim Harford",
+   "feedURL": "https://omny.fm/shows/cautionary-tales-with-tim-harford/playlists/podcast.rss",
+   "artworkURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/c0ae8c6e-22f0-4e9b-ac1c-ae390037ac53/7f5a4714-6b10-4ccf-a424-ae390037ac70/image.jpg?t=1650471153&size=Large",
+   "subjects": [
+    "society-culture"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Pushkin Industries",
+   "websiteURL": "https://www.pushkin.fm/",
+   "summary": "We tell our children unsettling fairy tales to teach them valuable lessons, but these Cautionary Tales are for the education of the grown ups – and they are all true. Tim Harford (Financial Times, BBC, author of “The Data Detective”) brings you stories of awful human error, tragic catastrophes, and…",
+   "recentPublishedAt": [
+    "2026-11-20T05:01:00Z",
+    "2026-11-17T05:01:00Z",
+    "2026-11-13T05:01:00Z",
+    "2026-11-06T05:01:00Z",
+    "2026-10-30T04:01:00Z",
+    "2026-10-23T04:01:00Z",
+    "2026-10-16T04:01:00Z",
+    "2026-10-09T04:01:00Z",
+    "2026-10-02T04:01:00Z",
+    "2026-09-25T04:01:00Z",
+    "2026-09-18T04:01:00Z",
+    "2026-09-11T04:01:00Z",
+    "2026-09-04T04:01:00Z",
+    "2026-08-28T04:01:00Z",
+    "2026-08-21T04:01:00Z",
+    "2026-08-14T04:01:00Z",
+    "2026-08-07T04:01:00Z",
+    "2026-07-31T04:01:00Z",
+    "2026-07-24T04:01:00Z",
+    "2026-07-17T07:01:00Z"
+   ]
+  },
+  {
+   "id": "bbc-inside-science",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "BBC Inside Science",
+   "feedURL": "https://podcasts.files.bbci.co.uk/b036f7w2.rss",
+   "artworkURL": "https://ichef.bbci.co.uk/images/ic/3000x3000/p0m1wy8q.jpg",
+   "subjects": [
+    "science"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "BBC Radio 4",
+   "websiteURL": "https://www.bbc.co.uk/programmes/b036f7w2",
+   "summary": "A weekly programme that illuminates the mysteries and challenges the controversies behind the science that's changing our world.",
+   "recentPublishedAt": [
+    "2026-11-19T17:00:00Z",
+    "2026-11-12T17:11:00Z",
+    "2026-11-05T17:00:00Z",
+    "2026-10-29T17:22:00Z",
+    "2026-10-22T20:00:00Z",
+    "2026-10-15T20:00:00Z",
+    "2026-10-08T20:00:00Z",
+    "2026-10-01T20:00:00Z",
+    "2026-09-24T20:00:00Z",
+    "2026-09-17T20:00:00Z",
+    "2026-09-10T20:00:00Z",
+    "2026-09-03T20:00:00Z",
+    "2026-08-27T20:00:00Z",
+    "2026-08-20T20:00:00Z",
+    "2026-08-13T20:00:00Z",
+    "2026-08-06T20:00:00Z",
+    "2026-07-30T20:00:00Z",
+    "2026-07-23T20:00:00Z",
+    "2026-07-16T20:00:00Z",
+    "2026-07-09T20:00:00Z"
+   ]
+  },
+  {
+   "id": "conversations-with-tyler",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Conversations with Tyler",
+   "feedURL": "https://cowenconvos.libsyn.com/rss",
+   "artworkURL": "https://static.libsyn.com/p/assets/7/1/7/b/717bd07f94e956cea04421dee9605cbd/CWT_-_Podcast_Art_-_3000x3000.jpg",
+   "subjects": [
+    "news",
+    "society-culture"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Mercatus Center at George Mason University",
+   "websiteURL": "https://www.conversationswithtyler.com",
+   "summary": "Tyler Cowen engages today's deepest thinkers in wide-ranging explorations of their work, the world, and everything in between. New conversations every other Wednesday. Subscribe wherever you get your podcasts.",
+   "recentPublishedAt": [
+    "2026-11-11T12:06:00Z",
+    "2026-11-04T12:05:00Z",
+    "2026-10-28T11:09:00Z",
+    "2026-10-14T11:07:00Z",
+    "2026-09-30T12:02:00Z",
+    "2026-09-23T11:13:00Z",
+    "2026-09-16T11:06:00Z",
+    "2026-09-09T11:17:00Z",
+    "2026-09-02T11:13:00Z",
+    "2026-08-19T12:00:00Z",
+    "2026-08-12T11:10:00Z",
+    "2026-08-05T11:23:00Z",
+    "2026-07-22T11:30:00Z",
+    "2026-07-15T11:30:00Z",
+    "2026-07-08T12:00:00Z",
+    "2026-06-24T11:00:00Z",
+    "2026-06-17T12:00:00Z",
+    "2026-06-10T11:30:00Z",
+    "2026-05-27T11:30:00Z",
+    "2026-05-13T11:30:00Z"
+   ]
+  },
+  {
+   "id": "tech-won-t-save-us",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Tech Won't Save Us",
+   "feedURL": "https://feeds.buzzsprout.com/1004689.rss",
+   "artworkURL": "https://storage.buzzsprout.com/tutsi25s4vue63c1xwucuexriowa?.jpg",
+   "subjects": [
+    "technology"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Paris Marx",
+   "websiteURL": "https://techwontsave.us/",
+   "summary": "Silicon Valley wants to shape our future, but why should we let it? Every Thursday, Paris Marx is joined by a new guest to critically examine the tech industry, its big promises, and the people behind them. Tech Won’t Save Us challenges the notion that tech alone can drive our world forward by…",
+   "recentPublishedAt": [
+    "2026-11-19T08:00:00Z",
+    "2026-11-12T08:00:00Z",
+    "2026-11-05T08:00:00Z",
+    "2026-10-29T07:00:00Z",
+    "2026-10-22T07:00:00Z",
+    "2026-10-15T07:00:00Z",
+    "2026-10-08T07:00:00Z",
+    "2026-10-01T07:00:00Z",
+    "2026-09-24T07:00:00Z",
+    "2026-09-17T07:00:00Z",
+    "2026-09-10T07:00:00Z",
+    "2026-09-03T07:00:00Z",
+    "2026-08-27T07:00:00Z",
+    "2026-08-20T07:00:00Z",
+    "2026-08-13T07:00:00Z",
+    "2026-08-06T07:00:00Z",
+    "2026-07-30T07:00:00Z",
+    "2026-07-23T07:00:00Z",
+    "2026-07-16T07:00:00Z",
+    "2026-07-09T07:00:00Z"
+   ]
+  },
+  {
    "id": "apple-1896760409",
    "kind": "podcast_feed",
    "contentKind": "podcast",
@@ -2575,7 +3644,7 @@
    "contentKind": "podcast",
    "title": "No Laying Up - Golf Podcast",
    "feedURL": "https://feeds.megaphone.fm/nolayingup",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/2646220c-ef7c-11ed-9222-bfc4b0a551e1/image/e9683a997b86f170b0ee1a1b770cc781.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/2646220c-ef7c-11ed-9222-bfc4b0a551e1/image/e9683a997b86f170b0ee1a1b770cc781.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "sports"
    ],
@@ -2594,7 +3663,7 @@
    "contentKind": "podcast",
    "title": "The Chef's Cut",
    "feedURL": "https://feeds.megaphone.fm/LMINC5612116895",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/6389c408-538d-11f0-bf5a-674fe9d25c54/image/b632260f3deff8c76a2fa3733b9d204b.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/6389c408-538d-11f0-bf5a-674fe9d25c54/image/b632260f3deff8c76a2fa3733b9d204b.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "arts"
    ],
@@ -2606,6 +3675,89 @@
    "author": "Level Media",
    "websiteURL": "https://podcasters.spotify.com/pod/show/adrienne-cheatham",
    "summary": "The Chef’s Cut focuses on the stories and techniques behind the food you love the most! Each week, Top Chef alums Adrienne Cheatham and Joe Flamm give you behind the scenes kitchen access and share food tips that will make you look like a culinary hero, all while hanging out with their celebrity…"
+  },
+  {
+   "id": "the-good-fight",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Good Fight",
+   "feedURL": "https://feeds.megaphone.fm/thegoodfight",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/151e5432-6b29-11e7-8e72-9fa7258a9677/image/uploads_2F1602179393910-bsdvszvgoys-469fdde0e2fd5076469d8ca0ef0a75ed_2FThe_Good_Fight_Persuasion.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "subjects": [
+    "news",
+    "society-culture"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Yascha Mounk",
+   "websiteURL": "https://www.yaschamounk.com",
+   "summary": "\"The Good Fight,\" the podcast that searches for the ideas, policies and strategies that can beat authoritarian populism.Please do listen and spread the word about The Good Fight.If you have not yet signed up for our podcast, please do so now by following this link on your phone.﻿Email…",
+   "recentPublishedAt": [
+    "2026-11-21T11:00:00Z",
+    "2026-11-14T12:10:00Z",
+    "2026-11-10T11:00:00Z",
+    "2026-11-07T11:00:00Z",
+    "2026-11-04T18:20:00Z",
+    "2026-10-31T10:00:00Z",
+    "2026-10-24T10:00:00Z",
+    "2026-10-20T17:00:00Z",
+    "2026-10-17T10:00:00Z",
+    "2026-10-13T11:15:00Z",
+    "2026-10-10T10:00:00Z",
+    "2026-10-06T13:00:00Z",
+    "2026-10-03T10:00:00Z",
+    "2026-09-29T10:00:00Z",
+    "2026-09-26T10:00:00Z",
+    "2026-09-23T10:00:00Z",
+    "2026-09-19T10:00:00Z",
+    "2026-09-15T10:35:00Z",
+    "2026-09-12T10:00:00Z",
+    "2026-09-08T10:15:00Z"
+   ]
+  },
+  {
+   "id": "the-vergecast",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Vergecast",
+   "feedURL": "https://feeds.megaphone.fm/vergecast",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/e4c412e6-e1f0-11e8-9bde-83f9d376f059/image/fa367fa8b1b6ca01fc4b8c34d83ba4d8.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "subjects": [
+    "technology"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "The Verge",
+   "websiteURL": "https://www.theverge.com/the-vergecast",
+   "summary": "The Vergecast is the flagship daily podcast from The Verge about small gadgets, Big Tech, and everything in between. Every Friday, Nilay Patel and David Pierce hang out and make sense of the week’s most important technology news. And Monday through Thursday, David leads a selection of The Verge’s…",
+   "recentPublishedAt": [
+    "2026-11-23T14:57:00Z",
+    "2026-11-20T10:00:00Z",
+    "2026-11-19T16:01:00Z",
+    "2026-11-18T14:53:00Z",
+    "2026-11-17T17:40:00Z",
+    "2026-11-16T17:50:00Z",
+    "2026-11-15T10:00:00Z",
+    "2026-11-13T10:00:00Z",
+    "2026-11-12T18:02:00Z",
+    "2026-11-11T15:00:00Z",
+    "2026-11-10T20:05:00Z",
+    "2026-11-09T15:48:00Z",
+    "2026-11-06T15:38:00Z",
+    "2026-11-05T18:03:00Z",
+    "2026-11-04T15:27:00Z",
+    "2026-11-03T20:11:00Z",
+    "2026-11-02T18:51:00Z",
+    "2026-10-30T16:16:00Z",
+    "2026-10-29T20:38:00Z",
+    "2026-10-28T20:17:00Z"
+   ]
   },
   {
    "id": "apple-1435516849",
@@ -2623,7 +3775,7 @@
     "hand-picked-shows",
     "publisher-feeds"
    ],
-   "author": "Audible",
+   "author": "Audible Original",
    "websiteURL": "https://wondery.com/shows/American-Scandal/",
    "summary": "Every scandal begins with a lie. But the truth will come out. And then comes the fallout and the outrage. Scandals have shaped America since its founding. From business and politics to sports and society, we look on aghast as corruption, deceit and ambition bring down heroes and celebrities…"
   },
@@ -2633,7 +3785,7 @@
    "contentKind": "podcast",
    "title": "Happy Hour with Ina Garten",
    "feedURL": "https://feeds.megaphone.fm/VMP2612107147",
-   "artworkURL": "https://megaphone.imgix.net/podcasts/12caad62-76d1-11f1-a7fd-0fd25a9888e6/image/30cb2b42d71bc5bb399dd8641e54fbca.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "artworkURL": "https://megaphone-images.spotifycdn.com/podcasts/12caad62-76d1-11f1-a7fd-0fd25a9888e6/image/30cb2b42d71bc5bb399dd8641e54fbca.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
    "subjects": [
     "arts"
    ],
@@ -2666,6 +3818,47 @@
    "summary": "Anthony Jeselnik wants you to read books. In Jeselnik Book Club, Anthony shares his obsessive passion for the benefits of reading literature—with contagious results. Every week, Anthony will discuss modern literary gossip and question popular culture with a series of guests, ranging from authors to…"
   },
   {
+   "id": "you-re-dead-to-me",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "You're Dead to Me",
+   "feedURL": "https://podcasts.files.bbci.co.uk/p07mdbhg.rss",
+   "artworkURL": "https://ichef.bbci.co.uk/images/ic/3000x3000/p0nr577g.jpg",
+   "subjects": [
+    "history"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "BBC Radio 4",
+   "websiteURL": "https://www.bbc.co.uk/programmes/p07mdbhg",
+   "summary": "The comedy podcast that takes history seriously. In each episode of You’re Dead to Me from BBC Radio 4, Greg Jenner is joined by a comedian and an expert historian to learn and laugh about the past. History isn’t just about dates and textbooks – it’s about extraordinary characters, amazing stories…",
+   "recentPublishedAt": [
+    "2026-11-20T06:00:00Z",
+    "2026-11-13T06:00:00Z",
+    "2026-11-06T06:00:00Z",
+    "2026-10-30T06:00:00Z",
+    "2026-10-23T05:00:00Z",
+    "2026-10-16T05:00:00Z",
+    "2026-10-09T07:15:00Z",
+    "2026-10-02T07:15:00Z",
+    "2026-09-25T07:15:00Z",
+    "2026-09-18T05:00:00Z",
+    "2026-09-11T05:00:00Z",
+    "2026-09-04T05:00:00Z",
+    "2026-08-28T05:00:00Z",
+    "2026-08-21T05:00:00Z",
+    "2026-08-14T05:00:00Z",
+    "2026-08-07T05:00:00Z",
+    "2026-07-31T05:00:00Z",
+    "2026-07-24T05:00:00Z",
+    "2026-07-10T05:00:00Z",
+    "2026-07-03T05:00:00Z"
+   ]
+  },
+  {
    "id": "substack-oneusefulthing",
    "kind": "article_feed",
    "contentKind": "newsletter",
@@ -2682,7 +3875,29 @@
    ],
    "author": "Ethan Mollick",
    "websiteURL": "https://www.oneusefulthing.org",
-   "summary": "Trying to understand the implications of AI for work, education, and life. By Prof. Ethan Mollick"
+   "summary": "Trying to understand the implications of AI for work, education, and life. By Prof. Ethan Mollick",
+   "recentPublishedAt": [
+    "2026-11-09T19:04:26Z",
+    "2026-10-20T15:57:59Z",
+    "2026-10-01T10:54:12Z",
+    "2026-09-18T17:54:32Z",
+    "2026-08-31T00:24:35Z",
+    "2026-07-23T18:05:24Z",
+    "2026-06-30T22:18:12Z",
+    "2026-06-09T17:11:22Z",
+    "2026-06-04T21:13:42Z",
+    "2026-05-26T19:56:01Z",
+    "2026-04-23T20:00:38Z",
+    "2026-03-31T22:34:37Z",
+    "2026-03-12T14:10:07Z",
+    "2026-02-18T01:45:41Z",
+    "2026-01-27T16:55:55Z",
+    "2026-01-07T23:00:10Z",
+    "2025-12-20T17:32:02Z",
+    "2025-11-18T16:55:07Z",
+    "2025-11-12T02:46:43Z",
+    "2025-10-19T18:45:34Z"
+   ]
   },
   {
    "id": "substack-experimental-history",
@@ -2701,7 +3916,29 @@
    ],
    "author": "Adam Mastroianni",
    "websiteURL": "https://www.experimental-history.com",
-   "summary": "1) Find what's true and make it useful. 2) Publish every other Tuesday. 3) Photo cred: my dad."
+   "summary": "1) Find what's true and make it useful. 2) Publish every other Tuesday. 3) Photo cred: my dad.",
+   "recentPublishedAt": [
+    "2026-11-10T17:21:43Z",
+    "2026-10-28T15:36:04Z",
+    "2026-10-13T21:04:46Z",
+    "2026-09-29T14:29:26Z",
+    "2026-09-15T12:54:38Z",
+    "2026-08-25T14:28:03Z",
+    "2026-08-18T15:02:15Z",
+    "2026-08-05T14:54:40Z",
+    "2026-07-21T14:38:24Z",
+    "2026-07-08T16:10:54Z",
+    "2026-06-23T15:57:56Z",
+    "2026-06-09T16:58:56Z",
+    "2026-05-26T16:02:14Z",
+    "2026-05-12T13:23:30Z",
+    "2026-04-28T17:48:50Z",
+    "2026-04-14T16:16:42Z",
+    "2026-03-31T16:05:29Z",
+    "2026-03-17T13:33:13Z",
+    "2026-03-03T17:47:57Z",
+    "2026-02-17T16:15:11Z"
+   ]
   },
   {
    "id": "substack-construction-physics",
@@ -2720,7 +3957,29 @@
    ],
    "author": "Brian Potter",
    "websiteURL": "https://www.construction-physics.com",
-   "summary": "Essays about buildings, infrastructure, and industrial technology."
+   "summary": "Essays about buildings, infrastructure, and industrial technology.",
+   "recentPublishedAt": [
+    "2026-11-21T13:04:03Z",
+    "2026-11-14T16:09:38Z",
+    "2026-11-12T13:01:45Z",
+    "2026-11-07T13:23:36Z",
+    "2026-11-06T13:01:35Z",
+    "2026-10-31T12:34:23Z",
+    "2026-10-29T15:45:10Z",
+    "2026-10-24T12:01:24Z",
+    "2026-10-17T12:03:37Z",
+    "2026-10-15T14:23:58Z",
+    "2026-10-10T14:55:48Z",
+    "2026-10-08T12:02:36Z",
+    "2026-10-03T13:14:44Z",
+    "2026-10-01T12:04:36Z",
+    "2026-09-26T10:17:46Z",
+    "2026-09-19T12:03:09Z",
+    "2026-09-17T12:02:08Z",
+    "2026-09-12T12:32:46Z",
+    "2026-09-11T12:04:09Z",
+    "2026-09-05T12:03:33Z"
+   ]
   },
   {
    "id": "substack-honest-broker",
@@ -2758,7 +4017,29 @@
    ],
    "author": "Noah Smith",
    "websiteURL": "https://www.noahpinion.blog",
-   "summary": "Economics and other interesting stuff"
+   "summary": "Economics and other interesting stuff",
+   "recentPublishedAt": [
+    "2026-11-22T06:27:25Z",
+    "2026-11-20T10:13:06Z",
+    "2026-11-18T09:50:29Z",
+    "2026-11-16T09:52:30Z",
+    "2026-11-14T09:00:44Z",
+    "2026-11-13T07:10:54Z",
+    "2026-11-11T08:51:56Z",
+    "2026-11-09T23:01:29Z",
+    "2026-11-09T07:59:29Z",
+    "2026-11-07T21:11:43Z",
+    "2026-11-06T06:46:24Z",
+    "2026-11-04T10:33:58Z",
+    "2026-11-02T11:03:51Z",
+    "2026-10-31T01:39:39Z",
+    "2026-10-29T09:55:51Z",
+    "2026-10-27T07:17:34Z",
+    "2026-10-25T07:19:36Z",
+    "2026-10-22T08:04:41Z",
+    "2026-10-21T08:45:19Z",
+    "2026-10-19T04:33:30Z"
+   ]
   },
   {
    "id": "substack-astralcodexten",
@@ -2777,7 +4058,29 @@
    ],
    "author": "Scott Alexander",
    "websiteURL": "https://www.astralcodexten.com",
-   "summary": "P(A|B) = [P(A)*P(B|A)]/P(B), all the rest is commentary."
+   "summary": "P(A|B) = [P(A)*P(B|A)]/P(B), all the rest is commentary.",
+   "recentPublishedAt": [
+    "2026-11-21T19:00:45Z",
+    "2026-11-19T20:29:45Z",
+    "2026-11-18T07:47:03Z",
+    "2026-11-17T06:30:03Z",
+    "2026-11-14T00:23:27Z",
+    "2026-11-12T23:09:15Z",
+    "2026-11-11T07:12:01Z",
+    "2026-11-09T22:18:03Z",
+    "2026-11-06T21:31:52Z",
+    "2026-11-05T02:01:33Z",
+    "2026-11-02T05:04:37Z",
+    "2026-10-30T16:30:33Z",
+    "2026-10-29T16:33:24Z",
+    "2026-10-28T15:29:17Z",
+    "2026-10-26T20:16:14Z",
+    "2026-10-23T23:45:42Z",
+    "2026-10-22T19:42:57Z",
+    "2026-10-21T21:53:11Z",
+    "2026-10-20T20:32:59Z",
+    "2026-10-19T17:51:46Z"
+   ]
   },
   {
    "id": "substack-yourlocalepidemiologist",
@@ -2796,7 +4099,29 @@
    ],
    "author": "Katelyn Jetelina",
    "websiteURL": "https://yourlocalepidemiologist.substack.com",
-   "summary": "Providing a direct line of \"translated\" public health science to you, so you can take action for your community's health"
+   "summary": "Providing a direct line of \"translated\" public health science to you, so you can take action for your community's health",
+   "recentPublishedAt": [
+    "2026-11-18T11:31:10Z",
+    "2026-11-17T12:31:40Z",
+    "2026-11-13T11:30:58Z",
+    "2026-11-10T11:34:21Z",
+    "2026-11-06T13:31:53Z",
+    "2026-11-04T14:48:29Z",
+    "2026-11-03T13:17:00Z",
+    "2026-10-28T11:40:34Z",
+    "2026-10-27T11:36:11Z",
+    "2026-10-23T10:03:37Z",
+    "2026-10-21T11:03:51Z",
+    "2026-10-20T10:00:46Z",
+    "2026-10-14T10:03:44Z",
+    "2026-10-09T10:01:40Z",
+    "2026-10-07T10:42:27Z",
+    "2026-10-06T10:03:18Z",
+    "2026-10-01T13:53:35Z",
+    "2026-09-30T09:05:46Z",
+    "2026-09-29T10:03:18Z",
+    "2026-09-25T10:31:30Z"
+   ]
   },
   {
    "id": "substack-lennysnewsletter",
@@ -2816,6 +4141,434 @@
    "author": "Lenny Rachitsky",
    "websiteURL": "https://www.lennysnewsletter.com",
    "summary": "Deeply researched product, growth, and career advice for product leaders, founders, and ambitious builders."
+  },
+  {
+   "id": "the-intrinsic-perspective",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "The Intrinsic Perspective",
+   "feedURL": "https://www.theintrinsicperspective.com/feed",
+   "artworkURL": "https://substackcdn.com/image/fetch/$s_!h-c8!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F7a113805-c000-413a-9b29-59429306c882_822x822.png",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Erik Hoel",
+   "websiteURL": "https://www.theintrinsicperspective.com",
+   "summary": "Natural philosophy, belles-lettres, polemics.",
+   "recentPublishedAt": [
+    "2026-11-21T14:51:53Z",
+    "2026-11-18T15:47:35Z",
+    "2026-11-12T15:30:36Z",
+    "2026-10-01T14:14:47Z",
+    "2026-09-15T12:04:57Z",
+    "2026-09-09T12:58:46Z",
+    "2026-08-21T14:15:28Z",
+    "2026-07-24T14:48:13Z",
+    "2026-07-13T16:34:01Z",
+    "2026-06-23T14:37:08Z",
+    "2026-06-05T14:35:09Z",
+    "2026-05-23T12:28:22Z",
+    "2026-04-29T15:57:43Z",
+    "2026-04-02T15:32:16Z",
+    "2026-03-19T15:35:27Z",
+    "2026-03-13T14:41:36Z",
+    "2026-03-05T17:04:15Z",
+    "2026-02-05T16:24:16Z",
+    "2026-01-26T15:18:23Z",
+    "2026-01-15T15:43:24Z"
+   ]
+  },
+  {
+   "id": "slow-boring",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "Slow Boring",
+   "feedURL": "https://www.slowboring.com/feed",
+   "artworkURL": "https://substackcdn.com/image/fetch/$s_!gzxV!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2Fceeb681e-a14d-4bbb-a8fe-951c29603e3f_256x256.png",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Matthew Yglesias",
+   "websiteURL": "https://www.slowboring.com",
+   "summary": "Start your day with pragmatic takes on politics and public policy.",
+   "recentPublishedAt": [
+    "2026-11-23T11:04:19Z",
+    "2026-11-22T18:02:11Z",
+    "2026-11-21T14:03:31Z",
+    "2026-11-20T23:02:14Z",
+    "2026-11-20T16:03:07Z",
+    "2026-11-20T11:01:58Z",
+    "2026-11-19T23:01:20Z",
+    "2026-11-19T11:02:36Z",
+    "2026-11-19T11:02:02Z",
+    "2026-11-18T23:01:37Z",
+    "2026-11-18T11:03:10Z",
+    "2026-11-17T23:01:07Z",
+    "2026-11-17T11:03:20Z",
+    "2026-11-16T23:01:41Z",
+    "2026-11-16T11:00:44Z",
+    "2026-11-15T18:01:31Z",
+    "2026-11-14T14:03:50Z",
+    "2026-11-13T23:02:04Z",
+    "2026-11-13T11:02:59Z",
+    "2026-11-12T23:01:48Z"
+   ]
+  },
+  {
+   "id": "pluralistic",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "Pluralistic: Daily links from Cory Doctorow",
+   "feedURL": "https://pluralistic.net/feed/",
+   "artworkURL": "https://i0.wp.com/pluralistic.net/wp-content/uploads/2020/02/cropped-guillotine-French-Revolution.jpg?fit=32%2C32&ssl=1",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "websiteURL": "https://pluralistic.net",
+   "summary": "No trackers, no ads. Black type, white background. Privacy policy: we don't collect or retain any data at all ever period.",
+   "recentPublishedAt": [
+    "2026-11-23T13:18:44Z",
+    "2026-11-20T10:44:20Z",
+    "2026-11-19T14:10:14Z",
+    "2026-11-18T08:28:46Z",
+    "2026-11-17T13:01:56Z",
+    "2026-11-13T19:44:37Z",
+    "2026-11-12T20:50:53Z",
+    "2026-11-10T17:34:21Z",
+    "2026-11-09T08:12:24Z",
+    "2026-11-07T13:03:46Z",
+    "2026-11-05T08:53:45Z",
+    "2026-11-04T11:45:02Z",
+    "2026-11-03T14:19:29Z",
+    "2026-11-02T08:20:37Z",
+    "2026-10-31T15:15:59Z",
+    "2026-10-28T10:54:05Z",
+    "2026-10-27T09:08:25Z",
+    "2026-10-26T15:47:10Z",
+    "2026-10-23T20:44:02Z",
+    "2026-10-21T20:05:21Z"
+   ]
+  },
+  {
+   "id": "a-collection-of-unmitigated-pedantry",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "A Collection of Unmitigated Pedantry",
+   "feedURL": "https://acoup.blog/feed/",
+   "artworkURL": "https://i0.wp.com/acoup.blog/wp-content/uploads/2019/05/cropped-altar-of-domitius-ahenobarb-1-1.jpg?fit=32%2C32&ssl=1",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "websiteURL": "https://acoup.blog",
+   "summary": "A look at history and popular culture",
+   "recentPublishedAt": [
+    "2026-11-20T22:59:38Z",
+    "2026-11-13T21:20:51Z",
+    "2026-11-06T20:03:08Z",
+    "2026-10-30T18:22:18Z",
+    "2026-10-23T20:43:00Z",
+    "2026-10-16T19:36:46Z",
+    "2026-10-09T15:10:54Z",
+    "2026-10-02T18:24:05Z",
+    "2026-09-25T20:41:57Z",
+    "2026-09-19T00:08:54Z"
+   ]
+  },
+  {
+   "id": "res-obscura",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "Res Obscura",
+   "feedURL": "https://resobscura.substack.com/feed",
+   "artworkURL": "https://substackcdn.com/image/fetch/$s_!jn01!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2Fa48e7735-237b-404b-a146-2a626b80a2f5_1140x1140.png",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Benjamin Breen",
+   "websiteURL": "https://resobscura.substack.com",
+   "summary": "Notes on the history of technology, medicine, science, art, drugs, and empire. Also: AI in research and teaching.",
+   "recentPublishedAt": [
+    "2026-11-10T19:41:41Z",
+    "2026-10-01T20:47:08Z",
+    "2026-09-24T19:13:56Z",
+    "2026-08-05T14:13:35Z",
+    "2026-07-22T14:15:52Z",
+    "2026-05-19T20:19:58Z",
+    "2026-05-14T13:23:31Z",
+    "2026-04-29T12:45:56Z",
+    "2026-04-22T13:05:46Z",
+    "2026-03-31T12:50:11Z",
+    "2026-02-24T14:12:37Z",
+    "2026-02-18T14:52:04Z",
+    "2025-12-04T18:43:04Z",
+    "2025-11-19T00:27:38Z",
+    "2025-11-06T23:08:09Z",
+    "2025-10-02T13:45:15Z",
+    "2025-08-13T20:33:27Z",
+    "2025-07-31T13:32:16Z",
+    "2025-05-21T19:37:37Z",
+    "2025-05-07T19:24:36Z"
+   ]
+  },
+  {
+   "id": "apricitas-economics",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "Apricitas Economics",
+   "feedURL": "https://www.apricitas.io/feed",
+   "artworkURL": "https://substackcdn.com/image/fetch/$s_!7ad5!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F56bd9853-89e6-4345-87ee-cd32052bba73_1080x1080.png",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "author": "Joseph Politano",
+   "websiteURL": "https://www.apricitas.io",
+   "summary": "Data-driven Insights on Economics, Business, Finance, and Public Policy.",
+   "recentPublishedAt": [
+    "2026-10-25T17:30:53Z",
+    "2026-09-27T14:01:59Z",
+    "2026-05-03T13:31:02Z",
+    "2026-03-05T13:31:25Z",
+    "2026-02-21T17:41:03Z",
+    "2026-02-10T13:30:25Z",
+    "2026-01-20T13:03:00Z",
+    "2026-01-11T14:31:01Z",
+    "2026-01-06T13:31:43Z",
+    "2025-12-02T13:15:47Z",
+    "2025-10-19T12:07:35Z",
+    "2025-10-05T13:45:26Z",
+    "2025-06-15T13:02:28Z",
+    "2025-05-29T13:15:18Z",
+    "2025-05-19T12:02:17Z",
+    "2025-05-10T14:01:39Z",
+    "2025-05-01T11:45:18Z",
+    "2025-04-23T12:19:18Z",
+    "2025-04-12T17:26:36Z",
+    "2025-04-02T14:00:38Z"
+   ]
+  },
+  {
+   "id": "the-marginalian",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "The Marginalian",
+   "feedURL": "https://www.themarginalian.org/feed/",
+   "artworkURL": "https://i0.wp.com/www.themarginalian.org/wp-content/uploads/2021/10/cropped-tm_site_icon-1.png?fit=32%2C32&ssl=1",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "websiteURL": "https://www.themarginalian.org",
+   "summary": "Marginalia on our search for meaning.",
+   "recentPublishedAt": [
+    "2026-11-22T05:45:46Z",
+    "2026-11-22T03:39:31Z",
+    "2026-11-22T02:37:53Z",
+    "2026-11-21T04:01:45Z",
+    "2026-11-20T19:50:52Z",
+    "2026-11-19T19:07:03Z",
+    "2026-11-19T12:53:30Z",
+    "2026-11-18T22:39:29Z",
+    "2026-11-18T22:38:46Z",
+    "2026-11-18T01:25:28Z",
+    "2026-11-17T00:53:18Z",
+    "2026-11-16T14:58:00Z",
+    "2026-11-15T15:30:57Z",
+    "2026-11-15T04:05:03Z",
+    "2026-11-14T14:31:26Z",
+    "2026-11-12T16:38:07Z",
+    "2026-11-10T01:10:15Z",
+    "2026-11-08T19:03:12Z",
+    "2026-11-06T19:46:28Z",
+    "2026-11-05T17:58:43Z"
+   ]
+  },
+  {
+   "id": "aeon-essays",
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "title": "Aeon | a world of ideas",
+   "feedURL": "https://aeon.co/feed.rss",
+   "artworkURL": "https://aeon.co/images/logo.svg",
+   "subjects": [
+    "writers"
+   ],
+   "explicit": false,
+   "provenanceIds": [
+    "hand-picked-shows",
+    "publisher-feeds"
+   ],
+   "websiteURL": "https://aeon.co",
+   "summary": "Aeon is a magazine of ideas and culture. We publish in-depth essays from the world’s most incisive and ambitious thinkers, and a mix of original and curated videos — free to all.",
+   "recentPublishedAt": [
+    "2026-11-23T11:01:00Z",
+    "2026-11-23T11:00:00Z",
+    "2026-11-20T11:00:00Z",
+    "2026-11-19T11:01:00Z",
+    "2026-11-19T11:00:00Z",
+    "2026-11-18T11:01:00Z",
+    "2026-11-17T11:00:00Z",
+    "2026-11-16T11:01:00Z",
+    "2026-11-16T11:00:00Z",
+    "2026-11-13T11:00:00Z",
+    "2026-11-12T11:01:00Z",
+    "2026-11-12T11:00:00Z",
+    "2026-11-11T11:01:00Z",
+    "2026-11-10T11:00:00Z",
+    "2026-11-09T11:01:00Z",
+    "2026-11-09T11:00:00Z",
+    "2026-11-06T11:00:00Z",
+    "2026-11-05T11:01:00Z",
+    "2026-11-05T11:00:00Z",
+    "2026-11-04T11:01:00Z"
+   ]
+  }
+ ],
+ "packs": [
+  {
+   "id": "curious-generalist",
+   "title": "The curious generalist",
+   "summary": "Big ideas from every field, the kind you'll want to answer back.",
+   "entryIds": [
+    "apple-354668519",
+    "apple-1614253637",
+    "apple-394775318",
+    "apple-1028908750",
+    "apple-152249110",
+    "cautionary-tales",
+    "substack-experimental-history",
+    "substack-astralcodexten"
+   ]
+  },
+  {
+   "id": "science-no-dumbing",
+   "title": "Science without the dumbing down",
+   "summary": "Working scientists, real papers, and the doubts left in.",
+   "entryIds": [
+    "sean-carroll-s-mindscape-science-society-philosophy-culture",
+    "apple-1051557000",
+    "apple-1482575855",
+    "apple-73329284",
+    "bbc-inside-science",
+    "unexplainable",
+    "substack-yourlocalepidemiologist",
+    "the-intrinsic-perspective"
+   ]
+  },
+  {
+   "id": "other-side",
+   "title": "Hear the other side",
+   "summary": "Smart people who disagree, with each other and maybe with you.",
+   "entryIds": [
+    "open-to-debate",
+    "apple-1548604447",
+    "econtalk",
+    "conversations-with-tyler",
+    "the-good-fight",
+    "substack-noahpinion",
+    "slow-boring"
+   ]
+  },
+  {
+   "id": "tech-skeptic",
+   "title": "Tech, skeptically",
+   "summary": "What technology is doing to us, from people who don't sell it.",
+   "entryIds": [
+    "decoder-with-nilay-patel",
+    "apple-1528594034",
+    "tech-won-t-save-us",
+    "the-vergecast",
+    "pluralistic",
+    "substack-oneusefulthing"
+   ]
+  },
+  {
+   "id": "history-argues",
+   "title": "History that argues back",
+   "summary": "The past as a fight over evidence, not a list of dates.",
+   "entryIds": [
+    "in-our-time",
+    "apple-1451109634",
+    "apple-1537788786",
+    "you-re-dead-to-me",
+    "a-collection-of-unmitigated-pedantry",
+    "res-obscura"
+   ]
+  },
+  {
+   "id": "money-works",
+   "title": "How money works",
+   "summary": "Economics you can check against your own bills.",
+   "entryIds": [
+    "odd-lots",
+    "planet-money",
+    "macro-musings",
+    "the-indicator-from-planet-money",
+    "the-economics-show-with-soumaya-keynes",
+    "substack-construction-physics",
+    "apricitas-economics"
+   ]
+  },
+  {
+   "id": "big-questions",
+   "title": "Big questions, slowly",
+   "summary": "Philosophy for people who like to pause and talk back.",
+   "entryIds": [
+    "philosophy-bites",
+    "philosophize-this",
+    "hi-phi-nation",
+    "philosophy-talk",
+    "sean-carroll-s-mindscape-science-society-philosophy-culture",
+    "the-marginalian",
+    "aeon-essays"
+   ]
+  },
+  {
+   "id": "health-argued",
+   "title": "Health advice, argued over",
+   "summary": "The loudest health voices, and the people who check their claims.",
+   "entryIds": [
+    "apple-1545953110",
+    "the-peter-attia-drive",
+    "bbc-inside-health",
+    "sensible-medicine",
+    "apple-1051557000",
+    "apple-1028908750",
+    "substack-yourlocalepidemiologist"
+   ]
   }
  ]
 }

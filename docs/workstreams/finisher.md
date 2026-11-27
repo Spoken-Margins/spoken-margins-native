@@ -16,7 +16,7 @@ Two things share the "finisher" name. Don't mix them up.
 | What it is | An interactive Claude Code session on the Mac, run by a person or a lead | A launchd job that starts headless `claude -p` runs, one fresh session per job |
 | Doc | This page | [ops/claude/README.md](../../ops/claude/README.md) |
 | Claims a PR with | `Finisher <name> taking this.` | `Finisher Claude taking this.` |
-| Order | The finisher goes first on a stalled PR | Waits an hour after the stall, so the finisher goes first; backs off for 2 hours when another finisher has claimed the PR |
+| Order | The finisher goes first on a stalled PR | Waits an hour after the stall, so the finisher goes first, except for a merge conflict, which it takes on its next tick (owner, 2026-11-24); backs off for 2 hours when another finisher has claimed the PR |
 
 The worker's rules (checked: `STALL_GRACE`, `OTHER_FINISHER_HOLD`, `OTHER_FINISHER_CLAIM_RE`, `OWN_FINISHER_CLAIM` in `sm_claude_worker.py`) are why a human-started finisher never races it for the first hour.
 
@@ -30,7 +30,7 @@ With no other instructions, a finisher:
    - The Dial (#589) is Off (checked: the worker reads it with `dial_gate.py`).
    - Memory pressure not normal, or under 10 GB free plus 4 GB for each running build (the floor is in the project instructions and the #337 header; [test-lane.md](test-lane.md) has the lane's own 10 GB line).
 2. **Takes the queue in this order** (owner's note, #2593):
-   1. `needs-mac` PRs: open, into `main`, with a `Handing to the Mac finisher:` comment saying what fails and where the report is.
+   1. `needs-mac` PRs: open, into `main`, with a `Handing to the Mac finisher:` comment saying what fails and where the report is. A merge conflict comes here only after the conflict resolver (`scripts/conflict_resolver.py`, #5320) declined it or left it 2 hours; until then the PR carries `conflict-resolver`, not `needs-mac`, and is not the finisher's.
    2. Then `priority` issues labelled `where:mac`.
 3. **Claims before it works.** The first line of a comment on the PR is exactly `Finisher <name> taking this.` (checked: both finishers and the worker match on it). On an issue it follows the normal claim: `in-progress` on, `ready` off, `Claimed by project thread "<title>"` (the project instructions' claim; the worker uses the same note for its issues).
 4. **Builds only through `scripts/xcodebuild-lane`**, never boots a simulator itself (simulator tests go to the lane as an optional `/lane T3` request with `lane:queued`; it holds no merge), and never pushes to `main` or to a PR that is armed (checked: the worker's run rules, `common_rules` in `sm_claude_worker.py`; a hook blocks raw `xcodebuild`, AGENTS.md "Verification"). Never reset or delete the owner's Library and recordings (owner overlay "Protect owner data").

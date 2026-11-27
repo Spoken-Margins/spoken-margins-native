@@ -5,33 +5,15 @@ import SwiftUI
 import UIKit
 
 /// What the Now tab's scene is doing, shared by the playback screen (which sees the scroll) and the passage (which
-/// draws the scene): the scene state, whether the header is on screen, and which sentences are (#4453).
+/// draws the scene): the scene state and which sentences are on screen (#4453).
 ///
 /// It follows the playhead and never moves audio. All of its rules are `PlaybackNowSceneState`'s, which is host-tested.
 @MainActor
 final class NowSceneController: ObservableObject {
     @Published private(set) var state: PlaybackNowSceneState?
-    /// Whether the Now header, with the Library arrow in it, is on screen. Following scrolls it away. Two thresholds
-    /// decide it (`NowHeaderVisibility`), so the toolbar arrow it brings can't move the header back and forth (#4739).
-    @Published private(set) var headerIsVisible = true
-    private var header = NowHeaderVisibility()
-
-    /// Whether at least `NowHeaderVisibility.goneBelow` of the header is on screen.
-    func headerReachedGoneThreshold(_ visible: Bool) {
-        header.reachedGoneThreshold(visible)
-        publishHeader()
-    }
-
-    /// Whether at least `NowHeaderVisibility.backAt` of the header is on screen.
-    func headerReachedBackThreshold(_ visible: Bool) {
-        header.reachedBackThreshold(visible)
-        publishHeader()
-    }
-
-    /// Published only on a change, so a threshold report that changes nothing redraws nothing.
-    private func publishHeader() {
-        if headerIsVisible != header.isVisible { headerIsVisible = header.isVisible }
-    }
+    /// Whether the scene lights its playing row: false on a spoken note that is not the one playing, or before its first
+    /// worded sentence (#4780). Articles always light. Back to playing shows only while it is true.
+    @Published var showsLit = true
     /// The ids (first Character offsets) of the sentences on screen. Not published: a scroll changes it constantly, and
     /// only `playingIsAbove` is drawn.
     private(set) var visibleSentenceIDs: Set<Int> = []
@@ -56,8 +38,9 @@ final class NowSceneController: ObservableObject {
     /// one correction, not one for every sentence after (`ClipHold.stillDropped`).
     private var droppedHolds: Set<Int> = []
 
-    func reset(text: String, chapters: [Chapter]) {
-        state = PlaybackNowSceneState(text: text, chapters: chapters)
+    func reset(text: String, chapters: [Chapter], sentenceStarts: [Int]? = nil, isNote: Bool = false) {
+        state = PlaybackNowSceneState(text: text, chapters: chapters, sentenceStarts: sentenceStarts, isNote: isNote)
+        showsLit = true
         // The cards belong to the text that is gone; the view finds them again for the new one.
         cards = NowClipCards(source: .none, anchors: [], listWidth: listWidth, visibleHeight: visibleHeight)
         droppedHolds = []
@@ -137,6 +120,13 @@ final class NowSceneController: ObservableObject {
         state = next
     }
 
+    /// A spoken note's Margins, as rows after their sentences (#4780).
+    func setNoteMargins(_ items: [SpokenNoteNowPassage.MarginItem]) {
+        guard var next = state else { return }
+        next.setNoteMargins(items)
+        state = next
+    }
+
     func listenerScrolled() {
         guard var next = state, next.follow.isFollowing else { return }
         next.listenerScrolled()
@@ -182,6 +172,12 @@ struct PlaybackLivePassageView: View {
     /// The page scroll view's proxy, from the reader that wraps it: a proxy scrolls only the scroll views inside its own reader.
     let proxy: ScrollViewProxy
     let openReader: (Int) -> Void
+    /// A spoken note's own words (#4780): when set, the scene is the note's sentences, a tap plays from a sentence, and
+    /// Margins are rows. Nil is an article or PDF, as before.
+    var noteWords: SpokenNoteNowPassage.Words? = nil
+    var noteRevision = 0
+    /// Opens a Margin's detail sheet, by the Margin's id (a note's Margin row).
+    var openMargin: (String) -> Void = { _ in }
     @State private var sourceIndex = PlaybackLivePassage.SourceIndex(TimelineSourceContent(text: ""))
     @State private var sourceVersion = 0
     /// The item's footnote markers as shown (#5109), scanned once per text.
@@ -200,14 +196,51 @@ struct PlaybackLivePassageView: View {
     @State private var builtInput: Input?
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @AccessibilityFocusState private var focusedSentence: Int?
+    /// A spoken note's following (#4780). A reference, not observed: it changes on every clock tick and draws nothing.
+    @State private var noteFollow = NoteFollow()
+    @State private var noteMarginItems: [SpokenNoteNowPassage.MarginItem] = []
+    @State private var noteMarginPreviews: [String] = []
+    /// Each Margin row's preview text, by Margin id, so a row draws without searching the model's Margins.
+    @State private var noteMarginPreviewByID: [String: String] = [:]
+    @State private var marginRevision = 0
+
+    /// The row offset last fed to the scene, the clock's last media time, and whether the next change is the listener's
+    /// own (a tap on a sentence).
+    private final class NoteFollow {
+        var offset: Int?
+        var lastTickMs: Int?
+        var pendingListenerMove = false
+    }
 
     private struct Input: Equatable {
         let itemID: String
         let text: String
         let chapters: [Chapter]
+        let noteRevision: Int
     }
     private var input: Input {
-        Input(itemID: model.selectedItem.id, text: model.selectedItem.text, chapters: model.selectedItem.chapters)
+        // A note's scene is its own words: an item refresh (a seek refreshes the item) never rebuilds it.
+        if noteWords != nil { return Input(itemID: model.selectedItem.id, text: "", chapters: [], noteRevision: noteRevision) }
+        return Input(itemID: model.selectedItem.id, text: model.selectedItem.text, chapters: model.selectedItem.chapters,
+                     noteRevision: 0)
+    }
+    private var isNoteSessionItem: Bool { model.snapshot.itemId == model.selectedItem.id }
+    /// The note is the session's item and its own audio is what plays (not a Margin on it).
+    private var noteSourceIsPlaying: Bool {
+        isNoteSessionItem && model.snapshot.targetType.flatMap(TargetType.init(rawValue:)) == .transcriptBackedMedia
+    }
+    /// The clock's media time while the note's own audio plays; nil otherwise, which keeps the last row lit.
+    private var noteMediaTimeMs: Int? {
+        guard noteWords != nil, noteSourceIsPlaying else { return nil }
+        return model.playbackClock.position.mediaTimeMs
+    }
+    private var noteTapState: SpokenNoteNowPassage.RowTap {
+        // While a Margin is recorded or written, the listener's place is held: no row moves it.
+        if model.recordingNavigationIsLocked { return .inert }
+        return SpokenNoteNowPassage.RowTap.rowTap(
+            hasActiveSession: model.hasActiveSession, isSessionItem: isNoteSessionItem,
+            targetIsSource: model.snapshot.targetType.flatMap(TargetType.init(rawValue:)) == .transcriptBackedMedia,
+            phase: model.snapshot.phase, hasAudio: true)
     }
     /// What finding the cards depends on, as counts: this is read on every tick, so it never compares the document.
     private struct ClipsInput: Equatable {
@@ -225,28 +258,45 @@ struct PlaybackLivePassageView: View {
                           saved: clipsSaved, rebuilds: rebuilds)
     }
     private var sourceOffset: Int? {
-        PlaybackLivePassage.sourceOffset(snapshot: model.snapshot, itemID: model.selectedItem.id,
+        // A note's lit row comes from the clock and its own timeline, never the engine's text offset (#4780).
+        guard noteWords == nil else { return nil }
+        return PlaybackLivePassage.sourceOffset(snapshot: model.snapshot, itemID: model.selectedItem.id,
                                          isNativeAudio: model.selectedItem.isNativeAudio,
                                          textLength: scene.state?.characterCount ?? 0)
     }
     /// Shown while this item plays its own source, and while a Margin or summary plays on it (the scene stays, with
     /// its last sentence lit). Hidden for another item or before anything starts, as before.
     private var isShowing: Bool {
+        // A note's words show whenever there are any, lit or not (#4780).
+        // Only a scene built for this note: the shared controller may still hold the last item's for one pass.
+        if noteWords != nil { return builtInput == input && !(scene.state?.isEmpty ?? true) }
         guard let state = scene.state, !state.isEmpty, model.snapshot.itemId == model.selectedItem.id else { return false }
         return sourceOffset != nil || state.litSentence != nil
     }
     private static let litAnchor = UnitPoint(x: 0.5, y: 0.33)
 
+    /// What a note's scene adds to the list; nil for an article or PDF.
+    private var noteList: NowSceneList.Note? {
+        noteWords.map { words in
+            NowSceneList.Note(
+                showsLit: scene.showsLit, tapState: noteTapState, tappableIds: words.rowIdsWithAudio,
+                revision: noteRevision, marginRevision: marginRevision, marginPreviews: noteMarginPreviewByID,
+                playFrom: playNote(fromRow:), openMargin: openMargin)
+        }
+    }
+
     var body: some View {
         let _ = playbackTick
         return VStack(spacing: 0) {
                 if isShowing, let state = scene.state {
+                    let note = noteList
                     NowSceneList(
                         items: state.shownItems, revision: state.sceneRevision, lit: state.litSentence, litID: state.litSentenceID,
                         sourceVersion: sourceVersion, sourceIndex: sourceIndex, endLine: state.endLine,
                         cards: scene.cards, clipsVersion: scene.clipsVersion, visibleHeight: scene.visibleHeight,
                         focus: $focusedSentence, openReader: openCurrentSentence,
-                        openClip: { selectedClip = $0 }
+                        openClip: { selectedClip = $0 },
+                        note: note, noteDrawKey: note?.drawKey
                     )
                     .equatable()
                     .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { scene.setListWidth($0) }
@@ -264,12 +314,15 @@ struct PlaybackLivePassageView: View {
             }
             .onChange(of: input) { _, _ in rebuild() }
             .onChange(of: model.selectedItem.timelineSource) { _, value in
+                guard noteWords == nil else { return } // a note's rows are its own words
                 sourceIndex = PlaybackLivePassage.SourceIndex(value, footnotes: footnotes)
                 sourceVersion &+= 1
             }
             .onChange(of: model.marginRows) { _, _ in updateMargins() }
             .onChange(of: model.sharedMarginRows) { _, _ in updateMargins() }
             .onChange(of: sourceOffset) { _, _ in follow() }
+            .onChange(of: noteMediaTimeMs) { _, time in followNote(to: time) }
+            .onChange(of: isNoteSessionItem) { _, _ in updateNoteShowsLit() }
             .onChange(of: scene.state?.litSentenceID) { _, _ in
                 guard let state = scene.state, state.follow.scrollsOnItsOwn(assistiveTechnologyRunning: voiceOverEnabled) else { return }
                 scrollToLit(animated: true)
@@ -308,6 +361,10 @@ struct PlaybackLivePassageView: View {
         lastOffset = nil
         rebuilds &+= 1
         builtInput = input
+        if let words = noteWords {
+            rebuildNote(words)
+            return
+        }
         scene.reset(text: input.text, chapters: input.chapters)
         footnotes = FootnoteDisplayText(text: input.text)
         sourceIndex = PlaybackLivePassage.SourceIndex(model.selectedItem.timelineSource, footnotes: footnotes)
@@ -315,7 +372,89 @@ struct PlaybackLivePassageView: View {
         updateMargins()
     }
 
+    /// A note's scene: its sentences as rows, no footnotes or structure, then lit at the clock's time when the note is
+    /// the one playing. Built at its first row so it shows unlit (another item, or before the first worded sentence).
+    private func rebuildNote(_ words: SpokenNoteNowPassage.Words) {
+        noteFollow.offset = nil
+        noteFollow.lastTickMs = nil
+        noteFollow.pendingListenerMove = false
+        noteMarginItems = []
+        noteMarginPreviews = []
+        scene.reset(text: words.text, chapters: [], sentenceStarts: words.sentenceStarts, isNote: true)
+        footnotes = .none
+        sourceIndex = PlaybackLivePassage.SourceIndex(TimelineSourceContent(text: words.text))
+        sourceVersion &+= 1
+        if let first = words.sentenceStarts.first { scene.move(offset: first, margins: []) }
+        updateMargins()
+        let time = noteMediaTimeMs
+        followNote(to: time)
+        updateNoteShowsLit()
+    }
+
+    private func updateNoteShowsLit() {
+        guard noteWords != nil else { return }
+        let lit = isNoteSessionItem && noteFollow.offset != nil
+        if scene.showsLit != lit { scene.showsLit = lit }
+    }
+
+    /// Moves a note's lit row to the clock's media time. Playback going on feeds every row it passed, so a short sentence
+    /// between two ticks is never read as a jump; a seek, a skip, a rewind or a tap is one move by the listener. No time,
+    /// or a time before the first worded sentence, changes nothing: the last row stays lit.
+    private func followNote(to time: Int?) {
+        guard let words = noteWords else { return }
+        let previousTick = noteFollow.lastTickMs
+        noteFollow.lastTickMs = time
+        guard let time, let offset = words.sourceOffset(mediaTimeMs: time), offset != noteFollow.offset else { return }
+        let previous = noteFollow.offset
+        noteFollow.offset = offset
+        defer { updateNoteShowsLit() }
+        if noteFollow.pendingListenerMove || previous == nil
+            || !SpokenNoteNowPassage.Words.isContinuous(fromMs: previousTick, toMs: time) {
+            noteFollow.pendingListenerMove = false
+            scene.move(offset: offset, margins: [], byListenerControl: true)
+            return
+        }
+        for crossed in words.rowsCrossed(fromOffset: previous, toOffset: offset) {
+            scene.move(offset: crossed, margins: [])
+        }
+    }
+
+    /// A tap on a note's sentence: play from its start. The next move of the lit row is the listener's own, so following
+    /// starts again at the tapped row and Back to playing goes away.
+    private func playNote(fromRow id: Int) {
+        guard let words = noteWords, noteTapState == .seeks, let row = words.row(id: id), let startMs = row.startMs,
+              !model.rejectNavigationOrSessionMutationWhileRecording("play_note_sentence") else { return }
+        let moved = MainThreadOperationLabels.shared.scoped("spokenNote.nowJump") { () -> Bool in
+            guard model.seekMedia(toMediaTimeMs: startMs) else { return false }
+            if !model.snapshot.status.isPlaybackActive { model.resumePlayback() }
+            return true
+        }
+        // Only a seek that happened makes the next move the listener's; a refused one must not later pull a reader back.
+        guard moved else { return }
+        if row.start == noteFollow.offset {
+            scene.backToPlaying()
+        } else {
+            noteFollow.pendingListenerMove = true
+        }
+        if voiceOverEnabled { focusedSentence = id }
+    }
+
     private func updateMargins() {
+        if let words = noteWords {
+            // A note's Margins are rows after their sentences, placed by segment id; no diamonds (#4780).
+            let items = words.marginItems(model.marginRows.map(\.interjection), itemId: input.itemID)
+            let previews = items.map { item in
+                model.marginRows.first { $0.interjection.id == item.marginId }.map { NowSceneMarginRow.previewText($0.interjection) } ?? ""
+            }
+            if items != noteMarginItems || previews != noteMarginPreviews {
+                noteMarginItems = items
+                noteMarginPreviews = previews
+                noteMarginPreviewByID = Dictionary(zip(items.map(\.marginId), previews), uniquingKeysWith: { first, _ in first })
+                marginRevision &+= 1
+                scene.setNoteMargins(items)
+            }
+            return
+        }
         let length = scene.state?.characterCount ?? 0
         margins = model.marginRows.compactMap {
             PlaybackLivePassage.Margin(own: $0.interjection, itemID: input.itemID, textLength: length)
@@ -403,11 +542,50 @@ private struct NowSceneList: View, Equatable {
     let focus: AccessibilityFocusState<Int?>.Binding
     let openReader: () -> Void
     let openClip: (TimelineClipSelection) -> Void
+    /// A spoken note's scene (#4780); nil for an article or PDF.
+    let note: Note?
+    /// `note`'s drawing key, kept apart so `==` reads only Sendable values.
+    let noteDrawKey: Note.DrawKey?
+
+    /// What a note's scene adds: whether the playing row is lit, what a tap on a row does, and its Margin rows.
+    struct Note {
+        let showsLit: Bool
+        let tapState: SpokenNoteNowPassage.RowTap
+        /// The rows that have audio to play from.
+        let tappableIds: Set<Int>
+        /// The note's words' revision: `tappableIds` changes only with it.
+        let revision: Int
+        /// Moves when the Margin rows or any of their previews change.
+        let marginRevision: Int
+        /// Each Margin row's preview text, by Margin id.
+        let marginPreviews: [String: String]
+        let playFrom: (Int) -> Void
+        let openMargin: (String) -> Void
+
+        /// What changes how the rows are drawn; the closures never do.
+        struct DrawKey: Equatable, Sendable {
+            let showsLit: Bool
+            let tapState: SpokenNoteNowPassage.RowTap
+            let revision: Int
+            let marginRevision: Int
+        }
+        var drawKey: DrawKey { DrawKey(showsLit: showsLit, tapState: tapState, revision: revision, marginRevision: marginRevision) }
+    }
 
     // The cards' version and the text area's height are what change a card; a tick changes neither, so it draws nothing.
     nonisolated static func == (lhs: NowSceneList, rhs: NowSceneList) -> Bool {
         lhs.revision == rhs.revision && lhs.lit == rhs.lit && lhs.sourceVersion == rhs.sourceVersion
             && lhs.clipsVersion == rhs.clipsVersion && lhs.visibleHeight == rhs.visibleHeight
+            && lhs.noteDrawKey == rhs.noteDrawKey
+    }
+
+    private var hint: String {
+        guard let note else { return "Open the full source at the current sentence" }
+        switch note.tapState {
+        case .seeks: return "Plays from this sentence."
+        case .inertFinished: return "Play the note again to jump to a sentence."
+        case .inert: return ""
+        }
     }
 
     var body: some View {
@@ -416,13 +594,27 @@ private struct NowSceneList: View, Equatable {
                 ForEach(items) { item in
                     switch item {
                     case .sentence(let sentence):
-                        NowSceneRow(
-                            sentence: sentence, fragments: sourceIndex.fragments(for: sentence), isLit: sentence.id == litID,
-                            focus: focus, openReader: openReader
-                        )
+                        if let note {
+                            let tappable = note.tapState == .seeks && note.tappableIds.contains(sentence.id)
+                            NowSceneRow(
+                                sentence: sentence, fragments: sourceIndex.fragments(for: sentence),
+                                isLit: note.showsLit && sentence.id == litID, focus: focus,
+                                isTappable: tappable, hint: tappable || note.tapState == .inertFinished ? hint : "",
+                                onTap: { id in if tappable { note.playFrom(id) } }
+                            )
+                        } else {
+                            NowSceneRow(
+                                sentence: sentence, fragments: sourceIndex.fragments(for: sentence), isLit: sentence.id == litID,
+                                focus: focus, isTappable: true, hint: hint, onTap: { _ in openReader() }
+                            )
+                        }
                     case .clip(_, let id):
                         if let anchor = cards.anchor(forCard: id) {
                             NowClipCard(anchor: anchor, cards: cards, open: openClip)
+                        }
+                    case .margin(let margin, _):
+                        if let preview = note?.marginPreviews[margin.marginId] {
+                            NowSceneMarginRow(item: margin, preview: preview, open: { note?.openMargin(margin.marginId) })
                         }
                     }
                 }
@@ -465,7 +657,11 @@ private struct NowSceneRow: View {
     let fragments: [PlaybackLivePassage.Fragment]
     let isLit: Bool
     let focus: AccessibilityFocusState<Int?>.Binding
-    let openReader: () -> Void
+    /// False for a note's row that does nothing on a tap: it keeps its look but is not a button (#4780).
+    let isTappable: Bool
+    let hint: String
+    /// Called with the sentence's id: an article opens the reader, a note plays from the sentence.
+    let onTap: (Int) -> Void
 
     var body: some View {
         #if DEBUG
@@ -483,7 +679,7 @@ private struct NowSceneRow: View {
             }
             .frame(width: 18)
             .padding(.top, 12)
-            Button(action: openReader) {
+            Button { onTap(sentence.id) } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(fragments) { fragment in
                         if let label = fragment.label {
@@ -509,12 +705,48 @@ private struct NowSceneRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(fragments.map(\.text).joined())
-            .accessibilityHint("Open the full source at the current sentence")
+            .accessibilityHint(hint)
             .accessibilityValue(isLit ? "Current sentence" : "")
             .accessibilityAddTraits(isLit ? .isSelected : [])
+            .accessibilityRemoveTraits(isTappable ? [] : .isButton)
             .accessibilityFocused(focus, equals: sentence.id)
             .accessibilityIdentifier("playback.now.passage.sentence.\(sentence.id)")
         }
+    }
+}
+
+/// One of the listener's Margins on a spoken note, as a one-line row after the sentence it sits on (#4780): the Recent
+/// Margins row's look, indented under the text, never lit and never a place following scrolls to. A tap opens it.
+private struct NowSceneMarginRow: View {
+    let item: SpokenNoteNowPassage.MarginItem
+    let preview: String
+    let open: () -> Void
+
+    static func previewText(_ note: Interjection) -> String {
+        PlaybackMarginPreview.text(displayText: note.displayText, cleanedTranscript: note.cleanedTranscript,
+                                   transcript: note.transcript, transcriptionStatus: note.transcriptionStatus,
+                                   captureKind: note.captureKind)
+    }
+
+    var body: some View {
+        Button(action: open) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Your Margin").font(.caption).foregroundStyle(AppColors.watchSecondary)
+                Text(preview).font(.body).foregroundStyle(Color.white).lineLimit(1)
+            }
+            .padding(.leading, 12)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .overlay(alignment: .leading) { Rectangle().fill(AppColors.captureBackground).frame(width: 2) }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        // Under the text, not the gutter: the gutter (18) and the spacing after it (10).
+        .padding(.leading, PlaybackLivePassage.ClipCardLayout.leadingInset)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Your Margin: \(preview)")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("playback.now.passage.margin.\(item.key)")
     }
 }
 

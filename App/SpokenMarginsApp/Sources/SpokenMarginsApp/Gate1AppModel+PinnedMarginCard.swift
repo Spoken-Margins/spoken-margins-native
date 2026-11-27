@@ -53,7 +53,7 @@ extension Gate1AppModel {
         }
         if let moment = marginMoment {
             let current = moment.playing ?? moment.target
-            let run: PinnedMarginCard.Run = moment.isReview ? .review : .moment
+            let run: PinnedMarginCard.Run = moment.isReview ? .review : hearItLandRun(forMomentTarget: moment.target.marginId)
             let subject: PinnedMarginCard.Subject = current.isYours || !moment.isReview && current.label == nil
                 ? .yours : .friend(current.label) // `Subject` drops every stand-in, "a friend" included
             let position = CantPlayListening.cardPosition(in: moment) // a review counts its Margins; one Margin is never "1 of 1"
@@ -65,8 +65,10 @@ extension Gate1AppModel {
                     voiceTime: playingVoiceTime, noun: sourceNoun, nextPress: nextMarginPress, run: run,
                     chainsWithoutLeadIn: CantPlayListening.isCantPlayListening(moment), canStartEarlier: marginMomentStartEarlierPlan != nil)
             }
-            // A plain moment that has played its Margin keeps listening for the others: the slot stays, saying so.
+            // A plain moment that has played its Margin keeps listening for the others: the slot stays, saying so. A silent Margin
+            // the listener has just gone to comes first, so a Skim to a note after a spoken Margin still shows its card (#4938).
             if !moment.isReview, moment.phase == .listening {
+                if let landing = shownSilentMarginLanding { return silentLandingCard(landing) }
                 return PinnedMarginCard(subject: .yours, stage: .upNext(msRemaining: nil, arrival: .playsByItself), position: nil, noun: sourceNoun, run: run)
             }
             let remaining = moment.msUntilTarget(currentMediaTimeMs: moment.review == nil ? (marginMomentPositionMs ?? moment.startMediaTimeMs) : snapshot.currentMediaTimeMs)
@@ -75,8 +77,10 @@ extension Gate1AppModel {
                 canStartEarlier: marginMomentStartEarlierPlan != nil)
         }
         // A friend's Margin the listener went to that is never read aloud: its words, while the source is still near it (#4934).
-        if let landing = shownSilentMarginLanding { return landing.card(noun: sourceNoun) }
-        if let saved = friendAnswerSavedCard { return saved }
+        if let landing = shownSilentMarginLanding { return silentLandingCard(landing) }
+        if let saved = friendAnswerSavedCard ?? hearItLandWrittenCard { return saved }
+        // After a catch-up run, the card that says no answer is owed, ahead of any heard Margin still ahead (#4785).
+        if let caughtUp = caughtUpCard { return caughtUp }
         // Auto-play off still holds the slot: Next Margin is reachable between Margins and the title never moves.
         guard let next = nextSharedMargin else { return friendLastMarginCard }
         let remaining = next.mediaTimeMs.flatMap { ms in snapshot.currentMediaTimeMs.map { max(0, ms - $0) } }
@@ -85,6 +89,11 @@ extension Gate1AppModel {
             subject: .friend(SharedPacketArrival.senderName(next.prompt.senderLabel)), stage: .upNext(msRemaining: remaining, arrival: arrival),
             position: PinnedMarginCard.position(next.prompt.index, of: next.prompt.count), noun: sourceNoun, nextPress: nextMarginPress,
             targetLeadInMs: next.prompt.interjection.senderLeadInMs)
+    }
+
+    /// The card for a silent landing: the words of the note the source has reached (a burst of your own notes shows each in turn, #4938).
+    private func silentLandingCard(_ landing: SilentMarginLanding) -> PinnedMarginCard {
+        landing.card(noun: sourceNoun, playhead: silentMarginLandingPlayhead ?? landing.position)
     }
 
     /// The friend's Margin an ordinary countdown card is about (no Margin moment), so the card's line can say how its
@@ -162,7 +171,7 @@ extension Gate1AppModel {
         case .seekToLeadIn(let ms) where marginMoment != nil:
             // A review's episode plays on between Margins and nothing hops ahead by itself: this tap is the hop. The
             // review's own Margin plays when the episode reaches it, so nothing is marked or dismissed here.
-            marginMomentConductor?.sourceMoved()
+            listenerMovedSource()
             seekMedia(toMediaTimeMs: ms)
         case .seekToLeadIn(let ms):
             // An announced Margin is not offered when the episode crosses it again, so give it back first: the lead-in

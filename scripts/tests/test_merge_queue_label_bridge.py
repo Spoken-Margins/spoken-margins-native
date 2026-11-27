@@ -167,6 +167,48 @@ class NeedsFixTests(unittest.TestCase):
         self.assertIn('--pr "$PR" --action edited', text)
 
 
+class HeldCommitTests(unittest.TestCase):
+    """#5281: a commit that failed two merge groups of only main and itself is not queued again until a new push."""
+    HEAD, OTHER = 'e' * 40, 'f' * 40
+
+    def failed(self, *heads):
+        return '\n'.join(f'<!-- merge-queue-dequeued own-failure head={h} -->' for h in heads)
+
+    def needs_fix(self):
+        p = pr(7, auto=False, extra=['needs-fix'])
+        p['headRefOid'] = self.HEAD
+        return {7: p}
+
+    def test_a_re_arm_of_a_commit_that_failed_alone_twice_is_held(self):
+        github = FakeGitHub(self.needs_fix(), comments=self.failed(self.HEAD, self.HEAD))
+        code, out = run(github, '--pr', '7', '--action', 'labeled')
+        self.assertEqual((code, github.merged), (0, []))
+        self.assertEqual(github.removed, [(7, 'automerge')])  # needs-fix stays; a re-add after a push is a fresh re-arm
+        self.assertIn(bridge.HELD_MARKER.format(head=self.HEAD), github.posted[0][1])
+        self.assertIn('held until a new push', out)
+
+    def test_one_failure_alone_or_failures_of_an_older_commit_still_re_arm(self):
+        for comments in (self.failed(self.HEAD), self.failed(self.OTHER, self.OTHER), ''):
+            with self.subTest(comments=comments):
+                github = FakeGitHub(self.needs_fix(), comments=comments)
+                code, _ = run(github, '--pr', '7', '--action', 'labeled')
+                self.assertEqual((code, github.removed, github.merged), (0, [(7, 'needs-fix')], [7]))
+
+    def test_the_hold_comments_once_per_commit(self):
+        comments = self.failed(self.HEAD, self.HEAD) + bridge.HELD_MARKER.format(head=self.HEAD)
+        github = FakeGitHub(self.needs_fix(), comments=comments)
+        run(github, '--pr', '7', '--action', 'labeled')
+        self.assertEqual(github.posted, [])
+
+    def test_the_sweep_reads_no_comments_for_a_pr_carrying_needs_fix(self):
+        github = FakeGitHub(self.needs_fix(), comments=self.failed(self.HEAD, self.HEAD))
+        github.comments = lambda number: self.fail('the sweep read comments')
+        self.assertEqual(run(github, '--sweep')[0], 0)
+
+    def test_the_pr_query_reads_the_head_commit(self):
+        self.assertIn('headRefOid', bridge.PR_FIELDS)
+
+
 class RetitleTests(unittest.TestCase):
     """Finding 2: retitling or drafting an armed, queued PR takes it out."""
 
@@ -180,6 +222,43 @@ class RetitleTests(unittest.TestCase):
         github = FakeGitHub({7: pr(7, draft=True)})
         code, _ = run(github, '--pr', '7', '--action', 'converted_to_draft')
         self.assertEqual((code, github.disabled, github.dequeued), (0, [7], []))
+
+    def test_a_dispatch_for_a_handed_off_queued_pr_turns_auto_merge_off_and_dequeues(self):
+        # #5302: lane_conflicts.py swaps automerge for needs-mac with GITHUB_TOKEN, which wakes no unlabeled run,
+        # and dispatches this one-PR run instead (the workflow passes --action edited for a dispatch).
+        # Since #5320 went live, a conflict is handed to the resolver (`conflict-resolver`) the same way.
+        for label in ('needs-mac', 'conflict-resolver'):
+            with self.subTest(label=label):
+                github = FakeGitHub({7: pr(7, armed=False, queued=True, extra=(label,))})
+                code, out = run(github, '--pr', '7', '--action', 'edited')
+                self.assertEqual((code, github.disabled, github.dequeued, github.merged), (0, [7], ['PR_7'], []))
+                self.assertIn(f'handed off (`{label}`)', out)
+
+    def test_a_handed_off_pr_set_to_auto_merge_but_not_queued_only_turns_it_off(self):
+        github = FakeGitHub({7: pr(7, armed=False, auto=True, extra=('needs-mac',))})
+        self.assertEqual(run(github, '--pr', '7', '--action', 'edited')[0], 0)
+        self.assertEqual((github.disabled, github.dequeued), ([7], []))
+
+    def test_a_handed_off_pr_that_is_not_set_to_merge_gets_no_call(self):
+        github = FakeGitHub({7: pr(7, armed=False, extra=('needs-mac',))})
+        self.assertEqual(run(github, '--pr', '7', '--action', 'edited')[0], 0)
+        self.assertEqual((github.disabled, github.dequeued, github.posted), ([], [], []))
+
+    def test_a_queued_pr_with_no_label_and_no_hand_off_is_still_left_alone(self):
+        # It may be the owner's own Merge tap.
+        github = FakeGitHub({7: pr(7, armed=False, queued=True)})
+        self.assertEqual(run(github, '--pr', '7', '--action', 'edited')[0], 0)
+        self.assertEqual((github.disabled, github.dequeued), ([], []))
+
+    def test_a_handed_off_pr_re_armed_after_the_fix_is_queued_as_usual(self):
+        github = FakeGitHub({7: pr(7, auto=False, extra=('needs-mac',))})
+        self.assertEqual(run(github, '--pr', '7', '--action', 'labeled')[0], 0)
+        self.assertEqual((github.merged, github.disabled, github.dequeued), ([7], [], []))
+
+    def test_the_sweep_never_takes_a_handed_off_pr_out(self):
+        github = FakeGitHub({7: pr(7, armed=False, queued=True, extra=('needs-mac',))})
+        self.assertEqual(run(github, '--sweep')[0], 0)
+        self.assertEqual((github.disabled, github.dequeued), ([], []))
 
     def test_an_ordinary_edit_of_a_queued_pr_changes_nothing(self):
         github = FakeGitHub({7: pr(7, queued=True)})

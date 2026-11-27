@@ -311,7 +311,9 @@ extension Gate1AppModel {
             id: "shared-package-\(UUID().uuidString)",
             inputURL: canonicalURL,
             sourceSurface: "spoken_margins_package",
-            createdAt: Date()
+            createdAt: Date(),
+            // The page may link several feed editions; take the one whose file the friend's Margins were made on (#5286).
+            preferredEnclosureURL: item.enclosureURL
         )
         var result: LinkResolutionResult
         do {
@@ -424,6 +426,7 @@ extension SpokenMarginsPackageImportCoordinator.Environment {
                 guard let model else { return }
                 try await model.reloadLibraryRowsOffMain(store: store) // on screen when it returns, as the direct read was
             },
+            refreshSelectedItemQuietly: { [weak model] in model?.refreshSelectedItemInBackground() },
             labels: model.hangTelemetry.labels
         )
     }

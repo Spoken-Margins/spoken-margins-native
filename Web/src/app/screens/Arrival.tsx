@@ -2,31 +2,42 @@
 // browser (the key is in the link's `#` part and never leaves it), shows who sent it, what it is and one Play, and
 // that tap also starts the episode, so the browser allows sound. Then Now Playing takes over with the countdown to
 // the sender's first Margin and a Skip. Every failure says what happened and one thing to do.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PlayIcon } from '../icons.tsx';
 import { LABELS, marginRows, playQueue, startFor, startWithUnheardMs, threads, firstToPlay, type Row } from '../logic/margins-control-center.ts';
 import type { MarginStart } from '../player.tsx';
 import { MarginsControlList } from './MarginsTab.tsx';
-import { arrivalResumeAt, playHint, playableArticleMargins, ARRIVAL_WORDS, GET_APP_LINK, arrivalFacts, possessive, type ArrivalFacts } from '../logic/arrival.ts';
+import { arrivalResumeAt, playHint, playableArticleMargins, ARRIVAL_WORDS, GET_APP_LINK, arrivalFacts, type ArrivalFacts } from '../logic/arrival.ts';
+import { showIphoneStep } from '../logic/arrival-card.ts';
+import { isMigrated, libraryEpisodes } from '../logic/library-membership.ts';
+import { capacitorBridge } from '../../sources/native-http.ts';
+import { ArrivalListen } from './ArrivalListen.tsx';
 import { placeImport, previewMargins, unnamedAuthorFor } from '../logic/import.ts';
 import { settleAppleEpisode } from '../logic/apple-arrival.ts';
-import { playability, type VoiceLookup } from '../logic/playability.ts';
+import { playability, webAddress, withOwnedAudio, type VoiceLookup } from '../logic/playability.ts';
 import { messageForFailure, messageForOpenedSettled, playCheckHandler, reportPlayCheck, type PlayCheckMessage } from '../play-check.ts';
 import { placeMarginsOnAudio } from '../place-margins.ts';
 import { plainError } from '../logic/messages.ts';
-import { ShareLinkError, linkFooterText, openSharedPacketWithExpiry, type ParsedLink, type ShareLinkRef } from '../logic/share-link.ts';
+import { ShareLinkError, linkFooterText, openSharedPacketWithExpiry, type ParsedLink, type ShareLinkFailure, type ShareLinkRef } from '../logic/share-link.ts';
+import { FRIEND_HELP_WORDS, friendHelpForFailure } from '../logic/friend-help.ts';
+import { FriendHelpLink } from './FriendHelpLink.tsx';
+import { fetchReplyOutcome, type ReplyFetchOutcome } from '../logic/reply-box.ts';
+import { senderNameOrNone } from '../logic/reply-words.ts';
+import { trackReplyBox } from '../reply-boxes.ts';
 import { NotSavedError } from '../logic/storage.ts';
+import { dontTellLabel, inSenderCheck, mayOffer, openedNotice, openedSignaller, openedToken, postOpened, toldNotNotice, withSignalled } from '../logic/opened-signal.ts';
 import { useData } from '../data.tsx';
 import type { PacketRead } from '../ports.ts';
 import { usePlayer } from '../player.tsx';
 import { RELAY_ORIGIN, services } from '../services.ts';
+import { linkPacketWords } from '../logic/link-packet-words.ts';
 import { primeSpeech } from '../speech.ts';
 import { useUi } from '../ui.tsx';
 
 type State =
   | { status: 'opening' }
-  | { status: 'failed'; message: string }
-  | { status: 'ready'; read: PacketRead; facts: ArrivalFacts; expires?: string; lookup?: VoiceLookup };
+  | { status: 'failed'; message: string; reason: ShareLinkFailure }
+  | { status: 'ready'; read: PacketRead; facts: ArrivalFacts; expires?: string; lookup?: VoiceLookup; offersOpened: boolean };
 
 /** Words for a link that wouldn't open. A cut-off link and an unopenable key read the same: the friend re-copies it. */
 function failureWords(error: unknown): string {
@@ -44,24 +55,13 @@ function failureWords(error: unknown): string {
         return ARRIVAL_WORDS.server;
     }
   }
-  return ARRIVAL_WORDS.unreadable;
+  return linkPacketWords(error) ?? ARRIVAL_WORDS.unreadable;
 }
 
 /** The first sentence is the heading; what to do is the rest. */
 function splitSentence(message: string): { head: string; rest: string } {
   const at = message.indexOf('. ');
   return at === -1 ? { head: message, rest: '' } : { head: message.slice(0, at + 1), rest: message.slice(at + 2) };
-}
-
-/** An address that is safe to offer as a tap: http or https only. */
-function webAddress(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -83,6 +83,8 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
   const playRef = useRef<HTMLButtonElement>(null);
   const dataRef = useRef(data);
   dataRef.current = data;
+  // The link's reply part (#4675), fetched beside the packet and never waited on: the Share section reads it once it settles.
+  const replyFetch = useRef<Promise<ReplyFetchOutcome>>(undefined);
 
   // Inside the sender's hidden check (#4454) this says the page is running; anywhere else it does nothing.
   const announced = useRef(false);
@@ -97,15 +99,17 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
     if (started.current || !data.ready) return;
     started.current = true;
     if (link.kind !== 'link') {
-      setState({ status: 'failed', message: ARRIVAL_WORDS.cutOff });
+      setState({ status: 'failed', message: ARRIVAL_WORDS.cutOff, reason: 'damaged' });
       reportPlayCheck({ type: 'failed', reason: 'link-broken' });
       return;
     }
+    // Not inside the sender's hidden check (#4454), which shares nothing back.
+    if (!playCheckHandler()) replyFetch.current = fetchReplyOutcome(serverFor(link.link));
     void (async () => {
       let message: PlayCheckMessage | undefined;
       let opened: PacketRead | undefined;
       try {
-        const { bytes, expires } = await openSharedPacketWithExpiry(serverFor(link.link));
+        const { bytes, expires, offersOpened } = await openSharedPacketWithExpiry(serverFor(link.link));
         const packet = await services.packets.readPacket(bytes, 'shared.spokenmargins');
         // An Apple Podcasts episode page with no audio address: Apple's lookup finds its audio now, so Play starts at once.
         // Not inside the sender's hidden check, which reads only through the app (`messageForOpenedSettled`).
@@ -120,11 +124,12 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
           facts: arrivalFacts(read.sender, [...read.margins, ...playableArticleMargins(read)]),
           ...(expires === undefined ? {} : { expires }),
           ...(lookup && { lookup }),
+          offersOpened,
         });
         opened = packet;
         message = undefined;
       } catch (error) {
-        setState({ status: 'failed', message: failureWords(error) });
+        setState({ status: 'failed', message: failureWords(error), reason: error instanceof ShareLinkError ? error.reason : 'other' });
         message = messageForFailure(error);
       }
       // After the try, so nothing about the sender's check can turn a link that opened into the failed card. Inside the
@@ -151,6 +156,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
   const store = useCallback((read: PacketRead) => {
     const current = dataRef.current;
     const placed = placeImport(read, current.shows, current.episodes, undefined, current.margins, { unnamedAuthor: unnamedAuthorFor('link') });
+    if (replyFetch.current) trackReplyBox(placed.episode.id, replyFetch.current, senderNameOrNone(read.sender), read.contentDigest);
     const saved = (async () => {
       if (placed.show) await current.follow(placed.show, [placed.episode]);
       else if (placed.newEpisode) await current.updateEpisode(placed.episode);
@@ -172,6 +178,34 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
     [onDone, toast],
   );
 
+  // Opened marks (#5275). The first start control tells the server this link was opened, unless the server offered no
+  // marks, the listener turned it off, this browser already told it, or this is the sender's hidden check.
+  const offeredRef = useRef(false);
+  offeredRef.current = state.status === 'ready' && state.offersOpened;
+  const [tapped, setTapped] = useState(false);
+  const [toldNot, setToldNot] = useState(false);
+  const sendOpened = useMemo(() => {
+    if (link.kind !== 'link') return () => Promise.resolve();
+    const { id, key } = link.link;
+    return openedSignaller({
+      gate: () => ({
+        offered: offeredRef.current,
+        receiptsOn: dataRef.current.settings.openedReceipts,
+        signalled: dataRef.current.settings.openedSignalled,
+        id,
+        probe: inSenderCheck(),
+      }),
+      token: () => openedToken(key, id),
+      post: (token) => postOpened(serverFor(link.link).origin, id, token),
+      remember: (signalledId) => dataRef.current.setSetting('openedSignalled', withSignalled(dataRef.current.settings.openedSignalled, signalledId, new Date())),
+    });
+  }, [link]);
+  /** A start control was tapped: the notice goes, and the mark is sent after the sound has started. */
+  const opened = useCallback(() => {
+    setTapped(true);
+    void sendOpened();
+  }, [sendOpened]);
+
   const play = useCallback(
     (read: PacketRead, at?: number, start?: MarginStart) => {
       setBusy(true);
@@ -190,25 +224,13 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
           ...(start && { start }),
         });
         void finish(saved, true);
+        opened();
       } catch (error) {
         setBusy(false);
         toast(`This couldn’t be opened. ${plainError(error)}`, 'problem');
       }
     },
-    [finish, player, store, toast],
-  );
-
-  const keep = useCallback(
-    (read: PacketRead) => {
-      setBusy(true);
-      try {
-        void finish(store(read).saved, false);
-      } catch (error) {
-        setBusy(false);
-        toast(`This couldn’t be opened. ${plainError(error)}`, 'problem');
-      }
-    },
-    [finish, store, toast],
+    [finish, opened, player, store, toast],
   );
 
   // The report form lives on the link server's page, never on the app's host, and the address carries no key (#3355).
@@ -230,6 +252,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
 
   if (state.status === 'failed') {
     const { head, rest } = splitSentence(state.message);
+    const helpTopic = friendHelpForFailure(state.reason);
     return (
       <div className="arrival" role="dialog" aria-modal="true" aria-labelledby="arrival-title" data-testid="arrival-failed">
         <div className="arrival-body arrival-centered">
@@ -238,6 +261,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
             {head}
           </h1>
           {rest && <p className="arrival-text">{rest}</p>}
+          {helpTopic && <FriendHelpLink topic={helpTopic} />}
           {state.message === ARRIVAL_WORDS.cutOff && reportHref && (
             <p className="arrival-foot">
               <a href={reportHref} target="_blank" rel="noopener noreferrer">
@@ -250,21 +274,68 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
     );
   }
 
-  const { read, facts, expires, lookup } = state;
+  const { facts, expires, lookup } = state;
   const who = facts.who;
-  const episode = read.episode;
   // What the browser can do with this packet is one function's answer, so the sender's check says the same (#4454).
   // A Substack post has no audio address yet: its voice is looked up when the friend taps Play, as for a pasted link.
-  const can = playability(read, lookup);
-  const article = can.verdict === 'cannot' && can.reason === 'article';
-  const unplayable = can.verdict === 'cannot' && can.reason === 'no-episode-audio';
+  const verdict = playability(state.read, lookup);
+  // An episode with no audio that the listener's own web Library holds with audio plays on their copy (#5265).
+  const owned = verdict.verdict === 'cannot' && verdict.reason === 'no-episode-audio' ? withOwnedAudio(state.read, data.episodes) : undefined;
+  const read = owned && playability(owned).verdict === 'plays' ? owned : state.read;
+  const episode = read.episode;
+  const can = read === state.read ? verdict : playability(read);
+  const offerOpened =
+    link.kind === 'link' &&
+    mayOffer({ offered: state.offersOpened, receiptsOn: data.settings.openedReceipts, signalled: data.settings.openedSignalled, id: link.link.id, probe: inSenderCheck() });
+  const dontTell = () => {
+    setToldNot(true);
+    void data.setSetting('openedReceipts', false);
+  };
+  const notice = tapped ? null : toldNot ? (
+    <p className="arrival-opened" data-testid="arrival-opened" role="status">
+      {toldNotNotice(who)}
+    </p>
+  ) : offerOpened ? (
+    <p className="arrival-opened" data-testid="arrival-opened">
+      {openedNotice(who)}{' '}
+      <button type="button" className="arrival-dont-tell" onClick={dontTell}>
+        {dontTellLabel(who)}
+      </button>
+    </p>
+  ) : null;
+  // Margins on something the browser can't play are heard on the listen-here card (#5265).
+  if (can.verdict === 'cannot' && (can.reason === 'article' || can.reason === 'no-episode-audio')) {
+    const held = read.margins.length > 0 ? previewMargins(read, data.shows, data.episodes, data.margins, unnamedAuthorFor('link')) : [];
+    return (
+      <ArrivalListen
+        read={read}
+        origin="link"
+        iphoneStep={showIphoneStep(capacitorBridge() !== undefined, navigator.userAgent)}
+        footer={linkFooterText(expires)}
+        {...(reportHref && { reportHref })}
+        libraryFirst={libraryEpisodes(data.episodes, data.library, isMigrated(data.settings)).length > 0}
+        heardBefore={new Set(read.margins.filter((_, i) => held[i]?.heard).map((m) => m.id))}
+        setHeard={data.setHeard}
+        {...(read.margins.length > 0 && {
+          store: () => {
+            const { placed, saved } = store(read);
+            // `held` lines up with the packet's timed Margins: each one, or the copy already stored for it.
+            return { saved, storedIds: new Map(read.margins.map((m, i) => [m.id, placed.held[i]?.id ?? m.id])) };
+          },
+        })}
+        onLibrary={(saved) => void finish(saved ?? Promise.resolve(), false)}
+        notice={notice}
+        onStart={opened}
+      />
+    );
+  }
   const articleAddress = webAddress(episode.pageUrl);
   const minutes = episode.durationSeconds ? Math.max(1, Math.round(episode.durationSeconds / 60)) : undefined;
   const subtitle = [episode.showTitle, minutes ? `${minutes} min` : undefined].filter(Boolean).join(' · ');
   const title = episode.title;
   // The arrival preview (part of #3216): the friend's Margins listed before anything plays, each with its own start, and
   // two starts pinned at the bottom. A packet with only an article's rough places keeps its one Play.
-  const preview = !article && !unplayable && read.margins.length > 0;
+  const preview = read.margins.length > 0;
   const autoplay = data.settings.marginAutoplay;
   const rows = preview ? marginRows(previewMargins(read, data.shows, data.episodes, data.margins, unnamedAuthorFor('link'))) : [];
   const unheardAt = preview ? startWithUnheardMs(rows) : null;
@@ -290,6 +361,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
             </span>
             <span>From {who}</span>
           </p>
+          {notice}
           <h1 id="arrival-title" className="arrival-title">
             {title}
           </h1>
@@ -320,6 +392,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
                 {GET_APP_LINK.text}
               </a>
             </p>
+            <FriendHelpLink text={FRIEND_HELP_WORDS.footer} />
           </footer>
         </div>
         <div className="arrival-starts">
@@ -352,49 +425,25 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
           </span>
           <span>From {who}</span>
         </p>
+        {notice}
         <h1 id="arrival-title" className="arrival-title">
           {title}
         </h1>
         {subtitle && <p className="arrival-sub">{subtitle}</p>}
-        {article ? (
-          <>
-            <p className="arrival-text">{ARRIVAL_WORDS.article(who)}</p>
-            {articleAddress && (
-              <p>
-                <a className="button button-primary arrival-play" href={articleAddress} target="_blank" rel="noopener noreferrer">
-                  Open the article
-                </a>
-              </p>
-            )}
-            <button type="button" className="button arrival-play" onClick={() => onDone(false)}>
-              Open Spoken Margins
-            </button>
-          </>
-        ) : (
-          <>
-            <p className="arrival-count">{facts.countLine}</p>
-            <p className="arrival-explain">{facts.explanation}</p>
-            {unplayable && <p className="arrival-text">{ARRIVAL_WORDS.noEpisodeAudio(who)}</p>}
-            <button
-              ref={playRef}
-              type="button"
-              className="button button-primary arrival-play"
-              disabled={busy}
-              onClick={() => (unplayable ? keep(read) : play(read))}
-            >
-              <PlayIcon size={22} />
-              {unplayable ? `Keep ${possessive(who)} Margins` : 'Play'}
-            </button>
-            {!unplayable && <p className="arrival-hint">{playHint(who, arrivalResumeAt(read, data.episodes, data.positions))}</p>}
-            {/* A post whose voice can't be found (a paid post, none offered) leaves the friend the article itself (#4421). */}
-            {read.margins.length === 0 && articleAddress && (
-              <p className="arrival-hint">
-                <a href={articleAddress} target="_blank" rel="noopener noreferrer">
-                  Open the article
-                </a>
-              </p>
-            )}
-          </>
+        <p className="arrival-count">{facts.countLine}</p>
+        <p className="arrival-explain">{facts.explanation}</p>
+        <button ref={playRef} type="button" className="button button-primary arrival-play" disabled={busy} onClick={() => play(read)}>
+          <PlayIcon size={22} />
+          Play
+        </button>
+        <p className="arrival-hint">{playHint(who, arrivalResumeAt(read, data.episodes, data.positions))}</p>
+        {/* A post whose voice can't be found (a paid post, none offered) leaves the friend the article itself (#4421). */}
+        {read.margins.length === 0 && articleAddress && (
+          <p className="arrival-hint">
+            <a href={articleAddress} target="_blank" rel="noopener noreferrer" onClick={opened}>
+              Open the article
+            </a>
+          </p>
         )}
         <footer className="arrival-foot">
           <p>{linkFooterText(expires)}</p>
@@ -410,6 +459,7 @@ export function Arrival({ link, onDone }: { link: ParsedLink; onDone: (playing: 
               {GET_APP_LINK.text}
             </a>
           </p>
+          <FriendHelpLink text={FRIEND_HELP_WORDS.footer} />
         </footer>
       </div>
     </div>

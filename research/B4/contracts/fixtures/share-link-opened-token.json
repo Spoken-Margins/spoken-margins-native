@@ -1,0 +1,10 @@
+{
+  "_comment": "Share link opened-token test vector (#5275). token = lowercase hex of HMAC-SHA256(key, message), key = the bytes the link's # part decodes to (base64url, no padding), message = \"spoken-margins opened v1 \" + the 32-hex link id. The server keeps only sha256(token) as the opened mark (markHex). Generated once with Python's hmac; the Go store tests, the Swift tests (ShareLinkOpenedTokenTests) and the web tests (opened-signal.test.ts) all check against it. Not a real link: never reuse this key.",
+  "keyFragment": "jxwqfUueA_ahXH4tkLT4NhzlegstSfaDDhpce50vTmA",
+  "linkID": "5e2d0c4b7a8f41e39c6b2d18f0a7e4c1",
+  "message": "spoken-margins opened v1 5e2d0c4b7a8f41e39c6b2d18f0a7e4c1",
+  "tokenHex": "38bf8588bee41a2f20052ead1ce8810ee504290223f361d59bda94160d94755f",
+  "markHex": "e8fb6c8327e45567106fcfcbcd17d975adaf5b52545f1daeca10e43a9ba35bb7",
+  "otherLinkID": "00000000000000000000000000000000",
+  "otherTokenHex": "5b48ee0c364bb5e5081a7df585b35e1811927f464af61d80b8c2b36c3b2354d1"
+}

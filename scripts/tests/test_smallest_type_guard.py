@@ -44,9 +44,10 @@ PINNED_FOOTNOTE = {
     # pinned in test_share_review_card_words.py (#3839).
     # SharingExperience.swift held four pinned sentences, all in the old InterjectionSharingView, deleted in #3839.
     'Gate1RootView.swift': ['This note helps you choose what to send.'],
-    'ExportScreen.swift': ['Native audio exports include only bounded listening context'],
+    # ExportScreen.swift: the audio-source caption now comes from ExportToggle.sourceTextUnavailableCaption in
+    # SessionKit's ExportOptionWords.swift and shows in ExportContentsOptions.toggleRow at `.footnote` (#4956).
     'SettingsScreen.swift': [
-        'Send transcripts of public episodes to the Spoken Margins server',
+        # "Send transcripts of public episodes…" left with the community-map switches (#5359).
         # The Share Diagnostics footer reads the shared text from SessionKit (#5126).
         '\\(DiagnosticsExportFile.contentsDescription) It stays on this device',
         'A private log of listening time, Margins, shares and finishes',

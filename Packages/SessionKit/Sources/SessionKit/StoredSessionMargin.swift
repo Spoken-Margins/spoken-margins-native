@@ -32,6 +32,12 @@ public enum StoredSessionMargin {
     public struct ItemChoice: Equatable, Sendable {
         public let id: String
         public let title: String
+
+        /// Public so the app's Move to an Item sheet tests can make the choices they offer (#4233).
+        public init(id: String, title: String) {
+            self.id = id
+            self.title = title
+        }
     }
 
     /// The Library items a shortcut offers, the one listened to most recently first and then by title. Items in

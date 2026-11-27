@@ -135,17 +135,18 @@ public enum ShareLinkPlayCheck {
     public static func words(for reason: Reason) -> (heading: String, remedy: String) {
         switch reason {
         case .article:
-            ("Your friend's browser can't play this article yet.",
-             "They'll see your Margins' words. To hear them in place, they need Spoken Margins on iPhone.")
+            // The friend's browser lists the Margins and plays each one after the words before it (#5265).
+            ("Your friend's browser plays your Margins on their own, not in place.",
+             "Each one plays after the words just before it. To hear them in place, they need Spoken Margins on iPhone.")
         case .noEpisodeAudio:
-            ("Your friend's browser can't play this episode.",
+            ("Your friend's browser plays your Margins without the episode.",
              "It has no public audio link. If the show has a public feed, add the episode from there and share again.")
         case .paidPost:
             ("Your friend's browser can't play this paid post.",
              "Only paid subscribers can hear it.")
         case .noPostVoice:
             ("Your friend's browser can't find audio for this post.",
-             "They'll see your Margins' words. To hear it read aloud, they need Spoken Margins on iPhone.")
+             "To hear it read aloud with your Margins, they need Spoken Margins on iPhone.")
         case .audioRefused:
             ("Your friend's browser can't reach this episode's audio.",
              "The podcast's server turned the request away. Try again later, or add the episode again from the show.")

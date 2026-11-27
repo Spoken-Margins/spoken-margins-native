@@ -26,6 +26,8 @@ public enum FollowingFriends {
         public let summary: String
         /// "2 new" when any of their Margins are unheard; nil otherwise. Words carry it, never a colour alone.
         public var newLabel: String? { newCount > 0 ? "\(newCount) new" : nil }
+        /// The tag on the friend's initial, capped like the show row's (#4723).
+        public var newBadgeText: String? { FollowingNewBadge.text(count: newCount) }
 
         public struct Item: Identifiable, Hashable, Sendable {
             public let id: String

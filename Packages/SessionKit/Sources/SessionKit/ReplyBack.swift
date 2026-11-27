@@ -20,6 +20,12 @@ public struct ReplyBackOffer: Equatable, Sendable {
     public var title: String {
         replies.isEmpty ? "Share your Margins with \(friendName)" : "Share replies with \(friendName)"
     }
+    /// The line under the sheet's heading when it shares replies (#4785): the sender's worry was that the friend would
+    /// have to hunt for a third reply among old Margins. Both receivers mark an imported Margin new and can play only
+    /// the new ones, so it says so. Nil for "Share your Margins with", which holds no reply.
+    public var caption: String? {
+        replies.isEmpty ? nil : "These arrive marked new, so \(friendName) can hear just them."
+    }
     /// Every Margin the share sheet lists, in the order they were made.
     public var candidates: [Interjection] { (replies + others).sorted(by: ReplyBackOffer.madeBefore) }
     /// Whether the sheet starts with this Margin included. With linked replies, those and only those (#3221). With none,
@@ -89,6 +95,7 @@ extension SharedMarginReview {
     public struct ReplyContext: Sendable, Equatable {
         public enum Parent: Sendable, Equatable {
             /// The listener's own Margin: the common case, when a friend answers what was sent to them.
+            /// `interjectionId` is the Margin's `Interjection.sessionScopedId` (#5133): a replay's first Margin is "ij-001" too.
             case yours(interjectionId: String, mediaTimeMs: Int?)
             /// Another shared Margin in this Library.
             case shared(marginId: String, label: String, mediaTimeMs: Int?)
@@ -145,7 +152,7 @@ extension SharedMarginReview {
     /// place on this copy. The parent then keeps its own place, exact, and the reply follows it there (still marked
     /// approximate: how far after the parent the friend spoke isn't known).
     public static func playlist(for entries: [Entry], ownMargins: [Interjection]) -> [Step] {
-        let own = Dictionary(ownMargins.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let own = Dictionary(ownMargins.map { ($0.sessionScopedId, $0) }, uniquingKeysWith: { first, _ in first })
         var parentPlaces: [String: Int] = [:]  // where each played parent's step sits, for its later replies
         var steps: [Step] = []
         for entry in entries {
@@ -215,7 +222,7 @@ extension SharedMarginReview {
         let all = layers.flatMap { records[$0.id] ?? [] }
         guard all.contains(where: { !($0.replyLinks ?? []).isEmpty }) else { return [:] }
         let graph = MarginReplyGraph.build(localMargins: ownMargins, layers: layers, importedMargins: all)
-        let own = Dictionary(ownMargins.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let own = Dictionary(ownMargins.map { ($0.sessionScopedId, $0) }, uniquingKeysWith: { first, _ in first })
         let layerById = Dictionary(layers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let importedById = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 

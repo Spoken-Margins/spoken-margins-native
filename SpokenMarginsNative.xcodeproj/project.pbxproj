@@ -1029,7 +1029,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 39;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsGate2Widget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1054,7 +1054,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsApp/SpokenMarginsApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 39;
 				INFOPLIST_FILE = App/SpokenMarginsApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Spoken Margins";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
@@ -1066,7 +1066,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native;
 				REMOVE_STATIC_EXECUTABLES_FROM_EMBEDDED_BUNDLES = YES;
 				SDKROOT = iphoneos;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION))";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION)) $(SM_LINK_REPLIES_CONDITIONS_$(SM_LINK_REPLIES))";
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -1077,7 +1077,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 39;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsShareExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1106,7 +1106,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native.tests;
 				SDKROOT = iphoneos;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION))";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION)) $(SM_LINK_REPLIES_CONDITIONS_$(SM_LINK_REPLIES))";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SpokenMarginsApp.app/SpokenMarginsApp";
 			};
@@ -1117,7 +1117,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 39;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsGate2Widget/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1142,7 +1142,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsApp/SpokenMarginsApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 39;
 				INFOPLIST_FILE = App/SpokenMarginsApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Spoken Margins";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
@@ -1154,7 +1154,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native;
 				REMOVE_STATIC_EXECUTABLES_FROM_EMBEDDED_BUNDLES = YES;
 				SDKROOT = iphoneos;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION))";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION)) $(SM_LINK_REPLIES_CONDITIONS_$(SM_LINK_REPLIES))";
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -1199,7 +1199,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 39;
 				INFOPLIST_FILE = App/SpokenMarginsWatchApp/Info.plist;
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native.watchkitapp;
@@ -1268,6 +1268,9 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SM_LINK_REPLIES = "$(SM_SHARE_LINK_CREATION)";
+				SM_LINK_REPLIES_CONDITIONS_NO = "";
+				SM_LINK_REPLIES_CONDITIONS_YES = SM_LINK_REPLIES;
 				SM_PHONE_BUILD = YES;
 				SM_PHONE_BUILD_CONDITIONS_NO = "";
 				SM_PHONE_BUILD_CONDITIONS_YES = SM_LOCKED_MARGIN_SPIKE;
@@ -1286,7 +1289,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 39;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsShareExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1307,7 +1310,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 39;
 				INFOPLIST_FILE = App/SpokenMarginsWatchApp/Info.plist;
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native.watchkitapp;
@@ -1369,6 +1372,9 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SM_LINK_REPLIES = "$(SM_SHARE_LINK_CREATION)";
+				SM_LINK_REPLIES_CONDITIONS_NO = "";
+				SM_LINK_REPLIES_CONDITIONS_YES = SM_LINK_REPLIES;
 				SM_PHONE_BUILD = NO;
 				SM_PHONE_BUILD_CONDITIONS_NO = "";
 				SM_PHONE_BUILD_CONDITIONS_YES = SM_LOCKED_MARGIN_SPIKE;
@@ -1395,7 +1401,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native.tests;
 				SDKROOT = iphoneos;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION))";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(SM_PHONE_BUILD_CONDITIONS_$(SM_PHONE_BUILD)) $(SM_SHARE_LINK_CREATION_CONDITIONS_$(SM_SHARE_LINK_CREATION)) $(SM_LINK_REPLIES_CONDITIONS_$(SM_LINK_REPLIES))";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SpokenMarginsApp.app/SpokenMarginsApp";
 			};
@@ -1406,7 +1412,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 39;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsBrowserTextExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1427,7 +1433,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 39;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsBrowserTextExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (

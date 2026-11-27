@@ -31,6 +31,12 @@ public struct SharedMarginReplyMemory: Equatable, Sendable {
         heard = current
     }
 
+    /// The window ends now, sounding or not: the source jumped away from the friend's Margin (a review's return, the next
+    /// lead-in, a catch-up place given back), or the listener's own voice started, so a new Margin doesn't answer it (#5238).
+    public mutating func forget() {
+        heard = nil
+    }
+
     /// The Margin a Margin started at `now` on `itemId` answers, if any.
     public func reply(forItem itemId: String, at now: Date) -> MarginReplyDraft? {
         guard let heard, heard.itemId == itemId else { return nil }

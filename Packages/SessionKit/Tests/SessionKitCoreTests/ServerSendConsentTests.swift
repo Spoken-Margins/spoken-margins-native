@@ -37,6 +37,19 @@ final class ServerSendConsentTests: XCTestCase {
         XCTAssertFalse(ServerSendConsent.hasConsented(to: .shareLinks, in: defaults))
     }
 
+    /// Version 2's alert never said a friend's open leaves a mark on the server, so whoever agreed to it reads the
+    /// alert once more (#5275).
+    func testAnAgreementBeforeOpenedMarksDoesNotCoverThem() {
+        XCTAssertEqual(ServerSendConsent.disclosureVersion, 3)
+        let defaults = freshDefaults()
+        defaults.set(2, forKey: "serverSendConsent.share-links.version")
+        XCTAssertFalse(ServerSendConsent.hasConsented(to: .shareLinks, in: defaults))
+        let text = ShareLinkConsentCopy.message
+        for phrase in ["their browser or app tells our server the link was opened", "your app shows \"Opened\"", "Nothing else is kept, and it is deleted with the link", "Either of you can turn this off in Settings"] {
+            XCTAssertTrue(text.contains(phrase), "the consent text should say: \(phrase)")
+        }
+    }
+
     func testAnAgreementToEarlierWordsNoLongerCounts() {
         let defaults = freshDefaults()
         let current = ServerSendConsent.disclosureVersion

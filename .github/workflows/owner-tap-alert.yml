@@ -21,6 +21,11 @@
 #   `workflow files parse` check to have run since the base last changed those, so such a push can make an open PR
 #   stale. The sweep strips `needs-owner-tap` from it and, if it was already alerted, warns once.
 #
+# Deploy approvals (#5255): on the schedule (and a manual run with no PR) the same job also runs
+# scripts/deploy_wait_alert.py, which @mentions the owner on a standing issue when a deploy waits for his environment
+# approval (deploy-web sat `waiting` all of 2026-11-23 with no alert). Read-only on Actions; it needs actions: read
+# and issues: write, both granted below, and uses github.token so the comment comes from github-actions[bot].
+#
 # The script is taken from the PR's base with no credentials kept, and reads PRs only through the API; a base
 # without the script skips quietly. A same-repo PR that edits this file runs its own copy on pull_request; only
 # collaborators can open those (forks are skipped below). One run at a time per PR, and the script reads the
@@ -96,6 +101,7 @@ jobs:
             scripts/owner_review_tap.py
             scripts/comment_trust.py
             scripts/trunk.py
+            scripts/deploy_wait_alert.py
           sparse-checkout-cone-mode: false
       - name: Alert the owner about PRs ready for his merge tap
         env:
@@ -110,3 +116,15 @@ jobs:
             exit 0
           fi
           python3 scripts/owner_tap_alert.py ${ONLY_PR:+--pr "$ONLY_PR"} ${CLEAR:+--clear-label "$CLEAR"}
+      - name: Alert the owner about deploys waiting for his approval
+        # After the tap step even when it failed; never on a PR or label event (the schedule and a manual sweep only).
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.pr)) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ ! -f scripts/deploy_wait_alert.py ]; then
+            echo "This checkout has no scripts/deploy_wait_alert.py yet; nothing to check."
+            exit 0
+          fi
+          python3 scripts/deploy_wait_alert.py

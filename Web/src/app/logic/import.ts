@@ -154,7 +154,9 @@ export function placeImport(
       : own;
   } else {
     const shared = sharedShowFor(read.sender, now);
-    if (!shows.some((s) => s.id === shared.id)) show = shared;
+    // A holder the listener unfollowed counts as missing (#4426): the fresh one is followed through `follow()`, which
+    // picks up the stored record, so the sender's row comes back on Following.
+    if (!shows.some((s) => s.id === shared.id && !Object.hasOwn(s, 'unfollowedAt'))) show = shared;
     const { showTitle, publisher: _publisher, ...fields } = read.episode;
     const realShow = showTitle?.trim();
     episode = {
@@ -246,8 +248,8 @@ export function placeByPercent(
   return placed.filter((m) => !existing.some((e) => sameMargin(e, m, episode.title))).sort((a, b) => a.atSeconds - b.atSeconds);
 }
 
-/** What the listener is told once the Margins are in. */
-export function importSummary(placed: PlacedImport, sender: string | undefined): string {
+/** What the listener is told once the Margins are in. `noun` names what the unplaced Margins sit on ("article", "PDF"; #5265). */
+export function importSummary(placed: PlacedImport, sender: string | undefined, noun: string = 'article'): string {
   const count = placed.margins.length;
   const who = sender?.trim() ? ` from ${sender.trim()}` : '';
   const what = count === 1 ? '1 Margin' : `${count} Margins`;
@@ -255,7 +257,7 @@ export function importSummary(placed: PlacedImport, sender: string | undefined):
   // looks the post's voice up when the friend taps Play (#4421).
   const unopened = placed.skipped + placed.pending.length;
   const skipped = unopened
-    ? ` ${unopened === 1 ? '1 Margin is' : `${unopened} Margins are`} on an article’s text, which the web app can’t open yet.`
+    ? ` ${unopened === 1 ? '1 Margin is' : `${unopened} Margins are`} on the ${noun}’s words. Open the file in Spoken Margins on iPhone to hear them in place.`
     : '';
   const already = placed.duplicates
     ? ` ${placed.duplicates === 1 ? '1 Margin was' : `${placed.duplicates} Margins were`} already here.`

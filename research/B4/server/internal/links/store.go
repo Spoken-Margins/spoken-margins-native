@@ -3,6 +3,7 @@ package links
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,7 +16,9 @@ import (
 const (
 	MaxPacketBytes  = 20 << 20
 	MaxPreviewBytes = 16 << 10
-	Lifetime        = 30 * 24 * time.Hour
+	// MaxReplyBytes bounds a link's sealed reply part (#4675): a box id, a post proof and a sealing key.
+	MaxReplyBytes = 1 << 10
+	Lifetime      = 30 * 24 * time.Hour
 )
 
 var (
@@ -30,10 +33,14 @@ var (
 // that name so no readable copy outlives its link.
 const previewFile = "preview"
 
+// replyFile holds a link's sealed reply part (#4675, docs/design/reply-mailbox.md), when the sender's phone
+// made a reply box with the link. It is content: takedown and the sweep delete it with the packet.
+const replyFile = "reply"
+
 // A parked link (ParkLink) can also hold reported full links, key included, in the same slots a hold uses.
 // They are content: takedown and the sweep delete them with the packet, so no key outlives its link.
 var contentFiles = func() []string {
-	names := []string{"packet", previewFile, "preview.json"}
+	names := []string{"packet", previewFile, "preview.json", replyFile}
 	for n := 1; n <= MaxReportedLinks; n++ {
 		names = append(names, reportedLinkName(n))
 	}
@@ -53,7 +60,16 @@ type metadata struct {
 	// Disabled means the link is no longer served but its content stays until ExpiresAt, so a hold that
 	// could not be made (or was refused at a cap) can still be made by hand. Disable sets it.
 	Disabled bool `json:"disabled,omitempty"`
+	// OpenedMarks says a friend opened the link (#5275): the SHA-256 of an opened-token only someone holding
+	// the whole link can make, never the token itself, and nothing about who, when, from where or how often.
+	// A server build from before #5275 ignores the field. Takedown, Disable and the sweep drop it.
+	OpenedMarks []string `json:"openedMarks,omitempty"`
 }
+
+// MaxOpenedMarks caps the marks one link keeps. One real open is one mark (everyone holding the link makes
+// the same token), so a full link means someone holding only the id posted junk: they can hide an open, but
+// never fake one, because a random value never matches the sender's token.
+const MaxOpenedMarks = 8
 
 func OpenStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -205,6 +221,68 @@ func (s *Store) PacketUntil(id string, now time.Time) (*os.File, time.Time, erro
 	return f, expires, err
 }
 
+// PutReply stores a link's sealed reply part beside its packet (#4675). The link must be live and the part
+// sealed as part 4; it is stored as it came, and a second call for the same link is refused, so a link's
+// reply part never changes once made.
+func (s *Store) PutReply(id string, part []byte, now time.Time) error {
+	if len(part) > MaxReplyBytes {
+		return ErrTooLarge
+	}
+	if !Sealed(part, PartReply) {
+		return ErrUnsealed
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.live(id, now); err != nil {
+		return err
+	}
+	dir := filepath.Join(s.dir, id)
+	if _, err := os.Stat(filepath.Join(dir, "packet")); err != nil {
+		return ErrGone
+	}
+	f, err := os.CreateTemp(dir, ".reply-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	_, err = f.Write(part)
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.Chmod(f.Name(), 0o600); err != nil {
+		return err
+	}
+	// Link, not rename, so an existing reply part is never replaced.
+	if err := os.Link(f.Name(), filepath.Join(dir, replyFile)); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return errors.New("links: reply part already stored")
+		}
+		return err
+	}
+	return nil
+}
+
+// Reply returns the link's sealed reply part unchanged: ErrNotFound when the link has none, and the same
+// answers as Packet for a link that has ended or was taken down.
+func (s *Store) Reply(id string, now time.Time) ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if err := s.live(id, now); err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(filepath.Join(s.dir, id, "packet")); errors.Is(err, os.ErrNotExist) {
+		return nil, ErrGone
+	}
+	data, err := os.ReadFile(filepath.Join(s.dir, id, replyFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotFound
+	}
+	return data, err
+}
+
 func (s *Store) deleteContent(id string) error {
 	for _, name := range contentFiles {
 		if err := os.Remove(filepath.Join(s.dir, id, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -234,7 +312,13 @@ func (s *Store) Sweep(now time.Time) (int, error) {
 			}
 			continue
 		}
-		if err := s.live(e.Name(), now); errors.Is(err, ErrGone) {
+		if err := s.live(e.Name(), now); err == nil {
+			// Rewriting every live link's meta.json each day leaves the file system's change time saying
+			// only which day the sweep ran, so it can't date an opened mark to the hour (#5275).
+			// A link whose file can't be rewritten keeps its old times; it must not stop the sweep deleting others.
+			_ = s.rewriteMetaLocked(e.Name(), false)
+			continue
+		} else if errors.Is(err, ErrGone) {
 			if s.parked(e.Name(), now) {
 				continue
 			}
@@ -247,6 +331,9 @@ func (s *Store) Sweep(now time.Time) (int, error) {
 			if err := s.deleteContent(e.Name()); err != nil {
 				return n, err
 			}
+			// After the content is gone, so a mark that can't be dropped never keeps content past its life; the
+			// next sweep tries again.
+			_ = s.rewriteMetaLocked(e.Name(), true)
 			if stored {
 				n++
 			}
@@ -294,6 +381,7 @@ func (s *Store) Disable(id string, now time.Time) error {
 		return nil
 	}
 	meta.Disabled = true
+	meta.OpenedMarks = nil
 	if keep := now.UTC().Add(Lifetime); keep.After(meta.ExpiresAt) {
 		meta.ExpiresAt = keep
 	}
@@ -319,6 +407,128 @@ func (s *Store) tombstoneLocked(id string) error {
 		return err
 	}
 	return s.writeMetaLocked(dir, metadata{ExpiresAt: time.Unix(0, 0).UTC()})
+}
+
+// MarkOpened records that someone holding the whole link opened it (#5275): it keeps the SHA-256 of token,
+// once, and only while the link is served. It reports nothing back, so the route can answer the same to
+// every caller. The file times are set back to the link's creation, so the write is not dated; the change
+// time can't be set back, and the daily sweep blurs it to the day.
+func (s *Store) MarkOpened(id, token string, now time.Time) error {
+	if !ValidOpenedToken(token) {
+		return ErrNotFound
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	meta, err := s.readMeta(id)
+	if err != nil {
+		return err
+	}
+	if meta.Disabled || !now.Before(meta.ExpiresAt) || !s.hasPreview(id) {
+		return ErrGone
+	}
+	mark := openedMark(token)
+	for _, m := range meta.OpenedMarks {
+		if m == mark {
+			return nil
+		}
+	}
+	if len(meta.OpenedMarks) >= MaxOpenedMarks {
+		return nil
+	}
+	meta.OpenedMarks = append(meta.OpenedMarks, mark)
+	dir := filepath.Join(s.dir, id)
+	if err := s.writeMetaLocked(dir, meta); err != nil {
+		return err
+	}
+	return backdate(dir, meta)
+}
+
+// IsOpened says whether token's mark is on a served link. A disabled, expired or unknown link is never opened.
+func (s *Store) IsOpened(id, token string, now time.Time) bool {
+	if !ValidOpenedToken(token) {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	meta, err := s.readMeta(id)
+	if err != nil || meta.Disabled || !now.Before(meta.ExpiresAt) || !s.hasPreview(id) {
+		return false
+	}
+	mark := openedMark(token)
+	for _, m := range meta.OpenedMarks {
+		if m == mark {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidOpenedToken is the opened-token's shape: 64 lowercase hex characters, an HMAC-SHA256 the clients
+// make from the link's key and id.
+func ValidOpenedToken(token string) bool {
+	return len(token) == 64 && ValidID(token[:32]) && ValidID(token[32:])
+}
+
+// hasPreview says the link's content is still there. A takedown from the CLI deletes it after writing the tombstone,
+// so a mark written between the two can't make a taken-down link read opened (Live checks the same).
+func (s *Store) hasPreview(id string) bool {
+	_, err := os.Stat(filepath.Join(s.dir, id, previewFile))
+	return err == nil
+}
+
+func openedMark(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Store) readMeta(id string) (metadata, error) {
+	if !ValidID(id) {
+		return metadata{}, ErrNotFound
+	}
+	data, err := os.ReadFile(filepath.Join(s.dir, id, "meta.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return metadata{}, ErrNotFound
+	}
+	if err != nil {
+		return metadata{}, err
+	}
+	var meta metadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return metadata{}, err
+	}
+	return meta, nil
+}
+
+// rewriteMetaLocked writes a link's meta.json again for the sweep. A live link's is written unchanged and
+// backdated, so every live link's change time is the sweep's; dropMarks takes the opened marks off a link
+// that stopped being served, and writes nothing when it has none.
+func (s *Store) rewriteMetaLocked(id string, dropMarks bool) error {
+	meta, err := s.readMeta(id)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(s.dir, id)
+	if dropMarks {
+		if len(meta.OpenedMarks) == 0 {
+			return nil
+		}
+		meta.OpenedMarks = nil
+		return s.writeMetaLocked(dir, meta)
+	}
+	if err := s.writeMetaLocked(dir, meta); err != nil {
+		return err
+	}
+	return backdate(dir, meta)
+}
+
+// backdate sets a served link's meta.json and folder times to when it was made, which its expiry already
+// says (Lifetime is fixed), so a later write tells nobody when it happened.
+func backdate(dir string, meta metadata) error {
+	made := meta.ExpiresAt.Add(-Lifetime)
+	if err := os.Chtimes(filepath.Join(dir, "meta.json"), made, made); err != nil {
+		return err
+	}
+	return os.Chtimes(dir, made, made)
 }
 
 // writeMetaLocked replaces meta.json atomically.

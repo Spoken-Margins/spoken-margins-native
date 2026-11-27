@@ -78,6 +78,15 @@ jobs:
             echo "::error::$sha has no scripts/branch_t3.py. Merge main into the branch once, then dispatch again."
             exit 1
           fi
+      # The app targets iOS 26; the hosted image ships iOS 27 only. Downloads iOS 26.5 (about 2.5 min, 8.5 GB) unless the
+      # image has an iOS 26 runtime, tries 3 times, and fails the run rather than test on iOS 27 (#5221).
+      - name: Install the iOS 26 simulator runtime
+        timeout-minutes: 40
+        # The script comes from the workflow's own commit, so an older commit under test (a bisect probe, a branch that
+        # predates #5221) still gets the runtime.
+        run: |
+          git show "$GITHUB_SHA:scripts/ci-ios-runtime.sh" > "$RUNNER_TEMP/ci-ios-runtime.sh"
+          bash "$RUNNER_TEMP/ci-ios-runtime.sh" branch-t3
       - name: Lane folders, Xcode and the iOS runtime
         run: |
           {
@@ -91,8 +100,10 @@ jobs:
           major=$(echo "$runtimes" | /usr/bin/python3 -c 'import json,sys
           ok=[r["version"].split(".")[0] for r in json.load(sys.stdin)["runtimes"] if r.get("isAvailable") and r.get("platform")=="iOS"]
           print("26" if "26" in ok else (max(ok, key=int) if ok else "26"))')
+          # The step before installed it; a run never falls back to iOS 27 silently (#5221).
           if [ "$major" != 26 ]; then
-            echo "::warning title=branch-t3 iOS::No iOS 26 simulator runtime on this image; the run uses iOS $major."
+            echo "::error title=branch-t3 iOS::No iOS 26 simulator runtime after the install step; the run would test on iOS $major."
+            exit 1
           fi
           echo "SM_LANE_IOS_MAJOR=$major" >> "$GITHUB_ENV"
       - name: List LFS objects
@@ -199,7 +210,9 @@ jobs:
           SHA: ${{ needs.test.outputs.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          if ! printf '%s' "$PR" | grep -Eq '^[0-9]*$'; then echo "::error::pr must be a number"; exit 1; fi
+          # Empty is allowed (no comment, the job summary still has the result). Not `printf | grep`: grep sees no
+          # line in an empty string and refused every run without a pr (run 45250843509, 2026-11-23).
+          case "$PR" in *[!0-9]*) echo "::error::pr must be a number"; exit 1 ;; esac
           # No result (the job stopped early) leaves an empty file, which the report reads as a runner fault.
           printf '%s' "$RESULT_B64" | base64 -d > "$RUNNER_TEMP/branch-t3-result.json" || : > "$RUNNER_TEMP/branch-t3-result.json"
           python3 scripts/branch_t3.py report --result "$RUNNER_TEMP/branch-t3-result.json" \

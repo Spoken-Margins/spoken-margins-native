@@ -17,6 +17,11 @@ Since #4937: every token found is tried in order when GitHub answers 401 or 403,
 `actions: write` falls back to the Dial's; a failure logs GitHub's status and message with what the token needs; a run
 still queued or running is not dispatched over (it would only queue behind it); a dropped connection is a logged
 failure, not a crash that skips the remaining workflows.
+
+Since #5154: a workflow whose schedule is fixed times of day (SLOTS: `phone-build` at 12:00 and 21:30 UTC, `main-t3`'s
+two pre-phone-build ticks) is also dispatched when its newest slot is more than SLOT_GRACE past with no run since. An
+interval alone can't see a missed slot of a twice-a-day job: on 2026-11-23 the 12:00 phone build never ran and the 21:30
+one started 1h48m late. Both workflows skip a commit they already handled, so a dispatch that finds nothing new is cheap.
 """
 from __future__ import annotations
 
@@ -48,6 +53,24 @@ WORKFLOWS = {
     'main-t3.yml': 180,
     'open-cloud-prs.yml': 20,  # a cloud session's own dispatch is the start (#4915); this catches a failed one
 }
+
+
+# workflow file -> its fixed daily slots (UTC "HH:MM"), for jobs that must run near a time of day, not merely every so
+# often. Keep in step with the `schedule:` crons in each file (scripts/tests/test_scheduled_workflows.py holds them to
+# it). main-t3's every-3-hours ticks are the interval above; only its two fixed ticks before the phone builds are here.
+SLOTS = {
+    'phone-build.yml': ('12:00', '21:30'),
+    'main-t3.yml': ('13:30', '22:30'),
+}
+# A slot is overdue this long after its time with no run since (#5154: "more than an hour overdue"). A run created up
+# to SLOT_EARLY before the slot covers it: a hand-started or interval run just before the slot built the same commit.
+SLOT_GRACE = dt.timedelta(minutes=60)
+SLOT_EARLY = dt.timedelta(minutes=30)
+
+
+def watched() -> list[str]:
+    """Every workflow the backstop looks at: the interval ones, then the slot-only ones, each once."""
+    return list(dict.fromkeys([*WORKFLOWS, *SLOTS]))
 
 
 # Events whose runs count for a workflow, where not every event does the whole job. The label bridge's `pull_request_target`
@@ -139,14 +162,59 @@ def decide(now: dt.datetime, interval_minutes: int, run: dict | None) -> tuple[b
     return True, f"last run {minutes}m ago ({run.get('event')}), past {interval_minutes}m"
 
 
-def tick(token, now: dt.datetime, out=sys.stdout, dry_run: bool = False, get=gh, workflows=None) -> int:
+def due_slot(now: dt.datetime, slots, grace: dt.timedelta = SLOT_GRACE) -> dt.datetime:
+    """The newest slot time whose grace has passed by `now`: the slot a run should exist for by now."""
+    edge = now - grace
+    times = []
+    for day in (edge.date(), edge.date() - dt.timedelta(days=1)):
+        for slot in slots:
+            hour, minute = (int(part) for part in slot.split(':'))
+            times.append(dt.datetime(day.year, day.month, day.day, hour, minute, tzinfo=dt.timezone.utc))
+    return max(t for t in times if t <= edge)
+
+
+def missed_slot(now: dt.datetime, slots, run: dict | None, grace: dt.timedelta = SLOT_GRACE) -> dt.datetime | None:
+    """The due slot (see due_slot) when no run was created from SLOT_EARLY before it onwards, else None. Only the newest
+    due slot is checked: one dispatch covers every earlier miss, because each run handles main's head."""
+    slot = due_slot(now, slots, grace)
+    if run is not None and parse_time(run['created_at']) >= slot - SLOT_EARLY:
+        return None
+    return slot
+
+
+def decide_slots(now: dt.datetime, slots, run: dict | None) -> tuple[bool, str]:
+    """(dispatch?, why) for a fixed-slot workflow. A run still queued or running is never dispatched over."""
+    if run is not None and run.get('status') in UNFINISHED:
+        return False, f"last run ({run.get('event')}) is still {run['status']}"
+    slot = missed_slot(now, slots, run)
+    last = 'no worked run yet' if run is None else f"last run {run['created_at']} ({run.get('event')})"
+    if slot is None:
+        return False, f'{last} covers the {due_slot(now, slots):%H:%M} slot'
+    late = int((now - slot).total_seconds() // 60)
+    return True, f'{last}; the {slot:%H:%M} slot is {late}m past with no run'
+
+
+def decide_both(now: dt.datetime, interval: int | None, slots, run: dict | None) -> tuple[bool, str]:
+    """An interval workflow, a slot workflow, or both (main-t3): dispatch when either says so, once."""
+    reasons = []
+    for go, why in ([decide(now, interval, run)] if interval else []) + ([decide_slots(now, slots, run)] if slots else []):
+        if go:
+            return True, why
+        reasons.append(why)
+    return False, '; '.join(reasons)
+
+
+def tick(token, now: dt.datetime, out=sys.stdout, dry_run: bool = False, get=gh, workflows=None, slots=None) -> int:
     """Look at each workflow once and dispatch the ones that are overdue. Returns how many lookups or dispatches failed.
-    `token` is one token or a list tried in order (see `call`)."""
+    `token` is one token or a list tried in order (see `call`). With `workflows` given and no `slots`, slots are off."""
     failures = 0
     stamp = now.strftime('%Y-%m-%dT%H:%M:%SZ')
-    for workflow, interval in (workflows or WORKFLOWS).items():
+    if workflows is None and slots is None:
+        workflows, slots = WORKFLOWS, SLOTS
+    workflows, slots = workflows or {}, slots or {}
+    for workflow in dict.fromkeys([*workflows, *slots]):
         try:
-            go, why = decide(now, interval, newest_run(workflow, token, get))
+            go, why = decide_both(now, workflows.get(workflow), slots.get(workflow), newest_run(workflow, token, get))
             if not go:
                 print(f'{stamp} {workflow} skipped: {why}', file=out)
             elif dry_run:

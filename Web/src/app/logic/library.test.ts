@@ -290,3 +290,28 @@ test('Following and Margins searches keep their counts and order on a long sourc
   assert.ok(matches.every((f) => !f.byTitle && f.margins.length === 10));
   assert.deepEqual(matches.map((f) => f.group.episodeId), groups.map((g) => g.episodeId).filter((id) => matches.some((f) => f.group.episodeId === id)));
 });
+
+test('#4426: followingRows with `listed` counts, previews and plays only listed episodes, and counts the rest', () => {
+  const hidden = new Set(['b3', 'q1']);
+  const rows = followingRows(
+    [show('quiet', 'Quiet'), show('busy', 'Busy')],
+    [ep('q1', 'quiet', '2026-09-01'), ep('b1', 'busy', '2026-10-01'), ep('b2', 'busy', '2026-10-02'), ep('b3', 'busy', '2026-10-03')],
+    [pos('b1', 10)],
+    (e) => !hidden.has(e.id),
+  );
+  assert.deepEqual(rows.map((r) => [r.show.id, r.newest?.id, r.newCount, r.dismissedCount, r.episodes.map((e) => e.id)]), [
+    ['busy', 'b2', 1, 1, ['b2', 'b1']],
+    ['quiet', undefined, 0, 1, []],
+  ]);
+  // No predicate: as before, with nothing dismissed.
+  assert.ok(followingRows([show('busy', 'Busy')], [ep('b1', 'busy')], []).every((r) => r.dismissedCount === 0));
+});
+
+test('#4426: a feed at the 500-episode cap with 499 dismissed gives the right row', () => {
+  const episodes = Array.from({ length: 500 }, (_, i) => ep(`e${i}`, 'big', new Date(Date.UTC(2026, 0, 1) + i * 86_400_000).toISOString()));
+  const keep = 'e123';
+  const [row] = followingRows([show('big', 'Big')], episodes, [], (e) => e.id === keep);
+  assert.equal(row?.newest?.id, keep);
+  assert.equal(row?.newCount, 1);
+  assert.equal(row?.dismissedCount, 499);
+});

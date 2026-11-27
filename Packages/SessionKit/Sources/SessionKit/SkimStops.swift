@@ -18,12 +18,16 @@ public struct SkimStop: Sendable, Equatable {
     /// plays on, with no lead-in and no voice, as it does for a chapter (#4934). Its `kind` stays `.margin`, so it still
     /// beats the scene summary in `SkimStopRouting.choose`.
     public let isSilent: Bool
+    /// The listener's own written Margin (#4938): a silent stop too, with no lead-in and no voice. A landing on it gathers the
+    /// own written stops just after it (`SilentMarginLanding.init(own:in:margins:itemId:)`), so a burst of notes takes one press.
+    public let isOwnWritten: Bool
 
-    public init(kind: Kind, id: String, position: Int, isSilent: Bool = false) {
+    public init(kind: Kind, id: String, position: Int, isSilent: Bool = false, isOwnWritten: Bool = false) {
         self.kind = kind
         self.id = id
         self.position = max(0, position)
         self.isSilent = isSilent
+        self.isOwnWritten = isOwnWritten
     }
 
     public static func chapter(_ chapter: Chapter) -> SkimStop {
@@ -56,6 +60,14 @@ public struct SkimStop: Sendable, Equatable {
         }
         guard let position, position >= 0 else { return nil }
         return SkimStop(kind: .margin, id: margin.id, position: position)
+    }
+
+    /// The listener's own written Margin, at the same place `margin(_:unit:)` gives it, as a silent stop, or nil with none (#4938).
+    /// Whether the Margin should be a stop at all is `SilentMarginWords.ownWrittenGoesTo`, which `SkimStopRouting.stops` asks.
+    public static func silentMargin(_ margin: Interjection, unit: SkimStops.PositionUnit) -> SkimStop? {
+        Self.margin(margin, unit: unit).map {
+            SkimStop(kind: .margin, id: $0.id, position: $0.position, isSilent: true, isOwnWritten: true)
+        }
     }
 
     /// A friend's Margin that is never spoken, at the same place `margin(_:unit:)` gives it, or nil with none (#4934).
