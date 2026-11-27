@@ -2,6 +2,7 @@ import Foundation
 import SessionKit
 import SessionKitAudio
 import SessionKitFeeds
+import SessionKitPersistence
 
 /// The question Continue asks before it starts an item that has new shared Margins (#474): the item, and the Margins
 /// the question is about. Read once when Continue is tapped, so the dialog's message and its two answers don't read
@@ -49,7 +50,12 @@ extension Gate1AppModel {
         }
         // Only the Margins the item's review can place on its clock (#5409), so the intro, "Hear the replies" and catch-up
         // never offer what the review would then refuse: an article playing a recording has no time for a text place.
-        let placeable = expectedReviewClock(itemId: itemId).map { SharedMarginReview.placeable(entries, on: $0) } ?? entries
+        var clock = expectedReviewClock(itemId: itemId)
+        // An article stored as text can still start on media: its publisher's recording, adopted only when it starts,
+        // or prepared narration attached to it. Neither shows on the Library row, so the store says, read only when a
+        // Margin placed by characters is at stake (audit on #5422).
+        if clock == nil, entries.contains(where: \.isPlacedInText), startsOnMedia(itemId: itemId) { clock = .media }
+        let placeable = clock.map { SharedMarginReview.placeable(entries, on: $0) } ?? entries
         return placeable.filter { WrittenMarginReadings.audio(for: $0.interjection, in: $0.layer, voiceFile: resolvedApplicationSupportAssetURL(for:)).file != nil }
     }
 
@@ -57,12 +63,31 @@ extension Gate1AppModel {
     /// is that item, else media for an item known to play audio. Nil when unknown, and then nothing is left out: a podcast
     /// has no text-placed Margins, and a text item whose narration is prepared only when it starts is caught by the
     /// review's own check once the session has begun.
+    ///
+    /// The Library row counts too: a row with recorded audio of its own (`hasNativeAudio`, `mediaDurationMs`) starts on
+    /// media whatever its `mediaType` says (audit on #5422). What the row can't say, `startsOnMedia` reads.
     func expectedReviewClock(itemId: String) -> MarginMomentClock? {
         if snapshot.itemId == itemId, snapshot.targetType != nil { return reviewSourceClock }
         if selectedItem.id == itemId, selectedItem.isNativeAudio || selectedItem.mediaDurationMs != nil { return .media }
-        let mediaTypes: Set<String> = [TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue]
-        if let row = libraryItems.first(where: { $0.id == itemId }), mediaTypes.contains(row.mediaType) { return .media }
+        if let row = libraryItems.first(where: { $0.id == itemId }),
+           Self.reviewMediaTypes.contains(row.mediaType) || row.hasNativeAudio || row.mediaDurationMs != nil {
+            return .media
+        }
         return nil
+    }
+
+    private static let reviewMediaTypes: Set<String> = [TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue]
+
+    /// Whether a new session on `itemId` starts on media, read as `SessionEngine.playbackTargetType` decides it (a media
+    /// type, or media with a file or stream, such as finished prepared narration), or because the article plays its
+    /// publisher's recording (`playsPublisherAudio`, the check every play start makes). Store reads: the caller asks only
+    /// when a friend's Margin placed by characters would be offered (#5409, audit on #5422).
+    func startsOnMedia(itemId: String) -> Bool {
+        guard let store, let item = try? store.loadItemSummary(id: itemId) else { return false }
+        if Self.reviewMediaTypes.contains(item.mediaType) || item.media?.url != nil { return true }
+        return PublisherAudioPlayback.playsRecording( // `playsPublisherAudio`, without reading the summary twice
+            summary: item, record: try? store.loadPublisherAudio(itemId: itemId),
+            choice: try? store.loadPublisherAudioChoice(itemId: itemId))
     }
 
     /// The listener's own Margins on `itemId`, read from what the app already holds: the open item's and the rows the
@@ -208,6 +233,9 @@ extension Gate1AppModel {
             noteCatchUp(.play) // an ordinary review puts an earlier caught-up card away (#4785)
             if snapshot.itemId != itemId || !hasActiveSession { startItem(id: itemId) }
         }
+        // The item didn't start (offline, refused): its start already said why, and the loaded item's clock says nothing
+        // about this one's Margins (audit on #5422).
+        guard snapshot.itemId == itemId else { return }
         // The clock is the started session's: an article read aloud counts on narration time, where its Margins are placed
         // by characters (#5409). Only the Margins placed on that clock can play in this review.
         let clock = reviewSourceClock
