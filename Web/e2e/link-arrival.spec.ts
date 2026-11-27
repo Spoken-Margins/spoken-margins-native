@@ -62,9 +62,10 @@ function networkLog(page: Page): Request[] {
 
 function assertNothingPlainLeft(log: Request[]): void {
   const stub = log.filter((r) => r.url().startsWith(STUB));
-  // The server is asked for the sealed packet, by id, with a plain GET; the app's own files are the rest.
+  // The server is asked for the sealed packet and the sealed preview (for an introduction mark, #4784), by id, with a
+  // plain GET; the app's own files are the rest.
   const asked = stub.filter((r) => /\/l\/[^/]+\/(packet|preview)$/.test(new URL(r.url()).pathname));
-  expect(asked.map((r) => new URL(r.url()).pathname)).toEqual(['/l/vectorvoice01/packet']);
+  expect(asked.map((r) => new URL(r.url()).pathname).sort()).toEqual(['/l/vectorvoice01/packet', '/l/vectorvoice01/preview']);
   for (const request of log) {
     const where = `${request.method()} ${request.url()}`;
     expect(request.method(), where).toBe('GET');

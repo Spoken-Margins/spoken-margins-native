@@ -14,6 +14,7 @@ import { addedRow, inLibrary, isMigrated, membershipRow, prepareLibrary, removed
 import { mergeRefresh } from './logic/refresh.ts';
 import { keepingSharedAs, withSharedAs, type WrittenFacts } from './logic/shared-as.ts';
 import { keepingSentThrough, withSentThrough } from './logic/reply-send.ts';
+import { keepingFromIntro, withFromIntro } from './logic/intro-link.ts';
 import { keepingHeard, keepingStar, withStar } from './logic/star.ts';
 import { FailureGate, NotSavedError, notSavedMessage, shouldAskToPersist, type PersistState, type WriteKind } from './logic/storage.ts';
 import type { FeedRead } from './ports.ts';
@@ -64,6 +65,12 @@ export interface DataApi extends Snapshot {
    * Margins as stored now, like `addSharedAs`. Throws a `NotSavedError` when a write isn't kept.
    */
   markSentThrough(marginIds: readonly string[], linkId: string): Promise<void>;
+  /**
+   * Marks a link's friend's Margins `fromIntro` once its preview says it is an introduction link (#4784). Built from the
+   * Margins as stored now, like `markSentThrough`; the listener's own are never marked. Throws a `NotSavedError` when a
+   * write isn't kept.
+   */
+  markFromIntro(marginIds: readonly string[]): Promise<void>;
   /** Stars or unstars the listener's own Margin for sharing (#4172). Throws a `NotSavedError` when it isn't kept. */
   setStarred(marginId: string, on: boolean): Promise<void>;
   /** Marks a friend's Margin heard: the listener listened to some of it (part of #3216). Once heard, it stays heard. */
@@ -354,7 +361,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const addMargin = useCallback(
     (margin: Margin) => {
       const stored = dataRef.current.margins.find((m) => m.id === margin.id);
-      return saveMargin(keepingSentThrough(keepingHeard(keepingSharedAs(keepingStar(margin, stored), stored), stored), stored));
+      return saveMargin(keepingFromIntro(keepingSentThrough(keepingHeard(keepingSharedAs(keepingStar(margin, stored), stored), stored), stored), stored));
     },
     [saveMargin],
   );
@@ -369,6 +376,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const markSentThrough = useCallback(
     async (marginIds: readonly string[], linkId: string) => {
       for (const margin of withSentThrough(marginIds, linkId, dataRef.current.margins)) await saveMargin(margin);
+    },
+    [saveMargin],
+  );
+
+  const markFromIntro = useCallback(
+    async (marginIds: readonly string[]) => {
+      for (const margin of withFromIntro(marginIds, dataRef.current.margins)) await saveMargin(margin);
     },
     [saveMargin],
   );
@@ -486,8 +500,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const migrated = isMigrated(data.settings);
 
   const api = useMemo<DataApi>(
-    () => ({ ...data, ready, persist, migrated, follow, unfollowShow, undoUnfollow, dismissEpisode, undoDismiss, bringBack, applyRefresh, updateEpisode, addMargin, addSharedAs, markSentThrough, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, removeFromLibrary, putBackInLibrary, putBackMovedOut, dismissLibraryNotice }),
-    [data, ready, persist, migrated, follow, unfollowShow, undoUnfollow, dismissEpisode, undoDismiss, bringBack, applyRefresh, updateEpisode, addMargin, addSharedAs, markSentThrough, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, removeFromLibrary, putBackInLibrary, putBackMovedOut, dismissLibraryNotice],
+    () => ({ ...data, ready, persist, migrated, follow, unfollowShow, undoUnfollow, dismissEpisode, undoDismiss, bringBack, applyRefresh, updateEpisode, addMargin, addSharedAs, markSentThrough, markFromIntro, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, removeFromLibrary, putBackInLibrary, putBackMovedOut, dismissLibraryNotice }),
+    [data, ready, persist, migrated, follow, unfollowShow, undoUnfollow, dismissEpisode, undoDismiss, bringBack, applyRefresh, updateEpisode, addMargin, addSharedAs, markSentThrough, markFromIntro, setStarred, setHeard, deleteMargin, savePosition, setSetting, addToLibrary, removeFromLibrary, putBackInLibrary, putBackMovedOut, dismissLibraryNotice],
   );
   return <DataContext.Provider value={api}>{children}</DataContext.Provider>;
 }

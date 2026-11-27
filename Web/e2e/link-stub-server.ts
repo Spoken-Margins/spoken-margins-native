@@ -21,6 +21,10 @@
 //   vectornoaud1   a podcast episode on an ordinary site's page with no audio address: web-voice's two timed Margins
 //   vectornewer01  vectorvoice01's packet declaring a required capability this page doesn't know, as a packet from a newer
 //                  Spoken Margins does: the page says it is a version gap, not damage (#5266)
+//   introvoice01   vectorvoice01's packet behind an introduction link: its preview carries `answers: "none"`, as
+//                  `make-share-link --intro` seals it (#4784)
+//   introreply01   the same introduction preview with a reply part too, which no maker writes: the mark wins (#4784)
+//   introslow001   the introduction preview, answered only after 8 seconds: the page has given up by then (5 s) (#4784)
 //   expired00001   answers 410, as an expired link does
 //   switchedoff1   answers 503 `disabled`, as the server does while links are switched off
 //
@@ -260,6 +264,20 @@ for (const [id, answers] of Object.entries(REPLY_LINKS)) {
   boxOfLink.set(id, box);
 }
 
+// Introduction links (#4784): the vector's preview with the mark `make-share-link --intro` adds.
+const SLOW_INTRO = 'introslow001';
+const introPreviewBytes = new TextEncoder().encode(
+  JSON.stringify({ ...JSON.parse(Buffer.from(vector.preview.plaintextBase64, 'base64').toString('utf8')), answers: 'none' }),
+);
+for (const id of ['introvoice01', 'introreply01', SLOW_INTRO]) {
+  links.set(id, {
+    preview: await sealPart(introPreviewBytes, PART.preview, vectorKey),
+    packet: await sealPart(await voicePacketOfLength(SERVED_EPISODE_MS), PART.packet, vectorKey),
+    ...(id === 'introreply01' && { reply: links.get('replyvoice01')?.reply }),
+  });
+}
+boxOfLink.set('introreply01', boxOfLink.get('replyvoice01') as string);
+
 /** Opens an answer as the club server does: SMLINK part 2 under the seal key, the header then the box id as additional data. */
 async function openAnswer(sealed: Uint8Array, box: string): Promise<Uint8Array | undefined> {
   const header = sealed.subarray(0, 8);
@@ -372,6 +390,7 @@ createServer(async (req, res) => {
       if (!stored.reply) return json(res, 404, { error: 'not_found' });
       if (parts[1] === SLOW_REPLY) await new Promise((resolve) => setTimeout(resolve, 8_000));
     }
+    if (parts[2] === 'preview' && parts[1] === SLOW_INTRO) await new Promise((resolve) => setTimeout(resolve, 8_000));
     res.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store' });
     res.end(parts[2] === 'packet' ? stored.packet : parts[2] === 'reply' ? stored.reply : stored.preview);
     return;

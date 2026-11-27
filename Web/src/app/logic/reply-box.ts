@@ -83,7 +83,8 @@ export async function openReplyPart(sealed: Uint8Array, linkKey: Uint8Array): Pr
   }
 }
 
-function withCeiling<T>(work: (signal: AbortSignal) => Promise<T>, ms: number, fallback: T): Promise<T> {
+/** Runs `work` with an abort signal; `fallback` when it fails or hasn't answered in `ms`. Never rejects. */
+export function withCeiling<T>(work: (signal: AbortSignal) => Promise<T>, ms: number, fallback: T): Promise<T> {
   const controller = new AbortController();
   return new Promise<T>((resolve) => {
     const timer = setTimeout(() => {

@@ -30,7 +30,8 @@ export async function sendFile(
  * the friend when the episode has a friend's Margins, as the saved-file sentence does (#3784).
  */
 export function sendRefusedNextStep(offer: ReplyBackOffer | undefined): string {
-  const whom = offer ? friendNames(offer.friendLabels) : undefined;
+  // An introduction link names no one to send it to (#4784).
+  const whom = offer && !offer.intro ? friendNames(offer.friendLabels) : undefined;
   return `This browser wouldn’t open its share sheet. Tap Save as a file, then send the file${whom ? ` to ${whom}` : ''} in a message.`;
 }
 
