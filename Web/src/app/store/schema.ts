@@ -26,6 +26,9 @@
 //    #4426: a show record may carry `unfollowedAt` (the listener unfollowed it; the record and its episodes stay), and
 //    one settings row per dismissed episode, under the key `dismissed:<episode id>` with the value `{ dismissed, at }`.
 //    An older copy ignores both. Still shape 2.
+//    #5419: one settings row per episode whose link carried a reply box, under the key `replyBox:<episode id>`, so
+//    "Send to <sender>" survives a reload. Its value is read by `readReplyBoxRow` (logic/reply-box.ts); here it passes
+//    through as it is. An older copy ignores it. Still shape 2.
 import type { Episode, Margin, PlaybackPosition, Show } from '../../shared/model.ts';
 
 export const DB_VERSION = 1;
@@ -126,6 +129,9 @@ export interface DismissedRow {
 /** Dismissal rows by episode id. An episode with no row is not dismissed. */
 export type Dismissals = Readonly<Record<string, DismissedRow>>;
 
+/** The settings-store key prefix of an episode's kept reply box (#5419): `replyBox:<episode id>`. */
+export const REPLY_BOX_PREFIX = 'replyBox:';
+
 export interface Snapshot {
   shows: Show[];
   episodes: Episode[];
@@ -136,6 +142,8 @@ export interface Snapshot {
   library: LibraryMembership;
   /** Dismissals by episode id (#4426), read from the `dismissed:` setting rows. */
   dismissed: Dismissals;
+  /** Kept reply boxes by episode id (#5419), the `replyBox:` rows' values as stored; reply-boxes.ts reads them. */
+  replyBoxes?: Readonly<Record<string, unknown>>;
 }
 
 export interface SettingRow {
@@ -232,6 +240,17 @@ export function readDismissed(rows: readonly SettingRow[]): Dismissals {
   return dismissed;
 }
 
+/** The `replyBox:<episode id>` rows' values by episode id (#5419), unread: `readReplyBoxRow` checks each. No prototype. */
+export function readReplyBoxRows(rows: readonly SettingRow[]): Readonly<Record<string, unknown>> {
+  const boxes: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  for (const row of rows) {
+    if (typeof row.key !== 'string' || !row.key.startsWith(REPLY_BOX_PREFIX)) continue;
+    const id = row.key.slice(REPLY_BOX_PREFIX.length);
+    if (id) boxes[id] = row.value;
+  }
+  return boxes;
+}
+
 /**
  * Reads stored rows of any shape into the current one. Records pass through as they are, unknown fields
  * included, so a write back keeps what a newer copy added. A store from a newer copy is read the same way and
@@ -247,6 +266,7 @@ export function upgrade(rows: StoredRows): Upgraded {
     settings: readSettings(rows.settings),
     library: readMembership(rows.settings),
     dismissed: readDismissed(rows.settings),
+    replyBoxes: readReplyBoxRows(rows.settings),
   };
   // 1 to 2 changed no record, only added the version row (and settings that default when missing).
   const writes = from < SCHEMA_VERSION ? [{ key: SCHEMA_KEY, value: SCHEMA_VERSION }] : [];

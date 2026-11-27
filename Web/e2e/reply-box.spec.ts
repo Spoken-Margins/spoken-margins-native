@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { readPacket } from '../src/packet/read.ts';
-import { serveAudio, serveFixtures, startFromBeginning } from './fixtures.ts';
+import { nowTab, serveAudio, serveFixtures, startFromBeginning } from './fixtures.ts';
 
 const STUB = 'http://127.0.0.1:4174';
 const vector = JSON.parse(
@@ -115,6 +115,71 @@ test('Send to the sender posts one sealed answer, says Sent, marks the row, and 
   await again.getByRole('button', { name: `Send to ${SENDER}` }).click();
   await expect(again.locator('#share-why-not')).toContainText(SENT);
   expect((await postsIn(page, 'replyvoice01')).length).toBe(before + 2);
+  await context.close();
+});
+
+/** Waits until every settings and Margins write the page already started has landed, so a reload can't cut one off. */
+const settleWrites = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open('spoken-margins');
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const tx = open.result.transaction(['settings', 'margins'], 'readwrite');
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error ?? new Error('The write was aborted.'));
+        };
+      }),
+  );
+
+test('a reload of the web app keeps the link’s reply box: the Sent tag, and Send to the sender for a new answer (#5419)', async ({ browser }) => {
+  const context = await newContext(browser);
+  const page = await friendPage(context);
+  const before = (await postsIn(page, 'replyvoice01')).length;
+  const playing = await openAndAnswer(page, 'replyvoice01');
+  await playing.getByRole('button', { name: `Send to ${SENDER}` }).click();
+  await expect(playing.locator('#share-why-not')).toContainText(SENT);
+  await settleWrites(page);
+
+  // A plain reload of the web app's own address, not the link: nothing fetches the reply part again.
+  const asked: string[] = [];
+  page.on('request', (request) => asked.push(new URL(request.url()).pathname));
+  await page.goto(`${STUB}/`);
+  await page.reload();
+  await page.getByRole('button', { name: new RegExp(EPISODE.replace(/[()]/g, '\\$&')) }).first().click();
+  await nowTab(page);
+  const again = page.getByRole('dialog', { name: EPISODE });
+  const sentRow = again.locator('.reply-back li').filter({ hasText: 'My answer.' });
+  await expect(sentRow.locator('.tag', { hasText: 'Sent' })).toBeVisible();
+  await expect(again.getByText(CAPTION)).toBeVisible();
+  await write(again, 'After the reload.');
+  const newRow = again.locator('.reply-back li').filter({ hasText: 'After the reload.' });
+  await expect(newRow.getByRole('checkbox')).toBeChecked();
+  await again.getByRole('button', { name: `Send to ${SENDER}` }).click();
+  await expect(again.locator('#share-why-not')).toContainText(SENT);
+  expect(asked.some((path) => path.endsWith('/reply'))).toBe(false);
+  const posts = await postsIn(page, 'replyvoice01');
+  expect(posts.length).toBe(before + 2);
+  expect((await readPacket(posts[posts.length - 1])).margins.map((m) => m.text)).toEqual(['After the reload.']);
+  await context.close();
+});
+
+test('a box that can’t take answers any more is not kept: after a reload the Share section is today’s (#5419)', async ({ browser }) => {
+  const context = await newContext(browser);
+  const page = await friendPage(context);
+  const playing = await openAndAnswer(page, 'replyclosed1');
+  await playing.getByRole('button', { name: `Send to ${SENDER}` }).click();
+  await expect(playing.locator('#share-why-not')).toHaveText(ENDED);
+  await settleWrites(page);
+  await page.goto(`${STUB}/`);
+  await page.reload();
+  await page.getByRole('button', { name: new RegExp(EPISODE.replace(/[()]/g, '\\$&')) }).first().click();
+  await nowTab(page);
+  const again = page.getByRole('dialog', { name: EPISODE });
+  await expect(again.getByText(TODAY_CAPTION)).toBeVisible();
+  await expect(again.getByRole('button', { name: /^Send to / })).toHaveCount(0);
   await context.close();
 });
 

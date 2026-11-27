@@ -30,7 +30,7 @@ import {
   splitForLink, withoutSent,
   type FileFallback,
 } from '../logic/reply-send.ts';
-import { useReplyBox } from '../reply-boxes.ts';
+import { forgetReplyBox, useReplyBox } from '../reply-boxes.ts';
 import { SKIP_SECONDS, usePlayer } from '../player.tsx';
 import type { RecordedVoice, VoiceRecording } from '../ports.ts';
 import { services } from '../services.ts';
@@ -649,6 +649,8 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
       const result = await postAnswer(box.box, written.bytes);
       if (result.kind === 'failed') {
         setBoxFailure(result.failure);
+        // Kept for a reload no longer (#5419): the next visit shows today's section. This page keeps the line below.
+        if (result.failure === 'ended') forgetReplyBox(episode.id, box.box.linkId);
         // The box can't take answers: Send goes, so focus moves to the file button that now leads.
         if (result.failure === 'ended') requestAnimationFrame(() => document.getElementById('share-save')?.focus());
         return;
