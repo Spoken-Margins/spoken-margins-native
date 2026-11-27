@@ -48,6 +48,10 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
     private var friendPlacementHeld = false
     /// An episode map the listener asked for met the hold. In memory, like `friendPlacementHeld`.
     private var listenerMapHeld = false
+    /// A spoken save's hear it land playback is due or running, so the card waits for `.hearItLandEnded` (#4713, #5423).
+    /// Set by `.spokenMarginSaved(hearItLandWillRun: true)` and cleared by `.hearItLandEnded`. In memory: a relaunch ends
+    /// any playback, so the card is free again.
+    public private(set) var waitsForHearItLand = false
 
     /// `hasSavedSpokenMargin` is true at launch when a spoken Margin is on the waiting list.
     public init(storedAnswer: String?, hasSavedSpokenMargin: Bool = false) {
@@ -90,6 +94,13 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
     /// Now pane shows it whenever its slot is free, including after a relaunch.
     public func isOwed(access: SpeechRecognitionAccessState) -> Bool {
         access == .notDetermined && answer == .unanswered && hasReasonToAsk
+    }
+
+    /// Whether an owed card may go up now, when work meets the hold: owed, and no hear it land playback holds it back.
+    /// The save's transcription meets the hold during its own playback, so a hold must not let the card out early (#5423);
+    /// the playback's end lets it out (`cardDue(at: .hearItLandEnded, ...)`).
+    public func mayShowOwedCard(access: SpeechRecognitionAccessState) -> Bool {
+        isOwed(access: access) && !waitsForHearItLand
     }
 
     private var hasReasonToAsk: Bool { hasSavedSpokenMargin || friendPlacementHeld || listenerMapHeld }
@@ -138,7 +149,11 @@ public struct SpeechRecognitionAsk: Equatable, Sendable {
     /// Whether the card shows at `moment`. A save arms the card whatever the answer to whether it shows now.
     /// `shownThisLaunchForReAsk` limits a re-ask after Not now to once per launch.
     public mutating func cardDue(at moment: Moment, access: SpeechRecognitionAccessState, shownThisLaunchForReAsk: Bool) -> Bool {
-        if case .spokenMarginSaved = moment { hasSavedSpokenMargin = true }
+        if case .spokenMarginSaved(let hearItLandWillRun) = moment {
+            hasSavedSpokenMargin = true
+            if hearItLandWillRun { waitsForHearItLand = true }
+        }
+        if case .hearItLandEnded = moment { waitsForHearItLand = false }
         guard access == .notDetermined else { return false }
         switch (moment, answer) {
         case (_, .yes):

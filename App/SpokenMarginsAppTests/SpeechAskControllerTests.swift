@@ -102,6 +102,19 @@ final class SpeechAskControllerTests: XCTestCase {
         XCTAssertTrue(relaunched.isWaiting(marginIdentity: "s1::m1"))
     }
 
+    /// #5423: the save's own transcription meets the hold while hear it land plays the Margin back. Neither the waiting
+    /// Margin nor the gate's report lets the card out until the playback ends.
+    func testAHoldDuringHearItLandWaitsForThePlaybacksEnd() {
+        let controller = makeController()
+        controller.spokenMarginSaved(isWritten: false, hearItLandWillRun: true)
+        controller.marginIsWaiting(marginIdentity: "s1::m1")
+        controller.holdReported(.playerMargin)
+        XCTAssertNil(controller.cardSurface, "the card waits for the playback")
+        XCTAssertTrue(controller.isOutstanding, "but it is owed")
+        controller.hearItLandEnded()
+        XCTAssertEqual(controller.cardSurface, .now, "the playback's end lets it out")
+    }
+
     func testNotNowIsOutstandingNoMoreAndTheListStaysUntilIOSDecides() {
         let controller = makeController()
         controller.spokenMarginSaved(isWritten: false)

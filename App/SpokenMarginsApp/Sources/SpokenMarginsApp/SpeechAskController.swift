@@ -135,10 +135,11 @@ final class SpeechAskController: ObservableObject {
         defaults.set(waiting.stored, forKey: SpeechAskWaitingList.storageKey)
         if SpeechAskSettling.settlesOnReport(access: access()) { return reconcile(model: model) }
         // A relaunch arms the card from this list; this launch is armed by the save, but a Margin that arrives here alone
-        // (a retry) arms it too.
+        // (a retry) arms it too. The save's own transcription lands here during its hear it land playback, so the card
+        // waits for that playback's end (#5423).
         if cardSurface == nil, ask.answer == .unanswered {
-            _ = ask.cardDue(at: .spokenMarginSaved(hearItLandWillRun: true), access: access(), shownThisLaunchForReAsk: false)
-            if ask.isOwed(access: access()) { cardSurface = .now }
+            ask.transcriptionHeld(.playerMargin)
+            if ask.mayShowOwedCard(access: access()) { cardSurface = .now }
         }
     }
 
@@ -155,7 +156,7 @@ final class SpeechAskController: ObservableObject {
             defaults.set(true, forKey: key)
         }
         if settleLateHold() { return }
-        if cardSurface == nil, ask.isOwed(access: access()) { cardSurface = .now }
+        if cardSurface == nil, ask.mayShowOwedCard(access: access()) { cardSurface = .now }
     }
 
     /// Transcription work met the hold (`HeldTranscription`): `retry` runs on Allow, whatever bookkeeping the caller kept.
@@ -165,7 +166,7 @@ final class SpeechAskController: ObservableObject {
         heldRetries.hold(kind, key: key, retry: retry)
         ask.transcriptionHeld(kind)
         if settleLateHold() { return }
-        if cardSurface == nil, ask.isOwed(access: access()) { cardSurface = .now }
+        if cardSurface == nil, ask.mayShowOwedCard(access: access()) { cardSurface = .now }
     }
 
     /// A hold the listener's answer has already overtaken (it was met while iOS was undecided and reached here after the
