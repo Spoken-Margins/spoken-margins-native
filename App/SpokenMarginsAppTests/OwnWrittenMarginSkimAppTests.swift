@@ -150,7 +150,7 @@ final class OwnWrittenMarginSkimAppTests: XCTestCase {
         defer { fixture.cleanUp() }
         let model = fixture.model
         try addNote(fixture, id: "note-5", atMs: 5_000)
-        _ = try fixture.addOwnMargin(id: "spoken-20", atMediaTimeMs: 20_000, voiceSeconds: 1)
+        let spoken = try fixture.addOwnMargin(id: "spoken-20", atMediaTimeMs: 20_000, voiceSeconds: 1)
         model.refreshMarginRows()
         try await pollUntil { model.marginRows.filter { ["note-5", "spoken-20"].contains($0.interjection.id) }.count == 2 }
 
@@ -160,7 +160,9 @@ final class OwnWrittenMarginSkimAppTests: XCTestCase {
             abs((model.snapshot.currentMediaTimeMs ?? 0) - 5_000) <= 2_000 && model.shownSilentMarginLanding != nil
         }
         model.skimForward()
-        try await fixture.waitUntil("the spoken Margin's moment has started") { model.marginMoment?.target.marginId == "spoken-20" }
+        // A moment names its Margin by identity (session and id, `Gate1AppModel.marginIdentity`), never by the bare id (#5428).
+        let identity = Gate1AppModel.marginIdentity(spoken)
+        try await fixture.waitUntil("the spoken Margin's moment has started") { model.marginMoment?.target.marginId == identity }
         XCTAssertGreaterThanOrEqual(model.snapshot.currentMediaTimeMs ?? 0, 4_000, "never back before the note")
     }
 
@@ -168,15 +170,19 @@ final class OwnWrittenMarginSkimAppTests: XCTestCase {
         let fixture = try await pausedFixture(atMs: 500)
         defer { fixture.cleanUp() }
         let model = fixture.model
-        _ = try fixture.addOwnMargin(id: "spoken-3", atMediaTimeMs: 3_000, voiceSeconds: 1)
+        let spoken = try fixture.addOwnMargin(id: "spoken-3", atMediaTimeMs: 3_000, voiceSeconds: 1)
         try addNote(fixture, id: "note-15", atMs: 15_000, words: "After the voice")
         try await pollUntil { model.marginRows.filter { ["spoken-3", "note-15"].contains($0.interjection.id) }.count == 2 }
 
         model.skimForward()
         defer { model.endMarginMoment(); model.pause() }
-        try await fixture.waitUntil("the spoken Margin has played and its moment listens", timeout: 15) {
-            model.marginMoment?.phase == .listening
+        let identity = Gate1AppModel.marginIdentity(spoken)
+        try await fixture.waitUntil("the spoken Margin's voice has the floor", timeout: 15) {
+            model.marginMoment?.isPlayingMargin == true && model.marginMoment?.playing?.marginId == identity
         }
+        // The note is a silent stop, never one of the moment's inline Margins, so once the voice ends nothing is left to play
+        // inline and the moment ends (`startMarginMoment`'s `onChange`). It never sits listening here (#5428).
+        try await fixture.waitUntil("the spoken Margin has played and its moment has ended", timeout: 15) { model.marginMoment == nil }
         model.skimForward()
         try await fixture.waitUntil("the source is at the note") {
             abs((model.snapshot.currentMediaTimeMs ?? 0) - 15_000) <= 2_000 && model.shownSilentMarginLanding != nil
