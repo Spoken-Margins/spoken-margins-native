@@ -23,9 +23,11 @@ public enum ServerSendConsent {
     /// want to read again. Every feature shares the number, so a bump asks everyone once more.
     public static let disclosureVersion = 3
 
-    /// Version 3 (#4675) adds the answers paragraph, in a build whose links carry a reply box (`SM_LINK_REPLIES`, which
-    /// the app reads and passes as `repliesOffered`). A build without reply boxes keeps version 2 and its words.
-    public static let repliesDisclosureVersion = 3
+    /// Version 3 added the opened-marks paragraph (#5275). Version 4 (#4675) adds the answers paragraph too, in a build
+    /// whose links carry a reply box (`SM_LINK_REPLIES`, which the app reads and passes as `repliesOffered`). A build
+    /// without reply boxes keeps version 3 and its words. The two must differ, or agreeing to the words without answers
+    /// would count as agreeing to answers.
+    public static let repliesDisclosureVersion = 4
 
     /// The version the words shown in this build carry.
     public static func disclosureVersion(repliesOffered: Bool) -> Int {

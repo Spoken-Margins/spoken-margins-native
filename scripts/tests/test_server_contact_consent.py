@@ -37,7 +37,7 @@ DEFINITIONS = {KIT + "SessionKit/BridgePublicTransport.swift", KIT + "SessionKit
 # server for its config before the alert is shown; that is a plain request too.
 CONTACTS = {
     APP + "ShareLinkSender.swift": (
-        "a consent alert on the first Share as link; the upload code refuses without the record (version 3, with the answers paragraph, in a build whose links carry a reply box, #4675)",
+        "a consent alert on the first Share as link; the upload code refuses without the record (version 4, with the answers paragraph, in a build whose links carry a reply box, #4675)",
         "guard ServerSendConsent.hasConsented(to: .shareLinks", 1,
     ),
     KIT + "SessionKit/ShareLinkUpload.swift": (
@@ -87,7 +87,7 @@ CONTACTS = {
         None, 0,
     ),
     APP + "ReplyBoxCoordinator.swift": (
-        "a reply box is made only with a link the listener agreed to share under version 3 of the share-link consent, whose words say answers wait on our server until the phone collects them (#4675); the pickup checks that record before any request. Stop and Report are the listener's own taps on an answer in their Library",
+        "a reply box is made only with a link the listener agreed to share under version 4 of the share-link consent, whose words say answers wait on our server until the phone collects them (#4675); the pickup checks that record before any request. Stop and Report are the listener's own taps on an answer in their Library",
         "ServerSendConsent.hasConsented(to: .shareLinks, repliesOffered: true)", 1,
     ),
     KIT + "SessionKit/ShareLinkOpening.swift": (
