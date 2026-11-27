@@ -133,11 +133,11 @@ public enum SharedMarginReview {
     /// The entries a review counting on `clock` can place (#5409): Margins placed in the text on the narrated-text clock
     /// of an article read aloud, the others on a media clock. An article playing its publisher's recording or prepared
     /// narration has a media clock, where a Margin placed only by characters has no time.
-    public static func entries(_ entries: [Entry], playableOn clock: MarginMomentClock) -> [Entry] {
+    public static func placeable(_ entries: [Entry], on clock: MarginMomentClock) -> [Entry] {
         entries.filter { $0.isPlacedInText == clock.isNarratedText }
     }
 
-    /// The same, read from the repository for an item that isn't open.
+    /// The item's new shared Margins (`entries(layers:records:ownMargins:durationMs:)`), read from the repository for an item that isn't open.
     public static func entries(
         itemId: String, in repository: some ListeningSessionRepository, ownMargins: [Interjection] = [],
         hiddenSenders: HiddenSenders = HiddenSenders()

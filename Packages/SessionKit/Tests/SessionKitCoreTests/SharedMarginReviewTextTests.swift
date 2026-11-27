@@ -72,8 +72,8 @@ final class SharedMarginReviewTextTests: XCTestCase {
         let text = SharedMarginReview.entries(layers: [layer("ana")], records: ["ana": [textMargin("t", char: 350)]])
         let media = [SharedMarginReview.Entry(layer: layer("bo", type: .podcast), interjection: textMargin("m", in: "bo", char: nil),
                                               mediaTimeMs: 60_000, isApproximate: false)]
-        XCTAssertEqual(SharedMarginReview.entries(text + media, playableOn: .liveNarration).map(\.interjection.id), ["t"])
-        XCTAssertEqual(SharedMarginReview.entries(text + media, playableOn: .media).map(\.interjection.id), ["m"],
+        XCTAssertEqual(SharedMarginReview.placeable(text + media, on: .liveNarration).map(\.interjection.id), ["t"])
+        XCTAssertEqual(SharedMarginReview.placeable(text + media, on: .media).map(\.interjection.id), ["m"],
                        "an article playing a recording has a media clock, where a text place has no time")
     }
 

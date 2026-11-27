@@ -49,7 +49,7 @@ extension Gate1AppModel {
         }
         // Only the Margins the item's review can place on its clock (#5409), so the intro, "Hear the replies" and catch-up
         // never offer what the review would then refuse: an article playing a recording has no time for a text place.
-        let placeable = expectedReviewClock(itemId: itemId).map { SharedMarginReview.entries(entries, playableOn: $0) } ?? entries
+        let placeable = expectedReviewClock(itemId: itemId).map { SharedMarginReview.placeable(entries, on: $0) } ?? entries
         return placeable.filter { WrittenMarginReadings.audio(for: $0.interjection, in: $0.layer, voiceFile: resolvedApplicationSupportAssetURL(for:)).file != nil }
     }
 
@@ -211,7 +211,7 @@ extension Gate1AppModel {
         // The clock is the started session's: an article read aloud counts on narration time, where its Margins are placed
         // by characters (#5409). Only the Margins placed on that clock can play in this review.
         let clock = reviewSourceClock
-        let entries = SharedMarginReview.entries(offeredEntries, playableOn: clock)
+        let entries = SharedMarginReview.placeable(offeredEntries, on: clock)
         guard !entries.isEmpty else {
             diagnostics["review.clock"] = "no_margins_on_clock:\(clock.isNarratedText ? "narrated_text" : "media")"
             reportWarning("There are no new Margins to review here.")
