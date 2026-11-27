@@ -28,12 +28,14 @@ FLAGS_OFF = 'Build 39 (0.1): TestFlight upload\n\nflags: SMPhoneBuild=NO SMShare
 FLAGS_ON = 'Build 39 (0.1): TestFlight upload\n\nflags: SMPhoneBuild=NO SMShareLinkCreation=YES\n'
 
 
-def fake_git(message, names=('testflight/0.1-build-38', 'testflight/0.1-build-39')):
+def fake_git(message, names=('testflight/0.1-build-38', 'testflight/0.1-build-39'), objecttype='tag'):
     def run(*args):
         if args[:2] == ('tag', '-l') and len(args) == 3:
             return '\n'.join(names) + '\n'
         if args[0] == 'rev-list':
             return SHA + '\n'
+        if args[0] == 'for-each-ref':
+            return objecttype + '\n'
         if args[:2] == ('tag', '-l'):
             return message
         raise AssertionError(args)
@@ -126,6 +128,22 @@ class Gate(unittest.TestCase):
         with unittest.mock.patch.object(tt.release_gate, 'read_record', return_value=record):
             self.assertFalse(tt.gate_verdict(39, FLAGS_ON, TODAY)[0])
             self.assertTrue(tt.gate_verdict(39, FLAGS_OFF, TODAY)[0])
+
+    def test_a_lightweight_tag_records_no_flags_even_when_its_commit_message_says_off(self):
+        # git tag -l --format=%(contents) on a lightweight tag prints the commit's message, which a PR title can fill.
+        message = 'Merge pull request #1\n\nKeep share-link creation off in Release\n\nflags: SMShareLinkCreation=NO\n'
+        _tag, _commit, read = tt.upload_tag(39, fake_git(message, objecttype='commit'))
+        self.assertEqual(read, '')
+        self.assertFalse(tt.gate_verdict(39, read, TODAY)[0])
+
+    def test_only_the_archives_flags_line_counts_never_a_typed_sentence(self):
+        # A typed tag can say "off for the public group, on for the internal one"; only the archive's line is its state.
+        for typed in ('Build 39: share-link creation off for the public group, on for the internal one\n',
+                      'Build 39: SM_SHARE_LINK_CREATION=NO\n'):
+            with self.subTest(typed=typed):
+                allowed, reasons = tt.gate_verdict(39, typed, TODAY)
+                self.assertFalse(allowed)
+                self.assertIn('missing', ' '.join(reasons))
 
     def test_a_missing_or_doubled_tag_is_refused(self):
         for names in ((), ('testflight/0.1-build-39', 'testflight/0.2-build-39')):

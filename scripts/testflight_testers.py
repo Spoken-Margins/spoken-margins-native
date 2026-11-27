@@ -190,12 +190,22 @@ def upload_tag(build, run=git):
         raise Failure(f'expected one upload tag testflight/<version>-build-{build}, found {len(names)}; '
                       'every upload is tagged, and the tag carries the share-link flag the release gate needs')
     tag = names[0]
-    return tag, run('rev-list', '-n', '1', tag).strip(), run('tag', '-l', '--format=%(contents)', tag)
+    commit = run('rev-list', '-n', '1', tag).strip()
+    # A lightweight tag has no message of its own: git prints the commit's, which a PR title can fill. As in sm_live,
+    # only an annotated tag records flags.
+    if run('for-each-ref', '--format=%(objecttype)', f'refs/tags/{tag}').strip() != 'tag':
+        return tag, commit, ''
+    return tag, commit, run('tag', '-l', '--format=%(contents)', tag)
 
 
 def gate_verdict(build, message, today=None):
-    """(allowed, reasons) from release_gate for the external group. A tag without the flag counts as share links on."""
-    flags, _how = sm_live.flags_from_message(message)
+    """(allowed, reasons) from release_gate for the external group. A tag without the flag counts as share links on.
+
+    Only the archive's own `flags:` line counts: a sentence typed into a tag can say off and on at once, and a wrong
+    read sends share links to the friends beta."""
+    flags, how = sm_live.flags_from_message(message)
+    if how != 'read from the archive':
+        flags = None
     plist = {'CFBundleVersion': str(build)}
     if flags and 'SMShareLinkCreation' in flags:
         plist[release_gate.PLIST_KEY] = flags['SMShareLinkCreation']
