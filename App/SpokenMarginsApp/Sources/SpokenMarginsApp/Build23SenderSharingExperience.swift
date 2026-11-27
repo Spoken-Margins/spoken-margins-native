@@ -41,7 +41,7 @@ struct Build23SenderSharingExperience: View {
                 // The link's share sheet is about to show it: the star counts start again (#4173).
                 if case .ready = state { coordinator.recordSystemShareShown() }
             }
-            .task { isLinkOffered = await linkSender.isOffered() }
+            .task { isLinkOffered = true } // throwaway look (#5408): show Send as a file as a links-on build does
             .onDisappear { linkSender.takedownNoticeWasShown() }
         #else
         content
