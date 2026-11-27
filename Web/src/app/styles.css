@@ -1898,6 +1898,23 @@ body:not(:has(.mini-player)) .toasts {
   color: var(--muted);
 }
 
+/* Under "From Ana": the friend is told the sender can see they opened the Margins, with Don't tell (#5275). */
+.arrival-opened {
+  margin: 0;
+  color: var(--muted);
+}
+
+.arrival-dont-tell {
+  min-height: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--tint);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .arrival-count {
   margin: 0;
   font-weight: 650;

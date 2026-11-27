@@ -3,6 +3,36 @@ import SessionKitSharing
 import SwiftUI
 
 /// "From Cole", above the item's title while a friend's Margins wait (#3219). The words come from `FriendMarginsIntro`.
+/// Under "From Ana" when the Margins came by link (#5275, Screen C): the friend reads that Ana can see they opened them,
+/// with Don't tell Ana. After Don't tell it says what that changed, with no button. Nothing here blocks Play.
+struct FriendLinkOpenedNotice: View {
+    let text: String
+    /// Nil once Don't tell was tapped.
+    let dontTellTitle: String?
+    let onDontTell: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(text)
+                .font(.footnote)
+                .foregroundStyle(AppColors.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            if let dontTellTitle {
+                Button(action: onDontTell) {
+                    Text(dontTellTitle)
+                        .font(.footnote)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("item.friendIntro.dontTell")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("item.friendIntro.openedNotice")
+    }
+}
+
 struct FriendMarginsSenderLine: View {
     let intro: FriendMarginsIntro
 

@@ -291,7 +291,7 @@ The sheet is a standard SwiftUI `Form` in a sheet with a navigation bar.
 | Friend reopens the same link later (`returning`) | **Sent** marks come back from the web store; unsent Margins are offered |
 | Link forwarded to a second person | Both can send. Each answer appears under its typed name or "A friend". Honest limit 1. |
 | Sender, `first-run` (first link ever) | The consent sheet with the new paragraph, then the box is made. The first check finds nothing and shows nothing. |
-| Sender `returning`, agreed to version 2 of the consent | Asked once more (version 3) at their next link |
+| Sender `returning`, agreed to version 3 of the consent | Asked once more (version 4) at their next link |
 | Sender, `already-heard` or `finished`: the answer lands on an item at 100% or marked complete | Imported as new Margins. The banner names the item. **Open** reaches it even when "Completed hidden" hides its Library row. Each answer plays after its parent (#3257). Where Continue starts follows `SessionContinuation`, unchanged. |
 | Sender, `other-item-playing`: another item plays, is paused or records during a check | Playback is untouched, and the item that was playing still is. The banner waits while a Margin records or is written. |
 | Sender, the same item is playing when its answer arrives | See "Same item playing" in "Around it" |

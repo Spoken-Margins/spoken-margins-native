@@ -174,6 +174,7 @@ type Server struct {
 	linkWindow       window
 	relayWindow      window
 	linkReportWindow window
+	linkOpenedWindow window
 	clubWindow       window
 	clubReportWindow window
 	clubBytes        byteWindow
@@ -257,6 +258,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /l/{id}/packet", s.linkCORS(s.getLinkPacket))
 	mux.HandleFunc("GET /l/{id}/reply", s.linkCORS(s.getLinkReply))
 	mux.HandleFunc("POST /l/{id}/report", s.reportLink)
+	mux.HandleFunc("POST /l/{id}/opened", s.markLinkOpened)
+	mux.HandleFunc("GET /l/{id}/opened", s.linkOpened)
 	mux.HandleFunc("POST /l/{id}/report/reason", s.reportReason)
 	mux.HandleFunc("GET "+PathRelay, s.relay)
 	mux.HandleFunc("POST "+PathClubs, s.createClub)

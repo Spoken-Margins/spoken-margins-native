@@ -153,8 +153,8 @@ final class ReplyBoxWordsAndRequestsTests: XCTestCase {
         XCTAssertEqual(paragraphs.count, ShareLinkConsentCopy.message.components(separatedBy: "\n\n").count + 1)
         XCTAssertEqual(paragraphs[1], "Your friend can answer through the link. Their answers are locked the same way, wait on our server until your phone collects them or the link ends, and only your phone can open them.")
         XCTAssertTrue(paragraphs[0].hasPrefix("A link puts your Margins on our server"))
-        XCTAssertEqual(ServerSendConsent.disclosureVersion(repliesOffered: false), 2)
-        XCTAssertEqual(ServerSendConsent.disclosureVersion(repliesOffered: true), 3)
+        XCTAssertEqual(ServerSendConsent.disclosureVersion(repliesOffered: false), 3)
+        XCTAssertEqual(ServerSendConsent.disclosureVersion(repliesOffered: true), 4)
 
         let name = "ReplyBoxConsent-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
@@ -162,7 +162,7 @@ final class ReplyBoxWordsAndRequestsTests: XCTestCase {
         ServerSendConsent.record(.shareLinks, in: defaults)
         XCTAssertTrue(ServerSendConsent.hasConsented(to: .shareLinks, in: defaults))
         XCTAssertFalse(ServerSendConsent.hasConsented(to: .shareLinks, repliesOffered: true, in: defaults),
-                       "who agreed to version 2 is asked once more when links carry answers")
+                       "who agreed to version 3 is asked once more when links carry answers")
         ServerSendConsent.record(.shareLinks, repliesOffered: true, in: defaults)
         XCTAssertTrue(ServerSendConsent.hasConsented(to: .shareLinks, repliesOffered: true, in: defaults))
     }

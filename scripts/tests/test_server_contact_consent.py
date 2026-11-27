@@ -37,7 +37,7 @@ DEFINITIONS = {KIT + "SessionKit/BridgePublicTransport.swift", KIT + "SessionKit
 # server for its config before the alert is shown; that is a plain request too.
 CONTACTS = {
     APP + "ShareLinkSender.swift": (
-        "a consent alert on the first Share as link; the upload code refuses without the record (version 3, with the answers paragraph, in a build whose links carry a reply box, #4675)",
+        "a consent alert on the first Share as link; the upload code refuses without the record (version 4, with the answers paragraph, in a build whose links carry a reply box, #4675)",
         "guard ServerSendConsent.hasConsented(to: .shareLinks", 1,
     ),
     KIT + "SessionKit/ShareLinkUpload.swift": (
@@ -87,12 +87,24 @@ CONTACTS = {
         None, 0,
     ),
     APP + "ReplyBoxCoordinator.swift": (
-        "a reply box is made only with a link the listener agreed to share under version 3 of the share-link consent, whose words say answers wait on our server until the phone collects them (#4675); the pickup checks that record before any request. Stop and Report are the listener's own taps on an answer in their Library",
+        "a reply box is made only with a link the listener agreed to share under version 4 of the share-link consent, whose words say answers wait on our server until the phone collects them (#4675); the pickup checks that record before any request. Stop and Report are the listener's own taps on an answer in their Library",
         "ServerSendConsent.hasConsented(to: .shareLinks, repliesOffered: true)", 1,
     ),
     KIT + "SessionKit/ShareLinkOpening.swift": (
         "none needed: the listener tapped a link they were sent; the request names that link only",
         None, 0,
+    ),
+    KIT + "SessionKit/ShareLinkOpenedClient.swift": (
+        "none needed in this file: it makes the two opened-mark requests (#5275) and decides nothing. Its two callers are listed below with the switch each one checks",
+        None, 0,
+    ),
+    KIT + "SessionKit/FriendLinkSignals.swift": (
+        "the friend's mark: a line at arrival says the sender will see the open, with a Don't tell button, and Settings > Show when links are opened stops it. Unlike the map switches, this one starts ON (#5275 Design, Default 6, the owner's to veto). Nothing is sent with it off",
+        "guard receiptsOn", 1,
+    ),
+    KIT + "SessionKit/SentLinkStatus.swift": (
+        "the sender's check: only for links made after the Share as link consent, which names this; the same switch, read when a run starts and before each request",
+        "ShareLinkOpenedPolicy.isOn(defaults)", 2,
     ),
 }
 

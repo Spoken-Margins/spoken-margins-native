@@ -51,6 +51,13 @@ struct ExperienceItemDetailScreen: View {
     @State private var pdfExport: PDFCommentExportModel?
     /// A tap on Play or "Skip to …" made before its start is possible, kept until it can run (#3788).
     @StateObject private var arrival = FriendArrivalPresenter()
+    /// Settings' "Show when links are opened" (#5275): off means no notice here and no mark sent.
+    @AppStorage(ShareLinkOpenedPolicy.defaultsKey) private var showsOpenedReceipts = true
+    /// The listener's own sent links: no notice until they are read, so their own link never shows it (#5275).
+    @ObservedObject private var sentLinks = SentLinkStatus.shared
+    /// The item whose screen tapped Don't tell, or sent the mark from a start control; the notice changes or goes there.
+    @State private var linkNoticeToldNotItemID: String?
+    @State private var linkNoticeSentItemID: String?
     /// "Keep Sam’s readings together" under the friend's intro, from the second packet from one sender (#5033).
     @StateObject private var senderOffer = SenderCollectionOfferPresenter()
     private let episodeLinker = ImportedFileEpisodeLinker()
@@ -102,7 +109,14 @@ struct ExperienceItemDetailScreen: View {
                     // A friend's waiting Margins lead: who sent them, then the title, then how many and what a
                     // Margin is (#3219). Mark complete stays in the options menu until they're heard (2026-11-02).
                     let friendIntro = FriendMarginsIntro(unheardFriendMargins: newSharedMargins.map(\.waitingMargin))
-                    if let friendIntro { FriendMarginsSenderLine(intro: friendIntro) }
+                    if let friendIntro {
+                        FriendMarginsSenderLine(intro: friendIntro)
+                        friendLinkNotice
+                    } else {
+                        // The notice follows what arrived by link, not what can play now (#5351): with no Margin
+                        // ready to play there is no sender line, and the notice still says who will see the open.
+                        friendLinkNotice
+                    }
                     hero
                     // At the accessibility text sizes the status lines and the second choice sit here, under the
                     // title, and only the main button stays pinned, so the pinned area leaves room to read (#5110).
@@ -272,6 +286,7 @@ struct ExperienceItemDetailScreen: View {
                 await refreshKeptOriginal()
             }
             .task(id: WrittenMarginReadings.waitingKey(model.selectedItem)) { WrittenMarginReadings.prepare(newSharedMargins) } // readings ready before "Skip to the Margins" (#3365)
+            .task { await sentLinks.load() } // the listener's own links, so opening one never signals it (#5275)
             .onAppear { senderOffer.refresh(model: model, arriving: !newSharedMargins.isEmpty) }
             .onChange(of: senderOfferKey) { senderOffer.refresh(model: model, arriving: !newSharedMargins.isEmpty) }
             .onDisappear {
@@ -622,6 +637,14 @@ struct ExperienceItemDetailScreen: View {
     /// What a pinned button does. The choice is `ItemListeningChoices`'s; this only calls the model (#4125).
     private func perform(_ action: ItemListeningChoices.Action, behind: [SharedMarginReview.Entry]) {
         let itemId = model.selectedItem.id
+        // Read before the start changes what is waiting; sent after it, so the mark never delays audio (#5275).
+        let openedLinkIDs = friendLinkArrival.linkIDs
+        defer {
+            if !openedLinkIDs.isEmpty {
+                linkNoticeSentItemID = itemId
+                FriendLinkSignaller.shared.signal(ids: openedLinkIDs)
+            }
+        }
         switch action {
         case .play:
             // Friend Margins ahead of the place play in place as the episode reaches them (#3219).
@@ -1102,6 +1125,37 @@ struct ExperienceItemDetailScreen: View {
     }
 
     /// Shared Margins on this item that the listener hasn't heard (#474).
+    /// Whether this arrival by link shows the opened notice, and which links its start controls signal (#5275).
+    private var friendLinkArrival: FriendLinkArrival {
+        // Until the listener's own links are read, nothing counts: the error is a missed notice, never their own link.
+        guard let own = sentLinks.knownLinkIDs else { return FriendLinkArrival(linkIDs: [], senderName: nil) }
+        // Every Margin the friend sent that the listener hasn't heard counts, not only the ones that can play yet: a
+        // written Margin before its reading is made, or a voice Margin that couldn't be placed, still arrived (#5351).
+        let item = model.selectedItem
+        return FriendLinkArrival.make(
+            layers: item.importedCommentaryLayers, records: item.importedCommentaryInterjections,
+            ownMargins: model.ownMargins(itemId: item.id), signals: FriendLinkSignals().all(now: Date()),
+            receiptsOn: showsOpenedReceipts, ownLinkIDs: own)
+    }
+
+    /// "When you open these Margins, Ana can see that you did." under the sender line, until a start control sends the
+    /// mark; after Don't tell, what that changed, for the rest of this screen's life (#5275).
+    @ViewBuilder
+    private var friendLinkNotice: some View {
+        let itemID = model.selectedItem.id
+        if linkNoticeSentItemID != itemID {
+            let linkArrival = friendLinkArrival
+            if linkNoticeToldNotItemID == itemID {
+                FriendLinkOpenedNotice(text: linkArrival.toldNotText, dontTellTitle: nil) {}
+            } else if linkArrival.showsNotice {
+                FriendLinkOpenedNotice(text: linkArrival.noticeText, dontTellTitle: linkArrival.dontTellTitle) {
+                    linkNoticeToldNotItemID = itemID
+                    showsOpenedReceipts = false
+                }
+            }
+        }
+    }
+
     private var newSharedMargins: [SharedMarginReview.Entry] {
         model.newSharedMargins(itemId: model.selectedItem.id)
     }

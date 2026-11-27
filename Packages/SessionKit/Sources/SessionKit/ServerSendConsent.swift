@@ -21,11 +21,13 @@ public enum ServerSendFeature: String, CaseIterable, Sendable {
 public enum ServerSendConsent {
     /// Bump when the words below, or what the feature sends, change in a way a listener who already agreed would
     /// want to read again. Every feature shares the number, so a bump asks everyone once more.
-    public static let disclosureVersion = 2
+    public static let disclosureVersion = 3
 
-    /// Version 3 (#4675) adds the answers paragraph, in a build whose links carry a reply box (`SM_LINK_REPLIES`, which
-    /// the app reads and passes as `repliesOffered`). A build without reply boxes keeps version 2 and its words.
-    public static let repliesDisclosureVersion = 3
+    /// Version 3 added the opened-marks paragraph (#5275). Version 4 (#4675) adds the answers paragraph too, in a build
+    /// whose links carry a reply box (`SM_LINK_REPLIES`, which the app reads and passes as `repliesOffered`). A build
+    /// without reply boxes keeps version 3 and its words. The two must differ, or agreeing to the words without answers
+    /// would count as agreeing to answers.
+    public static let repliesDisclosureVersion = 4
 
     /// The version the words shown in this build carry.
     public static func disclosureVersion(repliesOffered: Bool) -> Int {
@@ -53,7 +55,8 @@ public enum ServerSendConsent {
 
 /// What the listener reads before the first share link. Drafted from `docs/legal/privacy-policy-draft.md` (row 14)
 /// and D15, D16 and D20 in `docs/legal/attorney-questions.md`; the owner's wording replaces it (#2842). It says only
-/// what the code does today. Version 2 (#2239) adds the App Attest code and the tie from a link to its install.
+/// what the code does today. Version 2 (#2239) adds the App Attest code and the tie from a link to its install;
+/// version 3 (#5275) adds the opened mark a friend's browser or app sends when they open the Margins.
 /// When the code starts to send more, the words change in the same PR and `ServerSendConsent.disclosureVersion`
 /// goes up. "30 days" is the server's
 /// retention (D4, `research/B4/DESIGN.md`); the app only passes the server's `expiresAt` through, so a change there
@@ -67,6 +70,10 @@ public enum ShareLinkConsentCopy {
         your phone, the Margins, their audio and text, a short excerpt of the source around each one, the source's \
         title and address, and the sender name if you typed one are locked with a key that is only in the link. We can't read them. Anyone who has the link \
         can. The link stops working after 30 days.
+
+        When your friend opens the Margins, their browser or app tells our server the link was opened, and your \
+        app shows "Opened". Nothing else is kept, and it is deleted with the link. Either of you can turn this \
+        off in Settings.
 
         To make a link, your phone also makes a random code for this app. Our server uses it to check that the \
         request comes from Spoken Margins, and to tie each link to this install so a report of a link can be \

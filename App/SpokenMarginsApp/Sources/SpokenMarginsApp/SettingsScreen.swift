@@ -33,6 +33,8 @@ struct SettingsScreen: View, Equatable {
     @State private var showsAllRecentlyDeleted = false
     @State private var isResetConfirmationPresented = false
     @State private var isPreparingDiagnostics = false
+    /// One switch for both ends of opened marks (#5275). On unless turned off; SessionKit reads an unset key as on too.
+    @AppStorage(ShareLinkOpenedPolicy.defaultsKey) private var showsOpenedReceipts = true
     /// The Supertonic download card's "Open Voices" lands here and opens Voices (#1820).
     @ObservedObject private var supertonicNotice: SupertonicDownloadNotice
     /// The pages opened by value: Download Voices and the Import Inbox. "See why" and the Supertonic card set it (#4781).
@@ -431,6 +433,15 @@ struct SettingsScreen: View, Equatable {
                     Text(QuickFolderStatus.sectionFooter)
                 }
                 Section("Privacy & Legal") {
+                    Toggle(isOn: $showsOpenedReceipts) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Show when links are opened")
+                            Text("When a friend opens Margins you sent by link, you see \"Opened\", and friends see it for links they send you. Off stops both. Our server keeps only a mark that the link was opened, with no name, device or time of day, and deletes it with the link.")
+                                .font(.footnote)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.openedReceipts.toggle")
                     #if canImport(UIKit)
                     ExportListeningSignalsButton(
                         exportFileURL: { [model] in await model.listeningSignals.exportFileURL() },

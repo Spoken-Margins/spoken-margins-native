@@ -2,7 +2,7 @@
 // pasted text, or an episode or recording with no audio. It lists the sender's Margins with the source's words at each,
 // plays them here on one tap (the source's words first, then the Margin), and gives one next step: the iPhone app,
 // which plays them in place and lets the friend answer. Every word comes from logic/arrival-card.ts.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { PlayIcon } from '../icons.tsx';
 import { cardSounds, type CardSounds } from '../arrival-run-effects.ts';
 import {
@@ -57,6 +57,10 @@ export interface ArrivalListenProps {
   setHeard: (storedId: string) => Promise<void>;
   /** The way to the web Library: closes the card onto the Library once `saved` (when given) settles. */
   onLibrary: (saved?: Promise<void>) => void;
+  /** For a link that offers opened marks (#5275): "When you open these Margins, Ana can see that you did." */
+  notice?: ReactNode;
+  /** A start control was tapped (Hear, the source, the way out): the link's opened mark goes (#5275, #5351). */
+  onStart?: () => void;
 }
 
 type Run =
@@ -151,6 +155,7 @@ export function ArrivalListen(props: ArrivalListenProps) {
       const fx = soundsNow();
       // Inside the tap: the clip element and the voice are readied before anything is awaited.
       fx.prime();
+      props.onStart?.();
       if (player.playing) player.pause();
       // Storing an episode's Margins never stops them playing here; a write that fails says so when the card closes.
       try {
@@ -185,7 +190,7 @@ export function ArrivalListen(props: ArrivalListenProps) {
         },
       });
     },
-    [cards, steps, sender, iphoneStep, player, soundsNow, storeOnce, markHeard],
+    [cards, steps, sender, iphoneStep, player, soundsNow, storeOnce, markHeard, props.onStart],
   );
 
   const playingIndex = run.state === 'playing' ? run.index : undefined;
@@ -218,6 +223,7 @@ export function ArrivalListen(props: ArrivalListenProps) {
 
   const toLibrary = () => {
     stop();
+    props.onStart?.();
     props.onLibrary(storeOnce()?.saved);
   };
 
@@ -230,13 +236,14 @@ export function ArrivalListen(props: ArrivalListenProps) {
           </span>
           <span>From {who}</span>
         </p>
+        {props.notice}
         <h1 id="arrival-title" className="arrival-title">
           {read.episode.title}
         </h1>
         {subtitle && <p className="arrival-sub">{subtitle}</p>}
         {words.sourceLabel && address && (
           <p className="arrival-source">
-            <a href={address} target="_blank" rel="noopener noreferrer">
+            <a href={address} target="_blank" rel="noopener noreferrer" onClick={props.onStart}>
               {words.sourceLabel}
             </a>
           </p>
