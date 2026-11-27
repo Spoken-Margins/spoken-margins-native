@@ -8,8 +8,9 @@ import XCTest
 final class SpokenNoteNowTranscriptTests: XCTestCase {
     private var support: URL!
     // One id per test: the loader keeps its last result per note id for the whole process, so a shared id lets a
-    // later test start from an earlier test's cached result.
-    private let noteId = "now-note-\(UUID().uuidString)"
+    // later test start from an earlier test's cached result. Lower-case, as `SpokenNoteStarter.start` makes them:
+    // `isSafeNoteId` takes only lower-case letters, digits, `-` and `_`, so `uuidString` as it comes names no note (#5437).
+    private let noteId = "now-note-\(UUID().uuidString.lowercased())"
 
     override func setUpWithError() throws {
         support = FileManager.default.temporaryDirectory.appendingPathComponent("now-transcript-\(UUID().uuidString)")
@@ -20,7 +21,11 @@ final class SpokenNoteNowTranscriptTests: XCTestCase {
         try? FileManager.default.removeItem(at: support)
     }
 
-    private var store: SpokenNoteStore { SpokenNoteStarter.store(noteId: noteId, in: support)! }
+    /// A failed expectation, not a crash, when the id names no note folder: a crash here kills the test host and every
+    /// test after it in the run (#5437).
+    private func noteStore() throws -> SpokenNoteStore {
+        try XCTUnwrap(SpokenNoteStarter.store(noteId: noteId, in: support), "the test's note id must be one isSafeNoteId accepts")
+    }
     private var reference: String { SpokenNoteItem.reference(forNoteId: noteId) }
 
     private func take(_ id: String, _ sentences: [String]) -> SpokenNoteTake {
@@ -38,7 +43,7 @@ final class SpokenNoteNowTranscriptTests: XCTestCase {
         let note = SpokenNote(id: noteId, takes: [
             take("a", ["so I was thinking about it", "and then the other part"]), take("b", ["one more without a stop"])
         ])
-        try store.save(note)
+        try noteStore().save(note)
         let loader = SpokenNoteNowTranscript()
         loader.load(externalReference: reference) { support }
         try await wait(loader) { $0.availability != .loading }
@@ -48,6 +53,7 @@ final class SpokenNoteNowTranscriptTests: XCTestCase {
     }
 
     func testANoteWithoutAFileReadsAsNoWordsAndIsNotMoved() async throws {
+        let store = try noteStore()
         try FileManager.default.createDirectory(at: store.folderURL, withIntermediateDirectories: true)
         try Data("not json".utf8).write(to: store.fileURL)
         let loader = SpokenNoteNowTranscript()
@@ -60,6 +66,7 @@ final class SpokenNoteNowTranscriptTests: XCTestCase {
     }
 
     func testANoteChangeReloadsAndMovesTheRevisionOnce() async throws {
+        let store = try noteStore()
         try store.save(SpokenNote(id: noteId, takes: [take("a", ["first words here"]), take("b", [])]))
         let loader = SpokenNoteNowTranscript()
         loader.load(externalReference: reference) { support }
@@ -72,7 +79,7 @@ final class SpokenNoteNowTranscriptTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(loader.revision, revision)
 
-        var note = store.peek()!
+        var note = try XCTUnwrap(store.peek())
         note.setTranscript([SpokenNoteSentence(text: "the second take's words", startMs: 0, endMs: 2_000)], forTake: "b")
         try store.save(note)
         NotificationCenter.default.post(name: .spokenNoteChanged, object: nil)
