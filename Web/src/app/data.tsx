@@ -17,6 +17,7 @@ import { keepingSentThrough, withSentThrough } from './logic/reply-send.ts';
 import { keepingHeard, keepingStar, withStar } from './logic/star.ts';
 import { FailureGate, NotSavedError, notSavedMessage, shouldAskToPersist, type PersistState, type WriteKind } from './logic/storage.ts';
 import type { FeedRead } from './ports.ts';
+import { restoreReplyBoxes } from './reply-boxes.ts';
 import { DEFAULT_SETTINGS, loadAll, putMany, putMargin, putSetting, putShowWithEpisodes, remove, type Settings, type Snapshot } from './store/db.ts';
 import { DISMISSED_PREFIX, type DismissedRow, type Membership } from './store/schema.ts';
 import { useUi } from './ui.tsx';
@@ -155,6 +156,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
           }
           loaded = { ...merged, library: prepared.library };
         }
+        // A link's reply box kept from an earlier visit (#5419), in place before the first screen draws.
+        restoreReplyBoxes(snapshot.replyBoxes);
         setData(loaded);
         if (written.length > 0) void putMany('positions', written).then(() => pruneMirror(storage, positions), () => undefined);
         else pruneMirror(storage, positions);
