@@ -670,13 +670,13 @@ struct ExperienceTimelineRailScreen: View {
 
     /// Replies sit directly under the Margin they answer, indented, at that Margin's place on the rail (#473).
     /// The thread is the one `MarginThreadPresentation` builds for the Margins list, so both screens agree.
-    /// It is given every session's own Margins: a copy of the listener's own Margin is left out of the friend layers
-    /// (#4910), so a reply to an earlier session's Margin finds its parent in the original instead.
+    /// It is given every session's own Margins with the open session's: a copy of the listener's own Margin is left out
+    /// of the friend layers (#4910), so a reply to an earlier session's Margin finds its parent in the original instead.
     static func threadingReplies(in entries: [TimelineRailEntry], item: ItemDetailState) -> [TimelineRailEntry] {
         guard entries.contains(where: { $0.reference != nil }) else { return entries }
         let rows = MarginThreadPresentation.rows(
             itemId: item.id,
-            localMargins: item.itemOwnMargins,
+            localMargins: SharedMarginReview.ownMargins(itemId: item.id, openItem: item.interjections, rows: item.itemOwnMargins),
             layers: item.importedCommentaryLayers,
             importedMargins: item.importedCommentaryLayers.flatMap { item.importedCommentaryInterjections[$0.id, default: []] }
         )
