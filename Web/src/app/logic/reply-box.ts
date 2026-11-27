@@ -156,16 +156,23 @@ function withCeiling<T>(work: (signal: AbortSignal) => Promise<T>, ms: number, f
 }
 
 /**
- * Fetches and opens a link's reply part. Undefined for every failure (no box, an expired link, offline, damage, an older
- * server) and for no answer within `ceilingMs`: the caller then shows today's Share section. Never throws.
+ * What a link's reply fetch found (#5419). `gone`: the link's server answered that this link has no reply part (404 or
+ * 410: never had one, removed or expired), which is definite. `unreachable`: no answer, a slow or failing server, or a
+ * part that didn't open, which may pass; the caller may fall back to a box it kept.
  */
-export function fetchReplyBox(
+export type ReplyFetchOutcome = { kind: 'box'; box: ReplyBox } | { kind: 'gone' } | { kind: 'unreachable' };
+
+const UNREACHABLE: ReplyFetchOutcome = Object.freeze({ kind: 'unreachable' });
+const GONE: ReplyFetchOutcome = Object.freeze({ kind: 'gone' });
+
+/** Fetches and opens a link's reply part, saying whether a missing part is definite. Never throws. */
+export function fetchReplyOutcome(
   link: ShareLinkRef,
   fetchImpl: typeof fetch = fetch,
   ceilingMs: number = REPLY_FETCH_CEILING_MS,
-): Promise<ReplyBox | undefined> {
+): Promise<ReplyFetchOutcome> {
   return withCeiling(
-    async (signal) => {
+    async (signal): Promise<ReplyFetchOutcome> => {
       const response = await fetchImpl(`${link.origin}/l/${link.id}/reply`, {
         cache: 'no-store',
         credentials: 'omit',
@@ -173,13 +180,27 @@ export function fetchReplyBox(
         referrerPolicy: 'no-referrer',
         signal,
       });
-      if (response.status !== 200) return undefined;
+      if (response.status === 404 || response.status === 410) return GONE;
+      if (response.status !== 200) return UNREACHABLE;
       const opened = await openReplyPart(new Uint8Array(await response.arrayBuffer()), link.key);
-      return opened && { origin: link.origin, linkId: link.id, ...opened };
+      return opened ? { kind: 'box', box: { origin: link.origin, linkId: link.id, ...opened } } : UNREACHABLE;
     },
     ceilingMs,
-    undefined,
+    UNREACHABLE,
   );
+}
+
+/**
+ * Fetches and opens a link's reply part. Undefined for every failure (no box, an expired link, offline, damage, an older
+ * server) and for no answer within `ceilingMs`: the caller then shows today's Share section. Never throws.
+ */
+export async function fetchReplyBox(
+  link: ShareLinkRef,
+  fetchImpl: typeof fetch = fetch,
+  ceilingMs: number = REPLY_FETCH_CEILING_MS,
+): Promise<ReplyBox | undefined> {
+  const outcome = await fetchReplyOutcome(link, fetchImpl, ceilingMs);
+  return outcome.kind === 'box' ? outcome.box : undefined;
 }
 
 /**

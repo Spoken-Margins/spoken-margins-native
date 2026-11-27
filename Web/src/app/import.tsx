@@ -13,7 +13,7 @@ import { packetPickerAccept, packetRoute } from './logic/native-packets.ts';
 import { plainError } from './logic/messages.ts';
 import { NotSavedError } from './logic/storage.ts';
 import { LINK_MESSAGES, ShareLinkError, openSharedPacket, type ParsedLink } from './logic/share-link.ts';
-import { fetchReplyBox } from './logic/reply-box.ts';
+import { fetchReplyOutcome } from './logic/reply-box.ts';
 import { senderNameOrNone } from './logic/reply-words.ts';
 import { usePlayer } from './player.tsx';
 import { trackReplyBox } from './reply-boxes.ts';
@@ -104,7 +104,7 @@ export function useOpenShareLink(onLanded: (landing: Landing) => void): OpenShar
         return;
       }
       // The link's reply part (#4675), fetched beside the packet and never waited on.
-      const replyFetch = fetchReplyBox(parsed.link);
+      const replyFetch = fetchReplyOutcome(parsed.link);
       let bytes: Uint8Array;
       try {
         bytes = await openSharedPacket(parsed.link);

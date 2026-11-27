@@ -5,10 +5,11 @@
 // A box that opened is also kept in this browser's store, as a `replyBox:<episode id>` settings row beside the Margins
 // (#5419), so a reload of the web app's own address still offers "Send to <sender>" and shows the Sent tags. The row holds
 // only what posting an answer takes (box id, post proof, seal key, sender's name, packet digest), never the link key. It
-// goes when a post says the box can't take answers any more ('ended': closed, removed, full or switched off); a reopened
-// link whose fetch fails falls back to the kept box, and one whose fetch opens a box replaces it.
+// goes when a post says the box can't take answers any more ('ended': closed, removed, full or switched off), or when a
+// reopened link's server says the link has no reply part (404 or 410). A reopened link whose fetch fails or times out
+// falls back to the kept box, and one whose fetch opens a box replaces it.
 import { useCallback, useSyncExternalStore } from 'react';
-import { readReplyBoxRow, replyBoxRowValue, type KeptReplyBox, type ReplyBox } from './logic/reply-box.ts';
+import { readReplyBoxRow, replyBoxRowValue, type KeptReplyBox, type ReplyBox, type ReplyFetchOutcome } from './logic/reply-box.ts';
 import { putMany, remove } from './store/db.ts';
 import { REPLY_BOX_PREFIX } from './store/schema.ts';
 
@@ -59,8 +60,10 @@ export function restoreReplyBoxes(rows: Readonly<Record<string, unknown>> | unde
   for (const [episodeId, value] of Object.entries(rows)) {
     const box = readReplyBoxRow(value);
     if (!box) continue;
+    // A link already registered this page is newer than the stored row: it keeps its own state and its own kept box.
+    if (tokens.has(episodeId)) continue;
     kept.set(episodeId, box);
-    if (!tokens.has(episodeId)) set(episodeId, readyFrom(box));
+    set(episodeId, readyFrom(box));
   }
 }
 
@@ -72,6 +75,10 @@ export function restoreReplyBoxes(rows: Readonly<Record<string, unknown>> | unde
 export function forgetReplyBox(episodeId: string, linkId: string): void {
   const box = kept.get(episodeId);
   if (!box || box.box.linkId !== linkId) return;
+  drop(episodeId);
+}
+
+function drop(episodeId: string): void {
   kept.delete(episodeId);
   void remove('settings', `${REPLY_BOX_PREFIX}${episodeId}`).catch((error: unknown) => console.warn('Could not drop the link’s reply box.', error));
 }
@@ -81,18 +88,24 @@ export function forgetReplyBox(episodeId: string, linkId: string): void {
  * earlier fetch that settles afterwards changes nothing.
  */
 export function trackReplyBox(
-  episodeId: string, fetching: Promise<ReplyBox | undefined>, sender: string | undefined, packetDigest: string,
+  episodeId: string, fetching: Promise<ReplyFetchOutcome>, sender: string | undefined, packetDigest: string,
 ): void {
   const token = {};
   tokens.set(episodeId, token);
   set(episodeId, WAITING);
   void fetching.then(
-    (box) => {
+    (outcome) => {
       if (tokens.get(episodeId) !== token) return;
-      if (box) {
-        const opened: KeptReplyBox = { box, sender, packetDigest };
+      if (outcome.kind === 'box') {
+        const opened: KeptReplyBox = { box: outcome.box, sender, packetDigest };
         keep(episodeId, opened);
         set(episodeId, readyFrom(opened));
+        return;
+      }
+      // The latest link opened for this episode has no reply part: an older link's kept box no longer applies.
+      if (outcome.kind === 'gone') {
+        if (kept.has(episodeId)) drop(episodeId);
+        set(episodeId, NONE);
         return;
       }
       fellThrough(episodeId);
@@ -103,7 +116,7 @@ export function trackReplyBox(
   );
 }
 
-/** The fetch found no box (offline, slow, a link with none): the kept box if there is one, else today's section. */
+/** The fetch couldn't say (offline, slow, a server error, damage): the kept box if there is one, else today's section. */
 function fellThrough(episodeId: string): void {
   const box = kept.get(episodeId);
   set(episodeId, box ? readyFrom(box) : NONE);

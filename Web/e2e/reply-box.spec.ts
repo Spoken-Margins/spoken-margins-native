@@ -183,6 +183,30 @@ test('a box that can’t take answers any more is not kept: after a reload the S
   await context.close();
 });
 
+test('a later link for the same episode with no reply part drops the kept box, before and after a reload (#5419)', async ({ browser }) => {
+  const context = await newContext(browser);
+  const page = await friendPage(context);
+  const playing = await openAndAnswer(page, 'replyvoice01');
+  await expect(playing.getByRole('button', { name: `Send to ${SENDER}` })).toBeEnabled();
+  await settleWrites(page);
+  // The same episode through a link the server says has no reply part (404): today's section, not the old box.
+  await page.goto(linkTo('vectorvoice01'));
+  await startFromBeginning(page);
+  const fromPlain = page.getByRole('dialog', { name: EPISODE });
+  await write(fromPlain, 'Through the plain link.');
+  await expect(fromPlain.getByText(TODAY_CAPTION)).toBeVisible();
+  await expect(fromPlain.getByRole('button', { name: /^Send to / })).toHaveCount(0);
+  await settleWrites(page);
+  await page.goto(`${STUB}/`);
+  await page.reload();
+  await page.getByRole('button', { name: new RegExp(EPISODE.replace(/[()]/g, '\\$&')) }).first().click();
+  await nowTab(page);
+  const again = page.getByRole('dialog', { name: EPISODE });
+  await expect(again.getByText(TODAY_CAPTION)).toBeVisible();
+  await expect(again.getByRole('button', { name: /^Send to / })).toHaveCount(0);
+  await context.close();
+});
+
 /** Makes the stored Margin with these words a reply to a Margin from another packet (another link or file). */
 async function replyToAnotherPacket(page: Page, words: string, digest: string): Promise<void> {
   await page.evaluate(
