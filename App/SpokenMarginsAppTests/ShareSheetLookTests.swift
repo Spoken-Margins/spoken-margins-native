@@ -1,4 +1,4 @@
-import SessionKit
+@testable import SessionKit
 import SwiftUI
 import UIKit
 import XCTest
