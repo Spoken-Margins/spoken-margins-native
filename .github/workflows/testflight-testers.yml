@@ -1,0 +1,160 @@
+# Give an uploaded TestFlight build to its testers after the owner approves (#5447).
+#
+# Owner's call, 2026-11-27: "yes" to adding every future build to the tester groups with the App Store Connect key
+# already stored, and "could we make it go through an approve similar to a deploy though?". Until now an upload
+# (testflight-upload.yml or the Mac) stopped at App Store Connect, and someone had to sign in there to add the build to
+# the groups and send it to beta review; Build 38 waited a day for that.
+#
+# Who starts it: testflight-testers-request.yml, as the spoken-margins-agent App, for the newest `testflight/*` upload
+# tag that has no run yet. GitHub refuses the owner's approval on a run his own login started (prevent self-review),
+# and cloud sessions act as his login, so `check` refuses such a run before he is asked.
+#   1. `check` (environment `phone-build`, GET requests only): waits until App Store Connect has processed the build,
+#      reads the share-link flag from the upload tag, runs the external release gate (scripts/release_gate.py, #2236),
+#      picks the groups and lists what is left in the run summary. A build already with its testers ends here, and no
+#      one is asked. A gate refusal fails here: nothing is changed, the internal group included.
+#   2. `notice` (no environment, no secrets): one comment as github-actions[bot] that @mentions the owner on the PR
+#      behind the uploaded commit, linking this run (scripts/testflight_testers.py notice).
+#   3. `approve` (environment `testflight-upload`, the upload's own: required reviewer uncomposed, prevent self-review,
+#      main only). No secret. It waits for his tap, then `testflight_upload.py gate` checks the environment's rules and
+#      this run's approval, since GitHub would create a missing environment with no rules and let the job through.
+#   4. `assign` (environment `phone-build`): reads everything again, refuses if the groups differ from the plan he
+#      approved or the gate now refuses, then adds the build to the internal groups, sets "What to Test" when empty,
+#      adds it to the friends beta (the one external group with a public link, behind spokenmargins.com/join) and
+#      submits it for beta review. Each step is skipped when already done, so a re-run of this job is safe.
+#
+# The whole step waits for the tap, the internal group included (Default taken on #5447): one tap per build, and the
+# owner sees every App Store Connect change before it happens.
+#
+# Trust: workflow_dispatch only, main only. Every job refuses any other ref and both environments admit main only.
+# There is no schedule, pull_request, pull_request_target, issue_comment or workflow_run trigger here, and there must
+# never be: that would hand the App Store Connect key to code nobody reviewed.
+#
+# Cost and catch: two short Linux jobs before the tap (the wait for Apple's processing is capped at 45 minutes, and
+# usually finds the build already processed), one owner tap, one short Linux job after; a few runs a month. A run for a
+# build already with its testers costs one short job and no tap. It catches the step that held Build 38 for a day, and
+# a build with share links on reaching the friends beta while the gate record is incomplete. Waste signal: runs sit
+# unapproved, or builds keep being assigned by hand anyway.
+name: testflight-testers
+run-name: Testers for Build ${{ inputs.build }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      build:
+        description: 'The uploaded build number (CFBundleVersion), which has a testflight/*-build-N tag'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight-testers
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: phone-build
+    timeout-minutes: 50
+    outputs:
+      needed: ${{ steps.plan.outputs.needed }}
+      expect: ${{ steps.plan.outputs.expect }}
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - name: Check the ref and the build number
+        env:
+          BUILD: ${{ inputs.build }}
+        run: |
+          [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }
+          [[ "$BUILD" =~ ^[0-9]{1,6}$ ]] || { echo "::error::the build number must be digits"; exit 1; }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+          filter: blob:none
+      - name: What this build still needs, and the release gate
+        id: plan
+        env:
+          BUILD: ${{ inputs.build }}
+          STARTED_BY: ${{ github.triggering_actor }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: python3 scripts/testflight_testers.py plan --build "$BUILD" --started-by "$STARTED_BY" --timeout 2700
+
+  notice:
+    needs: check
+    if: ${{ github.ref == 'refs/heads/main' && needs.check.outputs.needed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write       # the commit comment, when no PR is behind the commit
+      pull-requests: write  # the PR comment
+      issues: write         # PR comments go through the issues API
+    steps:
+      - name: Check the ref
+        run: '[ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Tell the owner what would change and where to approve it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD: ${{ inputs.build }}
+          SHA: ${{ needs.check.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/testflight_testers.py notice --build "$BUILD" --sha "$SHA" --run-url "$RUN_URL"
+
+  approve:
+    needs: [check, notice]
+    # A failed notice still leaves the run for the owner to find; a build that needs nothing never reaches him.
+    if: ${{ !cancelled() && needs.check.result == 'success' && needs.check.outputs.needed == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment: testflight-upload
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read  # this run's approvals, for the gate check
+    steps:
+      - name: Check the ref
+        run: '[ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # GitHub creates a missing environment with no rules on first use, so this job alone proves nothing.
+      - name: Check that the owner approved this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          BUILD: ${{ inputs.build }}
+        run: |
+          python3 scripts/testflight_upload.py gate --run-id "$RUN_ID"
+          echo "The owner approved giving Build $BUILD to its testers." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  assign:
+    name: Groups and beta review
+    needs: [check, approve]
+    if: ${{ !cancelled() && needs.approve.result == 'success' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment: phone-build
+    timeout-minutes: 10
+    steps:
+      - name: Check the ref
+        run: '[ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::main only"; exit 1; }'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+          filter: blob:none
+      - name: Add the build to its groups and submit it for beta review
+        env:
+          BUILD: ${{ inputs.build }}
+          EXPECT: ${{ needs.check.outputs.expect }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: python3 scripts/testflight_testers.py assign --build "$BUILD" --expect "$EXPECT"
