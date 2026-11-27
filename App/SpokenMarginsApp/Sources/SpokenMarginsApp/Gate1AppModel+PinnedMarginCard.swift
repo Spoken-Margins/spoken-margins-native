@@ -65,10 +65,8 @@ extension Gate1AppModel {
                     voiceTime: playingVoiceTime, noun: sourceNoun, nextPress: nextMarginPress, run: run,
                     chainsWithoutLeadIn: CantPlayListening.isCantPlayListening(moment), canStartEarlier: marginMomentStartEarlierPlan != nil)
             }
-            // A plain moment that has played its Margin keeps listening for the others: the slot stays, saying so. A silent Margin
-            // the listener has just gone to comes first, so a Skim to a note after a spoken Margin still shows its card (#4938).
+            // A plain moment that has played its Margin keeps listening for the others: the slot stays, saying so.
             if !moment.isReview, moment.phase == .listening {
-                if let landing = shownSilentMarginLanding { return silentLandingCard(landing) }
                 return PinnedMarginCard(subject: .yours, stage: .upNext(msRemaining: nil, arrival: .playsByItself), position: nil, noun: sourceNoun, run: run)
             }
             let remaining = moment.msUntilTarget(currentMediaTimeMs: moment.review == nil ? (marginMomentPositionMs ?? moment.startMediaTimeMs) : snapshot.currentMediaTimeMs)
@@ -77,7 +75,7 @@ extension Gate1AppModel {
                 canStartEarlier: marginMomentStartEarlierPlan != nil)
         }
         // A friend's Margin the listener went to that is never read aloud: its words, while the source is still near it (#4934).
-        if let landing = shownSilentMarginLanding { return silentLandingCard(landing) }
+        if let landing = shownSilentMarginLanding { return landing.card(noun: sourceNoun) }
         if let saved = friendAnswerSavedCard ?? hearItLandWrittenCard { return saved }
         // After a catch-up run, the card that says no answer is owed, ahead of any heard Margin still ahead (#4785).
         if let caughtUp = caughtUpCard { return caughtUp }
@@ -89,11 +87,6 @@ extension Gate1AppModel {
             subject: .friend(SharedPacketArrival.senderName(next.prompt.senderLabel)), stage: .upNext(msRemaining: remaining, arrival: arrival),
             position: PinnedMarginCard.position(next.prompt.index, of: next.prompt.count), noun: sourceNoun, nextPress: nextMarginPress,
             targetLeadInMs: next.prompt.interjection.senderLeadInMs)
-    }
-
-    /// The card for a silent landing: the words of the note the source has reached (a burst of your own notes shows each in turn, #4938).
-    private func silentLandingCard(_ landing: SilentMarginLanding) -> PinnedMarginCard {
-        landing.card(noun: sourceNoun, playhead: silentMarginLandingPlayhead ?? landing.position)
     }
 
     /// The friend's Margin an ordinary countdown card is about (no Margin moment), so the card's line can say how its

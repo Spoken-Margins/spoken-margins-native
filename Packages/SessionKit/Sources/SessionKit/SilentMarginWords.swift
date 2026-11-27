@@ -26,15 +26,6 @@ public enum SilentMarginWords {
             && MarginPlacePresentation.offersGoToMoment(margin)
     }
 
-    /// The words the pinned card shows for the listener's own written Margin (#4938): the first non-empty of its shown text, its
-    /// cleaned transcript and its transcript, trimmed, or nil when all three are empty. The card cuts them as a waiting card does.
-    public static func ownWords(_ margin: Interjection) -> String? {
-        [margin.displayText, margin.cleanedTranscript, margin.transcript]
-            .lazy
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .first { !$0.isEmpty }
-    }
-
     /// What a tap on a friend's row in the Library's Margins screen does (#4934, and #158's rule before it): a Margin with a place
     /// in an item in the Library plays its moment, unless it is never read aloud, in which case it goes there with no voice; one
     /// with no place, no item in the Library, or no way to go opens its details. `friendGoesTo` is asked first and is the whole test of

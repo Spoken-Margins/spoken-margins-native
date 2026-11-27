@@ -9,7 +9,7 @@ import SessionKit
 /// file so `Gate1AppModel` does not grow.
 extension Gate1AppModel {
     /// The playing item's stops, or nil when Skim has no source (a recording, no store, not a media or text item).
-    var skimStopList: SkimStops? {
+    private var skimStopList: SkimStops? {
         guard let source = skimSource, selectedItem.id == source.itemId else { return nil }
         let itemId = source.itemId
         let usesText = source.usesTextPositions
@@ -32,14 +32,7 @@ extension Gate1AppModel {
         return SkimStopRouting.stops(
             textChapters: selectedItem.chapters,
             mediaChapters: selectedItem.mediaChapters.isEmpty ? selectedItem.listeningMapScenes : selectedItem.mediaChapters,
-            ownMargins: own, sharedMargins: shared, silentSharedMargins: silent,
-            // The listener's own written Margins are silent stops too: a Mark, a Siri note, a live-session note (#4938).
-            silentOwnMargins: ownWrittenSkimMargins(itemId: itemId), unit: unit)
-    }
-
-    /// The open item's own written Margins that are Skim stops (`SilentMarginWords.ownWrittenGoesTo`, #4938).
-    func ownWrittenSkimMargins(itemId: String) -> [Interjection] {
-        marginRows.map(\.interjection).filter { $0.itemId == itemId && SilentMarginWords.ownWrittenGoesTo($0) }
+            ownMargins: own, sharedMargins: shared, silentSharedMargins: silent, unit: unit)
     }
 
     func skimStopChoice(direction: SkimDirection, at position: Int, summaryDestination: Int?) -> SkimStopRouting.Choice {
@@ -80,9 +73,6 @@ extension Gate1AppModel {
         guard let itemId = skimSource?.itemId else { return }
         // A press that lands on a stop ends the card for a silent Margin the listener went to (#4934). Only a press runs this, never
         // a view's read, so it may write. The next change reads `silentMarginLanding` in `skimStopChoice` first, so it clears after that.
-        // The landing is kept for the voiced branch: a seek to a note can land a second short of it, and the press has passed every
-        // note it gathered (#4938). Dismissed or not: `skimTarget` skips its notes either way; `startPlayhead` checks its window.
-        let landed = silentMarginLanding.flatMap { $0.itemId == itemId ? $0 : nil }
         silentMarginLanding = nil
         // A friend's Margin that is sounding or waiting gives way: the stop is where the listener is going now.
         if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
@@ -94,7 +84,7 @@ extension Gate1AppModel {
             // A silent Margin has nothing to start: it is a place, like a chapter. Checked before `startSkimMargin`, which would
             // report a failure for a Margin with no voice (#4934).
             if stop.isSilent { goToSilentSkimStop(stop, itemId: itemId); return }
-            let playhead = SilentMarginLanding.startPlayhead(playhead: skimCurrentMediaTimeMs ?? 0, landing: landed, target: target)
+            let playhead = skimCurrentMediaTimeMs ?? 0
             let started = startSkimMargin(id: stop.id, itemId: itemId)
             if started {
                 // Already inside the lead-in window: never seek back (and replay the Margin before it); play it now.

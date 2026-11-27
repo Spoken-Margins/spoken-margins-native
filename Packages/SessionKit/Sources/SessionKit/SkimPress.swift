@@ -97,9 +97,6 @@ public enum SkimPressOutcome: String, Equatable, Sendable {
     /// The press went to a friend's Margin that is never read aloud: the source moved to its place and plays on, with nothing
     /// spoken (#4934).
     case wentToSilentMargin = "went_to_silent_margin"
-    /// The press went to the listener's own written Margin: the source moved to its place and plays on, with nothing spoken (#4938).
-    /// Counted apart from a friend's so Diagnostics can show a listener pressing through their own notes.
-    case wentToOwnWrittenMargin = "went_to_own_written_margin"
 
     /// The fields of the `skim.press` Diagnostics event.
     public func diagnosticFields(direction: SkimDirection, reason: String? = nil) -> [String: String] {

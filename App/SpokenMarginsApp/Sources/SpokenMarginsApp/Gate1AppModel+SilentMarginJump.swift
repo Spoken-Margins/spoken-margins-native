@@ -20,20 +20,13 @@ extension Gate1AppModel {
     /// right at any playback speed, for a listener who pauses, and after a scrub away.
     var shownSilentMarginLanding: SilentMarginLanding? {
         guard let landing = silentMarginLanding, !landing.isDismissed, landing.itemId == snapshot.itemId else { return nil }
-        guard let playhead = silentMarginLandingPlayhead, landing.isShowing(playhead: playhead) else { return nil }
-        return landing
-    }
-
-    /// The source's place in the landing's own unit (a media time, or a character offset), nil with no landing or no place.
-    var silentMarginLandingPlayhead: Int? {
-        silentMarginLanding.flatMap { playhead(in: $0.unit) }
-    }
-
-    private func playhead(in unit: SkimStops.PositionUnit) -> Int? {
-        switch unit {
-        case .milliseconds: return snapshot.currentMediaTimeMs
-        case .characters: return snapshot.currentTextStart
+        let playhead: Int?
+        switch landing.unit {
+        case .milliseconds: playhead = snapshot.currentMediaTimeMs
+        case .characters: playhead = snapshot.currentTextStart
         }
+        guard let playhead, landing.isShowing(playhead: playhead) else { return nil }
+        return landing
     }
 
     /// "Dismiss" on the card: the card goes, the source keeps playing. The landing stays, marked dismissed, so a Skim press a moment
@@ -60,7 +53,7 @@ extension Gate1AppModel {
         guard let landing = SilentMarginLanding(
             going: row.interjection, in: row.layer, itemId: itemID,
             textUnit: .characters(perSecond: ListeningTimeEstimator.defaultCharactersPerSecond)) else { return }
-        guard land(on: landing, friend: row) else { return } // the seek reported why; no card for a place the source didn't reach
+        guard land(on: landing, row: row) else { return } // the seek reported why; no card for a place the source didn't reach
         screen = .playback
         showNowRequests += 1 // the playback screen switches to Now, where the card is
     }
@@ -69,52 +62,20 @@ extension Gate1AppModel {
     /// spoken, and the card on Now says what is there. The same landing steps as a list's go-to, on the open item, with no
     /// switch of screen: the press came from where Skim is. It ends no voice of its own: `skimGo` already gave way to a friend's.
     func goToSilentSkimStop(_ stop: SkimStop, itemId: String) {
-        // The listener's own written Margin (#4938): the landing gathers the notes just after it, so a burst takes one press.
-        if stop.isOwnWritten {
-            guard let stops = skimStopList, let landing = SilentMarginLanding(
-                own: stop, in: stops, margins: ownWrittenSkimMargins(itemId: itemId), itemId: itemId) else { return }
-            land(on: landing, friend: nil)
-            return
-        }
         guard let source = skimSource, let row = sharedMarginRows.first(where: { $0.interjection.id == stop.id && $0.layer.itemId == itemId })
         else { return }
         let unit: SkimStops.PositionUnit = source.usesTextPositions
             ? .characters(perSecond: ListeningTimeEstimator.defaultCharactersPerSecond) : .milliseconds
         guard let landing = SilentMarginLanding(skipping: stop, margin: row.interjection, in: row.layer, itemId: itemId, unit: unit)
         else { return }
-        land(on: landing, friend: row)
+        land(on: landing, row: row)
     }
 
-    /// A go-to on the listener's own written Margin from a list (the Margins tab, the details sheet, the Timeline, the Library) that
-    /// already moved the source there (`MarginMomentTap`, #4938). It sets the same landing a Skim press would, with no seek, so the
-    /// card says "Your Margin is here" and the next Skim press never lands on this note again. Nothing for a spoken Margin, another
-    /// item, or a source that did not end up inside the landing's window.
-    func landOnOwnWrittenMargin(_ row: MarginRow) {
-        let margin = row.interjection
-        guard SilentMarginWords.ownWrittenGoesTo(margin), skimSource != nil, snapshot.itemId == margin.itemId else { return }
-        silentMarginLanding = nil // a go-to elsewhere ends any landing from before
-        guard let stops = skimStopList else { return }
-        let landing: SilentMarginLanding
-        if let stop = stops.stops.first(where: { $0.kind == .margin && $0.id == margin.id && $0.isOwnWritten }),
-           let gathered = SilentMarginLanding(own: stop, in: stops, margins: ownWrittenSkimMargins(itemId: margin.itemId), itemId: margin.itemId) {
-            landing = gathered
-        } else if let place = SkimStop.margin(margin, unit: stops.unit) {
-            // Dropped from the list on a tie with another stop: a landing of its own, at the same place.
-            landing = SilentMarginLanding(own: margin, position: place.position, itemId: margin.itemId, unit: stops.unit)
-        } else {
-            return
-        }
-        // The go-to may have played from a narration or sentence time that differs from the anchor: no card for a place elsewhere.
-        guard let playhead = playhead(in: landing.unit), landing.isShowing(playhead: playhead) else { return }
-        silentMarginLanding = landing
-    }
-
-    /// Seek to the landing's place, play on, show its card and, for a friend's Margin when the details sheet's own rule says so, mark
-    /// it heard (a note reading was turned off for is met by landing, #3427; one with no voice on this phone stays unmarked, #3402: a
-    /// voice downloaded later still has it to read). The listener's own note (`friend` nil) has nothing to mark. False when the seek
-    /// did not move the source, which reported why.
+    /// Seek to the landing's place, play on, show its card and, when the details sheet's own rule says so, mark the Margin heard
+    /// (a note reading was turned off for is met by landing, #3427; one with no voice on this phone stays unmarked, #3402: a voice
+    /// downloaded later still has it to read). False when the seek did not move the source, which reported why.
     @discardableResult
-    private func land(on landing: SilentMarginLanding, friend row: SharedMarginRow?) -> Bool {
+    private func land(on landing: SilentMarginLanding, row: SharedMarginRow) -> Bool {
         let moved: Bool
         switch landing.unit {
         case .milliseconds: moved = seekMedia(toMediaTimeMs: landing.position)
@@ -123,7 +84,7 @@ extension Gate1AppModel {
         guard moved else { return false }
         if !snapshot.status.isPlaybackActive { resumePlayback() }
         silentMarginLanding = landing
-        guard let margin = row?.interjection else { return true }
+        let margin = row.interjection
         if margin.isWritten, margin.isNewToListener, !margin.readAloudChoice { markSharedMarginHeard(margin) }
         return true
     }

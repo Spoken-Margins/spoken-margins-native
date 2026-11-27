@@ -416,7 +416,7 @@ final class SkimBridgeController {
         ) {
             let outcome: SkimPressOutcome = switch (target.stop.kind, target.stop.isSilent) {
             case (.chapter, _): .wentToChapter
-            case (.margin, true): target.stop.isOwnWritten ? .wentToOwnWrittenMargin : .wentToSilentMargin
+            case (.margin, true): .wentToSilentMargin
             case (.margin, false): .startedMarginLeadIn
             }
             record(outcome, direction, detail: target.stop.id)

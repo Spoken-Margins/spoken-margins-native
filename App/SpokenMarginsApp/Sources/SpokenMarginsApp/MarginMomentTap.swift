@@ -72,8 +72,6 @@ enum MarginMomentTap {
             case .success(let load):
                 let played = model.hangTelemetry.labels.scoped("playMarginMomentTap") { model.playMarginMoment(row, loaded: load) }
                 model.recordMarginTap(.own, played ? .started : .refused(.playFailed)) // playMarginMoment told the listener why
-                // Your own written Margin: the card says "Your Margin is here", as after a Skim press to it (#4938).
-                if played { model.landOnOwnWrittenMargin(row) }
             case .failure(let error):
                 model.recordMarginTap(.own, .refused(.marginUnavailable))
                 model.reportFailure(error, context: "Could not play this Margin's position")
