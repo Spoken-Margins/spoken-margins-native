@@ -4,7 +4,7 @@
 // today's words for a conversation link. The mark is never written into a packet. Plain TypeScript with no DOM.
 import type { Margin } from '../../shared/model.ts';
 import { PART, openPart } from '../../packet/share-link.ts';
-import { withCeiling, type ReplyBox } from './reply-box.ts';
+import { withCeiling, type ReplyFetchOutcome } from './reply-box.ts';
 import type { ShareLinkRef } from './share-link.ts';
 import { canStar } from './star.ts';
 
@@ -75,23 +75,27 @@ export function keepingFromIntro(margin: Margin, stored: Margin | undefined): Ma
 }
 
 /**
- * What the Share section reads for a link (#4784 with #4675): the reply box, unless the link is an introduction link.
- * Waits for both fetches (each settles within its 5-second ceiling). On an introduction link it first marks the link's
- * Margins (`mark`, which waits for them to be stored), so the section never draws a conversation's words and then
- * changes, and the reply part is dropped: an introduction mark wins over a reply part (Default taken 4). A mark that
- * isn't kept is logged; the words still follow the mark for this page.
+ * What the Share section reads for a link (#4784 with #4675, #5419): the reply fetch's outcome, unless the link is an
+ * introduction link. Waits for both fetches (each settles within its 5-second ceiling). On an introduction link it first
+ * marks the link's Margins (`mark`, which waits for them to be stored), so the section never draws a conversation's words
+ * and then changes, and the reply part is dropped as `gone`: an introduction mark wins over a reply part (Default taken
+ * 4), and an older link's box kept for the same episode no longer applies. A mark that isn't kept is logged; the words
+ * still follow the mark for this page. A reply fetch that rejects counts as `unreachable`, as its own ceiling does.
  */
 export async function linkShareFetch(
-  reply: Promise<ReplyBox | undefined>,
+  reply: Promise<ReplyFetchOutcome>,
   intro: Promise<boolean>,
   mark: () => Promise<void>,
-): Promise<ReplyBox | undefined> {
-  const [box, isIntro] = await Promise.all([reply.catch(() => undefined), intro.catch(() => false)]);
-  if (!isIntro) return box;
+): Promise<ReplyFetchOutcome> {
+  const [outcome, isIntro] = await Promise.all([
+    reply.catch((): ReplyFetchOutcome => ({ kind: 'unreachable' })),
+    intro.catch(() => false),
+  ]);
+  if (!isIntro) return outcome;
   try {
     await mark();
   } catch (error) {
     console.warn('Could not keep that these Margins came through an introduction link.', error);
   }
-  return undefined;
+  return { kind: 'gone' };
 }

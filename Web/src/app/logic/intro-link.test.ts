@@ -7,7 +7,7 @@ import type { Margin } from '../../shared/model.ts';
 import {
   INTRO_FETCH_CEILING_MS, fetchIntroMark, isIntroPreview, keepingFromIntro, linkShareFetch, openIntroMark, withFromIntro,
 } from './intro-link.ts';
-import type { ReplyBox } from './reply-box.ts';
+import type { ReplyBox, ReplyFetchOutcome } from './reply-box.ts';
 
 const base = { schema: 'spokenmargins.link-preview.v1', source: { title: 'T' }, margins: [{ text: 'x' }] };
 
@@ -102,18 +102,21 @@ test('#4784 a rewrite keeps a stored introduction mark, and never adds one to th
   assert.equal(keepingFromIntro(m('own'), { ...m('own'), fromIntro: true }).fromIntro, undefined);
 });
 
-test('#4784 an introduction mark wins over a reply part: the Margins are marked first and no box is offered', async () => {
-  const box = { linkId: 'x' } as unknown as ReplyBox;
+test('#4784 an introduction mark wins over a reply part: the Margins are marked first and the box is dropped as gone', async () => {
+  const box: ReplyFetchOutcome = { kind: 'box', box: { linkId: 'x' } as unknown as ReplyBox };
+  const gone: ReplyFetchOutcome = { kind: 'gone' };
+  const unreachable: ReplyFetchOutcome = { kind: 'unreachable' };
   const order: string[] = [];
   const mark = async () => {
     order.push('marked');
   };
-  assert.equal(await linkShareFetch(Promise.resolve(box), Promise.resolve(true), mark), undefined);
+  assert.deepEqual(await linkShareFetch(Promise.resolve(box), Promise.resolve(true), mark), gone);
   assert.deepEqual(order, ['marked']);
 
   order.length = 0;
   assert.equal(await linkShareFetch(Promise.resolve(box), Promise.resolve(false), mark), box, 'a conversation link keeps its box');
-  assert.equal(await linkShareFetch(Promise.resolve(undefined), Promise.resolve(false), mark), undefined);
+  assert.equal(await linkShareFetch(Promise.resolve(gone), Promise.resolve(false), mark), gone, 'a link with no reply part stays gone');
+  assert.equal(await linkShareFetch(Promise.resolve(unreachable), Promise.resolve(false), mark), unreachable, 'an unreachable reply part may fall back to a kept box (#5419)');
   assert.deepEqual(order, [], 'a conversation link marks nothing');
 
   const failing = async () => {
@@ -122,8 +125,8 @@ test('#4784 an introduction mark wins over a reply part: the Margins are marked 
   const warn = console.warn;
   console.warn = () => {};
   try {
-    assert.equal(await linkShareFetch(Promise.resolve(box), Promise.resolve(true), failing), undefined, 'a mark not kept still offers no box');
-    assert.equal(await linkShareFetch(Promise.reject(new Error('x')), Promise.reject(new Error('y')), mark), undefined, 'two failed fetches: today’s section');
+    assert.deepEqual(await linkShareFetch(Promise.resolve(box), Promise.resolve(true), failing), gone, 'a mark not kept still offers no box');
+    assert.deepEqual(await linkShareFetch(Promise.reject(new Error('x')), Promise.reject(new Error('y')), mark), unreachable, 'two failed fetches: the kept box or today’s section');
   } finally {
     console.warn = warn;
   }
