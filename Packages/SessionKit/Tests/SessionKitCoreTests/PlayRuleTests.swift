@@ -387,6 +387,33 @@ final class PlayRuleTests: XCTestCase {
             "a text session at the start has nothing behind it")
     }
 
+    /// The Library row's Continue on the open article (audit on #5422): its session holds a character place and no media
+    /// time, so the row's own reading counted every new Margin as behind and asked about one ahead of the place. It now
+    /// compares characters, as the item screen does: only a Margin before the place is asked about.
+    func testTheLibraryRowOnTheOpenArticleAsksOnlyAboutMarginsBeforeThePlace() {
+        let behind = entry("m0", mediaMs: 5_000, char: 400)
+        let ahead = entry("m1", mediaMs: 5_000, char: 8_000)
+        let sessions = [textSession("t", charOffset: 2_000)]
+        assertDecision(context(open: sessions, margins: [ahead]), .play(.savedPlace(mediaTimeMs: nil)), "a Margin ahead plays in place")
+        assertDecision(context(open: sessions, margins: [behind, ahead]), .askFirst(marginsBehind: [behind]), "only the one behind is asked about")
+        // The same item playing now is placed by its playhead, as before.
+        assertDecision(
+            context(nowPlaying: PlayRule.NowPlaying(itemId: "item", mediaTimeMs: 0), open: sessions, margins: [ahead]),
+            .play(.savedPlace(mediaTimeMs: 0)), "playing now: the playhead decides")
+    }
+
+    /// The article loaded or playing now, read aloud, has no media time (audit on #5446): its place is the text being
+    /// read. Read as media 0, no Margin counted as behind and Continue skipped one before the place with no question.
+    func testTheArticlePlayingNowIsPlacedByTheTextBeingRead() {
+        let behind = entry("m0", mediaMs: 28_000, char: 400)
+        let ahead = entry("m1", mediaMs: 560_000, char: 8_000)
+        let sessions = [textSession("t", charOffset: 5_000)]
+        let reading = PlayRule.NowPlaying(itemId: "item", mediaTimeMs: nil, textOffset: 5_000)
+        assertDecision(context(nowPlaying: reading, open: sessions, margins: [behind, ahead]), .askFirst(marginsBehind: [behind]), "open: the one behind")
+        assertDecision(context(nowPlaying: reading, margins: [behind, ahead]), .askFirst(marginsBehind: [behind]), "not open: the one behind")
+        assertDecision(context(nowPlaying: reading, margins: [ahead]), .play(.savedPlace(mediaTimeMs: 0)), "only ahead: plays in place")
+    }
+
     func testTheSavedPlaceIsAtTheEndOnlyFromNinetyNineUpToButNotIncludingOneHundred() {
         let table: [(String, [Session], Bool)] = [
             ("none", [], false),

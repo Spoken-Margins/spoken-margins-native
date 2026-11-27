@@ -2,6 +2,7 @@ import Foundation
 import SessionKit
 import SessionKitAudio
 import SessionKitFeeds
+import SessionKitPersistence
 
 /// The question Continue asks before it starts an item that has new shared Margins (#474): the item, and the Margins
 /// the question is about. Read once when Continue is tapped, so the dialog's message and its two answers don't read
@@ -47,7 +48,44 @@ extension Gate1AppModel {
         } else {
             entries = []
         }
-        return entries.filter { WrittenMarginReadings.audio(for: $0.interjection, in: $0.layer, voiceFile: resolvedApplicationSupportAssetURL(for:)).file != nil }
+        // Only the Margins the item's review can place on its clock (#5409), so the intro, "Hear the replies" and catch-up
+        // never offer what the review would then refuse: an article playing a recording has no time for a text place.
+        var clock = expectedReviewClock(itemId: itemId)
+        // An article stored as text can still start on media: its publisher's recording, adopted only when it starts,
+        // or prepared narration attached to it. The open item's detail says so (`startsOnMedia`); the Library row can't,
+        // so for an item that isn't open the store says, read only when a Margin placed by characters is at stake. That
+        // is the Library tap, which reads the item's Margins from the store just above (audit on #5422).
+        if clock == nil, selectedItem.id != itemId, entries.contains(where: \.isPlacedInText), startsOnMedia(itemId: itemId) { clock = .media }
+        let placeable = clock.map { SharedMarginReview.placeable(entries, on: $0) } ?? entries
+        return placeable.filter { WrittenMarginReadings.audio(for: $0.interjection, in: $0.layer, voiceFile: resolvedApplicationSupportAssetURL(for:)).file != nil }
+    }
+
+    /// The clock a review of `itemId` will count on, when it is known before it starts (#5409): the loaded session's when it
+    /// is that item, else media for an item known to play audio. Nil when unknown, and then nothing is left out: a podcast
+    /// has no text-placed Margins, and a text item whose narration is prepared only when it starts is caught by the
+    /// review's own check once the session has begun.
+    ///
+    /// The Library row counts too: a row with recorded audio of its own (`hasNativeAudio`, `mediaDurationMs`) starts on
+    /// media whatever its `mediaType` says (audit on #5422). What the row can't say, `startsOnMedia` reads.
+    func expectedReviewClock(itemId: String) -> MarginMomentClock? {
+        if snapshot.itemId == itemId, snapshot.targetType != nil { return reviewSourceClock }
+        // Not `mediaDurationMs`: the loader fills it from a transcript timeline too, for an article that still starts on
+        // live speech (audit on #5446). `startsOnMedia` is read the way the engine decides.
+        if selectedItem.id == itemId, selectedItem.isNativeAudio || selectedItem.startsOnMedia { return .media }
+        if let row = libraryItems.first(where: { $0.id == itemId }),
+           Self.reviewMediaTypes.contains(row.mediaType) || row.hasNativeAudio || row.mediaDurationMs != nil {
+            return .media
+        }
+        return nil
+    }
+
+    private static let reviewMediaTypes: Set<String> = [TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue]
+
+    /// `ItemDetailLoader.startsOnMedia` for an item that isn't open. Store reads: the caller asks only on the Library tap
+    /// for an item that isn't open, and only when a friend's Margin placed by characters would be offered (#5409).
+    func startsOnMedia(itemId: String) -> Bool {
+        guard let store, let item = try? store.loadItemSummary(id: itemId) else { return false } // no article text
+        return ItemDetailLoader.startsOnMedia(item, store: store)
     }
 
     /// The listener's own Margins on `itemId`, read from what the app already holds: the open item's and the rows the
@@ -90,7 +128,9 @@ extension Gate1AppModel {
     ) {
         var context = PlayRule.Context(
             itemId: itemId, surface: surface,
-            nowPlaying: hasActiveSession ? snapshot.itemId.map { PlayRule.NowPlaying(itemId: $0, mediaTimeMs: snapshot.currentMediaTimeMs) } : nil,
+            nowPlaying: hasActiveSession ? snapshot.itemId.map { PlayRule.NowPlaying(
+                itemId: $0, mediaTimeMs: snapshot.currentMediaTimeMs,
+                textOffset: reviewSourceClock.isNarratedText ? snapshot.currentTextStart : nil) } : nil,
             openItem: PlayRule.OpenItem(id: selectedItem.id, sessions: selectedItem.sessions, addedAgainAt: addedAgainAt(forItem: selectedItem.id)),
             libraryRow: libraryItems.first(where: { $0.id == itemId }),
             // Only the Library row asks about Margins, so the item screen skips the read.
@@ -169,13 +209,13 @@ extension Gate1AppModel {
     ) {
         guard !rejectNavigationOrSessionMutationWhileRecording("review_new_margins") else { return }
         if catchUp, catchUpRunIsPlaying(itemId: itemId) { return } // a second tap starts one run, not two
-        let entries = offered ?? newSharedMargins(itemId: itemId)
-        guard !entries.isEmpty else {
+        let offeredEntries = offered ?? newSharedMargins(itemId: itemId)
+        guard !offeredEntries.isEmpty else {
             reportWarning("There are no new Margins to review here.")
             return
         }
-        if reviewFriendMarginsOfDeadEpisode(itemId: itemId, entries: entries) { return } // the episode can't play (#3392)
-        if WrittenMarginReadings.holdReview(itemId: itemId, thenContinue: thenContinue, entries: entries, catchUp: catchUp, model: self) { return } // readings not ready yet (#3365)
+        if reviewFriendMarginsOfDeadEpisode(itemId: itemId, entries: offeredEntries) { return } // the episode can't play (#3392)
+        if WrittenMarginReadings.holdReview(itemId: itemId, thenContinue: thenContinue, entries: offeredEntries, catchUp: catchUp, model: self) { return } // readings not ready yet (#3365)
         endMarginMoment()
         settleCatchUpPlace(trigger: "review") // a place a catch-up run kept comes back first, so this review returns there (#5238)
         // A Margin voice already playing (your own, #1538, or a friend's) or a shared-Margin card waiting gives way:
@@ -192,6 +232,18 @@ extension Gate1AppModel {
         } else {
             noteCatchUp(.play) // an ordinary review puts an earlier caught-up card away (#4785)
             if snapshot.itemId != itemId || !hasActiveSession { startItem(id: itemId) }
+        }
+        // The item didn't start (offline, refused): its start already said why, and the loaded item's clock says nothing
+        // about this one's Margins (audit on #5422).
+        guard snapshot.itemId == itemId else { return }
+        // The clock is the started session's: an article read aloud counts on narration time, where its Margins are placed
+        // by characters (#5409). Only the Margins placed on that clock can play in this review.
+        let clock = reviewSourceClock
+        let entries = SharedMarginReview.placeable(offeredEntries, on: clock)
+        guard !entries.isEmpty else {
+            diagnostics["review.clock"] = "no_margins_on_clock:\(clock.isNarratedText ? "narrated_text" : "media")"
+            reportWarning("There are no new Margins to review here.")
+            return
         }
         // A friend's reply to one of the listener's own spoken Margins plays after that Margin (#3221): the lead-in,
         // the Margin, then the reply. Skip on the card goes past the Margin to the reply.
@@ -211,8 +263,8 @@ extension Gate1AppModel {
             built = StartEarlier.review(itemId: itemId, margins: reviewing, plan: startingEarlier)
         } else {
             built = MarginMomentSequence(
-                itemId: itemId, reviewing: reviewing, returnToMediaTimeMs: catchUp ? catchUpReturnTo : snapshot.currentMediaTimeMs,
-                resumesAtEnd: thenContinue && !catchUp, endsPaused: catchUp)
+                itemId: itemId, reviewing: reviewing, returnToMediaTimeMs: catchUp ? catchUpReturnTo : reviewSourcePositionMs,
+                resumesAtEnd: thenContinue && !catchUp, tickAdvanceLimitMs: clock.tickAdvanceLimitMs, endsPaused: catchUp)
         }
         guard snapshot.itemId == itemId, let sequence = built else { return }
         // The review plays these voices; the automatic shared-Margin prompts mustn't play them again.
@@ -223,7 +275,7 @@ extension Gate1AppModel {
         for entry in entries { heard[entry.marginId] = entry.interjection }
         // Each Margin's recording, or its reading (rendered now if need be), from `SharedMarginAudio` (#3365, #3412).
         voiceURLs.merge(WrittenMarginReadings.startingReview(for: entries, voiceFile: resolvedApplicationSupportAssetURL(for:))) { voice, _ in voice }
-        startMarginMoment(sequence: sequence, voiceURLs: voiceURLs, title: "New Margins", isApproximate: false)
+        startMarginMoment(sequence: sequence, voiceURLs: voiceURLs, title: "New Margins", isApproximate: false, clock: clock)
         if catchUp { beginCatchUpRun(itemId: itemId, entries: entries) }
         let earlier = marginMomentConductor?.onVoiceStarted // the reply window's hook (#5238)
         marginMomentConductor?.onVoiceStarted = { [weak self] in
@@ -302,12 +354,13 @@ extension Gate1AppModel {
               let place = reviewPlaces.owed(itemId: itemId) else { return }
         reviewPlaces.clear(itemId: itemId)
         if place.heldAtMediaTimeMs != nil { // a catch-up run's kept place: given back only if the source is still there (#5238)
-            guard case .giveBack(let placeMs) = CatchUpPlace.settle(place, itemId: itemId, sourceAtMediaTimeMs: snapshot.currentMediaTimeMs) else { return }
-            if seekMedia(toMediaTimeMs: placeMs) { diagnostics["catchUp.place"] = "given_back:launch" }
+            guard case .giveBack(let placeMs) = CatchUpPlace.settle(place, itemId: itemId, sourceAtMediaTimeMs: reviewSourcePositionMs) else { return }
+            if seekReviewSource(toPosition: placeMs) { diagnostics["catchUp.place"] = "given_back:launch" }
             return
         }
-        guard place.needsRestoring(from: snapshot.currentMediaTimeMs) else { return }
-        seekMedia(toMediaTimeMs: place.returnToMediaTimeMs)
+        // On the review's own clock: an article read aloud owes a place in narration time (#5409).
+        guard place.needsRestoring(from: reviewSourcePositionMs) else { return }
+        seekReviewSource(toPosition: place.returnToMediaTimeMs)
     }
 
     /// For the places that stop the player or start another session before they end a moment (opening, resuming or

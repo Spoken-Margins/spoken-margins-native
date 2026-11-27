@@ -71,7 +71,8 @@ extension Gate1AppModel {
                 if let landing = shownSilentMarginLanding { return silentLandingCard(landing) }
                 return PinnedMarginCard(subject: .yours, stage: .upNext(msRemaining: nil, arrival: .playsByItself), position: nil, noun: sourceNoun, run: run)
             }
-            let remaining = moment.msUntilTarget(currentMediaTimeMs: moment.review == nil ? (marginMomentPositionMs ?? moment.startMediaTimeMs) : snapshot.currentMediaTimeMs)
+            // On the moment's own clock: an article read aloud counts a review in narration time too (#5409).
+            let remaining = moment.msUntilTarget(currentMediaTimeMs: moment.review == nil ? (marginMomentPositionMs ?? moment.startMediaTimeMs) : marginMomentPositionMs)
             return PinnedMarginCard(subject: subject, stage: .comingUp(msRemaining: remaining), position: position, noun: sourceNoun,
                 nextPress: nextMarginPress, run: run, targetLeadInMs: moment.target.leadInMs,
                 canStartEarlier: marginMomentStartEarlierPlan != nil)
@@ -142,7 +143,7 @@ extension Gate1AppModel {
             return moment.isPlayingMargin
                 ? .momentVoice(isReview: moment.isReview, isLastMargin: moment.unplayed.isEmpty)
                 : .momentLeadIn(
-                    isReview: moment.isReview, positionMs: snapshot.currentMediaTimeMs, targetMs: moment.target.mediaTimeMs,
+                    isReview: moment.isReview, positionMs: marginMomentPositionMs, targetMs: moment.target.mediaTimeMs, // the moment's clock (#5409)
                     targetLeadInMs: moment.target.leadInMs, runUpStartMs: moment.targetRunUpStartMediaTimeMs)
         }
         guard let next = nextSharedMargin else { return nil }
@@ -172,7 +173,7 @@ extension Gate1AppModel {
             // A review's episode plays on between Margins and nothing hops ahead by itself: this tap is the hop. The
             // review's own Margin plays when the episode reaches it, so nothing is marked or dismissed here.
             listenerMovedSource()
-            seekMedia(toMediaTimeMs: ms)
+            seekMarginMomentSource(toPosition: ms) // the lead-in is on the moment's clock: text read aloud seeks by character (#5409)
         case .seekToLeadIn(let ms):
             // An announced Margin is not offered when the episode crosses it again, so give it back first: the lead-in
             // the press goes to must end with the Margin playing (#460).

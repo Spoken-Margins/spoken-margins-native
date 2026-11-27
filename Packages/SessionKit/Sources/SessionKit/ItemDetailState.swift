@@ -49,6 +49,11 @@ public struct ItemDetailState: Equatable, Sendable {
         id == itemId ? text : nil
     }
     public var isNativeAudio = false
+    /// A new session on this item starts on media, not on live speech (#5409): a media type, media with a file or stream
+    /// (finished prepared narration among them), or the publisher's recording, which the engine adopts only at the
+    /// start. Read with the detail, off the screen's render, so the shared-Margin offer knows which clock its review
+    /// will count on without a store read (audit on #5422).
+    public var startsOnMedia = false
     /// The listener's own spoken note (#4782): its Export offers the whole transcript, which other native audio doesn't.
     public var isSpokenNote = false
     public var timelineSource = TimelineSourceContent(text: "")

@@ -5,8 +5,9 @@ import Foundation
 ///
 /// A Margin is new until its voice first plays (#469, `SharedMarginHearing`). Only Margins the automatic
 /// prompts would play are offered: an enabled layer that isn't the wrong source, and a Margin that is placed
-/// at a time in this copy of the episode and has something to play: a recording, or the words of a written Margin,
-/// which the iPhone's voice reads (#3365). `MarginMomentSequence(reviewing:)` plays them.
+/// at a time in this copy of the episode, or at a place in the text of an article read aloud (#5409), and has something
+/// to play: a recording, or the words of a written Margin, which the iPhone's voice reads (#3365).
+/// `MarginMomentSequence(reviewing:)` plays them.
 public enum SharedMarginReview {
     /// One new shared Margin, with what the app needs to play it and mark it heard.
     public struct Entry: Sendable, Equatable {
@@ -19,10 +20,14 @@ public enum SharedMarginReview {
         public var replyContext: ReplyContext?
         /// No usable time in this copy (#3789): it plays after the others, and `mediaTimeMs` is where the others end.
         public var playsAfterOthers: Bool
+        /// The Margin's place in the text, for a Margin on an article, PDF or book placed by characters (#5409). Its
+        /// `mediaTimeMs` is then that place on the narrated-text clock (`MarginMomentClock.liveNarration`), the clock a
+        /// moment on text read aloud counts on (#1577); nil for a Margin placed at a time in the media.
+        public var textOffset: Int?
 
         public init(
             layer: ImportedCommentaryLayer, interjection: ImportedCommentaryInterjection, mediaTimeMs: Int,
-            isApproximate: Bool, replyContext: ReplyContext? = nil, playsAfterOthers: Bool = false
+            isApproximate: Bool, replyContext: ReplyContext? = nil, playsAfterOthers: Bool = false, textOffset: Int? = nil
         ) {
             self.layer = layer
             self.interjection = interjection
@@ -30,7 +35,11 @@ public enum SharedMarginReview {
             self.isApproximate = isApproximate
             self.replyContext = replyContext
             self.playsAfterOthers = playsAfterOthers
+            self.textOffset = textOffset
         }
+
+        /// Placed only by its place in the text, so its `mediaTimeMs` counts on the narrated-text clock.
+        public var isPlacedInText: Bool { textOffset != nil }
 
         /// The identity the playback screen, the conductor and the Timeline all use for this Margin.
         public var marginId: String { SharedMarginReview.marginId(layerId: layer.id, interjectionId: interjection.id) }
@@ -108,12 +117,27 @@ public enum SharedMarginReview {
         case .afterOthers:
             return Entry(layer: layer, interjection: record, mediaTimeMs: 0, isApproximate: true,
                          replyContext: replyContext, playsAfterOthers: true)
-        case .placed(nil), .roughly(nil), .notPlayable:
+        case .placed(nil), .roughly(nil):
+            // A Margin on an article, PDF or book is placed by characters and has no time in any media (#5409). It plays
+            // at its place in the reading, so its time is that place on the narrated-text clock, the one a moment on text
+            // read aloud counts on (#1577). A podcast Margin placed only in its transcript has no such clock.
+            guard layer.itemIdentity.itemType != .podcast, let char = record.resolution.localStartChar, char >= 0 else { return nil }
+            return Entry(
+                layer: layer, interjection: record, mediaTimeMs: MarginMomentClock.liveNarration.position(forTextOffset: char),
+                isApproximate: false, replyContext: replyContext, textOffset: char)
+        case .notPlayable:
             return nil
         }
     }
 
-    /// The same, read from the repository for an item that isn't open.
+    /// The entries a review counting on `clock` can place (#5409): Margins placed in the text on the narrated-text clock
+    /// of an article read aloud, the others on a media clock. An article playing its publisher's recording or prepared
+    /// narration has a media clock, where a Margin placed only by characters has no time.
+    public static func placeable(_ entries: [Entry], on clock: MarginMomentClock) -> [Entry] {
+        entries.filter { $0.isPlacedInText == clock.isNarratedText }
+    }
+
+    /// The item's new shared Margins (`entries(layers:records:ownMargins:durationMs:)`), read from the repository for an item that isn't open.
     public static func entries(
         itemId: String, in repository: some ListeningSessionRepository, ownMargins: [Interjection] = [],
         hiddenSenders: HiddenSenders = HiddenSenders()
@@ -200,7 +224,7 @@ extension Array where Element == SharedMarginReview.Entry {
             guard entry.playsAfterOthers else { return entry }
             return SharedMarginReview.Entry(
                 layer: entry.layer, interjection: entry.interjection, mediaTimeMs: end, isApproximate: true,
-                replyContext: entry.replyContext, playsAfterOthers: true)
+                replyContext: entry.replyContext, playsAfterOthers: true, textOffset: entry.textOffset)
         }
     }
 }

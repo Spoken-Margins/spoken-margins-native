@@ -63,8 +63,11 @@ extension Gate1AppModel {
         // friend listen. This runs on every playback tick, so the cheap answers come before the card is built.
         let layers = selectedItem.importedCommentaryLayers
         guard !layers.isEmpty, selectedItem.id == snapshot.itemId else { return .none }
-        let entries = SharedMarginReview.entriesInMemory(
-            layers: layers, records: selectedItem.importedCommentaryInterjections, durationMs: selectedItem.mediaDurationMs)
+        // Only the Margins placed on the playing clock (#5409): an article playing its recording can't compare a Margin
+        // placed by characters with its playhead (audit on #5422).
+        let entries = SharedMarginReview.placeable(SharedMarginReview.entriesInMemory(
+            layers: layers, records: selectedItem.importedCommentaryInterjections, durationMs: selectedItem.mediaDurationMs),
+            on: reviewSourceClock)
         let entryCount = FriendListenState.aheadCount(
             entries, mediaTimeMs: isMediaPlaybackSnapshot ? (snapshot.currentMediaTimeMs ?? 0) : nil,
             textStart: snapshot.currentTextStart,

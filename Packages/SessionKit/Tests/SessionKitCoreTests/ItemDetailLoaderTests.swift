@@ -656,6 +656,41 @@ final class ItemDetailLoaderTests: XCTestCase {
                           SpeakableSegment(id: "two", text: "Two.", locator: second)]))
     }
 
+    /// #5409, audit on #5422: the detail says whether a new session starts on media, so the shared-Margin offer knows its
+    /// review's clock without a store read on the screen's render. An article read by live speech doesn't; one with a
+    /// recording of its own, with finished prepared narration, or with its publisher's recording (never stored as its
+    /// media) does, unless the listener chose the app's voice.
+    func testTheDetailSaysWhetherANewSessionStartsOnMedia() throws {
+        try withFixture { fixture, store, _ in
+            let text = "One sentence here. Two sentences here."
+            func article(_ id: String, media: ItemMedia? = nil) throws {
+                var stored = Item(id: id, title: id, mediaType: "text", text: text, externalReference: nil, status: "ready")
+                stored.media = media
+                try store.saveItem(stored)
+            }
+            try article("speech")
+            try article("recording", media: ItemMedia(sourceType: .nativeMediaFile, url: "file:///r.m4a", durationMs: 60_000))
+            try article("prepared", media: ItemMedia(sourceType: .generatedTTSPrerendered, url: "file:///p.m4a", durationMs: 60_000))
+            try article("publisher")
+            try article("app-voice")
+            for id in ["publisher", "app-voice"] {
+                try store.savePublisherAudio(PublisherAudio(
+                    itemId: id, audioURL: "https://example.com/\(id).mp3", durationMs: 9_000, detectedFrom: "feed_enclosure",
+                    textMap: TranscriptTimeline(segments: [
+                        MediaTimelineSegment(id: "s1", startMs: 0, endMs: 4_000, startChar: 0, endChar: 18, text: "One sentence here.")
+                    ], chapters: [], durationMs: 9_000),
+                    textMapStatus: "aligned(1 of 1 sentences)"))
+            }
+            try store.savePublisherAudioChoice(PublisherAudioChoice(itemId: "app-voice", prefersAppVoice: true, chosenAt: Date()))
+            let expected: [(String, Bool)] = [
+                ("speech", false), ("recording", true), ("prepared", true), ("publisher", true), ("app-voice", false),
+            ]
+            for (id, startsOnMedia) in expected {
+                XCTAssertEqual(try fixture.load(id, store).startsOnMedia, startsOnMedia, id)
+            }
+        }
+    }
+
     private func item(_ id: String) -> Item {
         Item(id: id, title: id, mediaType: "text", text: "One.\n\nTwo.", externalReference: nil, status: "Ready")
     }
