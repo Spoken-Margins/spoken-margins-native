@@ -402,6 +402,18 @@ final class PlayRuleTests: XCTestCase {
             .play(.savedPlace(mediaTimeMs: 0)), "playing now: the playhead decides")
     }
 
+    /// The article loaded or playing now, read aloud, has no media time (audit on #5446): its place is the text being
+    /// read. Read as media 0, no Margin counted as behind and Continue skipped one before the place with no question.
+    func testTheArticlePlayingNowIsPlacedByTheTextBeingRead() {
+        let behind = entry("m0", mediaMs: 28_000, char: 400)
+        let ahead = entry("m1", mediaMs: 560_000, char: 8_000)
+        let sessions = [textSession("t", charOffset: 5_000)]
+        let reading = PlayRule.NowPlaying(itemId: "item", mediaTimeMs: nil, textOffset: 5_000)
+        assertDecision(context(nowPlaying: reading, open: sessions, margins: [behind, ahead]), .askFirst(marginsBehind: [behind]), "open: the one behind")
+        assertDecision(context(nowPlaying: reading, margins: [behind, ahead]), .askFirst(marginsBehind: [behind]), "not open: the one behind")
+        assertDecision(context(nowPlaying: reading, margins: [ahead]), .play(.savedPlace(mediaTimeMs: 0)), "only ahead: plays in place")
+    }
+
     func testTheSavedPlaceIsAtTheEndOnlyFromNinetyNineUpToButNotIncludingOneHundred() {
         let table: [(String, [Session], Bool)] = [
             ("none", [], false),

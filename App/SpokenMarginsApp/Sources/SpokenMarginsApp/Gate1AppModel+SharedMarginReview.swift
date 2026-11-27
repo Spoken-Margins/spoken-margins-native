@@ -69,7 +69,9 @@ extension Gate1AppModel {
     /// media whatever its `mediaType` says (audit on #5422). What the row can't say, `startsOnMedia` reads.
     func expectedReviewClock(itemId: String) -> MarginMomentClock? {
         if snapshot.itemId == itemId, snapshot.targetType != nil { return reviewSourceClock }
-        if selectedItem.id == itemId, selectedItem.isNativeAudio || selectedItem.mediaDurationMs != nil || selectedItem.startsOnMedia { return .media }
+        // Not `mediaDurationMs`: the loader fills it from a transcript timeline too, for an article that still starts on
+        // live speech (audit on #5446). `startsOnMedia` is read the way the engine decides.
+        if selectedItem.id == itemId, selectedItem.isNativeAudio || selectedItem.startsOnMedia { return .media }
         if let row = libraryItems.first(where: { $0.id == itemId }),
            Self.reviewMediaTypes.contains(row.mediaType) || row.hasNativeAudio || row.mediaDurationMs != nil {
             return .media
@@ -126,7 +128,9 @@ extension Gate1AppModel {
     ) {
         var context = PlayRule.Context(
             itemId: itemId, surface: surface,
-            nowPlaying: hasActiveSession ? snapshot.itemId.map { PlayRule.NowPlaying(itemId: $0, mediaTimeMs: snapshot.currentMediaTimeMs) } : nil,
+            nowPlaying: hasActiveSession ? snapshot.itemId.map { PlayRule.NowPlaying(
+                itemId: $0, mediaTimeMs: snapshot.currentMediaTimeMs,
+                textOffset: reviewSourceClock.isNarratedText ? snapshot.currentTextStart : nil) } : nil,
             openItem: PlayRule.OpenItem(id: selectedItem.id, sessions: selectedItem.sessions, addedAgainAt: addedAgainAt(forItem: selectedItem.id)),
             libraryRow: libraryItems.first(where: { $0.id == itemId }),
             // Only the Library row asks about Margins, so the item screen skips the read.

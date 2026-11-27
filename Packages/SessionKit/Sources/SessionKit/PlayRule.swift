@@ -26,9 +26,13 @@ public enum PlayRule {
         public let itemId: String
         /// The playhead in the media, or nil when the player doesn't report one yet.
         public let mediaTimeMs: Int?
-        public init(itemId: String, mediaTimeMs: Int?) {
+        /// Where text read aloud stands, in characters (`snapshot.currentTextStart`), for an article whose session has
+        /// no media time (#5409). Nil for media.
+        public let textOffset: Int?
+        public init(itemId: String, mediaTimeMs: Int?, textOffset: Int? = nil) {
             self.itemId = itemId
             self.mediaTimeMs = mediaTimeMs
+            self.textOffset = textOffset
         }
     }
 
@@ -113,7 +117,12 @@ public enum PlayRule {
             return .askFirst(marginsBehind: context.newMargins)
         }
         let behind: [SharedMarginReview.Entry]
-        if case .savedPlace(nil) = start, context.nowPlaying?.itemId != context.itemId,
+        if let now = context.nowPlaying, now.itemId == context.itemId, now.mediaTimeMs == nil, let textOffset = now.textOffset {
+            // The article loaded or playing now is read aloud and has no media time: its place is the text being read
+            // (#5409). Media 0 against the Margins' narrated positions counted none as behind, so Continue skipped a
+            // friend's Margin before the place with no question (audit on #5446).
+            behind = marginsBehind(context.newMargins, textOffset: textOffset)
+        } else if case .savedPlace(nil) = start, context.nowPlaying?.itemId != context.itemId,
            let open = context.openItem, open.id == context.itemId {
             // The open item resumes a session placed by characters, an article (#5409): compare characters, as the item
             // screen does, so a friend's Margin ahead of the place plays there with no question (#3059). Its media place
@@ -145,9 +154,13 @@ public enum PlayRule {
             let atEnd = session.completionPercent >= ItemFinishedRule.listenedPercent
             return FriendMarginsPlan.behind(entries, place: .known(mediaTimeMs: mediaTimeMs, isAtEnd: atEnd))
         }
-        let charOffset = session.position.charOffset
-        guard charOffset > 0 else { return [] }
-        return entries.filter { ($0.interjection.resolution.localStartChar ?? .max) < charOffset }
+        return marginsBehind(entries, textOffset: session.position.charOffset)
+    }
+
+    /// The Margins before a place in the text, compared by character; a Margin with no character place is not behind.
+    static func marginsBehind(_ entries: [SharedMarginReview.Entry], textOffset: Int) -> [SharedMarginReview.Entry] {
+        guard textOffset > 0 else { return [] }
+        return entries.filter { ($0.interjection.resolution.localStartChar ?? .max) < textOffset }
     }
 
     /// What the item screen's two pinned buttons are built from (#4125): the Margins behind the saved place, or none
