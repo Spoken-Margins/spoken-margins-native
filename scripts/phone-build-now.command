@@ -4,8 +4,9 @@
 # It fetches the newest origin/main into the ops checkout (~/SpokenMarginsOps/repo, the one the scheduled phone-build
 # job runs from, never a development checkout), then runs `scripts/phone-build --no-tests` there: a signed Release
 # build of that exact commit, on this Mac, with no host tests, no simulator build and no main-t3 gate. The build lands
-# in ~/SpokenMargins-phone/latest like every phone build. When it succeeds it runs the usual installer, which puts it
-# on the iPhone plugged into this Mac (it keeps the Library and recordings, and never uninstalls).
+# in ~/SpokenMargins-phone/latest like every phone build. When it succeeds it runs the usual installer with
+# SM_PHONE_INSTALL_LATEST=1, which puts that build (never the daily pass) on the iPhone plugged into this Mac (it keeps
+# the Library and recordings, and never uninstalls). It says "Done" only when installed.txt names the commit it built.
 #
 # A build takes about 5 to 15 minutes. Close the window when it says it is done.
 # Tests: SM_OPS_REPO replaces the ops checkout, SM_PHONE_DIR the phone folder, SM_PHONE_NOW_NO_INSTALL=1 skips installing.
@@ -53,6 +54,26 @@ if [[ -n "${SM_PHONE_NOW_NO_INSTALL:-}" ]]; then
   exit 0
 fi
 echo "Step 3 of 3: installing on the iPhone plugged into this Mac."
-/bin/zsh "$phone_dir/install-phone-build.command"
+SM_PHONE_INSTALL_LATEST=1 /bin/zsh "$phone_dir/install-phone-build.command"
+installed=$?
 echo
-echo "Done. You can close this window."
+# The installer stops with a non-zero exit and changes nothing when no iPhone is on a cable, the phone is locked,
+# or devicectl fails. The shortcut used to say "Done" anyway (#5343, 2026-11-26 run: phone paired over the network
+# only, nothing installed), so the build and the install are reported apart.
+if [[ $installed -ne 0 ]]; then
+  echo "The build is ready, but it is not on your phone yet: the install stopped (the reason is in the lines above)."
+  echo "Fix that, then double-click this shortcut again."
+  exit $installed
+fi
+# The installer can also end well without putting this build on the phone (an installer that ignores
+# SM_PHONE_INSTALL_LATEST and picks the daily pass), so "Done" is said only when installed.txt names the commit this
+# run built.
+built_sha=$(/usr/bin/python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("sha", ""))' \
+  "$phone_dir/latest/build.json" 2>/dev/null)
+phone_sha=$(head -1 "$phone_dir/installed.txt" 2>/dev/null | cut -d' ' -f1)
+if [[ -z "$built_sha" || "$built_sha" != "$phone_sha" ]]; then
+  echo "The build is ready (commit ${built_sha:0:7}), but your phone has a different one (commit ${phone_sha:0:7})."
+  echo "Double-click this shortcut again to put the newest build on it."
+  exit 1
+fi
+echo "Done: your phone runs commit ${built_sha:0:7}, the one just built. You can close this window."

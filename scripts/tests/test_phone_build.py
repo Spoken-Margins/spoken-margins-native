@@ -96,6 +96,21 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual((self.phone / 'installed.txt').read_text().split()[0], self.sha)
         self.assertFalse(any('uninstall' in call for call in calls))
 
+    def test_the_build_now_shortcut_installs_latest_over_a_current_daily_pin(self):
+        # #5343: the shortcut builds the newest main and sets SM_PHONE_INSTALL_LATEST=1; a daily pin under a day old
+        # used to win, so the owner's fresh build never reached the phone.
+        pin = self.make_build()
+        self.pin_daily_at(pin, '2026-10-02T08:00:00')
+        newer = self.other_build('20261002-090000-bbbbbbb', 'b' * 40, '2026-10-02T09:00:00')
+        self.point_latest_at(newer)
+        done, calls = self.run_installer([iphone('PHONE-1')], SM_PHONE_NOW='2026-10-02T10:00:00',
+                                         SM_PHONE_INSTALL_LATEST='1')
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual([call for call in calls if 'install app' in call],
+                         [f'devicectl device install app --device PHONE-1 {newer.resolve()}/SpokenMarginsApp.app'])
+        self.assertEqual((self.phone / 'installed.txt').read_text().split()[0], 'b' * 40)
+        self.assertIn('install the newest phone build', done.stdout)
+
     def other_build(self, name, sha, built_at):
         folder = self.phone / name
         (folder / 'SpokenMarginsApp.app').mkdir(parents=True)
@@ -1289,6 +1304,78 @@ class NoTestsBuildTests(unittest.TestCase):
         self.assertIn('NO TESTS RUN', self.module.NO_TESTS_CHECKS)
         source = (SCRIPTS / 'phone-build').read_text()
         self.assertIn('checks = NO_TESTS_CHECKS if no_tests else runner_tested(sha)', source)
+
+
+SHORTCUT = SCRIPTS / 'phone-build-now.command'
+
+
+class BuildNowShortcutTests(unittest.TestCase):
+    """The Desktop shortcut "Build Spoken Margins for iPhone" (#5343): it reports the install apart from the build.
+
+    The ops checkout, phone-build and the installer are all fakes, so no test can reach xcodebuild or a phone.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.repo, self.phone = self.tmp / 'repo', self.tmp / 'phone'
+        (self.repo / 'scripts').mkdir(parents=True)
+        self.phone.mkdir()
+        (self.repo / 'scripts/ops_checkout.py').write_text('import sys\nsys.exit(0)\n')
+        (self.repo / 'scripts/phone-build').write_text(
+            'import os, sys\n# --no-tests\nprint("phone-build", *sys.argv[1:])\n'
+            'sys.exit(int(os.environ.get("FAKE_BUILD_EXIT", "0")))\n')
+        self.sha = 'cd' * 20
+        (self.phone / 'latest').mkdir()
+        (self.phone / 'latest/build.json').write_text(json.dumps({'sha': self.sha}))
+        # The fake installer records what the real one would write to installed.txt (FAKE_INSTALLED, default the
+        # build's commit) and whether it was told to skip the daily pin.
+        (self.phone / 'install-phone-build.command').write_text(
+            '#!/bin/zsh\nprint -r -- "installer ran latest=${SM_PHONE_INSTALL_LATEST:-}"\n'
+            '[[ -n "${FAKE_INSTALLED:-}" ]] && print -r -- "$FAKE_INSTALLED 2026-11-27T10:00:00 Cole iPhone" '
+            f'> "$SM_PHONE_DIR/installed.txt" || print -r -- "{self.sha} 2026-11-27T10:00:00 Cole iPhone" '
+            '> "$SM_PHONE_DIR/installed.txt"\n'
+            'exit ${FAKE_INSTALL_EXIT:-0}\n')
+        git = ['git', '-C', str(self.repo), '-c', 'user.name=t', '-c', 'user.email=t@example.com']
+        subprocess.run(git[:3] + ['init', '-q'], check=True)
+        subprocess.run(git + ['add', '-A'], check=True)
+        subprocess.run(git + ['commit', '-q', '-m', 'fake ops checkout'], check=True)
+
+    def run_shortcut(self, **extra):
+        env = {key: value for key, value in os.environ.items() if key != 'SM_PHONE_NOW_NO_INSTALL'}
+        env.update(HOME=str(self.tmp), SM_OPS_REPO=str(self.repo), SM_PHONE_DIR=str(self.phone), **extra)
+        return subprocess.run(['/bin/zsh', str(SHORTCUT)], env=env, capture_output=True, text=True, timeout=60)
+
+    def test_a_finished_install_says_done(self):
+        done = self.run_shortcut()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn('phone-build --no-tests', done.stdout)
+        self.assertIn('installer ran latest=1', done.stdout)  # the build just made, never the daily pass
+        self.assertIn(f'Done: your phone runs commit {self.sha[:7]}, the one just built.', done.stdout)
+
+    def test_an_install_that_left_another_build_on_the_phone_is_not_called_done(self):
+        # Review of #5343: within a day of a daily pass the installer put the pinned build on the phone and exited
+        # 0, so the shortcut said "Done" while its own build was not on the phone.
+        done = self.run_shortcut(FAKE_INSTALLED='ef' * 20)
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertNotIn('Done', done.stdout)
+        self.assertIn(f'ready (commit {self.sha[:7]}), but your phone has a different one (commit efefefe)', done.stdout)
+
+    def test_an_install_that_stopped_is_not_called_done(self):
+        # Seen 2026-11-26 (#5343): the phone was paired over the network only, the installer found no cabled
+        # iPhone and changed nothing, and the shortcut still ended "Done. You can close this window."
+        done = self.run_shortcut(FAKE_INSTALL_EXIT='1')
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn('installer ran', done.stdout)
+        self.assertNotIn('Done', done.stdout)
+        self.assertIn('not on your phone yet', done.stdout)
+        self.assertIn('double-click this shortcut again', done.stdout)
+
+    def test_a_failed_build_never_runs_the_installer(self):
+        done = self.run_shortcut(FAKE_BUILD_EXIT='2')
+        self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+        self.assertNotIn('installer ran', done.stdout)
+        self.assertNotIn('Done', done.stdout)
 
 
 class NearestSlowResultTests(unittest.TestCase):
