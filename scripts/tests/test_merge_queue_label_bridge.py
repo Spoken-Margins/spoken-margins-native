@@ -337,6 +337,18 @@ class OwnerApprovalTests(unittest.TestCase):
     """The owner's approval of the head arms a PR as his `owner-tap` label does (owner, 2026-11-24): #5212, #5252 and
     #5256 were approved and nothing queued them."""
 
+    def test_a_hand_off_outranks_the_approval(self):
+        # #5302 meets #5261: lane_conflicts.py swaps `automerge` for `conflict-resolver` on a tap PR the owner had
+        # approved. The approval of that head must not keep the conflicting PR queued, or the sweep queue it again.
+        for label in ('needs-mac', 'conflict-resolver'):
+            with self.subTest(label=label):
+                github = FakeGitHub({7: approved(7, queued=True, extra=(label,))})
+                code, out = run(github, '--pr', '7', '--action', 'edited')
+                self.assertEqual((code, github.disabled, github.dequeued, github.merged), (0, [7], ['PR_7'], []))
+                self.assertIn(f'handed off (`{label}`)', out)
+                github = FakeGitHub({7: approved(7, auto=False, extra=(label,))})
+                self.assertEqual((run(github, '--sweep')[0], github.merged), (0, []))
+
     def test_which_reviews_arm_the_sweep(self):
         github = FakeGitHub({1: approved(1, auto=False), 2: approved(2, commit='old', auto=False),
                              3: approved(3, state='CHANGES_REQUESTED', auto=False),

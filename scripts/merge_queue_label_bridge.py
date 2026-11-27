@@ -277,8 +277,11 @@ def owner_approved(pr):
 
 def armed(pr):
     """Whether the PR asks for the queue: the `automerge` label, the owner's `owner-tap` label, or, on a PR touching
-    the tap paths, his approval of the head."""
-    return bool(labels(pr) & {LABEL, OWNER_TAP}) or owner_approved(pr)
+    the tap paths, his approval of the head. A hand-off label (#5302) outranks the approval: the PR was handed off
+    because it can't merge as it stands, and the approval of that head would otherwise keep it queued."""
+    if labels(pr) & {LABEL, OWNER_TAP}:
+        return True
+    return not (labels(pr) & set(HANDOFF_LABELS)) and owner_approved(pr)
 
 
 def arming_labels(pr):
