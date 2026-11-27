@@ -11,18 +11,19 @@ extension Gate1AppModel {
     }
 
     /// Records a successful outcome and presents it only when the result is not
-    /// otherwise apparent from the current interface.
-    func reportConfirmation(_ message: String, action: UserFeedbackEvent.Action? = nil, savesMargin: Bool = false, fileID: String = #fileID, line: Int = #line) {
+    /// otherwise apparent from the current interface. `answersRetryTap` marks the outcome of a Retry the listener just
+    /// tapped, which may cover an older Retry banner (#5418).
+    func reportConfirmation(_ message: String, action: UserFeedbackEvent.Action? = nil, savesMargin: Bool = false, answersRetryTap: Bool = false, fileID: String = #fileID, line: Int = #line) {
         reportSuccess(message)
-        presentFeedback(UserFeedbackEvent(kind: .success, message: message, action: action, savesMargin: savesMargin), fileID: fileID, line: line)
+        presentFeedback(UserFeedbackEvent(kind: .success, message: message, action: action, savesMargin: savesMargin, answersRetryTap: answersRetryTap), fileID: fileID, line: line)
     }
 
     /// Presents degraded-but-successful behavior without styling it as either a
     /// normal confirmation or a failure.
-    func reportWarning(_ message: String, action: UserFeedbackEvent.Action? = nil, origin: FeedbackOrigin? = nil, savesMargin: Bool = false, fileID: String = #fileID, line: Int = #line) {
+    func reportWarning(_ message: String, action: UserFeedbackEvent.Action? = nil, origin: FeedbackOrigin? = nil, savesMargin: Bool = false, answersRetryTap: Bool = false, fileID: String = #fileID, line: Int = #line) {
         statusMessage = message
         lastError = nil
-        presentFeedback(UserFeedbackEvent(kind: .warning, message: message, action: action, origin: origin, savesMargin: savesMargin), fileID: fileID, line: line)
+        presentFeedback(UserFeedbackEvent(kind: .warning, message: message, action: action, origin: origin, savesMargin: savesMargin, answersRetryTap: answersRetryTap), fileID: fileID, line: line)
         diagnostics["lastStatus"] = message
         diagnostics["recentFailure"] = "none"
     }

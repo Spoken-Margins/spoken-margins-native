@@ -31,6 +31,12 @@ public enum TranscriptionFailureWording {
     public static let contextNeedsRetry = "Couldn't find the source words near this Margin"
     public static let transcriptionNeedsRetry = "Transcription needs retry"
 
+    /// The banner while a transcription Retry the listener tapped runs, and the one that answers it when the words
+    /// come back (#5418). The answer shows only while the first is still up, so the opt-in card's batch, which uses the
+    /// same retry, posts nothing per Margin.
+    public static let retranscribing = "Retranscribing the saved Margin audio."
+    public static let retranscribed = "Transcribed Margin."
+
     /// The error the transcription clients throw while the listener has not been asked yet (#4715): the app holds iOS's
     /// prompt until its own card has asked. A Margin that meets it is waiting, not failed.
     public static let speechRecognitionNotYetAskedError = "speech_recognition_not_yet_asked"

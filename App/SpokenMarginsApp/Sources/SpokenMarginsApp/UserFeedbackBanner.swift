@@ -37,6 +37,10 @@ struct UserFeedbackEvent: Identifiable, Equatable {
     /// saved Margin is never left looking like the failed one (#3793).
     var savesMargin = false
 
+    /// The outcome of a Retry the listener just tapped (its start, its result or why it couldn't run). It may cover
+    /// any Retry, so the answer to their tap is what they see (#5418).
+    var answersRetryTap = false
+
     /// Each event is new, so its id decides equality; the retry action can't be compared.
     static func == (lhs: UserFeedbackEvent, rhs: UserFeedbackEvent) -> Bool {
         lhs.id == rhs.id
@@ -48,7 +52,8 @@ struct UserFeedbackEvent: Identifiable, Equatable {
             currentOffersRetry: retry != nil,
             with: newer.kind,
             currentIsMarginTranscription: origin?.work == .marginTranscription,
-            newSavesMargin: newer.savesMargin
+            newSavesMargin: newer.savesMargin,
+            newAnswersRetryTap: newer.answersRetryTap
         )
     }
 }

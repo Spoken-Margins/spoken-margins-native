@@ -57,7 +57,7 @@ extension Gate1AppModel {
         }
         guard !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) else { return }
         if !scheduleSourceWindowContextIfNeeded(for: interjection, reportsResult: true) {
-            reportWarning("Context needs a source timestamp and completed Margin transcription. Retry when transcription finishes.")
+            reportWarning("Context needs a source timestamp and completed Margin transcription. Retry when transcription finishes.", answersRetryTap: true)
         }
     }
 
@@ -83,7 +83,7 @@ extension Gate1AppModel {
         }
         guard retryingInterjectionTranscriptionIds.insert(Self.marginIdentity(current)).inserted else { return }
         scheduleRetriedTranscription(for: current)
-        reportConfirmation("Retranscribing the saved Margin audio.")
+        reportConfirmation(TranscriptionFailureWording.retranscribing, answersRetryTap: true)
     }
 
     /// A transcription failure is about the Margin's own listen, so on the Now screen it is the tag under the
