@@ -57,7 +57,9 @@ closed issue, and a failed validation reopens it with `regression` (owner, 2026-
 must therefore read closed issues too (#2448).
 
 --apply releases a stale claim by removing `in-progress`, adding `ready` (unless the issue is `blocked`,
-`needs-owner`, `deferred`, `validate-by-use`, `agent-verify`, `status: needs-human-validation` or `needs-design`, #3866) and commenting why. It re-reads the issue's comments just before writing and does
+`needs-owner`, `deferred`, `validate-by-use`, `agent-verify`, `status: needs-human-validation` or `needs-design`, #3866) and commenting why.
+When a trunk PR that closes the issue or says `Part of #N` merged after the claim began, it adds `agent-verify` with
+`ready` and names that PR, so the issue returns as proof work, not as code work (#5443). It re-reads the issue's comments just before writing and does
 nothing if any arrived. Every other finding is printed for the coordinator to dispatch; nothing else is written.
 
 Limits, stated so the output isn't over-trusted: the sweep reads GitHub, not sessions. A Test Desk or thread that has
@@ -104,6 +106,8 @@ FINISHER_BUSY = 30                           # minutes: a finisher active more r
 COMMENT_WINDOW = dt.timedelta(hours=24)      # the Dial gate's own window for claim and stop notes
 CARD_RULE_FROM = '2026-11-10T00:00:00Z'    # rule 13 starts here; older cards were written before it existed
 CHECKED_LINE = re.compile(r'^\W*checked:', re.I | re.M)
+PROOF_LABEL = 'agent-verify'                  # #5443: a released claim whose code merged goes back as proof work
+PART_OF = re.compile(r'\bpart\s+of\s+#(\d+)', re.I)   # #5443: a merged slice works on an issue without closing it
 NEEDS_DESIGN = 'needs-design'                 # #3866: waits for an Opus Design comment; never `ready` until then
 SKIP_LABELS = {'in-progress', 'needs-owner', 'deferred', 'blocked', NEEDS_DESIGN}
 OUTSIDE_LABEL = 'needs-triage-review'          # an issue by an untrusted author; only a collaborator can make it `ready`
@@ -263,8 +267,15 @@ def gather_claim(api, number, now, ctx):
 def release_note(issue, why, window=STALE_AFTER):
     hours = int(window.total_seconds() // 3600)
     held = sorted(set(issue['labels']) & HOLD_LABELS)
-    back = (f'Not set back to `ready`: it carries {", ".join("`" + l + "`" for l in held)}.' if held
-            else 'Back on the queue as `ready`.')
+    merged = issue.get('merged_pr')
+    if held:
+        back = f'Not set back to `ready`: it carries {", ".join("`" + l + "`" for l in held)}.'
+    elif merged:
+        back = (f'Its code merged in #{merged["pr"]} on {merged["merged_at"][:10]}, so it is back on the queue as '
+                f'`ready` + `{PROOF_LABEL}`: what is left is the real-use run (docs/workstreams/real-use-proof.md). '
+                f'If code is still owed, take `{PROOF_LABEL}` off and say what is missing (#5443).')
+    else:
+        back = 'Back on the queue as `ready`.'
     return (f'Released by scripts/sm_sweep.py: this claim has had no commit, open PR or comment for {hours} hours '
             f'({why}). {back} (Owner\'s housekeeping call, 2026-10-14.) A thread that is still working on it can '
             f'claim it again.')
@@ -330,6 +341,22 @@ def merged_fixes(pulls, ready, ctx):
         if claim_state(evidence, ctx['now'])[0] == 'active':
             continue
         found.append(dict(row, **fix))
+    return found
+
+
+def merged_work(pulls):
+    """{issue: {pr, merged_at}}: the newest merged trunk PR that closes an issue or says `Part of #N` (#5443). None
+    when the closed-PR read failed, so a release then falls back to plain `ready`, as before."""
+    if pulls is None:
+        return None
+    found = {}
+    for pull in pulls:
+        if not pull.get('merged_at'):
+            continue
+        text = f'{pull.get("title") or ""}\n{pull.get("body") or ""}'
+        for number in {int(n) for n in sm_status.CLOSING.findall(text) + PART_OF.findall(text)}:
+            if number not in found or pull['merged_at'] > found[number]['merged_at']:
+                found[number] = {'pr': pull['number'], 'merged_at': pull['merged_at']}
     return found
 
 
@@ -633,9 +660,11 @@ def release(api, issue, why, now, window=STALE_AFTER):
         if current.get('state') != 'open' or 'in-progress' not in names:
             return 'skipped: no longer an open in-progress issue'
         # in-progress comes off last, so a failed step leaves the claim in place for the next sweep to retry
+        merged = issue.get('merged_pr')
         if not names & HOLD_LABELS:
-            api.post(f'issues/{number}/labels', {'labels': ['ready']})
-        api.post(f'issues/{number}/comments', {'body': release_note({'labels': sorted(names)}, why, window)})
+            api.post(f'issues/{number}/labels', {'labels': ['ready', PROOF_LABEL] if merged else ['ready']})
+        api.post(f'issues/{number}/comments',
+                 {'body': release_note({'labels': sorted(names), 'merged_pr': merged}, why, window)})
         api.delete(f'issues/{number}/labels/{urllib.parse.quote("in-progress", safe="")}')
         return 'released'
     except sm_status.GitHubError as error:
@@ -719,11 +748,16 @@ def collect(api, now, snapshot=None):
         drafts = stale_drafts(api, now)
     except (sm_status.GitHubError, KeyError, TypeError, ValueError):
         drafts = None
+    landed = merged_work(trunk_pulls) or {}
     claims = []
     for issue in in_progress:
         evidence = gather_claim(api, issue['number'], now, ctx)
         state, why, last = claim_state(evidence, now)
-        claims.append(dict(issue, state=state, why=why, last_seen=last))
+        # Only a PR merged since this claim began says its work landed: an older slice may be why it was claimed.
+        since_claim = landed.get(issue['number'])
+        if since_claim and not (evidence.get('label_since') and since_claim['merged_at'] >= evidence['label_since']):
+            since_claim = None
+        claims.append(dict(issue, state=state, why=why, last_seen=last, merged_pr=since_claim))
 
     return {'now': now, 'snapshot': snapshot, 'dial': dial, 'dial_now': dial_now(status_comments), 'usage': usage,
             'tick': latest_tick(tick_comments), 'ready': ready, 'in_progress': claims, 'untriaged': untriaged, 'outside': outside, 'merged_fixes': merged, 'drift': drifted,
@@ -855,7 +889,10 @@ def decide(facts, window=STALE_AFTER):
 
     for claim in claims:
         if claim['state'] == 'stale':
-            act('stale-claim', LOOK, f'#{claim["number"]} {claim["title"][:60]}: {claim["why"]}; release to `ready`',
+            merged = claim.get('merged_pr')
+            to = (f'release to `ready` + `{PROOF_LABEL}` (code merged in #{merged["pr"]})' if merged
+                  else 'release to `ready`')
+            act('stale-claim', LOOK, f'#{claim["number"]} {claim["title"][:60]}: {claim["why"]}; {to}',
                 issues=[claim['number']], claim=claim)
         elif claim['state'] == 'unknown':
             act('claim-unreadable', LOOK, f'#{claim["number"]}: could not tell if the claim is stale ({claim["why"]}); '
