@@ -112,7 +112,16 @@ public enum PlayRule {
            !context.declined.isDeclined(itemId: context.itemId, margins: context.newMargins.map(\.marginId)) {
             return .askFirst(marginsBehind: context.newMargins)
         }
-        let behind = FriendMarginsPlan.behind(context.newMargins, place: place(of: start, in: context))
+        let behind: [SharedMarginReview.Entry]
+        if case .savedPlace(nil) = start, context.nowPlaying?.itemId != context.itemId,
+           let open = context.openItem, open.id == context.itemId {
+            // The open item resumes a session placed by characters, an article (#5409): compare characters, as the item
+            // screen does, so a friend's Margin ahead of the place plays there with no question (#3059). Its media place
+            // is unknown, and counting every new Margin as behind asked about Margins ahead (audit on #5422).
+            behind = marginsBehindSavedPlace(context.newMargins, sessions: open.sessions, addedAgainAt: open.addedAgainAt)
+        } else {
+            behind = FriendMarginsPlan.behind(context.newMargins, place: place(of: start, in: context))
+        }
         if behind.isEmpty || context.declined.isDeclined(itemId: context.itemId, margins: behind.map(\.marginId)) {
             return .play(start)
         }
