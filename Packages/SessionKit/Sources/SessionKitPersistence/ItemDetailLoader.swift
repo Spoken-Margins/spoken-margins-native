@@ -129,7 +129,7 @@ public struct ItemDetailLoader {
         let meetingLine = item.externalReferenceType == TranscriptItemText.referenceType
             ? (try? store.loadTranscriptTimes(itemId: id))?.meetingLine(now: now)
             : nil
-        return ItemDetailState(
+        var detail = ItemDetailState(
             id: item.id,
             title: item.title,
             status: item.status,
@@ -169,5 +169,18 @@ public struct ItemDetailLoader {
         ).includingTimelineSource(
             try? store.loadStructuredDocument(itemId: id),
             elements: try? store.loadSourceElements(itemId: id))
+        detail.startsOnMedia = startsOnMedia(LibraryItemSummary(item), store: store)
+        return detail
+    }
+
+    /// Whether a new session on `item` starts on media, as `SessionEngine.playbackTargetType` decides it (a media type,
+    /// or media with a url), or because the article plays its publisher's recording, which is never stored as the item's
+    /// media (`PublisherAudioPlayback.playsRecording`, the check every play start makes) (#5409).
+    public static func startsOnMedia(_ item: LibraryItemSummary, store: SQLiteSessionStore) -> Bool {
+        let mediaTypes: Set<String> = [TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue]
+        if mediaTypes.contains(item.mediaType) || item.media?.url != nil { return true }
+        return PublisherAudioPlayback.playsRecording(
+            summary: item, record: try? store.loadPublisherAudio(itemId: item.id),
+            choice: try? store.loadPublisherAudioChoice(itemId: item.id))
     }
 }

@@ -52,9 +52,10 @@ extension Gate1AppModel {
         // never offer what the review would then refuse: an article playing a recording has no time for a text place.
         var clock = expectedReviewClock(itemId: itemId)
         // An article stored as text can still start on media: its publisher's recording, adopted only when it starts,
-        // or prepared narration attached to it. Neither shows on the Library row, so the store says, read only when a
-        // Margin placed by characters is at stake (audit on #5422).
-        if clock == nil, entries.contains(where: \.isPlacedInText), startsOnMedia(itemId: itemId) { clock = .media }
+        // or prepared narration attached to it. The open item's detail says so (`startsOnMedia`); the Library row can't,
+        // so for an item that isn't open the store says, read only when a Margin placed by characters is at stake. That
+        // is the Library tap, which reads the item's Margins from the store just above (audit on #5422).
+        if clock == nil, selectedItem.id != itemId, entries.contains(where: \.isPlacedInText), startsOnMedia(itemId: itemId) { clock = .media }
         let placeable = clock.map { SharedMarginReview.placeable(entries, on: $0) } ?? entries
         return placeable.filter { WrittenMarginReadings.audio(for: $0.interjection, in: $0.layer, voiceFile: resolvedApplicationSupportAssetURL(for:)).file != nil }
     }
@@ -68,7 +69,7 @@ extension Gate1AppModel {
     /// media whatever its `mediaType` says (audit on #5422). What the row can't say, `startsOnMedia` reads.
     func expectedReviewClock(itemId: String) -> MarginMomentClock? {
         if snapshot.itemId == itemId, snapshot.targetType != nil { return reviewSourceClock }
-        if selectedItem.id == itemId, selectedItem.isNativeAudio || selectedItem.mediaDurationMs != nil { return .media }
+        if selectedItem.id == itemId, selectedItem.isNativeAudio || selectedItem.mediaDurationMs != nil || selectedItem.startsOnMedia { return .media }
         if let row = libraryItems.first(where: { $0.id == itemId }),
            Self.reviewMediaTypes.contains(row.mediaType) || row.hasNativeAudio || row.mediaDurationMs != nil {
             return .media
@@ -78,16 +79,11 @@ extension Gate1AppModel {
 
     private static let reviewMediaTypes: Set<String> = [TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue]
 
-    /// Whether a new session on `itemId` starts on media, read as `SessionEngine.playbackTargetType` decides it (a media
-    /// type, or media with a file or stream, such as finished prepared narration), or because the article plays its
-    /// publisher's recording (`playsPublisherAudio`, the check every play start makes). Store reads: the caller asks only
-    /// when a friend's Margin placed by characters would be offered (#5409, audit on #5422).
+    /// `ItemDetailLoader.startsOnMedia` for an item that isn't open. Store reads: the caller asks only on the Library tap
+    /// for an item that isn't open, and only when a friend's Margin placed by characters would be offered (#5409).
     func startsOnMedia(itemId: String) -> Bool {
-        guard let store, let item = try? store.loadItemSummary(id: itemId) else { return false }
-        if Self.reviewMediaTypes.contains(item.mediaType) || item.media?.url != nil { return true }
-        return PublisherAudioPlayback.playsRecording( // `playsPublisherAudio`, without reading the summary twice
-            summary: item, record: try? store.loadPublisherAudio(itemId: itemId),
-            choice: try? store.loadPublisherAudioChoice(itemId: itemId))
+        guard let store, let item = try? store.loadItemSummary(id: itemId) else { return false } // no article text
+        return ItemDetailLoader.startsOnMedia(item, store: store)
     }
 
     /// The listener's own Margins on `itemId`, read from what the app already holds: the open item's and the rows the
