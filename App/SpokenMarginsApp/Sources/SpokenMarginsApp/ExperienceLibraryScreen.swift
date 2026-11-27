@@ -134,6 +134,15 @@ struct ExperienceLibraryScreen: View {
                         LibraryPreparationLine(line: line) { isAudioPreparationQueuePresented = true }
                     }
                 }
+                // When this row's height changes (the queue entry coming or going), the list's cell and its content
+                // seem to reach their new heights at different moments (read from the Test Desk's frames on 55d399b, not
+                // traced in UIKit): the search box and chips dropped and came back, by about 50 pt at the largest text
+                // size, as content centred in a cell of the wrong height would, and the entry drew over the next row,
+                // with Reduce Motion on too (#5360). Pinned to the top and cut a little past its edge, the header stays put and the entry is
+                // uncovered as the cell grows. The 4 pt margin is this row's own inset, so nothing is cut that the
+                // row draws today (no shadows here), and nothing spills onto the item rows, whose insets are 0.
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .clipShape(Rectangle().inset(by: -4))
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                 .onChange(of: queuedRows.isEmpty, initial: true) { wasEmpty, isEmpty in
                     queueEmptinessChanged(isQueued: !isEmpty, onAppear: wasEmpty == isEmpty)
