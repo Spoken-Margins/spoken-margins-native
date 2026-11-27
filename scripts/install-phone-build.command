@@ -22,6 +22,7 @@
 # the embedded Watch app on it, reads the Watch's build back and says which build the Watch now has. A Watch that
 # is asleep, out of reach or missing gets one plain line and never fails the phone install. It never uninstalls.
 #
+# SM_PHONE_INSTALL_LATEST=1 installs latest even while a daily pin is current (the build-now shortcut, #5343).
 # Tests: SM_PHONE_DIR replaces ~/SpokenMargins-phone, SM_PHONE_ICLOUD the iCloud Drive folder,
 # SM_PHONE_NOW the clock; scripts/tests put a fake xcrun on PATH.
 set -u
@@ -37,7 +38,9 @@ if [[ -z "${SM_PHONE_INSTALLER_CURRENT:-}" && -f "$current" && "${0:A}" != "${cu
 fi
 latest="$phone_dir/latest"
 pinned=""
-if [[ -L "$phone_dir/daily-ready" && -f "$phone_dir/daily-ready/build.json" ]]; then
+# SM_PHONE_INSTALL_LATEST=1 (the "Build Spoken Margins for iPhone" shortcut, #5343) skips the daily pin: the owner just
+# asked for a build of the newest main, so that build, not the morning's pass, is the one to install.
+if [[ -z "${SM_PHONE_INSTALL_LATEST:-}" && -L "$phone_dir/daily-ready" && -f "$phone_dir/daily-ready/build.json" ]]; then
   # The daily walkthrough and binary must agree (#1600), but the pin never goes over a newer build
   # already on the phone (#1691). "newer" when the installed build was built after the pinned one,
   # or, once its folder is pruned, when a different build was installed after the pin was set:

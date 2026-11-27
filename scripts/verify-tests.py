@@ -864,6 +864,7 @@ PORTABLE_LEFT_OUT = {
 PHONE_BUILD_NEEDS_MAC = 'builds an app with xcodebuild and a fake xcrun on a Mac'
 PORTABLE_RUNNER_TESTS_LEFT_OUT = {
     'test_phone_build.InstallerTests.': 'runs the zsh phone installer, which calls plutil and xcrun',
+    'test_phone_build.BuildNowShortcutTests.': 'runs the zsh Desktop build shortcut; the hosted Linux runner has no zsh',
     'test_phone_build.PhoneBuildTests.test_a_failed_release_build_opens_one_item_updates_it_and_the_next_success_closes_it': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_a_merge_check_that_passed_and_pushed_this_commit_skips_the_host_checks': PHONE_BUILD_NEEDS_MAC,
     'test_phone_build.PhoneBuildTests.test_a_merge_check_that_pushed_another_commit_does_not_count_so_the_host_checks_run': PHONE_BUILD_NEEDS_MAC,
