@@ -57,6 +57,42 @@ final class SpeechRecognitionAskTests: XCTestCase {
         XCTAssertTrue(ask.cardDue(at: .hearItLandEnded, access: .notDetermined, shownThisLaunchForReAsk: false))
     }
 
+    /// #5423: the save's own transcription meets the hold while its hear it land playback runs (the gate is closed while
+    /// iOS is undecided), and that hold must not let the owed card out early. Every kind of hold is held back until the
+    /// playback ends; with no playback, a hold shows the owed card as before.
+    func testAHoldDuringHearItLandWaitsForThePlaybacksEnd() {
+        let holds: [HeldTranscription] = [.playerMargin, .liveSessionMargin, .watchMargin, .shortcutMargin, .spokenNote, .friendPacketPlacement, .sourceWindow]
+        for hold in holds {
+            var ask = SpeechRecognitionAsk(storedAnswer: nil)
+            _ = ask.cardDue(at: .spokenMarginSaved(hearItLandWillRun: true), access: .notDetermined, shownThisLaunchForReAsk: false)
+            ask.transcriptionHeld(hold)
+            XCTAssertTrue(ask.isOwed(access: .notDetermined), "\(hold): owed")
+            XCTAssertFalse(ask.mayShowOwedCard(access: .notDetermined), "\(hold): held back during the playback")
+            XCTAssertTrue(ask.cardDue(at: .hearItLandEnded, access: .notDetermined, shownThisLaunchForReAsk: false), "\(hold): the end lets it out")
+            XCTAssertTrue(ask.mayShowOwedCard(access: .notDetermined), "\(hold): and a later hold may show it")
+        }
+        var noPlayback = SpeechRecognitionAsk(storedAnswer: nil)
+        _ = noPlayback.cardDue(at: saved, access: .notDetermined, shownThisLaunchForReAsk: false)
+        XCTAssertTrue(noPlayback.mayShowOwedCard(access: .notDetermined), "no playback: a hold shows the owed card")
+        var retryAlone = SpeechRecognitionAsk(storedAnswer: nil)
+        retryAlone.transcriptionHeld(.playerMargin)
+        XCTAssertTrue(retryAlone.mayShowOwedCard(access: .notDetermined), "a retry with no save this launch shows it")
+        for decided in [SpeechRecognitionAccessState.authorized, .denied, .restricted] {
+            XCTAssertFalse(noPlayback.mayShowOwedCard(access: decided), "\(decided): nothing to show")
+        }
+    }
+
+    /// A second save's playback replaces the first: the card still waits, and is let out by the one end that is reported.
+    func testASecondHearItLandSaveKeepsTheCardWaitingUntilTheEnd() {
+        var ask = SpeechRecognitionAsk(storedAnswer: nil)
+        _ = ask.cardDue(at: .spokenMarginSaved(hearItLandWillRun: true), access: .notDetermined, shownThisLaunchForReAsk: false)
+        _ = ask.cardDue(at: .spokenMarginSaved(hearItLandWillRun: true), access: .notDetermined, shownThisLaunchForReAsk: false)
+        ask.transcriptionHeld(.playerMargin)
+        XCTAssertFalse(ask.mayShowOwedCard(access: .notDetermined))
+        _ = ask.cardDue(at: .hearItLandEnded, access: .notDetermined, shownThisLaunchForReAsk: false)
+        XCTAssertTrue(ask.mayShowOwedCard(access: .notDetermined))
+    }
+
     func testHearItLandEndedWithNoSpokenMarginSavedBringsNoCard() {
         var ask = SpeechRecognitionAsk(storedAnswer: nil)
         XCTAssertFalse(ask.cardDue(at: .hearItLandEnded, access: .notDetermined, shownThisLaunchForReAsk: false))
