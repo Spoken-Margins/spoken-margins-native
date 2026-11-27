@@ -580,6 +580,42 @@ class ReleasingClaims(unittest.TestCase):
                 self.assertNotIn(('POST', 'issues/60/labels', {'labels': ['ready']}), router.writes)
                 self.assertIn(('DELETE', 'issues/60/labels/in-progress', None), router.writes)
 
+    def test_a_claim_whose_code_merged_since_it_began_goes_back_as_proof_work(self):
+        # #5443: nine claims went back to plain `ready` on 2026-11-26 though their PRs had merged, and every cloud
+        # slot then found no code left in the queue.
+        self.router.on(r'^pulls\?state=closed', [merged_pull(800, 'Part of #50', at(days=1)),
+                                                 merged_pull(801, 'Closes #52', at(days=1))])
+        code, text = self.run_main('--apply')
+        self.assertEqual(code, 0)
+        self.assertIn(('POST', 'issues/50/labels', {'labels': ['ready', 'agent-verify']}), self.router.writes)
+        self.assertNotIn(('POST', 'issues/50/labels', {'labels': ['ready']}), self.router.writes)
+        comment = next(body['body'] for method, path, body in self.router.writes if path == 'issues/50/comments')
+        self.assertIn('merged in #800', comment)
+        self.assertIn('real-use run', comment)
+        self.assertIn('`ready` + `agent-verify` (code merged in #800)', text)
+        # a hold label still wins: the blocked claim gets neither label
+        self.assertFalse([w for w in self.router.writes if w[1] == 'issues/52/labels'])
+        self.assertIn('Not set back to `ready`', next(body['body'] for method, path, body in self.router.writes
+                                                     if path == 'issues/52/comments'))
+
+    def test_a_pr_merged_before_the_claim_or_not_merged_leaves_the_plain_release(self):
+        for pulls in ([merged_pull(800, 'Part of #50', at(days=3))],     # an older slice: maybe why it was claimed
+                      [merged_pull(800, 'Closes #50', None)],             # closed unmerged
+                      [merged_pull(800, 'See #50 for context', at(days=1))]):   # mentions it, works on something else
+            with self.subTest(body=pulls[0]['body'], merged=pulls[0]['merged_at']):
+                self.setUp()
+                self.router.on(r'^pulls\?state=closed', pulls)
+                self.run_main('--apply')
+                self.assertIn(('POST', 'issues/50/labels', {'labels': ['ready']}), self.router.writes)
+                comment = next(body['body'] for method, path, body in self.router.writes
+                               if path == 'issues/50/comments')
+                self.assertIn('Back on the queue as `ready`.', comment)
+
+    def test_an_unreadable_closed_pr_list_falls_back_to_the_plain_release(self):
+        self.router.on(r'^pulls\?state=closed', sm_status.GitHubError('HTTP 502'))
+        self.run_main('--apply')
+        self.assertIn(('POST', 'issues/50/labels', {'labels': ['ready']}), self.router.writes)
+
     def test_a_comment_that_arrives_before_the_write_stops_the_release(self):
         self.router.on(r'^issues/50/comments\?since', [note(50, 'back at it', at(minutes=1))])
         _, text = self.run_main('--apply')
