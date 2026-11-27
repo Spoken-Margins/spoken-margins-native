@@ -3,7 +3,8 @@ import XCTest
 @testable import SessionKit
 
 final class ExportSavedConfirmationTests: XCTestCase {
-    private let files = ExportSavedConfirmation.saveToFilesActivity
+    private let files = "com.apple.DocumentManagerUICore.SaveToFiles"
+    private let oldFiles = "com.apple.CloudDocsUI.AddToiCloudDrive"
 
     func testTable() {
         struct Row {
@@ -16,6 +17,12 @@ final class ExportSavedConfirmationTests: XCTestCase {
         }
         let rows = [
             Row(name: "Save to Files, no URL", completed: true, type: files, url: nil, failed: false, want: "Saved to Files"),
+            Row(name: "Save to Files, older iOS identifier", completed: true, type: oldFiles, url: nil, failed: false, want: "Saved to Files"),
+            Row(name: "Save to Files, cancelled, older identifier", completed: false, type: oldFiles, url: nil, failed: false, want: nil),
+            Row(name: "lookalike identifier", completed: true, type: "com.apple.DocumentManagerUICore.SaveToFilesX", url: nil, failed: false, want: nil),
+            Row(name: "identifier in other case", completed: true, type: "COM.APPLE.DOCUMENTMANAGERUICORE.SAVETOFILES", url: nil, failed: false, want: nil),
+            Row(name: "Copy", completed: true, type: "com.apple.UIKit.activity.CopyToPasteboard", url: nil, failed: false, want: nil),
+            Row(name: "empty identifier", completed: true, type: "", url: nil, failed: false, want: nil),
             Row(name: "On My iPhone folder", completed: true, type: files, url: "file:///var/mobile/On%20My%20iPhone/Margin.md", failed: false, want: "Saved to On My iPhone"),
             Row(name: "iCloud Drive folder", completed: true, type: files, url: "file:///Users/x/Library/Mobile%20Documents/com~apple~CloudDocs/Notes/Margin.md", failed: false, want: "Saved to Notes"),
             Row(name: "nested folder", completed: true, type: files, url: "file:///a/b/c/Reading/2026/Margin.md", failed: false, want: "Saved to 2026"),
