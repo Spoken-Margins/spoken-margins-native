@@ -66,6 +66,10 @@ if [[ -z "$(latest_of)" || "$(latest_of)" == "$latest_before" || ! -f "$phone_di
   exit 75
 fi
 
+# The commit this run built, read now: a scheduled build could repoint latest while the installer runs (review).
+built_sha=$(/usr/bin/python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("sha", ""))' \
+  "$phone_dir/latest/build.json" 2>/dev/null)
+
 if [[ -n "${SM_PHONE_NOW_NO_INSTALL:-}" ]]; then
   echo "Done. The build is in $phone_dir/latest."
   exit 0
@@ -85,8 +89,6 @@ fi
 # The installer can also end well without putting this build on the phone (an installer that ignores
 # SM_PHONE_INSTALL_LATEST and picks the daily pass), so "Done" is said only when installed.txt names the commit this
 # run built.
-built_sha=$(/usr/bin/python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("sha", ""))' \
-  "$phone_dir/latest/build.json" 2>/dev/null)
 phone_sha=$(head -1 "$phone_dir/installed.txt" 2>/dev/null | cut -d' ' -f1)
 if [[ -z "$built_sha" || "$built_sha" != "$phone_sha" ]]; then
   echo "The build is ready (commit ${built_sha:0:7}), but your phone has a different one (commit ${phone_sha:0:7})."
