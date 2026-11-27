@@ -755,6 +755,11 @@ These came in the project chat, so most have no comment of his to link. Each cit
   - Still his: the server deploy that turns on the `replies` switch (a public push), and which build carries `SM_LINK_REPLIES` (it follows `SM_SHARE_LINK_CREATION`).
   - Links made on the Mac get no reply box, so persona and intro links never become an inbox (#4784 keeps the rest of its one-way design).
 
+## 2026-11-27
+- **Each new TestFlight build goes to its testers by workflow, after his Approve (2026-11-27, #5447).** Build 38 was uploaded from the Mac on 2026-11-26 and waited a day for someone signed in to App Store Connect to add it to the tester groups; he did it by hand. Asked in the project chat "your App Store Connect key is already stored as a GitHub secret. One workflow PR could add every future build to the tester groups automatically, so you'd never do this step again. It changes CI, so it needs your yes now and your merge tap later. My pick is yes.", he answered (copied from his message by the server): "yes" and "could we make it go through an approve similar to a deploy though?"
+  - How it is carried out: `testflight-testers.yml`, started as the App by an hourly relay for the newest upload tag, checks the processed build and the external release gate before anything changes, then waits in the upload's own approval environment (`testflight-upload`) for his tap. After the tap it adds the build to the internal group, sets "What to Test" if empty, adds it to the friends beta behind spokenmargins.com/join and submits it for beta review.
+  - Default taken: the whole step waits for the tap, the internal group included. A build already with its testers asks for nothing.
+
 ## Background moved out of the guide (2026-11-06)
 - **From the guide.** Explanations that stood next to rules in `AGENTS.md`, moved here to keep it under its 4,000-word cap (the rules themselves are unchanged):
   - Verification layers: tests that pass while the app is broken usually fake the boundary that broke, such as audio sessions, players, file paths across containers and network responses.

@@ -1,0 +1,60 @@
+# Start testflight-testers as the spoken-margins-agent App for each new upload (#5447).
+#
+# Every upload, from GitHub (testflight-upload.yml) or from the Mac, ends with the tag testflight/<version>-build-N.
+# Once an hour this looks for the newest such tag and, when testflight-testers has never run for that build, starts it
+# on main as the App. A run the App starts is one the owner can approve; a run his own login started is not (prevent
+# self-review), and cloud sessions act as his login. The run itself asks for nothing when the build is already with
+# its testers, so a build assigned by hand costs one short job.
+#
+# Only the newest tag is considered, and only once: a run that failed or was rejected is not started again on its own.
+# To try again, start testflight-testers by hand as the App (as this job does), with the build number.
+#
+# Trust: no checkout and no branch code. It reads tag names and run titles through the API and starts main's workflow.
+#
+# Cost and catch: about 20 seconds of hosted Linux once an hour (free on this public repository), no tokens. It catches
+# an upload whose build never reaches its testers because nobody remembered the step (Build 38, 2026-11-26). Waste
+# signal: it never starts a run that needed the owner's tap, because builds keep being assigned some other way.
+name: testflight-testers-request
+
+on:
+  schedule:
+    - cron: '35 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: testflight-testers-request
+  cancel-in-progress: false
+
+jobs:
+  start:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: agent-identity
+    timeout-minutes: 5
+    steps:
+      - name: Act as the spoken-margins-agent App
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.SM_APP_ID }}
+          private-key: ${{ secrets.SM_APP_PRIVATE_KEY }}
+          # No owner or repositories: the action then scopes the token to this repository alone.
+      - name: Start testflight-testers for the newest upload that has no run
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          build=$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/testflight/" --jq '.[].ref' \
+            | sed -nE 's#^refs/tags/testflight/[0-9]+(\.[0-9]+)*-build-([0-9]+)$#\2#p' | sort -n | tail -1)
+          [ -n "$build" ] || { echo "No upload tags."; exit 0; }
+          titles=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/testflight-testers.yml/runs?per_page=100" \
+            --jq '.workflow_runs[].display_title')  # a failed read stops here rather than starting a duplicate
+          if printf '%s\n' "$titles" | grep -qx "Testers for Build $build"; then
+            echo "testflight-testers already ran for Build $build."
+            exit 0
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/actions/workflows/testflight-testers.yml/dispatches" \
+            -f ref=main -f "inputs[build]=$build"
+          echo "Started testflight-testers for Build $build as the App." | tee -a "$GITHUB_STEP_SUMMARY"
