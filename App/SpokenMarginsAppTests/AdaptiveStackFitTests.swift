@@ -1,3 +1,4 @@
+import SessionKit
 import SwiftUI
 import XCTest
 @testable import SpokenMarginsApp
@@ -74,6 +75,28 @@ final class AdaptiveStackFitTests: XCTestCase {
         }
     }
 
+    /// #5334: at the largest text size the share sheet's back button read "Back to", with "selection" dropped and no
+    /// ellipsis, so it no longer said where it went. Its title is too long for one line at that size on the narrowest
+    /// phone, so it needs two lines. Rendered on its own with no height limit the button already took two lines (a
+    /// hosted run of this file without the fix passed), so the sheet must have offered it less height than that and
+    /// the label took it. Here it is offered one line's height, as a squeezed container would, and must still keep its
+    /// whole title: at least two lines high. "Back" alone is one line. The offer goes through `OfferedHeight`, which
+    /// reports the button's own answer: an `ImageRenderer` given a height draws exactly that height whatever the view
+    /// answers (a hosted run with the fix came back 63.5 pt for a 63.5 pt offer), so it can't be the one offering.
+    func testTheShareSheetBackButtonKeepsItsWholeTitleWhenOfferedOneLine() {
+        let size = DynamicTypeSize.accessibility5
+        let oneLine = height(of: Build23BackToSelectionButton(identifier: "back", title: "Back", action: {}), size: size)
+        XCTAssertGreaterThan(oneLine, 0, "the back button did not render")
+        for title in ["Back to selection", ShareReviewCardWords.backToYourMargins] {
+            let button = Build23BackToSelectionButton(identifier: "back", title: title, action: {})
+            let whole = height(of: OfferedHeight(height: oneLine) { button }, size: size)
+            XCTAssertGreaterThan(
+                whole, oneLine * 1.5,
+                "\(size): offered one line (\(oneLine) pt), \"\(title)\" took \(whole) pt, so the rest of its title was cut off"
+            )
+        }
+    }
+
     // MARK: - Rendering
 
     @ViewBuilder
@@ -105,5 +128,19 @@ final class AdaptiveStackFitTests: XCTestCase {
         renderer.proposedSize = ProposedViewSize(width: Self.width, height: nil)
         renderer.scale = 2
         return renderer.uiImage?.size.height ?? 0
+    }
+}
+
+/// Offers its one subview a fixed height, as a squeezed container in a sheet would, and takes the height the subview
+/// answers with, so a rendering's height is the subview's own answer, not the offer.
+private struct OfferedHeight: Layout {
+    let height: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        subviews.first?.sizeThatFits(ProposedViewSize(width: proposal.width, height: height)) ?? .zero
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: height))
     }
 }
