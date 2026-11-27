@@ -1451,6 +1451,57 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.feedbackEvent?.message, "Source context recovered.")
     }
 
+    /// #5418: a Margins row's Retry for the source words found none, but the banner kept an older Retry's
+    /// "Retranscription failed." because a confirmation may not cover an error that offers Retry. The retry's own
+    /// result must take its place.
+    func testRetryContextResultReplacesAnOlderRetryBanner() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        temporaryDirectories.append(root)
+        let db = root.appending(path: "library.sqlite")
+        let transcriber = RecordingSourceWindowTranscriptionClient(timeline: TranscriptTimeline(segments: [], chapters: [], durationMs: 60_000))
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), sourceTranscriptionClient: transcriber, databaseURLOverride: db)
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        let store = try SQLiteSessionStore(path: db.path)
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let relative = "Audiobooks/context-\(UUID().uuidString).caf"
+        let local = support.appending(path: relative)
+        try FileManager.default.createDirectory(at: local.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("fixture".utf8).write(to: local)
+        defer { try? FileManager.default.removeItem(at: local) }
+        let item = Item(id: "context-none", title: "Local audiobook", mediaType: "audiobook", text: nil,
+            externalReference: "file:///former-container/missing.caf", status: "ready", externalReferenceType: "audiobook",
+            media: ItemMedia(sourceType: .nativeMediaFile, url: "file:///former-container/missing.caf", durationMs: 60_000))
+        try store.seed(item: item)
+        try store.saveOwnedOfflineAsset(OwnedOfflineAsset(id: "owned-context-none", itemId: item.id, category: .audiobook,
+            relativePath: relative, byteCount: 7, checksumSHA256: "fixture", isReproducible: false))
+        model.openItem(id: item.id)
+        model.startItem(id: item.id)
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId)
+        let note = Interjection(id: "retry-context-none", itemId: item.id, sessionId: sessionID, targetType: .item,
+            targetId: item.id, createdAt: Date(), roughPercent: 8,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 5_000),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "My note",
+            cleanedTranscript: nil, displayText: nil, status: "active", anchorContextStatus: .unavailable)
+        try store.saveInterjection(note)
+        // The banner the Test Desk saw: an earlier retry's failure, which offers its own Retry.
+        model.reportFailure(
+            "Saved audio and current transcript kept. Retranscription failed.",
+            itemId: item.id,
+            retry: .init(key: "earlier-transcription-retry") {},
+            origin: FeedbackOrigin(itemId: item.id, sessionId: sessionID, work: .marginTranscription)
+        )
+        XCTAssertEqual(model.feedbackEvent?.retry?.key, "earlier-transcription-retry")
+
+        model.retryAnchorContext(note)
+        _ = await transcriber.waitForWindowRequest()
+        try await waitFor("context retry to finish") { !model.isRetryingAnchorContext(note) }
+        try await waitFor("the retry's result on the banner") { model.feedbackEvent?.message == "No words were found near this Margin." }
+        XCTAssertEqual(try store.loadInterjections(sessionId: sessionID).first?.anchorContextStatus, .unavailable)
+        XCTAssertNil(model.feedbackEvent?.retry, "The older Retry must not stay over the retry's result.")
+    }
+
     /// #871 / #1308 (ANC-03): when a download finishes, every saved Margin on the episode wants its source context. The
     /// app must send those jobs through its SourceWindowJobQueue, two at a time, skip a Margin deleted while it waited,
     /// and clear every pending mark. The queue's own tests can't see the call site: replacing the enqueue with a bare
@@ -2050,6 +2101,8 @@ final class SourceLinkImportTests: XCTestCase {
         await transcriber.settleNext(.success("The complete saved interjection is restored from its original audio."))
         try await waitFor("third retry settles") { !model.isRetryingInterjectionTranscription(interjection) }
         XCTAssertNil(model.feedbackEvent?.retry, "a transcribed Margin leaves no Retry offer behind")
+        // #5418: the tapped Retry is answered on the banner, not left reading "Retranscribing" after the words came back.
+        XCTAssertEqual(model.feedbackEvent?.message, "Transcribed Margin.")
     }
 
     /// A Margin whose first transcription failed, with the Retry the failure offered captured as the banner holds it.
