@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+import re
 import sys
 import unittest
 
@@ -385,10 +386,43 @@ class LaneListTests(unittest.TestCase):
         scope = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(scope)
         audit = (ROOT / 'ops/codex/sm_codex_audit.py').read_text()
-        for name in ('required_checks.py', 'dispatch_required_check.py', 'merge_policy.py'):
+        for name in ('required_checks.py', 'dispatch_required_check.py', 'merge_policy.py', 'owner_review_tap.py'):
             with self.subTest(name):
                 self.assertIn(f'scripts/{name}', scope.LANE_FILES)
                 self.assertIn(name.replace('.', r'\.'), audit)
+
+    def test_every_script_merge_policy_imports_is_a_lane_file(self):
+        """The class behind the #5441 audit: a module the required check runs (owner_review_tap.py decides the owner's
+        tap) changed with no audit. Read merge_policy.py's own imports and loads so a new one can't be missed."""
+        import ast
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('test_scope_for_policy_imports', SCRIPTS / 'test-scope.py')
+        scope = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scope)
+        tree = ast.parse((SCRIPTS / 'merge_policy.py').read_text())
+        names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names |= {f'{a.name}.py' for a in node.names}
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                names.add(f'{node.module}.py')
+            elif isinstance(node, ast.Call) and getattr(node.func, 'id', None) == '_load':
+                names.add(node.args[1].value)
+        local = sorted(n for n in names if (SCRIPTS / n).is_file())
+        self.assertIn('owner_review_tap.py', local)
+        for name in local:
+            with self.subTest(name):
+                path = f'scripts/{name}'
+                self.assertTrue(path in scope.LANE_FILES or path.startswith(scope.LANE_PREFIXES), path)
+                self.assertTrue(any(re.search(p, path) for p in self.audit_lane_patterns()), path)
+
+    @staticmethod
+    def audit_lane_patterns() -> list[str]:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('sm_codex_audit_for_lane_list', ROOT / 'ops/codex/sm_codex_audit.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.RISKY_PATTERNS['lane']
 
 
 class ImportFailureTests(unittest.TestCase):
