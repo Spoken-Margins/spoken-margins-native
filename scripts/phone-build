@@ -2364,7 +2364,9 @@ def main(argv) -> int:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             say('another phone build is running; nothing to do')
-            return 0
+            # The Desktop shortcut (--no-tests) asked for a build now: "nothing done" must not read as a finished
+            # build, or it installs the old latest and says "Done" (#5440 audit). The scheduled jobs keep exit 0.
+            return EXIT_SKIPPED if args.no_tests else 0
         if not os.environ.get('SM_PHONE_NO_FETCH'):
             git('fetch', 'origin', BRANCH, '-q', check=False)
         sha = git('rev-parse', f'{args.commit or "origin/" + BRANCH}^{{commit}}')

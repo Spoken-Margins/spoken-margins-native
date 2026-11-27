@@ -1295,6 +1295,25 @@ class NoTestsBuildTests(unittest.TestCase):
         pick.assert_not_called()
         hosted.assert_not_called()
 
+    def run_main_with_the_lock_held(self, *argv):
+        import fcntl
+        module = self.module
+        with open(self.phone / '.phone-build.lock', 'a+') as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with unittest.mock.patch.dict(os.environ, {'SM_PHONE_DIR': str(self.phone)}), \
+                    unittest.mock.patch.object(module.ops_checkout, 'pin_from_env'), \
+                    unittest.mock.patch.object(module, 'take_or_build') as take:
+                code = module.main(list(argv))
+        take.assert_not_called()
+        return code
+
+    def test_the_shortcut_hears_a_held_lock_as_skipped_not_as_a_finished_build(self):
+        # Audit of #5440: exit 0 here made the Desktop shortcut install the old latest and say "Done".
+        self.assertEqual(self.run_main_with_the_lock_held('--no-tests'), self.module.EXIT_SKIPPED)
+
+    def test_a_scheduled_run_that_finds_the_lock_held_still_exits_0(self):
+        self.assertEqual(self.run_main_with_the_lock_held('--if-changed'), 0)
+
     def test_the_disk_and_memory_guard_still_applies(self):
         code, pick, hosted, build = self.run_take(guard='free disk is 3.0 GB')
         self.assertEqual(code, self.module.EXIT_SKIPPED)
@@ -1322,12 +1341,22 @@ class BuildNowShortcutTests(unittest.TestCase):
         (self.repo / 'scripts').mkdir(parents=True)
         self.phone.mkdir()
         (self.repo / 'scripts/ops_checkout.py').write_text('import sys\nsys.exit(0)\n')
+        self.sha, self.old_sha = 'cd' * 20, 'ab' * 20
+        # The fake phone-build makes a new build folder and points latest at it, as the real one does, unless
+        # FAKE_BUILD_NOTHING is set (the real one found the lock held or a guard said not now and built nothing).
         (self.repo / 'scripts/phone-build').write_text(
-            'import os, sys\n# --no-tests\nprint("phone-build", *sys.argv[1:])\n'
-            'sys.exit(int(os.environ.get("FAKE_BUILD_EXIT", "0")))\n')
-        self.sha = 'cd' * 20
-        (self.phone / 'latest').mkdir()
-        (self.phone / 'latest/build.json').write_text(json.dumps({'sha': self.sha}))
+            'import json, os, sys\n# --no-tests\nprint("phone-build", *sys.argv[1:])\n'
+            'code = int(os.environ.get("FAKE_BUILD_EXIT", "0"))\n'
+            'if code == 0 and not os.environ.get("FAKE_BUILD_NOTHING"):\n'
+            '    phone = os.environ["SM_PHONE_DIR"]\n'
+            '    os.makedirs(os.path.join(phone, "new-build"))\n'
+            f'    open(os.path.join(phone, "new-build", "build.json"), "w").write(json.dumps({{"sha": "{self.sha}"}}))\n'
+            '    os.remove(os.path.join(phone, "latest"))\n'
+            '    os.symlink("new-build", os.path.join(phone, "latest"))\n'
+            'sys.exit(code)\n')
+        (self.phone / 'old-build').mkdir()
+        (self.phone / 'old-build/build.json').write_text(json.dumps({'sha': self.old_sha}))
+        (self.phone / 'latest').symlink_to('old-build')
         # The fake installer records what the real one would write to installed.txt (FAKE_INSTALLED, default the
         # build's commit) and whether it was told to skip the daily pin.
         (self.phone / 'install-phone-build.command').write_text(
@@ -1370,6 +1399,24 @@ class BuildNowShortcutTests(unittest.TestCase):
         self.assertNotIn('Done', done.stdout)
         self.assertIn('not on your phone yet', done.stdout)
         self.assertIn('double-click this shortcut again', done.stdout)
+
+    def test_a_build_step_that_ended_well_without_a_new_build_is_not_called_done(self):
+        # Audit of #5440: phone-build found another phone build holding the lock, said "nothing to do" and exited 0.
+        # The shortcut installed the old latest, installed.txt matched it, and it said "Done ... the one just built".
+        done = self.run_shortcut(FAKE_BUILD_NOTHING='1', FAKE_INSTALLED=self.old_sha)
+        self.assertEqual(done.returncode, 75, done.stdout + done.stderr)
+        self.assertNotIn('installer ran', done.stdout)
+        self.assertNotIn('Done', done.stdout)
+        self.assertIn('No new build was made', done.stdout)
+        self.assertIn('The app on your phone is unchanged', done.stdout)
+
+    def test_a_skipped_build_says_no_build_was_made(self):
+        # phone-build --no-tests now exits 75 (EXIT_SKIPPED) when another phone build holds the lock.
+        done = self.run_shortcut(FAKE_BUILD_EXIT='75')
+        self.assertEqual(done.returncode, 75, done.stdout + done.stderr)
+        self.assertNotIn('installer ran', done.stdout)
+        self.assertNotIn('Done', done.stdout)
+        self.assertIn('another phone build is running', done.stdout)
 
     def test_a_failed_build_never_runs_the_installer(self):
         done = self.run_shortcut(FAKE_BUILD_EXIT='2')
