@@ -143,6 +143,8 @@ final class OwnMarginEchoesTests: XCTestCase {
                 XCTAssertEqual(try store.loadSharedMarginTallies()["a"]?.total ?? 0, row.echo ? 0 : 1, "SQL: \(row.why)")
                 // The readers that show or play a friend's Margins from memory, and the offer from the store (#4910).
                 XCTAssertEqual(try MarginRowsReading.item("a", store: store).sharedRows.count, row.echo ? 0 : 1, "Margins tab: \(row.why)")
+                XCTAssertEqual(try MarginRowsReading.all(store: store).sharedRows.count, row.echo ? 0 : 1, "Margins tab, every item: \(row.why)")
+                XCTAssertEqual(try PacketArrivalReading.beforeImport(itemId: "a", store: store).hadFriendMargins, !row.echo, "banner: \(row.why)")
                 let loaded = try ItemDetailLoader.load(
                     id: "a", store: store, snapshotItemId: "a", snapshotSessionId: "session-a", placementPasses: SharedMarginPlacementPasses())
                 XCTAssertEqual(loaded.importedCommentaryInterjections.values.flatMap { $0 }.count, row.echo ? 0 : 1, "item's layers: \(row.why)")

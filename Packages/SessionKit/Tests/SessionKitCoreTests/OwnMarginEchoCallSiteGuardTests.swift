@@ -29,7 +29,7 @@ final class OwnMarginEchoCallSiteGuardTests: XCTestCase {
         "ReplyBoxCoordinator.swift finishReport": (.readsToWrite, "hides every Margin of a reported layer by id"),
         "Gate1AppModel+SharedMarginReadAloud.swift setSharedMarginReadAloud": (.readsToWrite, "saves one record's read-aloud choice by id"),
         "Gate1AppModel+FriendPacketCheck.swift libraryHoldsFriendPacket": (.notAListenerSurface,
-            "asks whether any packet was ever imported, to hide the first-launch link card; it counts no Margins"),
+            "hides the first-launch link card once any packet is in; an own re-import means the listener already shared, so they are past it; it counts no Margins"),
         "ImportedFileEpisodeLinker.swift hasLinkedMargins": (.notAListenerSurface, "whether a file's episode link can still change"),
         "SkimBridgeController.swift readResources": (.notAListenerSurface, "reads layers for a shared Listening Map, no Margins"),
     ]
