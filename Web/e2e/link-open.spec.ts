@@ -74,8 +74,9 @@ test('a link opens on its arrival page; Play starts the episode at the beginning
   await expect(playing.getByTestId('margin-cue')).toContainText('Web fixture’s first Margin in');
   await shot(page, info, '30-link-landed');
 
-  // One request, for the packet only, and the key never in it. The address bar no longer holds the key.
-  expect(fetches.map((r) => new URL(r.url()).pathname)).toEqual(['/l/vectorvoice01/packet']);
+  // Two requests, for the sealed packet and the sealed preview (its introduction mark, #4784), and the key never in
+  // them. The address bar no longer holds the key.
+  expect(fetches.map((r) => new URL(r.url()).pathname).sort()).toEqual(['/l/vectorvoice01/packet', '/l/vectorvoice01/preview']);
   expect(fetches[0].url()).not.toContain(KEY);
   expect(page.url()).not.toContain(KEY);
 
@@ -104,13 +105,15 @@ test('a pasted link that is damaged or expired says so, and a link with no key a
   const wrongKey = `${KEY.slice(0, -2)}${KEY.endsWith('AA') ? 'BA' : 'AA'}`;
   await pasteLink(page, `${STUB}/l/vectorvoice01#${wrongKey}`);
   await expect(toast(page, DAMAGED, true)).toHaveCount(1);
-  expect(fetches.map((r) => new URL(r.url()).pathname)).toEqual(['/l/AbCdEf123456/packet', '/l/vectorvoice01/packet']);
+  expect(fetches.map((r) => new URL(r.url()).pathname).sort()).toEqual([
+    '/l/AbCdEf123456/packet', '/l/AbCdEf123456/preview', '/l/vectorvoice01/packet', '/l/vectorvoice01/preview',
+  ]);
 
   await pasteLink(page, `${STUB}/l/vectorvoice01#${KEY.slice(0, 20)}`);
   await expect(toast(page, DAMAGED, true)).toHaveCount(2);
   await pasteLink(page, `${STUB}/l/vectorvoice01`);
   await expect(toast(page, DAMAGED, true)).toHaveCount(3);
-  expect(fetches).toHaveLength(2);
+  expect(fetches).toHaveLength(4); // nothing more than the two links above asked for
 
   await pasteLink(page, `${STUB}/l/expired00001#${KEY}`);
   await expect(page.getByText('This link has expired. Ask your friend to share it again.')).toBeVisible();

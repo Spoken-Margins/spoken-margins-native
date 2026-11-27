@@ -13,7 +13,7 @@ import { landingOffer, type Landing } from '../logic/import.ts';
 import { marginRows, nextMargin, opensOnMarginsTab, playQueue, startFor, unheardCount, type NextMargin, type Row } from '../logic/margins-control-center.ts';
 import { nextSpeed, timelineFraction, timelinePosts } from '../logic/library.ts';
 import {
-  allPicked, candidateLabel, currentPicks, pickedFromList, pickedMargins, preselected, nowCard, replyBackOffer, savedFileNextStep, selectAllLabel, selectAllTap,
+  allPicked, candidateLabel, currentPicks, pickedFromList, pickedMargins, preselected, nowCard, replyBackOffer, savedFileNextStep, shareCaption, selectAllLabel, selectAllTap,
   starredPicks, starredShareList, whyNotShared,
 } from '../logic/reply-back.ts';
 import { plainError } from '../logic/messages.ts';
@@ -769,7 +769,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
           onChange={(event) => setTypedName(event.target.value)}
           onBlur={() => void keepName()}
         />
-        <p id="share-name-hint" className="muted">{senderNameHint(offer?.friendLabels ?? [])}</p>
+        <p id="share-name-hint" className="muted">{senderNameHint(offer?.friendLabels ?? [], offer?.intro)}</p>
       </div>
       {box ? (
         <ReplyBoxActions
@@ -789,7 +789,7 @@ function ShareMargins({ episode, margins, show }: { episode: Episode; margins: M
         />
       ) : (
         <>
-          <p className="muted">Share them as a file. Your friend opens it in Spoken Margins and hears each one at its moment.</p>
+          <p className="muted">{shareCaption(offer)}</p>
           {/* The live region stays mounted and only its words change, so a screen reader announces them. */}
           <div role="status" id="share-why-not">
             {whyNot ? <p className="muted">{whyNot}</p> : nextStep ? <p className="muted">{nextStep}</p> : null}

@@ -181,12 +181,13 @@ for (const [shape, open] of shapes) {
     const hosts = new Set(seen.map((r) => new URL(r.url).host));
     expect([...hosts].sort()).toEqual([new URL(SERVER).host, new URL(WEB).host, 'example.com', 'relay.test'].sort());
     // The episode is fetched only after Play, and only its enclosure; the link server is asked for the sealed packet
-    // and the link's sealed reply part (#4675), both plain GETs with no key, checked above.
+    // and the link's sealed reply part (#4675) and sealed preview (its introduction mark, #4784), all plain GETs with no
+    // key, checked above.
     const episode = seen.filter((r) => new URL(r.url).host === 'example.com');
     expect(episode.length).toBeGreaterThan(0);
     for (const r of episode) expect(new URL(r.url).pathname).toMatch(/^\/podcast\//);
     const asked = seen.filter((r) => r.url.startsWith(`${RELAY}/`)).map((r) => new URL(r.url).pathname);
-    expect([...new Set(asked)].sort()).toEqual([`/l/${id}/packet`, `/l/${id}/reply`]);
+    expect([...new Set(asked)].sort()).toEqual([`/l/${id}/packet`, `/l/${id}/preview`, `/l/${id}/reply`]);
     await context.close();
   });
 }

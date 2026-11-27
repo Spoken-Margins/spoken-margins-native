@@ -6,7 +6,7 @@
 import { useCallback, useRef, type ReactNode } from 'react';
 import { useData } from './data.tsx';
 import { packetsToOpen } from './logic/backup.ts';
-import { importSummary, placeImport, unnamedAuthorFor, type Arrival, type Landing } from './logic/import.ts';
+import { importSummary, placeImport, unnamedAuthorFor, type Arrival, type Landing, type PlacedImport } from './logic/import.ts';
 import { kindNoun, opensListenCard } from './logic/arrival-card.ts';
 import type { PacketRead } from './ports.ts';
 import { packetPickerAccept, packetRoute } from './logic/native-packets.ts';
@@ -14,6 +14,7 @@ import { plainError } from './logic/messages.ts';
 import { NotSavedError } from './logic/storage.ts';
 import { LINK_MESSAGES, ShareLinkError, openSharedPacket, type ParsedLink } from './logic/share-link.ts';
 import { fetchReplyOutcome } from './logic/reply-box.ts';
+import { fetchIntroMark, linkShareFetch } from './logic/intro-link.ts';
 import { senderNameOrNone } from './logic/reply-words.ts';
 import { usePlayer } from './player.tsx';
 import { trackReplyBox } from './reply-boxes.ts';
@@ -39,7 +40,7 @@ function useLandPacket(
   fileName: string | undefined,
   arrival: Arrival,
   alone?: boolean,
-  onPlaced?: (episodeId: string, read: PacketRead) => void,
+  onPlaced?: (episodeId: string, read: PacketRead, placed: PlacedImport) => void,
 ) => Promise<void> {
   const data = useData();
   const player = usePlayer();
@@ -57,7 +58,7 @@ function useLandPacket(
       }
       const current = dataRef.current;
       const placed = placeImport(read, current.shows, current.episodes, undefined, current.margins, { unnamedAuthor: unnamedAuthorFor(arrival), backup: arrival === 'backup' });
-      onPlaced?.(placed.episode.id, read);
+      onPlaced?.(placed.episode.id, read, placed);
       if (placed.show) await current.follow(placed.show, [placed.episode]);
       else if (placed.newEpisode) await current.updateEpisode(placed.episode);
       for (const margin of placed.margins) await current.addMargin(margin);
@@ -93,6 +94,9 @@ export function useOpenMarginFile(onLanded: (landing: Landing) => void, onListen
 export function useOpenShareLink(onLanded: (landing: Landing) => void): OpenShareLink {
   const land = useLandPacket(onLanded);
   const { toast } = useUi();
+  const data = useData();
+  const dataRef = useRef(data);
+  dataRef.current = data;
   return useCallback(
     async (parsed) => {
       if (parsed.kind === 'none') {
@@ -105,6 +109,12 @@ export function useOpenShareLink(onLanded: (landing: Landing) => void): OpenShar
       }
       // The link's reply part (#4675), fetched beside the packet and never waited on.
       const replyFetch = fetchReplyOutcome(parsed.link);
+      // Its sealed preview (#4784): an introduction link's Margins are marked once stored, and it takes no answers.
+      const introFetch = fetchIntroMark(parsed.link);
+      let stored!: () => void;
+      const landed = new Promise<void>((resolve) => {
+        stored = resolve;
+      });
       let bytes: Uint8Array;
       try {
         bytes = await openSharedPacket(parsed.link);
@@ -113,11 +123,19 @@ export function useOpenShareLink(onLanded: (landing: Landing) => void): OpenShar
         return;
       }
       try {
-        await land(bytes, 'shared.spokenmargins', 'link', false, (episodeId, read) => trackReplyBox(episodeId, replyFetch, senderNameOrNone(read.sender), read.contentDigest));
+        await land(bytes, 'shared.spokenmargins', 'link', false, (episodeId, read, placed) => {
+          const markIntro = async () => {
+            await landed;
+            await dataRef.current.markFromIntro(placed.margins.map((m) => m.id));
+          };
+          trackReplyBox(episodeId, linkShareFetch(replyFetch, introFetch, markIntro), senderNameOrNone(read.sender), read.contentDigest);
+        });
       } catch (error) {
         // A write that failed has already said what wasn't saved. Otherwise it opened under the key but isn't a
         // packet this app can read.
         if (!(error instanceof NotSavedError)) toast(`${LINK_MESSAGES.damaged} ${plainError(error)}`, 'problem');
+      } finally {
+        stored();
       }
     },
     [land, toast],

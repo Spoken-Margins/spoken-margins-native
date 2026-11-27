@@ -10,7 +10,7 @@ import {
   allPicked, candidateLabel, currentPicks, friendNames, nothingPickedReason, pickAll, pickedFromList, pickedMargins, preselected, replyBackOffer, nowCard,
   savedFileNextStep, savedMarginCard, shareCaption, INTRO_SHARE_TITLE, selectAllLabel, selectAllTap, starredPicks, starredShareList, tooManyReason, whyNotShared,
 } from './reply-back.ts';
-import { senderNameHint } from './share-send.ts';
+import { senderNameHint, sendRefusedNextStep } from './share-send.ts';
 import { shownStar, starTapWrites, withStar } from './star.ts';
 
 const D1 = 'a'.repeat(64);
@@ -458,6 +458,8 @@ const intro = (m: Margin): Margin => ({ ...m, fromIntro: true });
 const everyIntroWord = (offer: NonNullable<ReturnType<typeof replyBackOffer>>, margins: Margin[]): string[] => [
   offer.title, shareCaption(offer), senderNameHint(offer.friendLabels, offer.intro), savedFileNextStep(offer) ?? '',
   savedMarginCard(margins, undefined)?.sentence ?? '',
+  // Slice 2: the line when the browser refuses its share sheet names no one either.
+  sendRefusedNextStep(offer),
 ];
 
 test('#4784 an introduction link names no sender in any word the Share section shows', () => {
@@ -488,6 +490,8 @@ test('#4784 the intro words, branch by branch', () => {
   assert.equal(senderNameHint([], true), 'So whoever you share with knows who these are from. Kept in this browser.');
   assert.equal(savedMarginCard(margins, undefined)?.sentence, 'Your Margin is saved in this browser. It stays here unless you share it.');
   assert.equal(savedMarginCard(margins, { kind: 'unplayable' } as never), undefined, 'an unplayable episode still shows no saved card');
+  // Slice 2: no "your friend" either when the browser refuses its share sheet.
+  assert.equal(sendRefusedNextStep(offer), 'This browser wouldn’t open its share sheet. Tap Save as a file, then send the file in a message.');
   // Not an intro link: today's words, unchanged.
   const plain = replyBackOffer([friend(1, D1, 'Ana'), own('o', '2026-11-03T10:00:00Z')]);
   assert.ok(plain);
@@ -496,6 +500,7 @@ test('#4784 the intro words, branch by branch', () => {
   assert.equal(shareCaption(undefined), shareCaption(plain));
   assert.equal(senderNameHint(['Ana']), 'So Ana knows who these are from. Kept in this browser.');
   assert.equal(senderNameHint(['Ana'], false), senderNameHint(['Ana']));
+  assert.equal(sendRefusedNextStep(plain), 'This browser wouldn’t open its share sheet. Tap Save as a file, then send the file to Ana in a message.');
 });
 
 test('#4784 an introduction layer and a real friend on one episode: the words name only the real friend', () => {
