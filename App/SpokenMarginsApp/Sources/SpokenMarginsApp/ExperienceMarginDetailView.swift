@@ -274,6 +274,12 @@ struct ExperienceMarginDetailView: View {
             }
             .marginExportShareSheet($exportShare) { completed, activityType, failed in
                 // Save to Files leaves nothing on screen; say it worked. A cancel or a failure says nothing here (#5051).
+                // The activity type is logged so a run can see which identifier iOS reported (no file name or text).
+                // Another app's identifier would say what the listener has installed, so it is logged as "other".
+                model.recordDeveloperDiagnostic("export.margin.finished", [
+                    "completed": String(completed), "failed": String(failed),
+                    "activity": activityType.map { $0.hasPrefix("com.apple.") ? $0 : "other" } ?? "none",
+                ])
                 if let message = ExportSavedConfirmation.message(completed: completed, activityType: activityType, failed: failed) {
                     model.reportConfirmation(message)
                 }

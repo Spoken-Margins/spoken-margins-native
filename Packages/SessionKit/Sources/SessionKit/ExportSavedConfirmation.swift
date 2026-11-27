@@ -5,8 +5,14 @@ import Foundation
 /// so it is the only one that is confirmed. AirDrop, Mail, Copy and the like have their own feedback. A cancel or a
 /// failure says nothing here (a failure keeps the error handling it already has).
 public enum ExportSavedConfirmation {
-    /// The activity type iOS gives the "Save to Files" action (On My iPhone, iCloud Drive and the other providers).
-    public static let saveToFilesActivity = "com.apple.CloudDocsUI.AddToiCloudDrive"
+    /// The activity types iOS gives the "Save to Files" action (On My iPhone, iCloud Drive and the other providers).
+    /// Recent iOS reports `com.apple.DocumentManagerUICore.SaveToFiles`; older releases reported
+    /// `com.apple.CloudDocsUI.AddToiCloudDrive`. Matching only the old one left a completed save with no confirmation on
+    /// the build 9d1eafa simulator run (#5051). The same pair is what `SpokenNoteTextDelivery` and `SessionShareFiles` know.
+    public static let saveToFilesActivities: Set<String> = [
+        "com.apple.DocumentManagerUICore.SaveToFiles",
+        "com.apple.CloudDocsUI.AddToiCloudDrive",
+    ]
 
     /// - Parameters:
     ///   - completed: the share sheet's own "completed" flag; false for a cancel.
@@ -21,6 +27,6 @@ public enum ExportSavedConfirmation {
             if !name.isEmpty, name != "/", name != "." { return "Saved to \(name)" }
             return "Saved to Files"
         }
-        return activityType == saveToFilesActivity ? "Saved to Files" : nil
+        return activityType.map(saveToFilesActivities.contains) == true ? "Saved to Files" : nil
     }
 }
