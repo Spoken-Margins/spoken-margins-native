@@ -77,6 +77,17 @@ final class ShareSheetLookTests: XCTestCase {
         try await settle(mounted.window)
         dumpNodes("\(name)-top", mounted)
         shot("\(name)-c-top", mounted.window)
+        let backIDs: Set<String> = ["build23.sender.review.back", "build23.sender.preview.edit"]
+        guard let back = mounted.nodes().first(where: { backIDs.contains($0.identifier ?? "") }) else {
+            return print("SMNODE \(name) no back button")
+        }
+        // Put the back button's top 110 pt below the sheet's top, where the strip above the pinned bar shows it.
+        let sheetTop = top(mounted.window).view.convert(CGPoint.zero, to: nil).y
+        let offset = scroll.contentOffset.y + back.frame.minY - (sheetTop + 110)
+        scroll.setContentOffset(CGPoint(x: 0, y: max(-scroll.adjustedContentInset.top, offset)), animated: false)
+        try await settle(mounted.window)
+        dumpNodes("\(name)-back", mounted)
+        shot("\(name)-d-back", mounted.window)
     }
 
     // MARK: - Fixtures
