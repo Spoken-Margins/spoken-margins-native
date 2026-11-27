@@ -30,8 +30,11 @@ Persistent label (owner, 2026-10-22). While a PR qualifies for his tap (every ru
 head yet", so it keeps the label after the alert), it carries `needs-owner-tap`, so he can filter for what waits on
 him. The label is created when missing. It comes off when the PR stops qualifying (new head with failing or pending
 checks, a blocking audit, a conflict, a draft) or no longer touches the owner-tap paths, and a sweep of every open
-PR also strips it from closed and merged PRs. A PR that already carries the owner's own `owner-tap` label (his tap,
-which merge_policy.py reads) loses it and gets no alert, so the list is what still waits on him (#4939). Adding and
+PR also strips it from closed and merged PRs. A PR the owner has already tapped loses it and gets no alert, so the
+list is what still waits on him (#4939): his `owner-tap` label, or (owner, 2026-11-24) his approving review of the
+current head, the same rule merge_policy.py reads (scripts/owner_review_tap.py). The reviews are read only for an
+owner-tap PR without the label, and his review (submitted or dismissed) starts owner-tap-alert.yml, so the label
+comes off when he approves. Adding and
 removing it needs `issues: write` and `pull-requests: write` on the job token: with `pull-requests: read` GitHub
 answered every label and comment write on a PR with 403, so no PR got the label or an alert (every run read on
 2026-11-22, 02:21 to 05:19 UTC, ended in that 403; #4939). The list: https://github.com/Spoken-Margins/spoken-margins-native/pulls?q=is%3Apr+is%3Aopen+label%3Aneeds-owner-tap
@@ -74,6 +77,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import comment_trust  # noqa: E402
+try:  # the workflows check out a few files; one that predates this module still runs, on the label alone
+    import owner_review_tap  # noqa: E402
+except ImportError:  # pragma: no cover
+    owner_review_tap = None
 
 # The owner-tap paths (scripts/lane_merge_rules.py OWNER_TAP_FILES, OWNER_TAP_PREFIXES). A test keeps them equal.
 OWNER_LOGIN = 'uncomposed'  # who to @mention; the repo's owner is the org after #2169
@@ -196,21 +203,33 @@ def guard_run(check_runs: list[dict]) -> dict | None:
     return next((run for run in check_runs if run.get('name') == GUARD_CHECK), None)
 
 
-def tapped(pr: dict) -> bool:
-    """Whether the PR already carries the owner's `owner-tap` label (the REST pulls/N shape)."""
+def labelled_tap(pr: dict) -> bool:
+    """Whether the PR carries the owner's `owner-tap` label (the REST pulls/N shape)."""
     return any(label.get('name') == OWNER_TAP_LABEL for label in pr.get('labels') or [])
 
 
+def tapped(pr: dict, reviews: list[dict] | None = None) -> str:
+    """How the owner has tapped the PR ('' when he has not): his `owner-tap` label, or his approving review of the
+    current head (owner_review_tap.owner_approved; REST pulls/N/reviews shape)."""
+    if labelled_tap(pr):
+        return f'`{OWNER_TAP_LABEL}` label'
+    if owner_review_tap and reviews and owner_review_tap.owner_approved(reviews, pr['head']['sha']):
+        return f'his approval of {pr["head"]["sha"][:7]}'
+    return ''
+
+
 def readiness(pr: dict, files: list[dict], check_runs: list[dict], statuses: list[dict],
-              comments: list[dict], repo: str, guard_stale: str = '') -> tuple[bool, str]:
+              comments: list[dict], repo: str, guard_stale: str = '', reviews: list[dict] | None = None) -> tuple[bool, str]:
     """(ready, why) for one open PR. `pr` is the REST pulls/N shape. `guard_stale` is why the head's
-    workflow-files check no longer vouches for the merge with the base ('' when it does; `guard_staleness`)."""
+    workflow-files check no longer vouches for the merge with the base ('' when it does; `guard_staleness`).
+    `reviews` is the PR's reviews (pulls/N/reviews), for the owner's approval."""
     head = pr['head']['sha']
     tap = owner_tap_paths(files)
     if not tap:
         return False, 'no owner-tap paths'
-    if tapped(pr):
-        return False, f'already tapped (`{OWNER_TAP_LABEL}` label)'
+    how = tapped(pr, reviews)
+    if how:
+        return False, f'already tapped ({how})'
     if pr.get('draft'):
         return False, 'draft'
     if (pr['head'].get('repo') or {}).get('full_name') != repo:
@@ -418,13 +437,15 @@ def check_pr(api: GitHubApi, number: int, mention: str, dry_run: bool, via_label
         return 'no owner-tap paths'
     pr = get_pr(api, number)  # the single-PR read is the one that carries `mergeable`
     head = pr['head']['sha']
+    # The owner's approval is his tap too; read only when the label doesn't already say so (one call).
+    reviews = [] if labelled_tap(pr) or not owner_review_tap else api.get_all(f'pulls/{number}/reviews?per_page=100')
     runs = api.get_all(f'commits/{head}/check-runs?filter=latest&per_page=100')
     statuses = api.get_all(f'commits/{head}/statuses?per_page=100')
     comments = api.get_all(f'issues/{number}/comments?per_page=100')
     stale = guard_staleness(api, number, pr, runs)
     if pr.get('mergeable') is not None:  # GitHub still working it out: leave the label as it is until the next run
-        sync_tap_label(api, number, pr, qualifies(*readiness(pr, files, runs, statuses, comments, api.repo, stale)),
-                       dry_run)
+        sync_tap_label(api, number, pr,
+                       qualifies(*readiness(pr, files, runs, statuses, comments, api.repo, stale, reviews)), dry_run)
     if stale and alerted(comments, head) and not stale_warned(comments, head):  # alerted, then the base moved on
         if dry_run:
             return 'stale warning due (dry run, nothing posted)'
@@ -451,7 +472,7 @@ def check_pr(api: GitHubApi, number: int, mention: str, dry_run: bool, via_label
             return f'already followed up on {head[:7]}'
         api.comment(number, followup_body(head, mention, verdict))
         return 'audit follow-up posted'
-    ready, why = readiness(pr, files, runs, statuses, comments, api.repo, stale)
+    ready, why = readiness(pr, files, runs, statuses, comments, api.repo, stale, reviews)
     if not ready:
         return why
     if api.get(f'pulls/{number}')['head']['sha'] != head:

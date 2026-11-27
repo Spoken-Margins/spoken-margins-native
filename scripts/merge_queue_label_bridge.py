@@ -41,6 +41,15 @@ alone, so a PR tapped with `owner-tap` is queued by the next sweep (the VPS back
 minutes). `needs-fix` still stops it, and only `automerge` added again says "fixed". Removing a label takes the PR out
 only when neither arming label is left.
 
+The owner's approving review of the PR's current head arms a PR touching those tap paths the same way as `owner-tap`
+(owner, 2026-11-24): it is the same tap, under the same rule merge_policy.py reads (scripts/owner_review_tap.py; his
+latest approve, request-changes or dismissed review decides, on the head commit, and nobody else's review counts).
+On 2026-11-24 #5212, #5252 and #5256 were approved by him and nothing queued them. On any other PR his approval arms
+nothing (#5274 audit): nobody asked for the queue there, and neither removing `automerge` nor a manual dequeue could
+stop it. The PR query carries his reviews and the first 100 changed paths, so this costs no extra call; a tap path
+past the first 100 is missed, which leaves the PR unarmed until the label, never armed by mistake. A review starts no run here (this job's `agent-identity` environment admits main only, and a review
+event's ref is the PR's), so the next sweep queues an approved PR, as for a label added with GITHUB_TOKEN.
+
 Every call is tried a few times. One plain line per PR. Exit 1 when a PR could not be queued or unqueued, so the
 run shows red. The next sweep retries a failed queueing, and the PR gets one comment saying it could not be queued
 and why (#4937: with MERGE_QUEUE_TOKEN refused, every armed PR sat unqueued and only the bridge's own run was red,
@@ -62,6 +71,11 @@ import subprocess
 import sys
 import time
 import unicodedata
+
+try:  # the workflow checks out this file and owner_review_tap.py; without the latter, only labels arm a PR
+    import owner_review_tap
+except ImportError:  # pragma: no cover
+    owner_review_tap = None
 
 LABEL = 'automerge'
 OWNER_TAP = 'owner-tap'  # the owner's tap on a PR only he merges; it arms like `automerge` (#4939)
@@ -97,8 +111,11 @@ TRUSTED_LOGIN = 'github-actions[bot]'
 SETUP_RETRY_SLACK = datetime.timedelta(minutes=15)
 CHECK_ACTIONS = ('edited', 'converted_to_draft', 'opened', 'reopened', 'synchronize', 'ready_for_review')
 
+# The owner's reviews ride along for his approval (owner_review_tap.py): no extra call. The login is
+# owner_review_tap.OWNER_LOGIN; a test keeps them equal.
 PR_FIELDS = 'id number isDraft title state headRefOid labels(first: 50) { nodes { name } } autoMergeRequest { enabledAt } ' \
-            'mergeQueueEntry { id }'
+            'mergeQueueEntry { id } files(first: 100) { nodes { path } } ' \
+            'reviews(last: 100, author: "uncomposed") { nodes { state submittedAt author { login } commit { oid } } }'
 PR_QUERY = '''query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) { %s } }
 }''' % PR_FIELDS
@@ -250,13 +267,28 @@ def labels(pr):
     return {node['name'] for node in ((pr.get('labels') or {}).get('nodes') or [])}
 
 
+def owner_approved(pr):
+    """Whether the PR touches the tap paths and the owner's latest decisive review approves its current head
+    (owner_review_tap.py). On any other PR the approval is not a tap and arms nothing."""
+    return bool(owner_review_tap) and owner_review_tap.touches_tap_paths(
+        node.get('path') for node in ((pr.get('files') or {}).get('nodes') or [])) and owner_review_tap.owner_approved(
+        ((pr.get('reviews') or {}).get('nodes') or []), pr.get('headRefOid') or '')
+
+
 def armed(pr):
-    """Whether the PR carries a label that asks for the queue: `automerge`, or the owner's `owner-tap`."""
-    return bool(labels(pr) & {LABEL, OWNER_TAP})
+    """Whether the PR asks for the queue: the `automerge` label, the owner's `owner-tap` label, or, on a PR touching
+    the tap paths, his approval of the head. A hand-off label (#5302) outranks the approval: the PR was handed off
+    because it can't merge as it stands, and the approval of that head would otherwise keep it queued."""
+    if labels(pr) & {LABEL, OWNER_TAP}:
+        return True
+    return not (labels(pr) & set(HANDOFF_LABELS)) and owner_approved(pr)
 
 
 def arming_labels(pr):
-    return ' and '.join(f'`{name}`' for name in (LABEL, OWNER_TAP) if name in labels(pr)) or f'`{LABEL}`'
+    names = [f'`{name}`' for name in (LABEL, OWNER_TAP) if name in labels(pr)]
+    if not names and owner_approved(pr):
+        return "the owner's approval"
+    return ' and '.join(names) or f'`{LABEL}`'
 
 
 def take_out(github, pr, out):
@@ -325,13 +357,16 @@ def queue(github, pr, out=sys.stdout, rearmed=False):
         if handed and (pr.get('autoMergeRequest') or pr.get('mergeQueueEntry')):
             print(f'#{number}: handed off (`{handed[0]}`) with no `{LABEL}` or `{OWNER_TAP}`, taking it out', file=out)
             return take_out(github, pr, out)
-        print(f'#{number}: no `{LABEL}` or `{OWNER_TAP}` label, nothing to queue', file=out)
+        print(f'#{number}: no `{LABEL}` or `{OWNER_TAP}` label and no owner approval of the head, nothing to queue',
+              file=out)
         return True
     why = not_queueable(pr)
     if why:
         ok = take_out(github, pr, out)
         if MARKER not in github.comments(number):
-            github.comment(number, f'{MARKER}\nNot queued for merging: {why}. The {arming_labels(pr)} label stays, but the merge '
+            arming = arming_labels(pr)
+            arming = arming if arming.startswith('the owner') else f'{arming} label'
+            github.comment(number, f'{MARKER}\nNot queued for merging: {why}. The {arming} stays, but the merge '
                                    'queue will not take this PR until that changes and the label is added again.')
         print(f'#{number}: not queued, {why}', file=out)
         return ok
@@ -380,7 +415,7 @@ def unqueue(github, pr, out=sys.stdout):
     """Take one PR back out: no auto-merge, and out of the queue if it is in. True when done."""
     number = pr['number']
     if armed(pr):
-        print(f'#{number}: {arming_labels(pr)} is on, left queued', file=out)
+        print(f"#{number}: {arming_labels(pr)} still arms it, left queued", file=out)
         return True
     try:
         ok = take_out(github, pr, out)
@@ -398,7 +433,7 @@ def unqueue(github, pr, out=sys.stdout):
 
 def sweep(github, out):
     waiting = [pr for pr in github.open_pulls() if armed(pr)]
-    print(f'{len(waiting)} open PRs carry `{LABEL}` or `{OWNER_TAP}`', file=out)
+    print(f'{len(waiting)} open PRs carry `{LABEL}` or `{OWNER_TAP}` (or the owner\'s approval)', file=out)
     results = []
     for pr in waiting:
         try:

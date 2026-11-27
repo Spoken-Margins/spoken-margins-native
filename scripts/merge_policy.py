@@ -8,8 +8,12 @@ one check carries them, on the PR and again in the queue:
    (scripts/lane_merge_rules.py merge_blockers and audit_blocker).
 2. A PR that brings in another PR's commit with a blocking audit is held until that finding is resolved
    (lane_merge_rules.py inherited_check, scripts/lane_inherited_holds.py).
-3. A PR touching `.github/` or `scripts/lane_merge_rules.py` merges only with the owner's tap:
-   the `owner-tap` label, which only the owner adds (lane_merge_rules.py owner_tap_paths; owner rule 2026-10-09, #1203).
+3. A PR touching `.github/` or `scripts/lane_merge_rules.py` merges only with the owner's tap (lane_merge_rules.py
+   owner_tap_paths; owner rule 2026-10-09, #1203): the `owner-tap` label, which only the owner adds, or his approving
+   review of the PR's current head (scripts/owner_review_tap.py; owner's decision 2026-11-24). His latest approve,
+   request-changes or dismissed review decides; a request for changes, a dismissal, an approval of an older commit or
+   anyone else's review is no tap. The reviews are read only for such a PR without the label, one paginated call. In a
+   merge group the approval must be on the PR's own head, not the group's merge commit.
 4. An outside contributor's commits carry `Signed-off-by:` (scripts/signoff_check.py, #2114).
 5. A PR that changes `Packages/SessionKit/Package.resolved` without `Packages/SessionKit/Package.swift` is held: SwiftPM
    on Linux rewrites that file and drops the Mac's pins (#4972; the rewrite reached #4965 and #4970).
@@ -35,7 +39,8 @@ that commit (the Statuses API, #5162: a check run made through the Checks API la
 on the commit, and the merge queue did not count it when that was the label bridge's). The Actions job that runs it is
 named differently, so the required check is the one this script writes. A PR on the `pull_request` event held only for
 an audit that isn't there yet, or for the owner's tap, gets that status left `pending` ("waiting") instead of failed: no
-runner waits, because the job ends, and the audit's re-run or the owner's label event posts the next verdict. Any other
+runner waits, because the job ends, and the audit's re-run, the owner's label event or his review event posts the next
+verdict. Any other
 hold is `failure`, a merge group never waits (a held entry has to leave the queue), a read that failed is `failure`,
 and a cancel is `error`. The status is posted `pending` first and the verdict last, so a run that is cancelled or
 killed between them leaves it pending (blocked), never a stale pass. In this mode the exit code is 0 for a pass or a
@@ -65,6 +70,8 @@ import urllib.parse
 SCRIPTS = Path(__file__).resolve().parent
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+
+import owner_review_tap  # noqa: E402
 
 OWNER_TAP_LABEL = 'owner-tap'
 CHECK_NAME = 'merge policy'  # the required check; the workflow's job is named differently so only this script writes it
@@ -224,6 +231,10 @@ class GitHub:
     def issue_timeline(self, number: int) -> list[dict]:
         """An issue's timeline events: the last `reopened` one ends every proof written before it (#4979)."""
         return self.api(f'repos/{self.repo}/issues/{number}/timeline?per_page=100', paginate=True)
+
+    def reviews(self, number: int) -> list[dict]:
+        """The PR's reviews, every page (the owner's approval is his tap, owner_review_tap.py)."""
+        return self.api(f'repos/{self.repo}/pulls/{number}/reviews?per_page=100', paginate=True)
 
     def comments(self, number: int) -> list[dict]:
         """The PR's comments that the lane trusts (owner, members, collaborators, the project's bot)."""
@@ -422,10 +433,10 @@ def blockers(github: GitHub, tree: Path, base: str, number: int, head: str, clas
     reasons = list(rules().merge_blockers(scope, comments, head, inherited))
     tap = rules().owner_tap_paths(scope)
     labels = {label.get('name') for label in pull.get('labels') or []}
-    if tap and OWNER_TAP_LABEL not in labels:
+    if tap and OWNER_TAP_LABEL not in labels and not owner_review_tap.owner_approved(github.reviews(number), head):
         shown = ', '.join(f'`{p}`' for p in tap)
         reasons.append(f'it touches {shown}, {OWNER_TAP_MARK} (owner rule 2026-10-09, #1203); '
-                       f'it needs the `{OWNER_TAP_LABEL}` label, which only the owner adds')
+                       f'it needs the `{OWNER_TAP_LABEL}` label or his approving review of `{head[:7]}`')
     rewrite = resolved_rewrite(paths)
     if rewrite:
         reasons.append(rewrite)
@@ -440,7 +451,8 @@ def blockers(github: GitHub, tree: Path, base: str, number: int, head: str, clas
 
 def is_waiting(reason: str) -> bool:
     """Whether a hold is only a wait for something that arrives by itself: an audit of the head that isn't posted yet
-    (lane_merge_rules.AUDIT_MISSING; an audit with blocking findings is not one), or the owner's `owner-tap` label.
+    (lane_merge_rules.AUDIT_MISSING; an audit with blocking findings is not one), or the owner's tap (the `owner-tap`
+    label or his approving review).
     Anything else (an inherited finding, an unsigned commit, a Package.resolved rewrite, a missing real-use proof,
     a read that failed) is a defect for the author to fix or a fault, and stays a failure."""
     return rules().AUDIT_MISSING in reason or OWNER_TAP_MARK in reason

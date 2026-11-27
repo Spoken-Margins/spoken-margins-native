@@ -2,7 +2,8 @@
 #
 # The rules GitHub has no setting for, in one check that runs on the PR and again in the queue
 # (scripts/merge_policy.py says which): a clean audit for audio, persistence, packet and lane changes, inherited audit
-# holds, the owner's tap (`owner-tap` label) for `.github/` and `scripts/lane-runner.py`, and an outside contributor's
+# holds, the owner's tap (the `owner-tap` label or his approving review of the head) for `.github/` and
+# `scripts/lane_merge_rules.py`, and an outside contributor's
 # sign-off. Advisory until the "protect main" ruleset lists it as a required check.
 #
 # Safety: the script is checked out from main, never from the PR or the merge group. The PR's commits are fetched as
@@ -15,6 +16,14 @@
 # The audit turns the check green by re-running the PR's own pull_request run of this workflow after it posts
 # (ops/codex/sm_codex_audit.py rerun_merge_policy): a check from a workflow_dispatch run does not satisfy a required
 # check. A label change re-runs it through the labeled/unlabeled events.
+#
+# The owner's review re-runs it too (2026-11-24): his approval of the head is his tap (scripts/owner_review_tap.py), and
+# on 2026-11-24 #5212, #5252 and #5256 sat "Waiting for the owner's tap" after he approved them, because nothing ran the
+# check on a review. `pull_request_review` (submitted, dismissed) starts it, only for his own reviews (the job's `if`;
+# a dismissal event carries the dismissed review, whose author is him) and only for PRs into main: GitHub takes no
+# `branches` filter on this event, so the job checks the base itself. The event carries the same `pull_request` object
+# (number, head SHA, head repository), so the step and the fork guard read it unchanged, and the status lands on the
+# PR's head as for a label event. Its token is the same read-only one plus `statuses: write`.
 #
 # A held PR that is only waiting shows pending, not red (2026-11-22, Cole: "threads that are pending can show pending
 # as long as they're not using the runner for that"). The job is named `merge policy run`; the check named `merge policy`
@@ -34,12 +43,17 @@
 # Cost and catch: one Linux job of about 30 seconds per PR event and per queue entry, plus two Statuses API calls, no Mac
 # minutes, no tokens. It carries the rules lane-runner.py enforced before merging (it held 10 owner-tap PRs and every audited PR in the
 # 400 merges to 2026-11-19). Waste signal: a month in which it never blocks a PR that would otherwise have merged.
+# The review trigger adds one such job per review the owner submits or has dismissed, and the script one paginated
+# reviews read per run, only for an owner-tap PR without the label. It catches an approval left waiting (the three PRs
+# above); waste signal: the owner keeps adding the `owner-tap` label anyway.
 name: merge-policy
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [main]
+  pull_request_review:
+    types: [submitted, dismissed]
   merge_group:
     types: [checks_requested]
     branches: [main]
@@ -67,7 +81,13 @@ permissions:
 jobs:
   policy:
     name: merge policy run
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # pull_request and pull_request_review: same-repository PRs only. A review counts only when it is the owner's
+    # (owner_review_tap.OWNER_LOGIN; a test keeps them equal) on a PR into main.
+    if: >-
+      (github.event_name != 'pull_request' && github.event_name != 'pull_request_review') ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       (github.event_name == 'pull_request' ||
+        (github.event.review.user.login == 'uncomposed' && github.event.pull_request.base.ref == 'main')))
     runs-on: ubuntu-latest
     # 75, not 15 (#4990): a read refused because the hour's API budget is spent waits for the reset, up to an hour away
     # (RATE_LIMIT_WAIT below), instead of failing and holding the PR until someone re-runs the check.

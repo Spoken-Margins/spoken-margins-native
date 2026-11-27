@@ -1134,6 +1134,10 @@ class FakePolicyGitHub:
         rules = self.w.tree.module('lane_merge_rules', 'scripts/lane_merge_rules.py')
         return [c for c in self.w.comments if rules.trusted_comment(c)]
 
+    def reviews(self, number):
+        """The PR's reviews: the model taps with the `owner-tap` label only, so none (owner_review_tap.py)."""
+        return []
+
 
 def b_merge_policy(world, run, job, ctx, cause):
     """The tree's merge_policy.blockers(), with its git reads replaced by the world's paths (a member's PR, so the

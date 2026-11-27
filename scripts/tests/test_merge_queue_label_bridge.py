@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
 
 import merge_queue_label_bridge as bridge  # noqa: E402
+import owner_review_tap  # noqa: E402
 
 
 class FakeGitHub:
@@ -319,6 +320,83 @@ class OwnerTapTests(unittest.TestCase):
                 github = FakeGitHub({1: pr(1, armed=False, auto=False)})
                 self.assertEqual((run(github, '--pr', '1', '--action', 'labeled', '--label', label)[0], github.merged),
                                  (0, []))
+
+
+def approved(number, state='APPROVED', commit=None, login='uncomposed', paths=('.github/workflows/x.yml',), **kw):
+    """A PR with no arming label and one review in the GraphQL shape the PR query asks for. By default it touches a
+    tap path, the only kind of PR the approval arms."""
+    found = pr(number, armed=False, **kw)
+    found['headRefOid'] = f'head{number}'
+    found['files'] = {'nodes': [{'path': path} for path in paths]}
+    found['reviews'] = {'nodes': [{'state': state, 'submittedAt': '2026-11-24T06:12:29Z', 'author': {'login': login},
+                                   'commit': {'oid': commit or f'head{number}'}}]}
+    return found
+
+
+class OwnerApprovalTests(unittest.TestCase):
+    """The owner's approval of the head arms a PR as his `owner-tap` label does (owner, 2026-11-24): #5212, #5252 and
+    #5256 were approved and nothing queued them."""
+
+    def test_a_hand_off_outranks_the_approval(self):
+        # #5302 meets #5261: lane_conflicts.py swaps `automerge` for `conflict-resolver` on a tap PR the owner had
+        # approved. The approval of that head must not keep the conflicting PR queued, or the sweep queue it again.
+        for label in ('needs-mac', 'conflict-resolver'):
+            with self.subTest(label=label):
+                github = FakeGitHub({7: approved(7, queued=True, extra=(label,))})
+                code, out = run(github, '--pr', '7', '--action', 'edited')
+                self.assertEqual((code, github.disabled, github.dequeued, github.merged), (0, [7], ['PR_7'], []))
+                self.assertIn(f'handed off (`{label}`)', out)
+                github = FakeGitHub({7: approved(7, auto=False, extra=(label,))})
+                self.assertEqual((run(github, '--sweep')[0], github.merged), (0, []))
+
+    def test_which_reviews_arm_the_sweep(self):
+        github = FakeGitHub({1: approved(1, auto=False), 2: approved(2, commit='old', auto=False),
+                             3: approved(3, state='CHANGES_REQUESTED', auto=False),
+                             4: approved(4, login='pat', auto=False),
+                             5: approved(5, login='spoken-margins-agent[bot]', auto=False),
+                             6: approved(6, state='DISMISSED', auto=False), 7: pr(7, armed=False)})
+        code, out = run(github, '--sweep')
+        self.assertEqual((code, github.merged), (0, [1]))
+        self.assertIn("1 open PRs carry", out)
+
+    def test_holds_still_apply_to_an_approved_pr(self):
+        github = FakeGitHub({1: approved(1, auto=False, title='DO NOT MERGE: x')})
+        self.assertEqual((run(github, '--sweep')[0], github.merged), (0, []))
+        self.assertIn("the owner's approval stays", github.posted[0][1])
+        github = FakeGitHub({1: approved(1, auto=False, extra=['needs-fix'])})
+        self.assertEqual((run(github, '--sweep')[0], github.merged), (0, []))
+
+    def test_removing_automerge_from_an_approved_pr_leaves_it_queued(self):
+        github = FakeGitHub({1: approved(1, queued=True)})
+        self.assertEqual(run(github, '--pr', '1', '--action', 'unlabeled', '--label', 'automerge')[0], 0)
+        self.assertEqual((github.disabled, github.dequeued), ([], []))
+
+    def test_the_approval_arms_only_a_pr_touching_the_tap_paths(self):
+        # #5274 audit: the approval is the owner's tap, the gate on `.github/` and lane_merge_rules.py PRs. On any
+        # other PR it would queue a PR nobody armed, which removing `automerge` or a manual dequeue could not stop.
+        github = FakeGitHub({1: approved(1, auto=False, paths=('scripts/lane_merge_rules.py',)),
+                             2: approved(2, auto=False, paths=('Web/src/foo.ts', '.github/CODEOWNERS')),
+                             3: approved(3, auto=False, paths=('Web/src/foo.ts',)),
+                             4: approved(4, auto=False, paths=('scripts/lane_merge_rules_test.py', 'x/.github/y')),
+                             5: approved(5, auto=False, paths=())})
+        self.assertEqual((run(github, '--sweep')[0], github.merged), (0, [1, 2]))
+
+    def test_removing_automerge_from_an_approved_ordinary_pr_takes_it_out(self):
+        github = FakeGitHub({1: approved(1, queued=True, paths=('Web/src/foo.ts',))})
+        self.assertEqual(run(github, '--pr', '1', '--action', 'unlabeled', '--label', 'automerge')[0], 0)
+        self.assertEqual(github.dequeued, ['PR_1'])
+
+    def test_the_tap_paths_match_lane_merge_rules(self):
+        import lane_merge_rules
+        self.assertEqual(owner_review_tap.OWNER_TAP_FILES, lane_merge_rules.OWNER_TAP_FILES)
+        self.assertEqual(owner_review_tap.OWNER_TAP_PREFIXES, lane_merge_rules.OWNER_TAP_PREFIXES)
+
+    def test_the_query_asks_for_the_owners_reviews_and_the_head(self):
+        self.assertIn('headRefOid', bridge.PR_FIELDS)
+        self.assertIn('files(first: 100) { nodes { path } }', bridge.PR_FIELDS)
+        self.assertIn(f'reviews(last: 100, author: "{owner_review_tap.OWNER_LOGIN}")', bridge.PR_FIELDS)
+        self.assertIn('commit { oid }', bridge.PR_FIELDS)
+        self.assertIs(bridge.owner_review_tap, owner_review_tap)
 
 
 class UnqueueTests(unittest.TestCase):
@@ -688,7 +766,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn('pull_request', on)
         checkout = self.workflow['jobs']['bridge']['steps'][0]
         self.assertEqual(checkout['with']['ref'], 'main')
-        self.assertEqual(checkout['with']['sparse-checkout'], 'scripts/merge_queue_label_bridge.py')
+        self.assertEqual(checkout['with']['sparse-checkout'].split(),
+                         ['scripts/merge_queue_label_bridge.py', 'scripts/owner_review_tap.py'])
         self.assertFalse(checkout['with']['persist-credentials'])
         self.assertNotIn('github.head_ref', self.text)
         self.assertNotIn('pull_request.head.ref', self.text)
