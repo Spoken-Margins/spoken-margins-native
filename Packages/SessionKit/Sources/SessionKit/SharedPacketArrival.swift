@@ -53,14 +53,8 @@ public enum SharedPacketArrival {
 
     /// How many of the Margins a file just added can be offered, for `announcement`: the count the offer and the item's
     /// screen use, so the arrival never promises one they can't play (#3402). `saved` is what the store holds for the
-    /// file's layer, `importedIds` what this import added to it.
-    public static func newMarginCount(importedIds: [String], saved: [ImportedCommentaryInterjection]) -> Int {
-        let added = Set(importedIds)
-        return saved.filter { added.contains($0.id) && $0.isNewToListener && SharedMarginAudio.canOffer($0) }.count
-    }
-
-    /// `newMarginCount(importedIds:saved:)` without the listener's own copies (#4910): a Margin that came back in a packet
-    /// is not "new from a friend". `ownMargins` are the own Margins of the file's item.
+    /// file's layer, `importedIds` what this import added to it. The listener's own copies are left out (#4910): a Margin
+    /// that came back in a packet is not "new from a friend". `ownMargins` are the own Margins of the file's item.
     public static func newMarginCount(
         importedIds: [String], saved: [ImportedCommentaryInterjection], layer: ImportedCommentaryLayer,
         ownMargins: [Interjection]
@@ -99,6 +93,22 @@ public enum SharedPacketArrival {
     public static func ownCopiesMessage(count: Int) -> String {
         count == 1 ? "Nothing new: this is your own Margin" : "Nothing new: these are your own Margins"
     }
+
+    /// What the import says once it is done, or nil for nothing. A file that added only the listener's own Margins says
+    /// so whatever route it took (#4910); otherwise a Margin being recorded holds the item, the review-sheet route says
+    /// playback hasn't started, and a direct open says what's new (`announcement`).
+    public static func confirmation(
+        ownCopiesCount: Int?, openingWaits: Bool, opensDirectly: Bool, newMarginCount: Int, itemHadFriendMargins: Bool,
+        senderName: String?
+    ) -> String? {
+        if let ownCopiesCount { return ownCopiesMessage(count: ownCopiesCount) }
+        if openingWaits { return waitingToOpenMessage(senderName: senderName) }
+        if !opensDirectly { return importedWithoutPlaybackMessage }
+        return announcement(newMarginCount: newMarginCount, senderName: senderName, itemHadFriendMargins: itemHadFriendMargins)
+    }
+
+    /// Said when the import came through the review sheet rather than opening the item.
+    public static let importedWithoutPlaybackMessage = "Imported shared Margins. Playback has not started."
 
     /// The honest parts of the old Import sheet, one tap away on the item's screen.
     public static let aboutTitle = "About this file"

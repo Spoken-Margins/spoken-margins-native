@@ -138,10 +138,17 @@ public enum MarginCollection {
                     )
                 }
         }
+        // A copy of the listener's own Margin that came back in a packet is not a friend's row: their own row already
+        // shows it. Matched per item, as the Library row is; a layer that isn't in the Library has no own Margins (#4910).
+        let ownIdentitiesByItem = Dictionary(grouping: rows.map(\.interjection), by: \.itemId)
+            .mapValues { OwnMarginEchoes.identities(of: $0) }
         let sharedRows = try loadImportedLayers()
             .filter { $0.deletedAt == nil && ($0.itemId == nil || activeItems[$0.itemId ?? ""] != nil) }
             .flatMap { layer in
-                try loadImportedInterjections(layer.id).map {
+                try OwnMarginEchoes.withoutEchoes(
+                    loadImportedInterjections(layer.id), in: layer,
+                    ownIdentities: layer.itemId.flatMap { ownIdentitiesByItem[$0] } ?? []
+                ).map {
                     SharedEntry(interjection: $0, layer: layer, itemTitle: activeItems[layer.itemId ?? ""] ?? layer.itemIdentity.title)
                 }
             }

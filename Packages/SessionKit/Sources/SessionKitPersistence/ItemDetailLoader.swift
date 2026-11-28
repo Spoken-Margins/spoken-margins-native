@@ -110,14 +110,22 @@ public struct ItemDetailLoader {
         }
         // Every screen reads the layers from here, so a hidden sender's Margins are gone from all of them at once.
         // Nothing is deleted: the layers stay in the store and come back when the listener shows the sender again (#2846).
-        let importedLayers = hiddenSenders.visible(
+        let layersBeforeEchoes = hiddenSenders.visible(
             try store.loadImportedCommentaryLayers(itemId: id).filter { $0.deletedAt == nil })
-        let importedInterjections = Dictionary(uniqueKeysWithValues: importedLayers.map { layer in
-            (layer.id, hiddenSenders.visible((try? store.loadImportedCommentaryInterjections(layerId: layer.id)) ?? []))
-        })
-        // Worked out here so the Item screen's `body` doesn't read the store for it on every render (#2506).
+        // A copy of the listener's own Margin that came back in a packet is theirs, not a friend's, so it is left out
+        // here for the same reason: every screen, count and in-place play then agrees. It stays stored as imported (#4910).
+        let friendMargins = OwnMarginEchoes.friendMargins(
+            layers: layersBeforeEchoes,
+            records: Dictionary(uniqueKeysWithValues: layersBeforeEchoes.map { layer in
+                (layer.id, hiddenSenders.visible((try? store.loadImportedCommentaryInterjections(layerId: layer.id)) ?? []))
+            }),
+            ownMargins: itemOwnMargins)
+        let importedLayers = friendMargins.layers
+        let importedInterjections = friendMargins.records
+        // Worked out here so the Item screen's `body` doesn't read the store for it on every render (#2506). It
+        // reads the layers before copies are left out, so a map placement sees every live layer, as it did before #4910.
         let sharedMapRefusalReason = SharedListeningMapPlacement.storedRefusalReason(
-            layers: importedLayers,
+            layers: layersBeforeEchoes,
             listenerHasMap: SharedListeningMapPlacement.listenerHasMap(
                 proposalIds: committed.map(\.id), hasTimelineChapters: !mediaChapters.isEmpty))
         // An article or PDF has no media; its scene summaries are what the Item screen may offer to write (#3461).

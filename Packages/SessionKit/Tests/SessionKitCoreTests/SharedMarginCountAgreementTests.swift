@@ -84,7 +84,9 @@ final class SharedMarginCountAgreementTests: XCTestCase {
             let offered = try SharedMarginReview.entries(itemId: "a", in: store).map(\.interjection.id)
             XCTAssertEqual(Set(offered), Set(table.filter(\.offered).map(\.margin.id)), "the offer and the item screen")
             XCTAssertEqual(
-                SharedPacketArrival.newMarginCount(importedIds: table.map(\.margin.id), saved: saved), offered.count,
+                SharedPacketArrival.newMarginCount(
+                    importedIds: table.map(\.margin.id), saved: saved, layer: layer(), ownMargins: []),
+                offered.count,
                 "the arrival says what the offer says"
             )
         }
@@ -97,12 +99,12 @@ final class SharedMarginCountAgreementTests: XCTestCase {
             let margins = [margin("one", words: "First."), margin("two", words: "Second."), margin("emoji", words: "🎧")]
             _ = try store.importCommentaryLayer(layer(), interjections: margins)
             let saved = try store.loadImportedCommentaryInterjections(layerId: "cole")
-            let count = SharedPacketArrival.newMarginCount(importedIds: ids, saved: saved)
+            let count = SharedPacketArrival.newMarginCount(importedIds: ids, saved: saved, layer: layer(), ownMargins: [])
             XCTAssertEqual(count, 2)
             XCTAssertEqual(SharedPacketArrival.announcement(newMarginCount: count, senderName: "Cole", itemHadFriendMargins: true), "2 new Margins from Cole")
             XCTAssertEqual(try SharedMarginReview.entries(itemId: "a", in: store).count, count)
-            XCTAssertEqual(SharedPacketArrival.newMarginCount(importedIds: ["emoji"], saved: saved), 0, "nothing to say about a file that added only that")
-            XCTAssertEqual(SharedPacketArrival.newMarginCount(importedIds: ["one"], saved: saved), 1, "only what this import added")
+            XCTAssertEqual(SharedPacketArrival.newMarginCount(importedIds: ["emoji"], saved: saved, layer: layer(), ownMargins: []), 0, "nothing to say about a file that added only that")
+            XCTAssertEqual(SharedPacketArrival.newMarginCount(importedIds: ["one"], saved: saved, layer: layer(), ownMargins: []), 1, "only what this import added")
         }
     }
 

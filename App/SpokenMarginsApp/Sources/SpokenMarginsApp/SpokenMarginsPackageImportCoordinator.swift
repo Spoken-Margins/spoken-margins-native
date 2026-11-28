@@ -558,15 +558,12 @@ final class SpokenMarginsPackageImportCoordinator {
             queue.finish(review.id)
             isImporting = false
             review.releaseSource?()
-            if openingWaits {
-                environment.reportConfirmation(SharedPacketArrival.waitingToOpenMessage(senderName: review.contents.manifest.senderDisplayLabel))
-            } else if !review.opensDirectly {
-                environment.reportConfirmation("Imported shared Margins. Playback has not started.")
-            } else if let announcement = SharedPacketArrival.announcement(
-                newMarginCount: committed.newMarginCount, senderName: review.contents.manifest.senderDisplayLabel,
-                itemHadFriendMargins: committed.itemHadFriendMargins
+            if let line = SharedPacketArrival.confirmation(
+                ownCopiesCount: committed.ownCopiesCount, openingWaits: openingWaits, opensDirectly: review.opensDirectly,
+                newMarginCount: committed.newMarginCount, itemHadFriendMargins: committed.itemHadFriendMargins,
+                senderName: review.contents.manifest.senderDisplayLabel
             ) {
-                environment.reportConfirmation(announcement)
+                environment.reportConfirmation(line)
             }
             await removeFolderIfNothingNamesIt(review.extractionDirectory)
         } catch {
@@ -593,6 +590,8 @@ final class SpokenMarginsPackageImportCoordinator {
         /// Whether a friend's Margins were already on the item, for "2 new Margins from Cole" (#3291).
         let itemHadFriendMargins: Bool
         let newMarginCount: Int
+        /// How many Margins the import added when every one is a copy of the listener's own, else nil (#4910).
+        let ownCopiesCount: Int?
         /// The layer the packet is now, new or the one an earlier import of it made.
         let layerId: String
     }
@@ -611,9 +610,14 @@ final class SpokenMarginsPackageImportCoordinator {
             localAudioAdmission = try await verifyLocalAudioForImport(item, contents: contents)
         }
         let itemText = item?.text
-        let itemHadFriendMargins = try await reader.read { store in
-            try itemId.map { try store.loadImportedCommentaryLayers(itemId: $0).contains { $0.deletedAt == nil } } ?? false
+        // The listener's own Margins on the item, so their own copies coming back in a packet count neither as a friend's
+        // Margins already there nor as new ones (#4910). A failed read counts as before and never stops the import.
+        let before = try await reader.read { store -> (ownMargins: [Interjection], hadFriendMargins: Bool) in
+            guard let itemId else { return ([], false) }
+            if let read = try? PacketArrivalReading.beforeImport(itemId: itemId, store: store) { return read }
+            return ([], try store.loadImportedCommentaryLayers(itemId: itemId).contains { $0.deletedAt == nil })
         }
+        let itemHadFriendMargins = before.hadFriendMargins, ownMargins = before.ownMargins
         let (disposition, repairedLayerId) = try await reader.read { store -> (ImportedCommentaryImportDisposition, String?) in
             let localItem = item.map {
                 SharedPacketItemMatcher.localIdentity(for: $0, ownedAudiobookDigest: ownedAudiobookDigest)
@@ -645,6 +649,7 @@ final class SpokenMarginsPackageImportCoordinator {
             environment.recordDiagnostic("lastSpokenMarginsPackageRepair", "reassociated:\(repairedLayerId):\(itemId)")
         }
         var newMarginCount = 0
+        var ownCopiesCount: Int?
         let layerId: String
         switch disposition {
         case .duplicate(let existingLayerId):
@@ -654,17 +659,23 @@ final class SpokenMarginsPackageImportCoordinator {
             layerId = importedLayerId
             // What the offer can play, so the arrival says what the item's screen says (#3402). Nothing redraws the arrival,
             // so it waits for the voices if this count is what first asks. A failed read is no reason to fail a finished import.
-            newMarginCount = await WrittenMarginVoiceCoverage.shared.onceVoicesAreKnown {
-                (try? await reader.read { store in
-                    SharedPacketArrival.newMarginCount(importedIds: interjectionIds, saved: try store.loadImportedCommentaryInterjections(layerId: importedLayerId))
-                }) ?? interjectionIds.count
+            (newMarginCount, ownCopiesCount) = await WrittenMarginVoiceCoverage.shared.onceVoicesAreKnown {
+                (try? await reader.read { store -> (Int, Int?)? in
+                    guard let layer = try store.loadImportedCommentaryLayer(id: importedLayerId) else { return nil }
+                    let saved = try store.loadImportedCommentaryInterjections(layerId: importedLayerId)
+                    return (
+                        SharedPacketArrival.newMarginCount(
+                            importedIds: interjectionIds, saved: saved, layer: layer, ownMargins: ownMargins),
+                        SharedPacketArrival.ownCopiesCount(
+                            importedIds: interjectionIds, saved: saved, layer: layer, ownMargins: ownMargins))
+                }) ?? (interjectionIds.count, nil)
             }
             environment.recordDiagnostic("lastSpokenMarginsPackageImport", "imported:\(importedLayerId):\(interjectionIds.count)")
             environment.recordPacketImport(itemId, contents.manifest.packageId, interjectionIds.count)
         }
         return CommittedImport(
             item: item, localAudioAdmission: localAudioAdmission, itemHadFriendMargins: itemHadFriendMargins,
-            newMarginCount: newMarginCount, layerId: layerId
+            newMarginCount: newMarginCount, ownCopiesCount: ownCopiesCount, layerId: layerId
         )
     }
 
