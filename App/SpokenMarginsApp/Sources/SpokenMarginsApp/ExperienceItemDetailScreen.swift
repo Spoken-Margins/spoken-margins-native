@@ -629,7 +629,7 @@ struct ExperienceItemDetailScreen: View {
         let choices = listeningChoices
         let behind = marginsBehindPlace
         switch choice {
-        case .play: perform(choices.primaryAction, behind: behind)
+        case .play: if let action = choices.secondaryAction { perform(action, behind: behind) } // MUTATION #3713: Hear-first never starts the review
         case .skip: if let action = choices.secondaryAction { perform(action, behind: behind) }
         }
     }
