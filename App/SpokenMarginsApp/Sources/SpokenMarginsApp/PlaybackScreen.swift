@@ -604,8 +604,8 @@ struct PlaybackScreen: View {
         }
     }
 
-    /// One of the last two Margins under the player. The star (#4173) sits at the trailing edge, outside the button that opens
-    /// the detail sheet, and under the words at accessibility sizes. Only a Margin Share can send has one.
+    /// One of the last two Margins under the player. The star (#4173) sits under the words at the trailing edge, outside the
+    /// button that opens the detail sheet, so the words keep the full width (#5301). Only a Margin Share can send has one.
     @ViewBuilder
     private func recentMarginRow(_ note: Interjection) -> some View {
         let star = PlaybackMarginRowView.Star.ownMargin(note, place: .now, model: model)
@@ -634,17 +634,8 @@ struct PlaybackScreen: View {
                 isStarred: star.isStarred,
                 title: preview,
                 identifier: "playback.now.recent.\(note.id).star", action: star.action)
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 4) {
-                    details
-                    starButton.padding(.leading, 12)
-                }
-            } else {
-                HStack(alignment: .center, spacing: 8) {
-                    details
-                    starButton
-                }
-            }
+            // The words take the full width; the star sits under them at the trailing edge, as on the other Margin rows (#5301).
+            MarginWordsOverControls { details } controls: { starButton }
         } else {
             details
         }

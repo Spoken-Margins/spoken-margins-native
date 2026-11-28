@@ -1,9 +1,13 @@
 import SwiftUI
 import SessionKit
 
-/// A detail target and a separate, full-size play target. Both stay available to VoiceOver.
+/// A detail target and separate, full-size star and play targets. Both stay available to VoiceOver.
+///
+/// The words take the full width of the row, and the controls sit on their own line under them, at the trailing edge
+/// where Play has always been (#5301). Beside the words, the star and Play took about 110 pt of a 390 pt row, so a
+/// long Margin wrapped into a narrow column and lost most of its three lines. VoiceOver still reads the words, then
+/// the star, then Play.
 struct PlaybackMarginRowView: View {
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let title: String
     let detail: String
     var countdown: String? = nil
@@ -20,7 +24,7 @@ struct PlaybackMarginRowView: View {
     /// A live session's photo beside the words (#2708); its Margin's row also reads "with a photo".
     var thumbnail: AnyView? = nil
     /// The sharing star (#4173). Only the listener's own rows pass it; a friend's row and a live session's row pass nil
-    /// and look as before.
+    /// and show Play alone on the controls line.
     var star: Star? = nil
     let showDetails: () -> Void
     let play: () -> Void
@@ -31,27 +35,14 @@ struct PlaybackMarginRowView: View {
     }
 
     var body: some View {
-        Group {
-            if dynamicTypeSize.isAccessibilitySize && star != nil {
-                // A row with a star: the words take the full width; the star and Play sit under them, as the detail sheet's actions do.
-                VStack(alignment: .leading, spacing: 8) {
-                    detailsButton
-                    HStack(spacing: 12) {
-                        starButton
-                        playButton
-                    }
-                }
-            } else {
-                HStack(alignment: .center, spacing: 12) {
-                    detailsButton
-                    starButton
-                    playButton
-                }
-            }
+        MarginWordsOverControls { detailsButton } controls: {
+            starButton
+            playButton
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white)
-        .padding(.vertical, 10)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
         .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(0.16)).frame(height: 1) }
     }
 
@@ -109,6 +100,25 @@ struct PlaybackMarginRowView: View {
         .accessibilityHint(goesTo ? SilentMarginWords.hint(noun: sourceNoun)
             : playHint ?? (canPlay ? "Plays the source lead-in and this Margin" : "Open details to review this Margin’s audio and position"))
         .accessibilityIdentifier("\(identifier).play")
+    }
+}
+
+/// The one layout for a Margin row with controls on the playback screen (#5301): the words take the full width and the
+/// controls (the sharing star, Play or Go-to) sit on their own line under them at the trailing edge. The Margins tab,
+/// Now's nearby list and Now's recent Margins under a text item all use it, so no row puts its controls beside the
+/// words again.
+struct MarginWordsOverControls<Words: View, Controls: View>: View {
+    @ViewBuilder let words: () -> Words
+    @ViewBuilder let controls: () -> Controls
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            words()
+            HStack(spacing: 12) {
+                Spacer(minLength: 0)
+                controls()
+            }
+        }
     }
 }
 
