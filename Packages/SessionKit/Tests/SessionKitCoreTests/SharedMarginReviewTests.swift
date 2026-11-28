@@ -316,11 +316,11 @@ final class SharedMarginReviewTests: XCTestCase {
     }
 
     private func ownMargin(
-        _ id: String, session: String = "s", item: String = "item", sharedAs: [MarginPacketIdentity]? = nil
+        _ id: String, session: String = "s", item: String = "item", sharedAs: [MarginPacketIdentity]? = nil, at ms: Int = 754_000
     ) -> Interjection {
         Interjection(
             id: id, itemId: item, sessionId: session, targetType: .item, targetId: item, createdAt: early, roughPercent: 0,
-            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 754_000),
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: ms),
             audioPath: "\(id).m4a", audioStatus: "ready", transcriptionStatus: "complete", transcript: "Words", cleanedTranscript: nil,
             displayText: "Words", status: "active", sharedAs: sharedAs
         )
@@ -374,6 +374,30 @@ final class SharedMarginReviewTests: XCTestCase {
         XCTAssertEqual(merged.map(\.id), ["m-1", "new", "old"])
         XCTAssertEqual(Set(merged[0].sharedAs ?? []), [first, second], "a list read before the share doesn't hide the identity")
         XCTAssertTrue(SharedMarginReview.ownMargins(itemId: "item", openItem: [], rows: []).isEmpty)
+    }
+
+    /// #5133 (Test Desk run on 9d1eafa, steps 6 and 7): each listening pass numbers its Margins from "ij-001", so a
+    /// replay's voice Margin had the id of the first listen's shared one. The merge kept only the replay's (the open
+    /// item's) and gave it the shared one's packet identity, and "Hear the reply first" played the replay's Margin at
+    /// 1:58 as the one the reply answers, captioned "at 1:58". The reply answers the first listen's Margin at 1:03.
+    func testAReplayMarginWithTheSameIdIsNotTheParentOfAReplyToTheFirstListen() {
+        let sent = MarginPacketIdentity(packageDigest: "digest-mine", packageScopedId: "margin-0002")
+        let firstListen = ownMargin("ij-002", session: "pass-1", sharedAs: [sent], at: 63_000)
+        let replay = ownMargin("ij-002", session: "pass-2", at: 118_000)
+        let own = SharedMarginReview.ownMargins(itemId: "item", openItem: [replay], rows: [replay, firstListen])
+        XCTAssertEqual(own.map(\.sessionScopedId), [replay.sessionScopedId, firstListen.sessionScopedId], "two passes, two Margins")
+        XCTAssertNil(own.first?.sharedAs, "the replay's Margin was never shared")
+        XCTAssertEqual(own.last?.sharedAs, [sent])
+
+        let link = MarginReplyLink.replying(to: sent, parentConversationId: nil)
+        let entries = SharedMarginReview.entries(
+            layers: [layer("ana")], records: ["ana": [margin("reply", at: 63_000, replyLinks: [link])]], ownMargins: own)
+        XCTAssertEqual(entries.first?.replyContext?.caption, "Reply to your Margin at 1:03")
+        XCTAssertEqual(entries.first?.replyContext?.yoursParentId, firstListen.sessionScopedId)
+
+        let steps = SharedMarginReview.playlist(for: entries, ownMargins: own)
+        XCTAssertEqual(steps.map { $0.ownParent?.sessionId }, ["pass-1", nil], "the first listen's Margin plays, then the reply")
+        XCTAssertEqual(steps.first?.anchor.caption, "Your Margin at 1:03")
     }
 
     func testTheOfferNamesHowManyAndWhose() throws {
