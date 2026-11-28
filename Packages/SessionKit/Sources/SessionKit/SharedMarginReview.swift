@@ -153,16 +153,21 @@ public enum SharedMarginReview {
     /// the parent of a friend's reply all the same; the Margins list holds every session's. Both are read, so a
     /// Margin made just now and one shared long ago are found. A Margin in both lists is one Margin (the open item's copy is the fresher), and keeps every
     /// packet identity either list knows it by (a list read before a share doesn't have the new identity yet).
+    ///
+    /// One Margin is one session and id (`Interjection.sessionScopedId`), never the id alone (#5133): each listening pass
+    /// numbers its Margins from "ij-001", so a replay's Margin shares its id with the first listen's. Merging by id dropped
+    /// the first listen's Margin and gave its packet identity to the replay's, and a friend's reply then played and named
+    /// the replay's Margin as the one it answers.
     public static func ownMargins(itemId: String, openItem: [Interjection], rows: some Sequence<Interjection>) -> [Interjection] {
         var merged: [Interjection] = []
         var index: [String: Int] = [:]
         for margin in openItem + rows where margin.itemId == itemId {
-            if let at = index[margin.id] {
+            if let at = index[margin.sessionScopedId] {
                 for identity in margin.sharedAs ?? [] where !(merged[at].sharedAs ?? []).contains(identity) {
                     merged[at].sharedAs = (merged[at].sharedAs ?? []) + [identity]
                 }
             } else {
-                index[margin.id] = merged.count
+                index[margin.sessionScopedId] = merged.count
                 merged.append(margin)
             }
         }
