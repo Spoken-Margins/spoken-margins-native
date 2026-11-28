@@ -94,6 +94,25 @@ final class MarginShareStarRowTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(play.frame.maxX, 390 - 1, "Play left the trailing edge (\(play.frame))")
     }
 
+    /// Now's recent Margins under a text item have a star and no Play (#5301, the row the first look found still beside
+    /// the words). They share `MarginWordsOverControls`, so the star sits under full-width words there too.
+    func testARecentMarginRowWithOnlyAStarPutsItUnderTheWords() async throws {
+        let view = AnyView(MarginWordsOverControls {
+            Button {} label: { Text("A recent Margin under the player").frame(maxWidth: .infinity, alignment: .leading) }
+                .accessibilityIdentifier("playback.now.recent.x")
+        } controls: {
+            MarginShareStarButton(isStarred: false, title: "A recent Margin", identifier: "playback.now.recent.x.star", action: {})
+        })
+        let row = try mount(view)
+        defer { row.close() }
+        let details = try await row.waitForNode("the words") { $0.identifier == "playback.now.recent.x" }
+        let star = try await row.waitForNode("the star") { $0.identifier == "playback.now.recent.x.star" }
+        XCTAssertGreaterThanOrEqual(details.frame.width, 390 - 1, "the words are \(details.frame.width) pt wide")
+        XCTAssertGreaterThanOrEqual(star.frame.minY, details.frame.maxY - 1, "the star (\(star.frame)) is not under the words (\(details.frame))")
+        XCTAssertGreaterThanOrEqual(star.frame.maxX, 390 - 1, "the star left the trailing edge (\(star.frame))")
+        XCTAssertAtLeastPoints(star.frame.height, TapTarget.minimum, "the star is \(star.frame.height) pt tall")
+    }
+
     func testTheSpokenTitleIsCutAtSixtyCharacters() {
         let long = String(repeating: "a", count: 90)
         XCTAssertEqual(MarginShareStarButton.accessibilityLabel(title: long), "Star for sharing: " + String(repeating: "a", count: 60))

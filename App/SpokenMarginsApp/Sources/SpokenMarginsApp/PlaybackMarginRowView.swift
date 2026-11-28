@@ -35,13 +35,9 @@ struct PlaybackMarginRowView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            detailsButton
-            HStack(spacing: 12) {
-                Spacer(minLength: 0)
-                starButton
-                playButton
-            }
+        MarginWordsOverControls { detailsButton } controls: {
+            starButton
+            playButton
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white)
@@ -104,6 +100,25 @@ struct PlaybackMarginRowView: View {
         .accessibilityHint(goesTo ? SilentMarginWords.hint(noun: sourceNoun)
             : playHint ?? (canPlay ? "Plays the source lead-in and this Margin" : "Open details to review this Margin’s audio and position"))
         .accessibilityIdentifier("\(identifier).play")
+    }
+}
+
+/// The one layout for a Margin row with controls on the playback screen (#5301): the words take the full width and the
+/// controls (the sharing star, Play or Go-to) sit on their own line under them at the trailing edge. The Margins tab,
+/// Now's nearby list and Now's recent Margins under a text item all use it, so no row puts its controls beside the
+/// words again.
+struct MarginWordsOverControls<Words: View, Controls: View>: View {
+    @ViewBuilder let words: () -> Words
+    @ViewBuilder let controls: () -> Controls
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            words()
+            HStack(spacing: 12) {
+                Spacer(minLength: 0)
+                controls()
+            }
+        }
     }
 }
 
