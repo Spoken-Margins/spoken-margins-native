@@ -64,26 +64,34 @@ final class MarginShareStarRowTests: XCTestCase {
         XCTAssertFalse(row.nodes().contains { $0.identifier?.hasSuffix(".star") == true })
     }
 
-    /// At accessibility5 the details take the full width and the star sits under them, beside Play.
-    func testAtTheLargestTextSizeTheStarSitsUnderTheWords() async throws {
-        let row = try mount(rowView(star: .init(isStarred: false, action: {})), textSize: .accessibility5)
-        defer { row.close() }
-        let details = try await row.waitForNode("the row's details button") { $0.identifier == "margins.row.x" }
-        let star = try await row.waitForNode("the star") { $0.identifier == "margins.row.x.star" }
-        let play = try await row.waitForNode("the play button") { $0.identifier == "margins.row.x.play" }
-        XCTAssertGreaterThanOrEqual(star.frame.minY, details.frame.maxY - 1, "the star (\(star.frame)) is not under the words (\(details.frame))")
-        XCTAssertGreaterThanOrEqual(play.frame.minY, details.frame.maxY - 1)
-        XCTAssertLessThan(star.frame.maxX, play.frame.minX + 1, "the star and Play share a line, the star first")
+    /// #5301: at every text size the words take the full row and the star and Play sit on their own line under them,
+    /// the star first and Play at the trailing edge. Beside the words they squeezed a long Margin into a narrow column.
+    func testTheWordsTakeTheFullRowAndTheControlsSitUnderThem() async throws {
+        for textSize in [DynamicTypeSize.large, .xxxLarge, .accessibility5] {
+            let row = try mount(rowView(star: .init(isStarred: false, action: {})), textSize: textSize)
+            defer { row.close() }
+            let details = try await row.waitForNode("the row's details button") { $0.identifier == "margins.row.x" }
+            let star = try await row.waitForNode("the star") { $0.identifier == "margins.row.x.star" }
+            let play = try await row.waitForNode("the play button") { $0.identifier == "margins.row.x.play" }
+            XCTAssertGreaterThanOrEqual(details.frame.width, 390 - 1, "at \(textSize) the words are \(details.frame.width) pt wide")
+            XCTAssertGreaterThanOrEqual(star.frame.minY, details.frame.maxY - 1, "at \(textSize) the star (\(star.frame)) is not under the words (\(details.frame))")
+            XCTAssertGreaterThanOrEqual(play.frame.minY, details.frame.maxY - 1, "at \(textSize) Play (\(play.frame)) is not under the words")
+            XCTAssertLessThan(star.frame.maxX, play.frame.minX + 1, "at \(textSize) the star and Play share a line, the star first")
+            XCTAssertGreaterThanOrEqual(play.frame.maxX, 390 - 1, "at \(textSize) Play left the trailing edge (\(play.frame))")
+            XCTAssertAtLeastPoints(play.frame.height, TapTarget.minimum, "at \(textSize) Play is \(play.frame.height) pt tall")
+        }
     }
 
-    /// A friend's row has no star, so it keeps Play on the trailing edge at every text size.
-    func testAFriendsRowKeepsPlayBesideTheWordsAtTheLargestSize() async throws {
+    /// A friend's row has no star; its words take the full row too, with Play alone under them at the trailing edge.
+    func testAFriendsRowPutsPlayUnderTheWords() async throws {
         let row = try mount(AnyView(PlaybackMarginRowView(title: "From Sam", detail: "00:01", isShared: true, identifier: "margins.shared.row.x",
-                                                          showDetails: {}, play: {})), textSize: .accessibility5)
+                                                          showDetails: {}, play: {})))
         defer { row.close() }
         let details = try await row.waitForNode("the details button") { $0.identifier == "margins.shared.row.x" }
         let play = try await row.waitForNode("the play button") { $0.identifier == "margins.shared.row.x.play" }
-        XCTAssertGreaterThan(play.frame.minX, details.frame.maxX - 1, "Play (\(play.frame)) moved from beside the words (\(details.frame))")
+        XCTAssertGreaterThanOrEqual(details.frame.width, 390 - 1, "the words are \(details.frame.width) pt wide")
+        XCTAssertGreaterThanOrEqual(play.frame.minY, details.frame.maxY - 1, "Play (\(play.frame)) is not under the words (\(details.frame))")
+        XCTAssertGreaterThanOrEqual(play.frame.maxX, 390 - 1, "Play left the trailing edge (\(play.frame))")
     }
 
     func testTheSpokenTitleIsCutAtSixtyCharacters() {
